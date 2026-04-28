@@ -1,0 +1,244 @@
+"""
+/*
+ * Copyright (C) 2026 Michael Niedermayer
+ *
+ * This file is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This file is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License version 2 for more details.
+ *
+ * Additional permission:
+ *
+ * Michael Niedermayer is permitted to relicense this file, in whole or
+ * in part, under any version of the GNU General Public License, the GNU
+ * Affero General Public License, or the GNU Lesser General Public License
+ * published by the Free Software Foundation.
+ *
+ * This additional permission is personal to Michael Niedermayer.  It is
+ * not transferable and does not grant any other person permission to
+ * relicense this file under a different license.
+ *
+ * This additional permission may be removed from modified copies of this
+ * file.  Removal of this additional permission does not affect the
+ * licensing of the file under the GNU General Public License version 2.
+ */
+"""
+from __future__ import annotations
+
+import logging
+import os
+import pickle
+from datetime import datetime, timezone
+from pathlib import Path
+import sys
+import tempfile
+from typing import Any, TypeAlias
+
+
+# JSON value type aliases shared by every module that touches gcli or
+# OpenAI responses. Defined here (rather than in ``forge_gcli`` or
+# ``openai_common``) so neither subsystem has to depend on the other
+# just to agree on the shape of a ``dict[str, JsonValue]``. Both
+# subsystems re-import these names; consumers may pick either entry
+# point.
+JsonPrimitive: TypeAlias = None | bool | int | float | str
+JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
+JsonObject: TypeAlias = dict[str, JsonValue]
+
+
+class _ThreadPrefixFilter(logging.Filter):
+    _PREFIXES = {
+        "MainThread": "M ",
+        "pr-prepare": "P ",
+        "pr-llm": "L ",
+    }
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.thread_prefix = self._PREFIXES.get(record.threadName, "T ")
+        return True
+
+
+def setup_logging(
+    logger: logging.Logger,
+    verbose: bool,
+    *extra_loggers: logging.Logger,
+) -> None:
+    """Configure given loggers to print DEBUG/INFO/WARNING with timestamps.
+
+    Attaches shared stdout/stderr handlers to ``logger`` and each logger
+    in ``extra_loggers``. The caller is responsible for listing the
+    sibling module loggers it depends on -- ``common.py`` deliberately
+    does NOT know the set of consumers, so the dependency direction
+    stays one-way (top-level entry points know their helpers, the
+    shared utility module does not know its users).
+
+    Why multiple loggers instead of configuring the root logger: we
+    would rather not eagerly route every third-party library's DEBUG
+    traffic (e.g. ``openai``, ``httpx``) through our formatter when
+    ``verbose=True``. Restricting handler attachment to a known set of
+    project loggers keeps ``--verbose`` output scoped to our own code.
+
+    Sharing handler instances across loggers is safe: ``logging.Handler``
+    is designed for multi-logger attachment, and the filters we install
+    are stateless. ``propagate`` is turned off on each target so
+    messages are never emitted twice via the root logger's lastResort
+    handler.
+    """
+    level = logging.DEBUG if verbose else logging.INFO
+
+    formatter = logging.Formatter(
+        fmt='%(asctime)s %(thread_prefix)s%(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+    )
+    thread_prefix_filter = _ThreadPrefixFilter()
+
+    # INFO goes to stderr (not stdout) because several scripts that use
+    # this logging setup also write machine-readable data to stdout
+    # (``openai_pr_review_wrapper.py`` writes the review-decision JSON,
+    # ``--prepare-vector-store-only`` writes a vector-store dump). Any
+    # INFO line on stdout would otherwise be concatenated with that data
+    # and break the parent's JSON parse (e.g. the leading "2026" in a
+    # timestamp parses as a JSON number, turning the captured stdout
+    # into a multi-value list).
+    # info_handler.setLevel(INFO) accepts INFO and above, so without an
+    # explicit "INFO only" filter every WARNING/ERROR would print twice
+    # (once via info_handler, once via warn_handler). The lambda is the
+    # de-dup gate.
+    info_handler = logging.StreamHandler(sys.stderr)
+    info_handler.setLevel(logging.INFO)
+    info_handler.addFilter(thread_prefix_filter)
+    info_handler.addFilter(lambda r: r.levelno == logging.INFO)
+    info_handler.setFormatter(formatter)
+
+    # No level-filter lambda needed: setLevel(WARNING) already drops
+    # everything below WARNING.
+    warn_handler = logging.StreamHandler(sys.stderr)
+    warn_handler.setLevel(logging.WARNING)
+    warn_handler.addFilter(thread_prefix_filter)
+    warn_handler.setFormatter(formatter)
+
+    # Same de-dup reason as info_handler: setLevel(DEBUG) accepts every
+    # level, so without "DEBUG only" each INFO/WARNING would print twice.
+    debug_handler: logging.Handler | None = None
+    if verbose:
+        debug_handler = logging.StreamHandler(sys.stderr)
+        debug_handler.setLevel(logging.DEBUG)
+        debug_handler.addFilter(thread_prefix_filter)
+        debug_handler.addFilter(lambda r: r.levelno == logging.DEBUG)
+        debug_handler.setFormatter(formatter)
+
+    # De-dupe by identity so passing the same logger twice is a no-op
+    # rather than attaching duplicate handlers.
+    seen: set[int] = set()
+    for target in (logger, *extra_loggers):
+        if id(target) in seen:
+            continue
+        seen.add(id(target))
+        target.setLevel(level)
+        target.handlers.clear()
+        target.propagate = False
+        target.addHandler(info_handler)
+        target.addHandler(warn_handler)
+        if debug_handler is not None:
+            target.addHandler(debug_handler)
+
+
+_CACHE_VERSION = 1
+
+
+def default_cache_path(filename: str = "repo_discussion_cache.pkl") -> Path:
+    return Path.home() / ".fairy" / filename
+
+
+def iso_to_dt(value: str | None) -> datetime | None:
+    """Parse a Forgejo/Gitea ISO-8601 timestamp into a UTC ``datetime``.
+
+    Forgejo emits timestamps with both ``Z`` and explicit ``+HH:MM``
+    suffixes; the leading ``Z`` is folded to ``+00:00`` so the standard
+    ``datetime.fromisoformat`` parser accepts it on every supported
+    Python version. Naive results (no tzinfo) are assumed to be UTC.
+    Returns ``None`` for empty / unparseable input -- callers that
+    sort/compare timestamps already filter ``None`` separately.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _empty_pickle_cache() -> dict[str, Any]:
+    return {"version": _CACHE_VERSION, "repos": {}}
+
+
+def load_pickle_cache(path: Path) -> dict[str, Any]:
+    try:
+        with path.open("rb") as f:
+            cache = pickle.load(f)
+        if cache["version"] != _CACHE_VERSION:
+            return _empty_pickle_cache()
+        return cache
+    except Exception:
+        return _empty_pickle_cache()
+
+
+def atomic_write_pickle(path: Path, obj: object) -> None:
+    """Pickle ``obj`` to ``path`` atomically (mkstemp -> dump -> os.replace).
+
+    Companion to ``atomic_write_text``. Unlike that helper this one
+    deliberately does NOT fsync before the rename: the existing
+    pickle-based caches (pr_auto_approve's discussion cache,
+    mail_fairy's forwarded-msgid state) treat themselves as advisory
+    -- a torn write at process kill survives a fresh start because
+    the loaders fall back to an empty cache on any deserialization
+    failure. Adding fsync would only buy crash-consistency at the
+    cost of write throughput, and is intentionally left as a future
+    decision.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "wb") as f:
+            pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp_name, path)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+
+
+def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> None:
+    """Write ``content`` to ``path`` atomically: write to a temp sibling file,
+    fsync, then rename into place.
+
+    Safe for concurrent callers racing on the same ``path``: the last
+    ``os.replace`` wins and all readers observe either the previous file or
+    the new one, never a partially-written file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding=encoding) as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_name, path)
+    finally:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass

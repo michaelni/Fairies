@@ -277,6 +277,80 @@ class TestStripMailmanFooter(unittest.TestCase):
         self.assertEqual(mail_fairy.strip_mailman_footer(body), body)
 
 
+class TestQuotedListFooterRe(unittest.TestCase):
+    """Detect "full quote of prior list mail (footer included)" pattern."""
+
+    def _matches(self, body: str) -> bool:
+        return bool(mail_fairy._QUOTED_LIST_FOOTER_RE.search(body))
+
+    def test_clean_reply_does_not_match(self):
+        self.assertFalse(self._matches("Just a reply.\n"))
+
+    def test_quoted_text_without_footer_does_not_match(self):
+        body = (
+            "> some quoted line\n"
+            "> another quoted line\n"
+            "\n"
+            "My reply.\n"
+        )
+        self.assertFalse(self._matches(body))
+
+    def test_unquoted_real_footer_does_not_match(self):
+        # The actual Mailman footer of THIS mail (unquoted) must not
+        # trigger -- this regex is specifically about a PREVIOUS
+        # mail's footer included in the quote.
+        body = (
+            "Reply text.\n"
+            "_______________________________________________\n"
+            "ffmpeg-devel mailing list -- ffmpeg-devel@ffmpeg.org\n"
+        )
+        self.assertFalse(self._matches(body))
+
+    def test_bottom_posted_full_quote_matches(self):
+        body = (
+            "OK.\n"
+            "\n"
+            "On Thu, X wrote:\n"
+            "> some quoted body\n"
+            "> _______________________________________________\n"
+            "> ffmpeg-devel mailing list -- ffmpeg-devel@ffmpeg.org\n"
+            "> To unsubscribe send an email to ffmpeg-devel-leave@ffmpeg.org\n"
+        )
+        self.assertTrue(self._matches(body))
+
+    def test_top_posted_full_quote_matches(self):
+        # Top-posting: the one-word reply is ABOVE the quote rather
+        # than below. Detection must fire either way.
+        body = (
+            "Acknowledged.\n"
+            "\n"
+            "> some quoted body\n"
+            "> _______________________________________________\n"
+            "> ffmpeg-devel mailing list -- ffmpeg-devel@ffmpeg.org\n"
+        )
+        self.assertTrue(self._matches(body))
+
+    def test_double_quote_levels_match(self):
+        body = (
+            "> > some text\n"
+            "> > _______________________________________________\n"
+            "> > a-list mailing list -- list@example.org\n"
+            "\n"
+            "Acknowledged.\n"
+        )
+        self.assertTrue(self._matches(body))
+
+    def test_prose_mention_of_mailing_list_does_not_match(self):
+        # Belt-and-suspenders: a prose line that happens to include
+        # "mailing list --" in the middle (no quote prefix, no
+        # email after the dashes) must not trigger.
+        body = (
+            "As you mentioned, the mailing list -- the devel one --\n"
+            "is great.\n"
+        )
+        self.assertFalse(self._matches(body))
+
+
 class TestStripBottomQuote(unittest.TestCase):
     def test_drops_trailing_full_quote(self):
         body = (
@@ -589,6 +663,35 @@ class TestBuildDecision(unittest.TestCase):
             forwarded_msgids=set(),
         )
         self.assertEqual(d.action, mail_fairy.SKIP_TOO_LARGE)
+
+    def test_full_quote_with_footer_skip(self):
+        # Body with a full-quote of a previous list mail (including
+        # its Mailman footer in quoted text) plus a terse reply.
+        # build_decision must skip rather than forward this noise.
+        h = mail_fairy.read_headers(HUMAN_REPLY)
+        h.file_ts = self.now - 60
+        body = (
+            "OK.\n"
+            "\n"
+            "On Tue, X wrote:\n"
+            "> a long quoted mail body\n"
+            "> _______________________________________________\n"
+            "> some-list mailing list -- list@example.org\n"
+        )
+        with mock.patch.object(mail_fairy, "read_body", return_value=body):
+            d = mail_fairy.build_decision(
+                h, self.idx,
+                now_ts=self.now,
+                max_age_seconds=86400 * 30,
+                max_mail_bytes=1_000_000,
+                forge_bot_re=self.bot_re,
+                extra_skip_re=None,
+                forwarded_msgids=set(),
+            )
+        self.assertEqual(d.action, mail_fairy.SKIP_FULL_QUOTE_WITH_FOOTER)
+        # The target is retained so an operator investigating the
+        # skip can still see which PR/Issue the mail targeted.
+        self.assertIsNotNone(d.target)
 
     def test_local_dedup_skip(self):
         h = mail_fairy.read_headers(HUMAN_REPLY)

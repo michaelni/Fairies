@@ -394,6 +394,7 @@ SKIP_DEDUP_LOCAL = "skip:already-forwarded-local"
 SKIP_DEDUP_REMOTE = "skip:already-forwarded-remote"
 SKIP_EMPTY_BODY = "skip:empty-body-after-cleanup"
 SKIP_PARSE_ERROR = "skip:parse-error"
+SKIP_FULL_QUOTE_WITH_FOOTER = "skip:full-quote-with-footer"
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +497,19 @@ def strip_mailman_footer(body: str) -> str:
         if _MAILMAN_FOOTER_RE.match(line):
             return "\n".join(lines[:i]).rstrip() + "\n"
     return body
+
+
+# Match a QUOTED Mailman v3 list-footer continuation line: one or more
+# stacked "> " quote prefixes followed by the canonical
+# "<list-name> mailing list -- <list-addr>" shape. Presence of this
+# pattern anywhere in the body means the sender quoted a previous
+# list mail in full (footer included). Such replies tend to be a
+# huge quote with a terse reply line; we skip them rather than
+# forward the noise to the forge as a comment.
+_QUOTED_LIST_FOOTER_RE = re.compile(
+    r"^\s*(?:>\s*)+\S+\s+mailing list\s*--\s*\S+@\S+",
+    re.MULTILINE,
+)
 
 
 def strip_bottom_quote(body: str) -> str:
@@ -998,6 +1012,25 @@ def build_decision(
         return MailDecision(
             headers=headers, action=SKIP_EMPTY_BODY,
             reason="empty text/plain body",
+            target=target,
+        )
+
+    # If the body contains a previous list mail's footer in QUOTED
+    # text, the sender included an entire prior mail unsnipped --
+    # typical "huge quote with one-word reply" pattern. Skip it
+    # rather than post the noise to the forge.
+    if _QUOTED_LIST_FOOTER_RE.search(raw_body):
+        logger.warning(
+            "full-quote-with-footer msgid=%s path=%s",
+            headers.message_id, headers.path,
+        )
+        return MailDecision(
+            headers=headers, action=SKIP_FULL_QUOTE_WITH_FOOTER,
+            reason=(
+                "body quotes a previous list mail in full "
+                "(Mailman footer present in quoted text); not "
+                "forwarding huge quote with terse reply"
+            ),
             target=target,
         )
 

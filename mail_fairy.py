@@ -503,13 +503,54 @@ def strip_mailman_footer(body: str) -> str:
 # stacked "> " quote prefixes followed by the canonical
 # "<list-name> mailing list -- <list-addr>" shape. Presence of this
 # pattern anywhere in the body means the sender quoted a previous
-# list mail in full (footer included). Such replies tend to be a
-# huge quote with a terse reply line; we skip them rather than
-# forward the noise to the forge as a comment.
+# list mail in full (footer included). build_decision either skips
+# such mails or drops just the offending quote block, depending on
+# ``--full-quote-action``.
 _QUOTED_LIST_FOOTER_RE = re.compile(
     r"^\s*(?:>\s*)+\S+\s+mailing list\s*--\s*\S+@\S+",
     re.MULTILINE,
 )
+
+
+def strip_quoted_list_footer_blocks(body: str) -> str:
+    """Drop every ``>``-quoted block that contains a quoted Mailman
+    list-footer line.
+
+    For each line matching ``_QUOTED_LIST_FOOTER_RE``, walk outward
+    through contiguous ``>``-prefixed lines (in both directions) to
+    find the surrounding quote block and remove it. If an
+    ``On <date>, X wrote:`` attribution line (allowing one blank
+    line in between) immediately precedes the dropped block, that
+    line is dropped too -- otherwise it would be left dangling
+    above an empty space.
+
+    Bodies with no quoted full-mail block are returned unchanged.
+    Returns a body that always ends in exactly one ``\\n`` (or is
+    empty when everything was dropped).
+    """
+    if not _QUOTED_LIST_FOOTER_RE.search(body):
+        return body
+    lines = body.splitlines()
+    n = len(lines)
+    drop = [False] * n
+    for i, line in enumerate(lines):
+        if not _QUOTED_LIST_FOOTER_RE.match(line):
+            continue
+        start = i
+        while start > 0 and _QUOTE_LINE_RE.match(lines[start - 1]):
+            start -= 1
+        end = i
+        while end + 1 < n and _QUOTE_LINE_RE.match(lines[end + 1]):
+            end += 1
+        for k in range(start, end + 1):
+            drop[k] = True
+        attr_idx = start - 1
+        while attr_idx >= 0 and lines[attr_idx].strip() == "":
+            attr_idx -= 1
+        if attr_idx >= 0 and _ATTRIBUTION_LINE_RE.match(lines[attr_idx]):
+            drop[attr_idx] = True
+    out = "\n".join(line for line, d in zip(lines, drop) if not d).rstrip("\n")
+    return out + "\n" if out else ""
 
 
 def strip_bottom_quote(body: str) -> str:
@@ -942,6 +983,7 @@ def build_decision(
     forge_bot_re: re.Pattern[str],
     extra_skip_re: re.Pattern[str] | None,
     forwarded_msgids: set[str],
+    full_quote_action: str = "strip",
 ) -> MailDecision:
     """Decide what to do with a single mail.
 
@@ -1017,22 +1059,47 @@ def build_decision(
 
     # If the body contains a previous list mail's footer in QUOTED
     # text, the sender included an entire prior mail unsnipped --
-    # typical "huge quote with one-word reply" pattern. Skip it
-    # rather than post the noise to the forge.
+    # typical "huge quote with terse reply" pattern. Two responses
+    # are configurable via ``full_quote_action``:
+    #   "strip" (default): drop the offending quote block(s) and
+    #     forward the rest. Cheap and lets a real reply through if
+    #     one exists.
+    #   "skip": do not post anything. Safer fallback if the strip
+    #     turns out to remove genuine content for a particular
+    #     list's quoting style.
     if _QUOTED_LIST_FOOTER_RE.search(raw_body):
+        if full_quote_action == "skip":
+            logger.warning(
+                "full-quote-with-footer skip msgid=%s path=%s",
+                headers.message_id, headers.path,
+            )
+            return MailDecision(
+                headers=headers, action=SKIP_FULL_QUOTE_WITH_FOOTER,
+                reason=(
+                    "body quotes a previous list mail in full "
+                    "(Mailman footer present in quoted text); "
+                    "skipping per --full-quote-action=skip"
+                ),
+                target=target,
+            )
+        # strip mode: drop the offending block(s) and continue.
+        stripped = strip_quoted_list_footer_blocks(raw_body)
         logger.warning(
-            "full-quote-with-footer msgid=%s path=%s",
+            "full-quote-with-footer strip msgid=%s path=%s "
+            "raw_bytes=%d stripped_bytes=%d",
             headers.message_id, headers.path,
+            len(raw_body), len(stripped),
         )
-        return MailDecision(
-            headers=headers, action=SKIP_FULL_QUOTE_WITH_FOOTER,
-            reason=(
-                "body quotes a previous list mail in full "
-                "(Mailman footer present in quoted text); not "
-                "forwarding huge quote with terse reply"
-            ),
-            target=target,
-        )
+        raw_body = stripped
+        if not raw_body.strip():
+            return MailDecision(
+                headers=headers, action=SKIP_EMPTY_BODY,
+                reason=(
+                    "body became empty after stripping "
+                    "full-quote-with-footer block"
+                ),
+                target=target,
+            )
 
     body_no_footer = strip_mailman_footer(raw_body)
     body_clean = strip_bottom_quote(body_no_footer)
@@ -1255,6 +1322,7 @@ def main(argv: list[str] | None = None) -> int:
             forge_bot_re=forge_bot_re,
             extra_skip_re=extra_skip_re,
             forwarded_msgids=forwarded_msgids,
+            full_quote_action=args.full_quote_action,
         )
         decisions.append(d)
 
@@ -1450,6 +1518,18 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=(
             "Additional From-regex to skip (loop-guard for our own "
             "bot account or other automation). Repeatable."
+        ),
+    )
+    p.add_argument(
+        "--full-quote-action", choices=("strip", "skip"), default="strip",
+        help=(
+            "How to handle mails whose body quotes a previous list "
+            "mail in full (Mailman footer present in quoted text). "
+            "'strip' (default) drops just the offending quote "
+            "block(s) and forwards the rest. 'skip' skips the entire "
+            "mail. Use 'skip' as a fallback if 'strip' turns out to "
+            "drop content that should have been forwarded for your "
+            "particular list's quoting style."
         ),
     )
     p.add_argument(

@@ -351,6 +351,92 @@ class TestQuotedListFooterRe(unittest.TestCase):
         self.assertFalse(self._matches(body))
 
 
+class TestStripQuotedListFooterBlocks(unittest.TestCase):
+    """Drop quote blocks that contain a quoted Mailman list footer."""
+
+    def test_no_match_returns_unchanged(self):
+        body = "Plain reply.\n> snippet\n> more\n"
+        self.assertEqual(
+            mail_fairy.strip_quoted_list_footer_blocks(body), body,
+        )
+
+    def test_strips_block_above_reply(self):
+        # Bottom-posted reply: quote on top, real content below.
+        body = (
+            "On Tue, X wrote:\n"
+            "> long body\n"
+            "> _______________________________________________\n"
+            "> a-list mailing list -- a-list@example.org\n"
+            "\n"
+            "LGTM.\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertNotIn("mailing list", out)
+        self.assertNotIn("On Tue, X wrote:", out)
+        self.assertNotIn(">", out)
+        self.assertIn("LGTM.", out)
+
+    def test_strips_block_below_reply(self):
+        # Top-posted reply: real content above, quote below.
+        body = (
+            "OK.\n"
+            "\n"
+            "On Tue, X wrote:\n"
+            "> long body\n"
+            "> _______________________________________________\n"
+            "> a-list mailing list -- a-list@example.org\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertIn("OK.", out)
+        self.assertNotIn("mailing list", out)
+        self.assertNotIn("On Tue, X wrote:", out)
+        self.assertNotIn(">", out)
+
+    def test_preserves_other_quote_blocks_without_footer(self):
+        # Two quote blocks: only the one with the footer is dropped.
+        body = (
+            "Reply.\n"
+            "\n"
+            "On Tue, A wrote:\n"
+            "> innocuous quote without footer\n"
+            "\n"
+            "On Mon, B wrote:\n"
+            "> quoted full mail\n"
+            "> _______________________________________________\n"
+            "> a-list mailing list -- a-list@example.org\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertIn("innocuous quote without footer", out)
+        self.assertNotIn("mailing list", out)
+        self.assertNotIn("quoted full mail", out)
+        # Attribution for the surviving quote is preserved.
+        self.assertIn("On Tue, A wrote:", out)
+        # Attribution for the dropped quote is removed.
+        self.assertNotIn("On Mon, B wrote:", out)
+
+    def test_strips_to_empty_when_body_was_only_quote(self):
+        body = (
+            "On Tue, X wrote:\n"
+            "> only this and footer\n"
+            "> _______________________________________________\n"
+            "> a-list mailing list -- a-list@example.org\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertEqual(out, "")
+
+    def test_does_not_strip_unquoted_mailing_list_line(self):
+        # The actual Mailman footer of THIS mail must not be touched
+        # by the quote-block stripper -- strip_mailman_footer handles
+        # that elsewhere.
+        body = (
+            "Reply.\n"
+            "_______________________________________________\n"
+            "ffmpeg-devel mailing list -- ffmpeg-devel@ffmpeg.org\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertEqual(out, body)
+
+
 class TestStripBottomQuote(unittest.TestCase):
     def test_drops_trailing_full_quote(self):
         body = (
@@ -664,19 +750,75 @@ class TestBuildDecision(unittest.TestCase):
         )
         self.assertEqual(d.action, mail_fairy.SKIP_TOO_LARGE)
 
-    def test_full_quote_with_footer_skip(self):
-        # Body with a full-quote of a previous list mail (including
-        # its Mailman footer in quoted text) plus a terse reply.
-        # build_decision must skip rather than forward this noise.
+    FULL_QUOTE_BODY = (
+        "OK.\n"
+        "\n"
+        "On Tue, X wrote:\n"
+        "> a long quoted mail body\n"
+        "> _______________________________________________\n"
+        "> some-list mailing list -- list@example.org\n"
+    )
+
+    def test_full_quote_with_footer_skip_action(self):
+        # full_quote_action="skip" : the mail is skipped entirely.
+        h = mail_fairy.read_headers(HUMAN_REPLY)
+        h.file_ts = self.now - 60
+        with mock.patch.object(
+            mail_fairy, "read_body", return_value=self.FULL_QUOTE_BODY,
+        ):
+            d = mail_fairy.build_decision(
+                h, self.idx,
+                now_ts=self.now,
+                max_age_seconds=86400 * 30,
+                max_mail_bytes=1_000_000,
+                forge_bot_re=self.bot_re,
+                extra_skip_re=None,
+                forwarded_msgids=set(),
+                full_quote_action="skip",
+            )
+        self.assertEqual(d.action, mail_fairy.SKIP_FULL_QUOTE_WITH_FOOTER)
+        # The target is retained so an operator investigating the
+        # skip can still see which PR/Issue the mail targeted.
+        self.assertIsNotNone(d.target)
+
+    def test_full_quote_with_footer_strip_action(self):
+        # full_quote_action="strip" (the default): drop the quote
+        # block + attribution and forward what remains, here just
+        # "OK." -- the actual reply that was sitting above the quote.
+        h = mail_fairy.read_headers(HUMAN_REPLY)
+        h.file_ts = self.now - 60
+        with mock.patch.object(
+            mail_fairy, "read_body", return_value=self.FULL_QUOTE_BODY,
+        ):
+            d = mail_fairy.build_decision(
+                h, self.idx,
+                now_ts=self.now,
+                max_age_seconds=86400 * 30,
+                max_mail_bytes=1_000_000,
+                forge_bot_re=self.bot_re,
+                extra_skip_re=None,
+                forwarded_msgids=set(),
+                full_quote_action="strip",
+            )
+        self.assertEqual(d.action, mail_fairy.ACTIONABLE, msg=d.reason)
+        self.assertIn("OK.", d.body)
+        self.assertNotIn("mailing list", d.body)
+        self.assertNotIn("On Tue, X wrote", d.body)
+        self.assertNotIn("a long quoted mail body", d.body)
+        self.assertNotIn("_____________", d.body)
+
+    def test_full_quote_with_footer_strip_to_empty(self):
+        # If stripping the offending block leaves nothing behind
+        # (the reply WAS the quote), the mail falls through to
+        # the existing empty-body skip rather than posting an
+        # attribution-only stub.
         h = mail_fairy.read_headers(HUMAN_REPLY)
         h.file_ts = self.now - 60
         body = (
-            "OK.\n"
-            "\n"
             "On Tue, X wrote:\n"
-            "> a long quoted mail body\n"
+            "> only the quote here\n"
             "> _______________________________________________\n"
-            "> some-list mailing list -- list@example.org\n"
+            "> a-list mailing list -- a-list@example.org\n"
         )
         with mock.patch.object(mail_fairy, "read_body", return_value=body):
             d = mail_fairy.build_decision(
@@ -687,11 +829,9 @@ class TestBuildDecision(unittest.TestCase):
                 forge_bot_re=self.bot_re,
                 extra_skip_re=None,
                 forwarded_msgids=set(),
+                full_quote_action="strip",
             )
-        self.assertEqual(d.action, mail_fairy.SKIP_FULL_QUOTE_WITH_FOOTER)
-        # The target is retained so an operator investigating the
-        # skip can still see which PR/Issue the mail targeted.
-        self.assertIsNotNone(d.target)
+        self.assertEqual(d.action, mail_fairy.SKIP_EMPTY_BODY)
 
     def test_local_dedup_skip(self):
         h = mail_fairy.read_headers(HUMAN_REPLY)

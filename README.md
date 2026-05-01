@@ -4,7 +4,7 @@ Scans a maildir from a mailing list. She will then with GCLI post replies to pul
 threads to a forge (Forgejo, Gitlab, Github, Gittea).
 She detects replies by analyzing in-reply-to header trees and thus needs more than just 1 mail
 She will check and cache all previously posted comments to avoid duplicates.
-She will also check for "Text above, full quote below" mails and skip them)
+She will also check for "full quotes" and can be configured to remove these quotes or skip affected mail
 mailman footers will be stripped, messages will be prefixed by author and date and should be a clickable
 link to a mailman3 mailinglist (lore supported too)
 

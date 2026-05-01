@@ -141,6 +141,18 @@ _ATTRIBUTION_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Detect a hard-wrapped attribution closer by structure rather
+# than language: "On <date>, X <addr@host> wrote:" can wrap onto
+# two physical lines because mail clients (notably Gmail) hard-wrap
+# inside the ``<email>`` envelope. The resulting closing line
+# starts with an email-like envelope tail ("addr@host>" or
+# "<addr@host>") followed by the wrote/schrieb/escribió verb that
+# _ATTRIBUTION_LINE_RE already matches. When the closer line
+# starts that way, the "On <date>, X <" head is on the line above.
+# This is language-agnostic: we never look at the head's leading
+# word, which would otherwise need a per-language enumeration.
+_WRAPPED_ATTRIBUTION_ENVELOPE_HEAD_RE = re.compile(r"^\s*<?\S*@\S+>?")
+
 # ``<Name> via <list-name>`` -- the From: display-name rewrite Mailman
 # 3 applies to every list mail. The original address is typically left
 # in Cc:.
@@ -549,6 +561,23 @@ def strip_quoted_list_footer_blocks(body: str) -> str:
             attr_idx -= 1
         if attr_idx >= 0 and _ATTRIBUTION_LINE_RE.match(lines[attr_idx]):
             drop[attr_idx] = True
+            # Hard-wrapped attribution: closer starts with an
+            # envelope tail ("addr@host>" / "<addr@host>"), meaning
+            # the "On <date>, X <" head wrapped onto the previous
+            # line. Drop wrapped continuation lines that contain
+            # envelope/email characters (``<`` or ``@``). Bail at
+            # blanks or quoted lines so paragraph boundaries are
+            # respected. The data-character requirement is what
+            # keeps us from eating unrelated prose that happens to
+            # sit directly above the wrap.
+            if _WRAPPED_ATTRIBUTION_ENVELOPE_HEAD_RE.match(lines[attr_idx]):
+                for k in range(attr_idx - 1, max(-1, attr_idx - 5), -1):
+                    line_k = lines[k]
+                    if not line_k.strip() or _QUOTE_LINE_RE.match(line_k):
+                        break
+                    if "<" not in line_k and "@" not in line_k:
+                        break
+                    drop[k] = True
     out = "\n".join(line for line, d in zip(lines, drop) if not d).rstrip("\n")
     return out + "\n" if out else ""
 

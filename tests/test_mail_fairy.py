@@ -424,6 +424,104 @@ class TestStripQuotedListFooterBlocks(unittest.TestCase):
         out = mail_fairy.strip_quoted_list_footer_blocks(body)
         self.assertEqual(out, "")
 
+    def test_strips_gmail_wrapped_multiline_attribution(self):
+        # Gmail hard-wraps the ``<email>`` envelope of "On <date>,
+        # X <addr> wrote:" -- the closing ``wrote:`` ends up on a
+        # different physical line from "On". Both lines must be
+        # dropped, otherwise the leading "On Thu, ... <" leaks into
+        # the forwarded comment. Regression for the bug report
+        # against b3fb740.
+        body = (
+            "On Thu, 30 Apr 2026, 03:13 michaelni via ffmpeg-devel, <\n"
+            "ffmpeg-devel@ffmpeg.org> wrote:\n"
+            "\n"
+            "> quoted full body\n"
+            "> _______________________________________________\n"
+            "> ffmpeg-devel mailing list -- ffmpeg-devel@ffmpeg.org\n"
+            "\n"
+            "Lgtm\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertNotIn("On Thu", out)
+        self.assertNotIn("ffmpeg-devel@ffmpeg.org>", out)
+        self.assertNotIn("wrote:", out)
+        self.assertNotIn("mailing list", out)
+        self.assertIn("Lgtm", out)
+
+    def test_envelope_tail_is_language_agnostic(self):
+        # The wrap detector is keyed on the envelope-tail SHAPE of
+        # the closer ("addr@host> wrote:"), not on the head word.
+        # A French ("Le ... a écrit:")-style head wraps just like
+        # English does and must be dropped even though the
+        # _ATTRIBUTION_LINE_RE language list does not include
+        # French. We verify the structural detector itself; the
+        # closer is forced into a shape _ATTRIBUTION_LINE_RE
+        # already accepts so the test exercises the new logic, not
+        # _ATTRIBUTION_LINE_RE's language list.
+        body = (
+            "Le jeudi 30 avril 2026, Some Long Name, <\n"
+            "addr@example.org> wrote:\n"
+            "> body\n"
+            "> a-list mailing list -- a-list@example.org\n"
+            "\n"
+            "merci\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertNotIn("Le jeudi", out)
+        self.assertNotIn("addr@example.org", out)
+        self.assertIn("merci", out)
+
+    def test_envelope_tail_does_not_eat_prose_above(self):
+        # If the closer starts with an envelope tail BUT the line
+        # directly above is plain prose (no ``<`` or ``@``), the
+        # walkback bails out and only the closer is dropped. This
+        # is the core safety property that lets us be language-
+        # agnostic without a head-word allowlist.
+        body = (
+            "Real prose ending with comma,\n"
+            "addr@example.org> wrote:\n"
+            "> quoted body\n"
+            "> a-list mailing list -- a-list@example.org\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertIn("Real prose ending with comma,", out)
+        self.assertNotIn("addr@example.org", out)
+        self.assertNotIn("mailing list", out)
+
+    def test_attribution_without_envelope_tail_falls_back_to_one_line(self):
+        # If the closer matches _ATTRIBUTION_LINE_RE but does NOT
+        # start with an envelope tail, we never attempt a walkback
+        # -- only the closer is dropped. This protects unrelated
+        # prose above a single-line attribution.
+        body = (
+            "Some real prose above\n"
+            "that wraps onto two lines.\n"
+            "2026-04-30 X) wrote:\n"  # closer matches, no envelope
+            "> quoted body\n"
+            "> a-list mailing list -- a-list@example.org\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertIn("Some real prose above", out)
+        self.assertIn("that wraps onto two lines.", out)
+        self.assertNotIn("wrote:", out)
+        self.assertNotIn("mailing list", out)
+
+    def test_attribution_blank_gap_stops_walkback(self):
+        # Even with an envelope-tail closer, a blank line above
+        # must stop the walkback -- otherwise we'd cross paragraph
+        # boundaries.
+        body = (
+            "On a side note about addr@example.com.\n"
+            "\n"
+            "addr@example.org> wrote:\n"
+            "> quoted body\n"
+            "> a-list mailing list -- a-list@example.org\n"
+        )
+        out = mail_fairy.strip_quoted_list_footer_blocks(body)
+        self.assertIn("On a side note", out)
+        self.assertNotIn("addr@example.org>", out)
+        self.assertNotIn("mailing list", out)
+
     def test_does_not_strip_unquoted_mailing_list_line(self):
         # The actual Mailman footer of THIS mail must not be touched
         # by the quote-block stripper -- strip_mailman_footer handles

@@ -654,6 +654,65 @@ class TestComposeCommentBody(unittest.TestCase):
             {msgid},
         )
 
+    def test_body_is_wrapped_in_fenced_code_block(self):
+        # Without the fence, Forgejo's markdown renderer turns
+        # ``> ``-quoted patch text into blockquotes and mangles
+        # ``<email>`` envelopes. Regression for the unfenced
+        # output at ffmpeg PR #23205 comment 42267.
+        out = mail_fairy.compose_comment_body(
+            "> diff --git a/x b/y\n>  some content\n",
+            "[Fw](https://x/y)",
+            "abc@host",
+        )
+        self.assertIn("```text", out)
+        # Find the opening fence and the matching closing fence.
+        self.assertEqual(out.count("```"), 2)
+        # Body content lives between the two fences.
+        before, _, after = out.partition("```text\n")
+        body_in_fence, _, _ = after.partition("\n```")
+        self.assertIn("> diff --git", body_in_fence)
+        # Attribution sits ABOVE the fence so its markdown link
+        # actually renders.
+        self.assertIn("[Fw](https://x/y)", before)
+        # Marker sits BELOW the fence so it remains an HTML
+        # comment and stays grep-able for dedup.
+        self.assertTrue(out.endswith("<!-- mail-fairy:msgid:abc@host -->\n"))
+
+    def test_marker_grep_roundtrip_with_backticks_in_body(self):
+        # The grep-based dedup invariant must hold even when the
+        # body contained backtick runs that forced a longer fence.
+        msgid = "id@host"
+        out = mail_fairy.compose_comment_body(
+            "use ```bash``` blocks", "attr", msgid,
+        )
+        self.assertEqual(
+            mail_fairy.find_marker_msgids([{"body": out}]),
+            {msgid},
+        )
+
+    def test_fence_grows_around_embedded_triple_backticks(self):
+        # If the body itself contains ```, a 3-backtick fence
+        # would terminate at the first embedded run. The fence
+        # must be at least one backtick longer than the longest
+        # embedded run.
+        body = "before\n```sh\nls\n```\nafter"
+        out = mail_fairy.compose_comment_body(body, "attr", "id@host")
+        # 4-backtick fence is the minimum that survives the
+        # embedded 3-backtick run.
+        self.assertIn("````text", out)
+        self.assertNotIn("`````", out)
+        # The embedded triple backticks survive verbatim.
+        self.assertIn("```sh", out)
+        self.assertIn("```\nafter", out)
+
+    def test_fence_grows_around_quadruple_backticks(self):
+        # Defense in depth: arbitrary-length runs work.
+        body = "stuff ````````\nmore"
+        out = mail_fairy.compose_comment_body(body, "attr", "id@host")
+        # 8 embedded -> need at least 9.
+        self.assertIn("`" * 9 + "text", out)
+        self.assertNotIn("`" * 10, out)
+
 
 # ---------------------------------------------------------------------------
 # Fixture-driven integration of the parsing layer

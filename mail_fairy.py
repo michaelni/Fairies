@@ -749,26 +749,50 @@ def find_marker_msgids(comments: Iterable[dict]) -> set[str]:
     return out
 
 
+_BACKTICK_RUN_RE = re.compile(r"`+")
+
+
+def _fence_for(body: str) -> str:
+    longest = 0
+    for m in _BACKTICK_RUN_RE.finditer(body):
+        if len(m.group()) > longest:
+            longest = len(m.group())
+    return "`" * max(3, longest + 1)
+
+
 def compose_comment_body(
     cleaned_body: str,
     attribution_line: str,
     msgid: str,
 ) -> str:
-    """Glue the attribution line, original body and dedup marker.
+    """Glue the attribution line, fenced original body and dedup marker.
 
     Layout::
 
         <attribution-line>
 
+        ```text
         <cleaned mail body>
+        ```
 
         <!-- mail-fairy:msgid:<id> -->
 
-    The marker is on a line by itself at the very end so it does not
-    visually disrupt the comment but is trivially grep-able.
+    The body is wrapped in a fenced code block so Forgejo's Markdown
+    renderer does not interpret the content
+
+    The fence is sized dynamically by ``_fence_for`` so any
+    backtick runs inside the body cannot terminate it.
     """
-    parts = [attribution_line.rstrip(), "", cleaned_body.strip(), ""]
-    parts.append(_MARKER_FMT.format(msgid=msgid))
+    fence = _fence_for(cleaned_body)
+    parts = [
+        attribution_line.rstrip(),
+        "",
+        f"{fence}text",
+        cleaned_body.strip("\n"),
+        fence,
+        "",
+        _MARKER_FMT.format(msgid=msgid),
+    ]
     return "\n".join(parts).rstrip() + "\n"
 
 

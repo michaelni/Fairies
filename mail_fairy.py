@@ -163,6 +163,18 @@ _VIA_LIST_RE = re.compile(r"\s+via\s+[\w\-.]+\s*$", re.IGNORECASE)
 # any mail file.
 _MAILDIR_FILENAME_TS_RE = re.compile(r"^(\d{9,12})\.")
 
+# Matched:
+#   "[PATCH] foo", "[PATCH 1/3] foo", "[PATCH v2 1/3] foo",
+#   "[RFC PATCH] foo", "[FFmpeg-devel] [PATCH 1/3] foo"
+# Not matched:
+#   "Re: [PATCH 1/3] foo"               -- discussion reply
+#   "[FFmpeg-devel] [PR] foo (PR #N)"   -- Forgejo PR notification
+#   "[PATCHWORK] ..."                   -- ``\b`` after PATCH blocks it
+_PATCH_SUBJECT_RE = re.compile(
+    r"^(?:\[[^\]]+\]\s*)*\[(?:RFC\s+)?PATCH\b",
+    re.IGNORECASE,
+)
+
 DEFAULT_MAX_AGE_DAYS = 14
 DEFAULT_MAX_MAIL_BYTES = 256 * 1024
 DEFAULT_FORGE_BOT_SENDER_RE = r"^code@"
@@ -407,6 +419,7 @@ SKIP_DEDUP_REMOTE = "skip:already-forwarded-remote"
 SKIP_EMPTY_BODY = "skip:empty-body-after-cleanup"
 SKIP_PARSE_ERROR = "skip:parse-error"
 SKIP_FULL_QUOTE_WITH_FOOTER = "skip:full-quote-with-footer"
+SKIP_PATCH_SERIES = "skip:patch-series"
 
 
 # ---------------------------------------------------------------------------
@@ -1080,6 +1093,13 @@ def build_decision(
         return MailDecision(
             headers=headers, action=SKIP_BOT_MAIL,
             reason="from --skip-from regex",
+        )
+
+    # ``git send-email`` patches belong to the review list, not to a PR thread.
+    if _PATCH_SUBJECT_RE.search(headers.subject):
+        return MailDecision(
+            headers=headers, action=SKIP_PATCH_SERIES,
+            reason=f"subject is a [PATCH ...] series mail: {headers.subject!r}",
         )
 
     if not headers.in_reply_to:

@@ -1055,6 +1055,62 @@ class TestBuildDecision(unittest.TestCase):
         )
         self.assertEqual(d.action, mail_fairy.SKIP_DEDUP_LOCAL)
 
+    def _patch_decision(self, subject: str) -> mail_fairy.MailDecision:
+        """Run build_decision against a HUMAN_REPLY clone with a faked subject.
+
+        The HUMAN_REPLY fixture is reused for everything except the
+        subject so we don't need a second .eml file -- the patch-series
+        check looks only at headers.subject and runs before any of the
+        body-touching steps.
+        """
+        h = mail_fairy.read_headers(HUMAN_REPLY)
+        h.file_ts = self.now - 60
+        h.subject = subject
+        return mail_fairy.build_decision(
+            h, self.idx,
+            now_ts=self.now,
+            max_age_seconds=86400 * 30,
+            max_mail_bytes=1_000_000,
+            forge_bot_re=self.bot_re,
+            extra_skip_re=None,
+            forwarded_msgids=set(),
+        )
+
+    def test_patch_series_cover_letter_skip(self):
+        d = self._patch_decision("[PATCH 0/3] lavfi: vf_drawtext: cover letter")
+        self.assertEqual(d.action, mail_fairy.SKIP_PATCH_SERIES)
+
+    def test_patch_series_numbered_skip(self):
+        d = self._patch_decision("[PATCH 1/3] lavfi: vf_drawtext: foo")
+        self.assertEqual(d.action, mail_fairy.SKIP_PATCH_SERIES)
+
+    def test_patch_series_v2_skip(self):
+        d = self._patch_decision("[PATCH v2 1/3] lavfi: vf_drawtext: foo")
+        self.assertEqual(d.action, mail_fairy.SKIP_PATCH_SERIES)
+
+    def test_patch_series_rfc_skip(self):
+        d = self._patch_decision("[RFC PATCH] lavfi: experimental thing")
+        self.assertEqual(d.action, mail_fairy.SKIP_PATCH_SERIES)
+
+    def test_patch_series_with_list_prefix_skip(self):
+        d = self._patch_decision(
+            "[FFmpeg-devel] [PATCH 1/3] lavfi: vf_drawtext: foo",
+        )
+        self.assertEqual(d.action, mail_fairy.SKIP_PATCH_SERIES)
+
+    def test_patch_series_re_reply_not_caught(self):
+        # ``Re: [PATCH ...]`` is a discussion reply; the guard must
+        # not match it. Falls through to threading, which here finds
+        # no forge ancestor and returns SKIP_NOT_FORGE_THREAD.
+        d = self._patch_decision("Re: [PATCH 1/3] lavfi: vf_drawtext: foo")
+        self.assertNotEqual(d.action, mail_fairy.SKIP_PATCH_SERIES)
+
+    def test_patch_series_forge_pr_subject_not_caught(self):
+        d = self._patch_decision(
+            "[FFmpeg-devel] [PR] Fix drawtext error handling (PR #22883)",
+        )
+        self.assertNotEqual(d.action, mail_fairy.SKIP_PATCH_SERIES)
+
 
 class TestForgeGcliCommentsApiPathDispatch(unittest.TestCase):
     """Lock in the per-backend path shape used by list_issue_comments."""

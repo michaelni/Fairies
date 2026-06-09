@@ -907,6 +907,57 @@ class TestBuildDecision(unittest.TestCase):
         )
         self.assertEqual(d.action, mail_fairy.SKIP_TOO_LARGE)
 
+    def test_missing_msgid_skip(self):
+        h = mail_fairy.read_headers(HUMAN_REPLY)
+        h.file_ts = self.now - 60
+        h.message_id = ""
+        d = mail_fairy.build_decision(
+            h, self.idx,
+            now_ts=self.now,
+            max_age_seconds=86400 * 30,
+            max_mail_bytes=1_000_000,
+            forge_bot_re=self.bot_re,
+            extra_skip_re=None,
+            forwarded_msgids=set(),
+        )
+        self.assertEqual(d.action, mail_fairy.SKIP_NO_MSGID)
+
+    def test_extra_skip_re_matches_from(self):
+        # --skip-from regex hit on From: counts as a bot mail and short-
+        # circuits before threading; the reason must differ from the
+        # default forge_bot_re path so operators can tell them apart.
+        h = mail_fairy.read_headers(HUMAN_REPLY)
+        h.file_ts = self.now - 60
+        d = mail_fairy.build_decision(
+            h, self.idx,
+            now_ts=self.now,
+            max_age_seconds=86400 * 30,
+            max_mail_bytes=1_000_000,
+            forge_bot_re=self.bot_re,
+            extra_skip_re=mail_fairy.re.compile(r"ffmpeg-devel"),
+            forwarded_msgids=set(),
+        )
+        self.assertEqual(d.action, mail_fairy.SKIP_BOT_MAIL)
+        self.assertIn("--skip-from", d.reason)
+
+    def test_no_in_reply_to_skip(self):
+        # A thread root that is not itself a forge notification has no
+        # In-Reply-To and no way to reach a forge ancestor; skip rather
+        # than walk into a NoneType comparison.
+        h = mail_fairy.read_headers(HUMAN_REPLY)
+        h.file_ts = self.now - 60
+        h.in_reply_to = ""
+        d = mail_fairy.build_decision(
+            h, self.idx,
+            now_ts=self.now,
+            max_age_seconds=86400 * 30,
+            max_mail_bytes=1_000_000,
+            forge_bot_re=self.bot_re,
+            extra_skip_re=None,
+            forwarded_msgids=set(),
+        )
+        self.assertEqual(d.action, mail_fairy.SKIP_NO_PARENT)
+
     FULL_QUOTE_BODY = (
         "OK.\n"
         "\n"

@@ -1039,25 +1039,16 @@ def _is_forge_or_self(headers: MailHeaders, *, bot_re: re.Pattern[str]) -> bool:
     return False
 
 
-def build_decision(
+def _pre_threading_skip(
     headers: MailHeaders,
-    idx: ThreadIndex,
     *,
     now_ts: float,
     max_age_seconds: float,
     max_mail_bytes: int,
     forge_bot_re: re.Pattern[str],
     extra_skip_re: re.Pattern[str] | None,
-    forwarded_msgids: set[str],
-    full_quote_action: str = "strip",
-) -> MailDecision:
-    """Decide what to do with a single mail.
-
-    Returns a MailDecision with ``action == ACTIONABLE`` if mail-fairy
-    should post it, or one of the ``skip:*`` actions with a reason.
-    The composed comment body is filled in only for the actionable
-    case.
-    """
+) -> MailDecision | None:
+    """Header-only guard chain. Returns ``None`` to fall through to threading."""
     if not headers.message_id:
         return MailDecision(
             headers=headers, action=SKIP_NO_MSGID,
@@ -1107,6 +1098,39 @@ def build_decision(
             headers=headers, action=SKIP_NO_PARENT,
             reason="no In-Reply-To header (thread root)",
         )
+
+    return None
+
+
+def build_decision(
+    headers: MailHeaders,
+    idx: ThreadIndex,
+    *,
+    now_ts: float,
+    max_age_seconds: float,
+    max_mail_bytes: int,
+    forge_bot_re: re.Pattern[str],
+    extra_skip_re: re.Pattern[str] | None,
+    forwarded_msgids: set[str],
+    full_quote_action: str = "strip",
+) -> MailDecision:
+    """Decide what to do with a single mail.
+
+    Returns a MailDecision with ``action == ACTIONABLE`` if mail-fairy
+    should post it, or one of the ``skip:*`` actions with a reason.
+    The composed comment body is filled in only for the actionable
+    case.
+    """
+    early = _pre_threading_skip(
+        headers,
+        now_ts=now_ts,
+        max_age_seconds=max_age_seconds,
+        max_mail_bytes=max_mail_bytes,
+        forge_bot_re=forge_bot_re,
+        extra_skip_re=extra_skip_re,
+    )
+    if early is not None:
+        return early
 
     target = classify_via_threading(headers, idx)
     if target is None:

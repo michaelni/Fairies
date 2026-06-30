@@ -85,9 +85,11 @@ from llm_review_api import (
     CLASSIFICATIONS,
     ENGAGE,
     TERMINAL_ROUTES,
+    Z_AI_ANTHROPIC_URL,
     Review,
     ReviewContext,
     Reviewer,
+    run_parallel,
 )
 import podman_host
 import podman_repos
@@ -469,7 +471,29 @@ INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.MULTILINE)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Review a PR with the OpenAI Responses API.")
-    p.add_argument("--model", default=DEFAULT_MODEL, help=f"Model to use (default: {DEFAULT_MODEL})")
+    p.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenAI model for the main review pass (default: {DEFAULT_MODEL})")
+    p.add_argument(
+        "--extra-model",
+        action="append",
+        default=[],
+        metavar="PROVIDER:MODEL",
+        help=(
+            "Add another reviewer to the ensemble, e.g. 'anthropic:claude-opus-4' "
+            "or 'zai:glm-4.6'. Repeat for more. All reviewers (the --model OpenAI "
+            "pass plus each --extra-model) run on the same PR; with more than one "
+            "you must pass --combine-model to merge their drafts."
+        ),
+    )
+    p.add_argument(
+        "--combine-model",
+        default=None,
+        metavar="PROVIDER:MODEL",
+        help=(
+            "Reviewer that verifies and combines the ensemble drafts into the "
+            "final review (e.g. 'openai:gpt-5.4'). Required when more than one "
+            "model reviewer is configured."
+        ),
+    )
     p.add_argument(
         "--triage-model",
         default=None,
@@ -1449,6 +1473,25 @@ def make_user_text(
     return "".join(parts)
 
 
+def make_combiner_user_text(drafts: list[Review]) -> str:
+    """Present the draft reviews the combiner must verify and merge.
+
+    Internal scaffolding for the combine stage; the combiner is instructed
+    (see ``C_PROMPT_COMBINER_TASK``) not to reference these drafts in its
+    posted message.
+    """
+    parts = [
+        "Independent draft reviews to verify and combine. They are internal: "
+        "do not mention them, the other models, or the combination process in "
+        "your posted message.\n\n"
+    ]
+    for index, draft in enumerate(drafts, start=1):
+        parts.append(f"----- Draft {index} from {draft.model or 'unknown'} -----\n")
+        parts.append(f"classification: {draft.classification}\n")
+        parts.append(f"message:\n{draft.message}\n\n")
+    return "".join(parts)
+
+
 def format_response_stats(response: object, *, elapsed_seconds: float | None = None) -> str:
     dumped = response_to_debug_json(response)
     parts: list[str] = []
@@ -2383,10 +2426,19 @@ class OpenAIReviewer(Reviewer):
     ``BadModelOutput`` for the routine, retryable failure modes.
     """
 
-    def __init__(self, args: argparse.Namespace, resources: OpenAIResources) -> None:
+    def __init__(
+        self,
+        args: argparse.Namespace,
+        resources: OpenAIResources,
+        *,
+        model: str | None = None,
+        role: str = "reviewer",
+    ) -> None:
         self.args = args
         self.res = resources
-        self.name = f"openai:{args.model}"
+        self.model = model or args.model
+        self.role = role
+        self.name = f"openai:{self.model}"
 
     def review(self, ctx: ReviewContext) -> Review:
         args = self.args
@@ -2402,6 +2454,11 @@ class OpenAIReviewer(Reviewer):
             },
             {"type": "input_file", "file_id": res.patch_file_id},
         ]
+        if self.role == "combiner":
+            content.append({
+                "type": "input_text",
+                "text": make_combiner_user_text(ctx.review_drafts()),
+            })
         if ctx.source_bundle is not None:
             source_file_id = upload_text_file(
                 client,
@@ -2425,14 +2482,14 @@ class OpenAIReviewer(Reviewer):
             reviewer_features.add("code_interpreter")
 
         response_kwargs: ResponseKwargs = {
-            "model": args.model,
+            "model": self.model,
             "input": [
                 {
                     "role": "developer",
                     "content": generate_llm_prompt(
-                        role="reviewer",
+                        role=self.role,
                         vendor="openai",
-                        model=args.model,
+                        model=self.model,
                         features=reviewer_features,
                         repo_roots=ctx.repo_roots,
                         container_repo_mounts=ctx.repo_mount_paths,
@@ -2472,7 +2529,7 @@ class OpenAIReviewer(Reviewer):
                 if isinstance(tool, dict)
             ]
             source_bundle_bytes = len(ctx.source_bundle.encode("utf-8")) if ctx.source_bundle is not None else 0
-            logger.debug("responses.create start model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", args.model, args.reasoning_effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, args.max_output_tokens)
+            logger.debug("responses.create start model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.model, args.reasoning_effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, args.max_output_tokens)
 
         create_started = time.monotonic()
         try:
@@ -2568,6 +2625,102 @@ class OpenAIReviewer(Reviewer):
             message=result["message"],
             model=self.name,
         )
+
+
+def make_reviewer(
+    spec: str,
+    *,
+    args: argparse.Namespace,
+    resources: OpenAIResources,
+    role: str,
+    verbose: bool,
+) -> Reviewer:
+    """Build a ``Reviewer`` from a ``provider:model`` spec.
+
+    ``openai:<m>`` (or a bare ``<m>``) -> OpenAIReviewer reusing the shared
+    OpenAI resources. ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` ->
+    AnthropicReviewer pointed at z.ai's Anthropic endpoint (GLM). The
+    Anthropic module (and its SDK) is imported only when actually requested.
+    """
+    provider, sep, model = spec.partition(":")
+    if not sep:
+        provider, model = "openai", spec
+    if not model:
+        raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
+
+    if provider == "openai":
+        return OpenAIReviewer(args, resources, model=model, role=role)
+    if provider in ("anthropic", "zai"):
+        from anthropic_reviewer import AnthropicReviewer
+
+        base_url = Z_AI_ANTHROPIC_URL if provider == "zai" else None
+        api_key_env = "ZAI_API_KEY" if provider == "zai" else "ANTHROPIC_API_KEY"
+        return AnthropicReviewer(
+            model,
+            name=f"{provider}:{model}",
+            role=role,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            max_tool_rounds=args.podman_max_tool_rounds,
+            exec_timeout_s=args.podman_exec_timeout,
+            verbose=verbose,
+        )
+    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai)")
+
+
+def review_pr(
+    ctx: ReviewContext,
+    model_reviewers: list[Reviewer],
+    combiner: Reviewer | None,
+) -> Review:
+    """Run the model reviewers, then optionally the combiner, over ``ctx``.
+
+    One model reviewer runs inline; several run concurrently (each gets its
+    own shell via ``ctx.new_shell``). Their drafts accumulate on ``ctx`` so
+    the combiner can verify and merge them. Without a combiner exactly one
+    model reviewer is required, and its verdict is returned as-is.
+    """
+    if len(model_reviewers) == 1:
+        drafts = [model_reviewers[0].review(ctx)]
+    else:
+        drafts = run_parallel(model_reviewers, ctx)
+    ctx.drafts.extend(drafts)
+
+    if combiner is None:
+        if len(drafts) != 1:
+            raise SystemExit("more than one --model requires --combine-model to merge them")
+        return drafts[0]
+
+    logger.info("combine stage: %s merging %d drafts", combiner.name, len(drafts))
+    return combiner.review(ctx)
+
+
+def open_review_container_shell(
+    remote_host: podman_host.RemoteHost,
+    repo_specs: list[podman_repos.RepoSpec],
+    args: argparse.Namespace,
+) -> tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]:
+    """Start a fresh ephemeral container, fill its repos, and open a shell.
+
+    One isolated container per call, so concurrent ensemble reviewers never
+    share a working tree. On any provisioning failure the half-started
+    container is stopped before the error propagates.
+    """
+    handle = podman_host.start_ephemeral_container(
+        image=args.podman_image,
+        host=remote_host,
+        network=args.podman_network,
+        memory=args.podman_memory,
+        cpus=args.podman_cpus,
+    )
+    try:
+        podman_repos.provision_repos_into_container(handle, repo_specs, remote_host)
+        podman_host.copy_into_container(handle, AGENT_LOCAL_PATH, AGENT_CONTAINER_DIR)
+        session = podman_host.open_container_shell(handle, AGENT_CONTAINER_PATH)
+    except Exception:
+        podman_host.stop_container(handle)
+        raise
+    return handle, session
 
 
 def main() -> int:
@@ -2699,6 +2852,10 @@ def main() -> int:
     podman_container_handle: podman_host.ContainerHandle | None = None
     podman_shell_session: podman_host.ContainerShellSession | None = None
     podman_repo_specs: list[podman_repos.RepoSpec] = []
+    remote_host: podman_host.RemoteHost | None = None
+    # Extra containers spun up on demand by the ensemble's new_shell factory
+    # (one isolated container per non-OpenAI reviewer); released in finally.
+    ensemble_shells: list[tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]] = []
     if args.podman:
         if not repo_roots:
             raise RuntimeError(
@@ -2730,26 +2887,9 @@ def main() -> int:
         podman_repo_specs = podman_repos.build_repo_specs(
             repo_roots, mirror_root=args.podman_mirror_root,
         )
-        podman_container_handle = podman_host.start_ephemeral_container(
-            image=args.podman_image,
-            host=remote_host,
-            network=args.podman_network,
-            memory=args.podman_memory,
-            cpus=args.podman_cpus,
+        podman_container_handle, podman_shell_session = open_review_container_shell(
+            remote_host, podman_repo_specs, args,
         )
-        try:
-            podman_repos.provision_repos_into_container(
-                podman_container_handle, podman_repo_specs, remote_host,
-            )
-            podman_host.copy_into_container(
-                podman_container_handle, AGENT_LOCAL_PATH, AGENT_CONTAINER_DIR,
-            )
-            podman_shell_session = podman_host.open_container_shell(
-                podman_container_handle, AGENT_CONTAINER_PATH,
-            )
-        except Exception:
-            podman_host.stop_container(podman_container_handle)
-            raise
 
     repo_mount_paths = (
         [s.container_path for s in podman_repo_specs]
@@ -2823,6 +2963,12 @@ def main() -> int:
             use_podman_shell=args.podman,
         )
 
+        def new_shell() -> podman_host.ContainerShellSession:
+            assert remote_host is not None  # only wired in when --podman
+            handle, session = open_review_container_shell(remote_host, podman_repo_specs, args)
+            ensemble_shells.append((handle, session))
+            return session
+
         review_ctx = ReviewContext(
             request=request,
             patch_text=patch_bundle,
@@ -2834,6 +2980,7 @@ def main() -> int:
             ci_triage_mode=ci_triage_active,
             repo_roots=repo_roots,
             repo_mount_paths=repo_mount_paths,
+            new_shell=new_shell if args.podman else None,
         )
         openai_resources = OpenAIResources(
             client=client,
@@ -2957,9 +3104,20 @@ def main() -> int:
                         route,
                     )
 
-        reviewer = OpenAIReviewer(args, openai_resources)
+        model_reviewers: list[Reviewer] = [
+            OpenAIReviewer(args, openai_resources, model=args.model, role="reviewer")
+        ]
+        for spec in args.extra_model:
+            model_reviewers.append(
+                make_reviewer(spec, args=args, resources=openai_resources, role="reviewer", verbose=args.verbose)
+            )
+        combiner = (
+            make_reviewer(args.combine_model, args=args, resources=openai_resources, role="combiner", verbose=args.verbose)
+            if args.combine_model
+            else None
+        )
         try:
-            review = reviewer.review(review_ctx)
+            review = review_pr(review_ctx, model_reviewers, combiner)
         except OpenAIContainerUnhealthy:
             # The outer ``finally`` still releases the lease; mark it
             # unhealthy so the dead container is dropped from the pool.
@@ -2982,6 +3140,9 @@ def main() -> int:
             podman_shell_session.close()
         if podman_container_handle is not None:
             podman_host.stop_container(podman_container_handle)
+        for handle, session in ensemble_shells:
+            session.close()
+            podman_host.stop_container(handle)
 
 
 if __name__ == "__main__":

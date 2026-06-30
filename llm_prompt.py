@@ -484,6 +484,60 @@ def make_developer_prompt(
     )
 
 
+C_PROMPT_COMBINER_TASK = """##Combiner task
+You are given several independent draft reviews of this pull request, each
+produced by a different model, in the user message. Produce ONE final review.
+
+- Treat each draft as a set of claims, not as ground truth. Verify every
+  issue a draft raises against the actual commit(s), attached files, prior
+  discussion, and the tools available to you.
+- Drop any issue you cannot verify, that is incorrect, or that is mere style
+  or speculation. Keep only issues you can confirm.
+- Merge the surviving issues into a single, de-duplicated, well-organized
+  review; do not make the same point twice.
+- Do not introduce a new issue that no draft raised, unless verifying a
+  draft's point exposes a clearly-confirmed adjacent correctness problem.
+- If the drafts disagree, decide from the evidence and state briefly why when
+  it matters.
+- Classify the pull request with the same classes and rules as a normal
+  review, based on the verified, merged issues.
+- The drafts are internal scaffolding: do NOT mention drafts, other models,
+  or the combination process in the posted message. Write it as one normal
+  review.
+"""
+
+
+def make_combiner_developer_prompt(
+    source_bundle_attached: bool,
+    reviewer_username: str,
+    repo_roots: list[Path],
+    vector_store_search_enabled: bool,
+    web_search_enabled: bool,
+    code_interpreter_enabled: bool,
+    podman_shell_enabled: bool,
+    container_repo_mounts: list[str],
+    *,
+    ci_failures_present: bool = False,
+) -> str:
+    # A combiner is a reviewer with one extra instruction block, so it
+    # carries the full reviewer contract (roles, classifications, tools,
+    # verification) and only adds the verify-and-merge task on top.
+    return (
+        make_developer_prompt(
+            source_bundle_attached,
+            reviewer_username,
+            repo_roots,
+            vector_store_search_enabled,
+            web_search_enabled,
+            code_interpreter_enabled,
+            podman_shell_enabled,
+            container_repo_mounts,
+            ci_failures_present=ci_failures_present,
+        )
+        + C_PROMPT_COMBINER_TASK
+    )
+
+
 def make_triage_developer_prompt(
     reviewer_username: str,
     repo_roots: list[Path],
@@ -537,7 +591,7 @@ PROMPT_FEATURES = frozenset({
 
 def generate_llm_prompt(
     *,
-    role: str,                          # "reviewer" | "triager"  (future: "ceo", "pr_author")
+    role: str,                          # "reviewer" | "combiner" | "triager"
     vendor: str,                        # "openai" | "anthropic" | "local"
     model: str,                         # e.g. "gpt-5.5"; informational
     features: set[str] | frozenset[str],
@@ -559,6 +613,18 @@ def generate_llm_prompt(
 
     if role == "reviewer":
         return make_developer_prompt(
+            "source_bundle"        in features,
+            reviewer_username,
+            repo_roots,
+            "vector_store_search"  in features,
+            "web_search"           in features,
+            "code_interpreter"     in features,
+            "podman_shell"         in features,
+            container_repo_mounts,
+            ci_failures_present=ci_triage_mode,
+        )
+    if role == "combiner":
+        return make_combiner_developer_prompt(
             "source_bundle"        in features,
             reviewer_username,
             repo_roots,

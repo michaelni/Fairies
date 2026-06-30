@@ -59,6 +59,7 @@ from shell_tool import exec_shell_call
 from openai_pr_review_wrapper import (
     BadModelOutput,
     REVIEW_SCHEMA,
+    make_combiner_user_text,
     make_user_text,
     validate_result,
 )
@@ -183,6 +184,8 @@ class AnthropicReviewer(Reviewer):
         ]
         if ctx.source_bundle is not None:
             user_blocks.append({"type": "text", "text": ctx.source_bundle})
+        if self.role == "combiner":
+            user_blocks.append({"type": "text", "text": make_combiner_user_text(ctx.review_drafts())})
         user_blocks.append({
             "type": "text",
             "text": "Return your final verdict by calling the submit_review tool. "

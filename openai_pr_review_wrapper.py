@@ -91,6 +91,7 @@ from llm_review_api import (
 )
 import podman_host
 import podman_repos
+from shell_tool import exec_shell_call
 from llm_prompt import (
     TRIAGE_REQUESTABLE_EFFORTS,
     generate_llm_prompt,
@@ -1672,56 +1673,13 @@ def run_responses_resolving_podman_shell(
                     ),
                 })
                 continue
-            if not isinstance(args_obj, dict):
-                output_items.append({
-                    "type": "function_call_output",
-                    "call_id": call["call_id"],
-                    "output": json.dumps({"error": "arguments must be a JSON object"}, ensure_ascii=False),
-                })
-                continue
-            command = args_obj.get("command")
-            if not isinstance(command, str) or not command.strip():
-                output_items.append({
-                    "type": "function_call_output",
-                    "call_id": call["call_id"],
-                    "output": json.dumps({"error": "missing or empty command"}, ensure_ascii=False),
-                })
-                continue
-            cwd_raw = args_obj.get("cwd")
-            cwd = cwd_raw if isinstance(cwd_raw, str) and cwd_raw.strip() else None
-            timeout_raw = args_obj.get("timeout_seconds")
-            try:
-                timeout_s = float(timeout_raw) if timeout_raw is not None else 120.0
-            except (TypeError, ValueError):
-                timeout_s = 120.0
-            timeout_s = max(1.0, min(timeout_s, max_shell_timeout_s))
-            logger.info(
-                "podman shell function call_id=%s timeout=%.1fs cwd=%s cmd=%s",
-                call["call_id"][:20], timeout_s, cwd or "-", command[:500],
+            payload_obj = exec_shell_call(
+                podman_shell_session, args_obj, max_timeout_s=max_shell_timeout_s,
             )
-            result = podman_shell_session.exec(
-                command, cwd=cwd, timeout_s=timeout_s,
-            )
-            logger.info(
-                "podman shell done call_id=%s rc=%d dt=%.3fs out_trunc=%s err_trunc=%s",
-                call["call_id"][:20],
-                result.exit_code,
-                result.duration_s,
-                result.stdout_truncated,
-                result.stderr_truncated,
-            )
-            payload = json.dumps({
-                "exit_code": result.exit_code,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "duration_s": result.duration_s,
-                "stdout_truncated": result.stdout_truncated,
-                "stderr_truncated": result.stderr_truncated,
-            }, ensure_ascii=False)
             output_items.append({
                 "type": "function_call_output",
                 "call_id": call["call_id"],
-                "output": payload,
+                "output": json.dumps(payload_obj, ensure_ascii=False),
             })
         rid = getattr(response, "id", None)
         if not isinstance(rid, str) or not rid:

@@ -131,7 +131,10 @@ class ReviewContext:
 
     request: JsonObject
     patch_text: str
+    patch_truncated: bool
     source_bundle: str | None
+    source_files: list[str]
+    source_notes: list[str]
     reviewer_username: str
     ci_triage_mode: bool
     repo_roots: list[Path]

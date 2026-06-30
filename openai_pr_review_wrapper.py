@@ -81,7 +81,14 @@ from openai import BadRequestError, DefaultHttpxClient, OpenAI
 
 from common import add_color_arg, setup_logging
 from git_util import git_show_file
-from llm_review_api import CLASSIFICATIONS, ENGAGE, TERMINAL_ROUTES
+from llm_review_api import (
+    CLASSIFICATIONS,
+    ENGAGE,
+    TERMINAL_ROUTES,
+    Review,
+    ReviewContext,
+    Reviewer,
+)
 import podman_host
 import podman_repos
 from llm_prompt import (
@@ -2369,6 +2376,242 @@ def run_triage_stage(
     return dict(validated)
 
 
+class OpenAIContainerUnhealthy(Exception):
+    """The attached OpenAI container is unhealthy (expired / stopped).
+
+    Raised by ``OpenAIReviewer`` so the entrypoint releases the lease and
+    exits ``EXIT_CONTAINER_UNHEALTHY``, letting the caller retry against a
+    freshly provisioned container.
+    """
+
+
+class BadModelOutput(Exception):
+    """The model's JSON did not parse / match ``REVIEW_SCHEMA``.
+
+    Raised by ``OpenAIReviewer`` so the entrypoint exits
+    ``EXIT_BAD_MODEL_OUTPUT`` and the caller retries the run.
+    """
+
+
+@dataclass
+class OpenAIResources:
+    """OpenAI-specific per-run resources shared across reviewer calls.
+
+    Built once by the entrypoint after vector-store / container / podman
+    setup, so the single uploaded patch file, tool wiring and container ids
+    are reused rather than rebuilt per call. ``uploaded_file_ids`` is the
+    entrypoint's own cleanup list; the reviewer appends any file it uploads
+    (e.g. the source bundle) so the outer ``finally`` deletes it.
+    """
+
+    client: OpenAI
+    tools: list[JsonObject]
+    include: list[str]
+    patch_file_id: str
+    vector_store_ids: list[str]
+    shared_container_id: str | None
+    podman_shell_session: podman_host.ContainerShellSession | None
+    uploaded_file_ids: list[str]
+    debug_dir_specified: bool
+
+
+class OpenAIReviewer(Reviewer):
+    """One OpenAI Responses-API review pass behind the shared interface.
+
+    ``review(ctx)`` builds the developer/user input, runs the model
+    (driving the podman shell tool loop when ``--podman`` is set, else the
+    direct Responses call), validates the JSON against ``REVIEW_SCHEMA`` and
+    renders file citations. Raises ``OpenAIContainerUnhealthy`` /
+    ``BadModelOutput`` for the routine, retryable failure modes.
+    """
+
+    def __init__(self, args: argparse.Namespace, resources: OpenAIResources) -> None:
+        self.args = args
+        self.res = resources
+        self.name = f"openai:{args.model}"
+
+    def review(self, ctx: ReviewContext) -> Review:
+        args = self.args
+        res = self.res
+        client = res.client
+
+        content: list[InputContentItem] = [
+            {
+                "type": "input_text",
+                "text": make_user_text(
+                    ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated
+                ),
+            },
+            {"type": "input_file", "file_id": res.patch_file_id},
+        ]
+        if ctx.source_bundle is not None:
+            source_file_id = upload_text_file(
+                client,
+                filename="source_bundle.txt",
+                text=ctx.source_bundle,
+                verbose=args.verbose,
+            )
+            res.uploaded_file_ids.append(source_file_id)
+            content.append({"type": "input_file", "file_id": source_file_id})
+
+        reviewer_features: set[str] = set()
+        if ctx.source_bundle is not None:
+            reviewer_features.add("source_bundle")
+        if res.vector_store_ids:
+            reviewer_features.add("vector_store_search")
+        if args.use_web_search:
+            reviewer_features.add("web_search")
+        if args.podman:
+            reviewer_features.add("podman_shell")
+        else:
+            reviewer_features.add("code_interpreter")
+
+        response_kwargs: ResponseKwargs = {
+            "model": args.model,
+            "input": [
+                {
+                    "role": "developer",
+                    "content": generate_llm_prompt(
+                        role="reviewer",
+                        vendor="openai",
+                        model=args.model,
+                        features=reviewer_features,
+                        repo_roots=ctx.repo_roots,
+                        container_repo_mounts=ctx.repo_mount_paths,
+                        reviewer_username=ctx.reviewer_username,
+                        ci_triage_mode=ctx.ci_triage_mode,
+                    ),
+                },
+                {"role": "user", "content": content},
+            ],
+            "text": {"format": {"type": "json_schema", **REVIEW_SCHEMA}},
+            "max_output_tokens": args.max_output_tokens,
+        }
+        if args.verbosity is not None:
+            response_kwargs["text"]["verbosity"] = args.verbosity
+        if args.top_p is not None:
+            response_kwargs["top_p"] = args.top_p
+        reasoning: JsonObject = {}
+        if args.reasoning_effort:
+            reasoning["effort"] = args.reasoning_effort
+        if args.reasoning_summary:
+            reasoning["summary"] = args.reasoning_summary
+        if reasoning:
+            response_kwargs["reasoning"] = reasoning
+        if args.max_tool_calls is not None:
+            response_kwargs["max_tool_calls"] = args.max_tool_calls
+        if args.service_tier is not None:
+            response_kwargs["service_tier"] = args.service_tier
+        if res.tools:
+            response_kwargs["tools"] = res.tools
+        if res.include:
+            response_kwargs["include"] = res.include
+
+        if args.verbose:
+            tool_names = [
+                tool.get("type") if tool.get("type") != "function" else f"function:{tool.get('name')}"
+                for tool in res.tools
+                if isinstance(tool, dict)
+            ]
+            source_bundle_bytes = len(ctx.source_bundle.encode("utf-8")) if ctx.source_bundle is not None else 0
+            logger.debug("responses.create start model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", args.model, args.reasoning_effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, args.max_output_tokens)
+
+        create_started = time.monotonic()
+        try:
+            if args.podman:
+                if res.podman_shell_session is None:
+                    raise RuntimeError("container shell session missing for main review pass")
+                response = run_responses_resolving_podman_shell(
+                    client,
+                    initial_kwargs=response_kwargs,
+                    podman_shell_session=res.podman_shell_session,
+                    max_tool_rounds=args.podman_max_tool_rounds,
+                    max_shell_timeout_s=args.podman_exec_timeout,
+                    what="responses.create",
+                    verbose=args.verbose,
+                )
+            else:
+                response = call_with_rate_limit_retry(
+                    lambda: client.responses.create(**response_kwargs),
+                    what="responses.create",
+                    verbose=args.verbose,
+                    # Main LLM request: APITimeoutError / APIConnectionError
+                    # are propagated to the outer caller (e.g. fairy.py)
+                    # which decides whether to retry the entire wrapper. These
+                    # requests are long and unpredictable, so silently re-issuing
+                    # them here would risk piling up duplicate billed runs.
+                    retry_transient=False,
+                )
+        except Exception as exc:
+            if args.verbose:
+                logger.debug("responses.create failed dt=%.3fs error=%s %s", time.monotonic() - create_started, type(exc).__name__, str(exc).replace("\n", " "))
+            if (
+                args.use_openai_container_repos
+                and ctx.repo_roots
+                and openai_container.is_container_unhealthy_error(exc)
+            ):
+                # Known, routine, retryable failure: surface a typed error
+                # so the entrypoint marks the lease unhealthy and exits with
+                # EXIT_CONTAINER_UNHEALTHY rather than dumping the full SDK
+                # traceback. The caller retries against a fresh container.
+                logger.warning(
+                    "openai container unhealthy during responses.create (%s); "
+                    "exiting with code %d so caller retries against a fresh container",
+                    str(exc).replace("\n", " "),
+                    EXIT_CONTAINER_UNHEALTHY,
+                )
+                raise OpenAIContainerUnhealthy() from exc
+            raise
+
+        if args.verbose:
+            logger.debug("responses.create ok %s", format_response_stats(response, elapsed_seconds=time.monotonic() - create_started))
+        if res.debug_dir_specified:
+            dump_response_debug_artifacts(
+                response,
+                response_kwargs,
+                wrapper_request=ctx.request,
+                debug_dir=args.debug_response_dir,
+                verbose=args.verbose,
+            )
+
+        annotations = extract_response_annotations(response)
+        file_citation_metadata = extract_response_file_citation_metadata(response)
+        raw_text = extract_response_text(
+            response,
+            response_kwargs=response_kwargs,
+            debug_dir=args.debug_response_dir,
+            verbose=args.verbose,
+        )
+        try:
+            result = validate_result(json.loads(raw_text), annotations, file_citation_metadata)
+        except (json.JSONDecodeError, SchemaError, RecursionError) as exc:
+            # The model returned text that isn't the JSON shape we asked for
+            # (OpenAI ``strict`` output is best-effort, not a guarantee).
+            # ``RecursionError`` covers a pathologically nested JSON payload
+            # (the model output is attacker-influenceable via prompt
+            # injection); json's own recursion guard turns that into a clean
+            # exception, not a crash. Discard the run with a typed error so
+            # the entrypoint exits EXIT_BAD_MODEL_OUTPUT and the caller
+            # retries.
+            logger.error(
+                "reviewer output did not match the requested schema (%s: %s); "
+                "discarding run, exiting %d so caller retries",
+                type(exc).__name__, str(exc).replace("\n", " "),
+                EXIT_BAD_MODEL_OUTPUT,
+            )
+            raise BadModelOutput() from exc
+
+        if args.verbose:
+            extra = f" vector_stores={','.join(res.vector_store_ids)}" if res.vector_store_ids else ""
+            logger.debug("classification=%s source_files=%d%s", result["classification"], len(ctx.source_files), extra)
+
+        return Review(
+            classification=result["classification"],
+            message=result["message"],
+            model=self.name,
+        )
+
+
 def main() -> int:
     args = parse_args()
     debug_dir_specified = any(
@@ -2622,6 +2865,30 @@ def main() -> int:
             use_podman_shell=args.podman,
         )
 
+        review_ctx = ReviewContext(
+            request=request,
+            patch_text=patch_bundle,
+            patch_truncated=patch_was_truncated,
+            source_bundle=source_bundle,
+            source_files=source_files,
+            source_notes=source_notes,
+            reviewer_username=reviewer_username,
+            ci_triage_mode=ci_triage_active,
+            repo_roots=repo_roots,
+            repo_mount_paths=repo_mount_paths,
+        )
+        openai_resources = OpenAIResources(
+            client=client,
+            tools=tools,
+            include=include,
+            patch_file_id=patch_file_id,
+            vector_store_ids=vector_store_ids,
+            shared_container_id=shared_container_id,
+            podman_shell_session=podman_shell_session,
+            uploaded_file_ids=uploaded_file_ids,
+            debug_dir_specified=debug_dir_specified,
+        )
+
         stashed_triage_label_changes: list[dict[str, object]] = []
 
         if args.triage_model:
@@ -2732,182 +2999,19 @@ def main() -> int:
                         route,
                     )
 
-        content: list[InputContentItem] = [
-            {"type": "input_text", "text": make_user_text(request, source_notes, source_files, patch_was_truncated)},
-            {"type": "input_file", "file_id": patch_file_id},
-        ]
-
-        if source_bundle is not None:
-            source_file_id = upload_text_file(
-                client,
-                filename="source_bundle.txt",
-                text=source_bundle,
-                verbose=args.verbose,
-            )
-            uploaded_file_ids.append(source_file_id)
-            content.append({"type": "input_file", "file_id": source_file_id})
-
-        reviewer_features: set[str] = set()
-        if source_bundle is not None:
-            reviewer_features.add("source_bundle")
-        if vector_store_ids:
-            reviewer_features.add("vector_store_search")
-        if args.use_web_search:
-            reviewer_features.add("web_search")
-        if args.podman:
-            reviewer_features.add("podman_shell")
-        else:
-            reviewer_features.add("code_interpreter")
-
-        response_kwargs: ResponseKwargs = {
-            "model": args.model,
-            "input": [
-                {
-                    "role": "developer",
-                    "content": generate_llm_prompt(
-                        role="reviewer",
-                        vendor="openai",
-                        model=args.model,
-                        features=reviewer_features,
-                        repo_roots=repo_roots,
-                        container_repo_mounts=repo_mount_paths,
-                        reviewer_username=reviewer_username,
-                        ci_triage_mode=ci_triage_active,
-                    ),
-                },
-                {"role": "user", "content": content},
-            ],
-            "text": {"format": {"type": "json_schema", **REVIEW_SCHEMA}},
-            "max_output_tokens": args.max_output_tokens,
-        }
-        if args.verbosity is not None:
-            response_kwargs["text"]["verbosity"] = args.verbosity
-        if args.top_p is not None:
-            response_kwargs["top_p"] = args.top_p
-        reasoning: JsonObject = {}
-        if args.reasoning_effort:
-            reasoning["effort"] = args.reasoning_effort
-        if args.reasoning_summary:
-            reasoning["summary"] = args.reasoning_summary
-        if reasoning:
-            response_kwargs["reasoning"] = reasoning
-        if args.max_tool_calls is not None:
-            response_kwargs["max_tool_calls"] = args.max_tool_calls
-        if args.service_tier is not None:
-            response_kwargs["service_tier"] = args.service_tier
-
-        if tools:
-            response_kwargs["tools"] = tools
-        if include:
-            response_kwargs["include"] = include
-
-        if args.verbose:
-            tool_names = [
-                tool.get("type") if tool.get("type") != "function" else f"function:{tool.get('name')}"
-                for tool in tools
-                if isinstance(tool, dict)
-            ]
-            source_bundle_bytes = len(source_bundle.encode("utf-8")) if source_bundle is not None else 0
-            logger.debug("responses.create start model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", args.model, args.reasoning_effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(vector_store_ids), len(source_files), source_bundle_bytes, args.max_output_tokens)
-
-        create_started = time.monotonic()
+        reviewer = OpenAIReviewer(args, openai_resources)
         try:
-            if args.podman:
-                if podman_shell_session is None:
-                    raise RuntimeError("container shell session missing for main review pass")
-                response = run_responses_resolving_podman_shell(
-                    client,
-                    initial_kwargs=response_kwargs,
-                    podman_shell_session=podman_shell_session,
-                    max_tool_rounds=args.podman_max_tool_rounds,
-                    max_shell_timeout_s=args.podman_exec_timeout,
-                    what="responses.create",
-                    verbose=args.verbose,
-                )
-            else:
-                response = call_with_rate_limit_retry(
-                    lambda: client.responses.create(**response_kwargs),
-                    what="responses.create",
-                    verbose=args.verbose,
-                    # Main LLM request: APITimeoutError / APIConnectionError
-                    # are propagated to the outer caller (e.g. fairy.py)
-                    # which decides whether to retry the entire wrapper. These
-                    # requests are long and unpredictable, so silently re-issuing
-                    # them here would risk piling up duplicate billed runs.
-                    retry_transient=False,
-                )
-        except Exception as exc:
-            if args.verbose:
-                logger.debug("responses.create failed dt=%.3fs error=%s %s", time.monotonic() - create_started, type(exc).__name__, str(exc).replace("\n", " "))
-            if (
-                args.use_openai_container_repos
-                and repo_roots
-                and openai_container.is_container_unhealthy_error(exc)
-            ):
-                # Known, routine, retryable failure: mark the lease
-                # unhealthy so the dead container is dropped from the
-                # pool, log a single-line warning, and return a distinct
-                # exit code. We deliberately avoid ``raise`` here because
-                # Python's default unhandled-exception handler would
-                # dump the full openai SDK traceback to stderr, which
-                # is alarming noise for what is a normal pool-level
-                # self-heal. The caller (e.g. fairy.py) will
-                # retry against a freshly provisioned container. The
-                # outer ``finally`` still runs and releases the lease.
-                container_lease_healthy = False
-                logger.warning(
-                    "openai container unhealthy during responses.create (%s); "
-                    "exiting with code %d so caller retries against a fresh container",
-                    str(exc).replace("\n", " "),
-                    EXIT_CONTAINER_UNHEALTHY,
-                )
-                return EXIT_CONTAINER_UNHEALTHY
-            raise
-
-        if args.verbose:
-            logger.debug("responses.create ok %s", format_response_stats(response, elapsed_seconds=time.monotonic() - create_started))
-        if debug_dir_specified:
-            dump_response_debug_artifacts(
-                response,
-                response_kwargs,
-                wrapper_request=request,
-                debug_dir=args.debug_response_dir,
-                verbose=args.verbose,
-            )
-
-        annotations = extract_response_annotations(response)
-        file_citation_metadata = extract_response_file_citation_metadata(response)
-        raw_text = extract_response_text(
-            response,
-            response_kwargs=response_kwargs,
-            debug_dir=args.debug_response_dir,
-            verbose=args.verbose,
-        )
-        try:
-            result = validate_result(json.loads(raw_text), annotations, file_citation_metadata)
-        except (json.JSONDecodeError, SchemaError, RecursionError) as exc:
-            # The model returned text that isn't the JSON shape we asked
-            # for (OpenAI ``strict`` output is best-effort, not a
-            # guarantee). ``RecursionError`` covers a pathologically
-            # nested JSON payload (the model output is attacker-
-            # influenceable via prompt injection); json's own recursion
-            # guard turns that into a clean exception, not a crash.
-            # Discard this run with a clean, distinct exit code; the
-            # caller (fairy.py) retries.
-            logger.error(
-                "reviewer output did not match the requested schema (%s: %s); "
-                "discarding run, exiting %d so caller retries",
-                type(exc).__name__, str(exc).replace("\n", " "),
-                EXIT_BAD_MODEL_OUTPUT,
-            )
+            review = reviewer.review(review_ctx)
+        except OpenAIContainerUnhealthy:
+            # The outer ``finally`` still releases the lease; mark it
+            # unhealthy so the dead container is dropped from the pool.
+            container_lease_healthy = False
+            return EXIT_CONTAINER_UNHEALTHY
+        except BadModelOutput:
             return EXIT_BAD_MODEL_OUTPUT
 
-        if args.verbose:
-            extra = f" vector_stores={','.join(vector_store_ids)}" if vector_store_ids else ""
-            logger.debug("classification=%s source_files=%d%s", result["classification"], len(source_files), extra)
-
         emit_review_stdout(
-            result["classification"], result["message"],
+            review.classification, review.message,
             label_changes=stashed_triage_label_changes,
         )
         return 0

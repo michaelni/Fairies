@@ -1,0 +1,154 @@
+"""AnthropicReviewer Messages tool-loop, replayed with a scripted client.
+
+The ``anthropic`` SDK is mocked (like the OpenAI replay tests mock
+``openai``) so the test runs without the package or network. It pins the
+shape the loop depends on: the model investigates via the ``shell`` tool
+(dispatched onto a fake ContainerShellSession), then returns its verdict by
+calling ``submit_review`` with REVIEW_SCHEMA-shaped input.
+"""
+
+from __future__ import annotations
+
+import sys
+import types
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+# Inject a minimal fake ``anthropic`` before importing the reviewer.
+if "anthropic" not in sys.modules:
+    fake = types.ModuleType("anthropic")
+
+    class _E(Exception):
+        pass
+
+    class APIConnectionError(_E):
+        pass
+
+    class APITimeoutError(APIConnectionError):
+        pass
+
+    class RateLimitError(_E):
+        pass
+
+    class InternalServerError(_E):
+        pass
+
+    fake.Anthropic = object  # replaced per-test via _client
+    fake.APIConnectionError = APIConnectionError
+    fake.APITimeoutError = APITimeoutError
+    fake.RateLimitError = RateLimitError
+    fake.InternalServerError = InternalServerError
+    sys.modules["anthropic"] = fake
+
+import podman_host  # noqa: E402
+from llm_review_api import ReviewContext  # noqa: E402
+import anthropic_reviewer  # noqa: E402
+
+
+class _Block:
+    def __init__(self, **kw: object) -> None:
+        self.__dict__.update(kw)
+
+
+class _Message:
+    def __init__(self, content: list[_Block]) -> None:
+        self.content = content
+
+
+class _ScriptedClient:
+    """Returns the next queued _Message on each messages.create call."""
+
+    def __init__(self, scripted: list[_Message]) -> None:
+        self._scripted = list(scripted)
+        self.calls: list[dict] = []
+        self.messages = self
+
+    def create(self, **kwargs: object) -> _Message:
+        self.calls.append(dict(kwargs))
+        return self._scripted.pop(0)
+
+
+class _FakeShell:
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+        self.closed = False
+
+    def exec(self, command: str, *, cwd: str | None = None, timeout_s: float = 120.0):
+        self.commands.append(command)
+        return podman_host.ExecResult(
+            exit_code=0, stdout="commit deadbeef\n", stderr="",
+            duration_s=0.01, stdout_truncated=False, stderr_truncated=False,
+        )
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _ctx(shell: _FakeShell | None) -> ReviewContext:
+    return ReviewContext(
+        request={"pull_request": {"number": 7, "title": "t"}, "reviewer_username": "fairy"},
+        patch_text="===== BEGIN PATCH =====\n...\n",
+        patch_truncated=False,
+        source_bundle="file a.c\n...",
+        source_files=["a.c"],
+        source_notes=[],
+        reviewer_username="fairy",
+        ci_triage_mode=False,
+        repo_roots=[Path.cwd()],
+        repo_mount_paths=["/work/ffmpeg"],
+        new_shell=(lambda: shell) if shell is not None else None,
+    )
+
+
+class AnthropicReviewLoopTests(unittest.TestCase):
+    def test_shell_round_then_submit(self) -> None:
+        shell = _FakeShell()
+        client = _ScriptedClient([
+            _Message([_Block(type="tool_use", id="t1", name="shell",
+                             input={"command": "git log -1"})]),
+            _Message([_Block(type="tool_use", id="t2", name="submit_review",
+                             input={"classification": "minor_issues_approve",
+                                    "message": "LLM review: one nit."})]),
+        ])
+        reviewer = anthropic_reviewer.AnthropicReviewer(
+            "glm-4.6", name="zai:glm-4.6",
+            base_url="https://api.z.ai/api/anthropic", api_key_env="ZAI_API_KEY",
+        )
+        reviewer._client = lambda: client  # type: ignore[method-assign]
+
+        review = reviewer.review(_ctx(shell))
+
+        self.assertEqual("minor_issues_approve", review.classification)
+        self.assertEqual("LLM review: one nit.", review.message)
+        self.assertEqual("zai:glm-4.6", review.model)
+        self.assertEqual(["git log -1"], shell.commands)
+        self.assertTrue(shell.closed)
+        self.assertEqual(2, len(client.calls))
+        # The second request must replay the assistant tool_use turn plus the
+        # tool_result, so the model can act on the shell output.
+        second_msgs = client.calls[1]["messages"]
+        self.assertEqual("assistant", second_msgs[1]["role"])
+        self.assertEqual("tool_use", second_msgs[1]["content"][0]["type"])
+        self.assertEqual("tool_result", second_msgs[2]["content"][0]["type"])
+
+    def test_no_shell_direct_submit(self) -> None:
+        client = _ScriptedClient([
+            _Message([_Block(type="tool_use", id="t1", name="submit_review",
+                             input={"classification": "ok_approve", "message": ""})]),
+        ])
+        reviewer = anthropic_reviewer.AnthropicReviewer("claude-opus-4", name="anthropic:claude-opus-4")
+        reviewer._client = lambda: client  # type: ignore[method-assign]
+
+        review = reviewer.review(_ctx(None))
+
+        self.assertEqual("ok_approve", review.classification)
+        # submit_review only (no shell tool) when the context has no shell.
+        self.assertEqual(1, len(client.calls[0]["tools"]))
+
+
+if __name__ == "__main__":
+    unittest.main()

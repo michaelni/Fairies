@@ -81,6 +81,7 @@ from openai import BadRequestError, DefaultHttpxClient, OpenAI
 
 from common import add_color_arg, setup_logging
 from git_util import git_show_file
+from llm_review_api import CLASSIFICATIONS, ENGAGE, TERMINAL_ROUTES
 import podman_host
 import podman_repos
 from llm_prompt import (
@@ -217,14 +218,6 @@ def make_openai_http_client() -> DefaultHttpxClient:
         ),
     )
 
-CLASSIFICATIONS = (
-    "ok_approve",
-    "minor_issues_approve",
-    "moderate_issues_comment",
-    "major_request_changes",
-    "helpful_reply",
-    "skip",
-)
 REVIEW_SCHEMA = {
     "name": "pr_review_result",
     "strict": True,
@@ -252,7 +245,7 @@ REVIEW_SCHEMA = {
     },
 }
 
-TRIAGE_ROUTES = ("skip", "helpful_reply", "engage")
+TRIAGE_ROUTES = (*TERMINAL_ROUTES, ENGAGE)
 
 
 class SchemaError(ValueError):

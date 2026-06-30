@@ -45,8 +45,16 @@ High level structure of teh tools
 
     receies data to review and output structured json representing the review
     It can be implemented using cloud LLMs, local LLMs, or even communicating with snail mail and humans
-    Currently we have a openai based implementation
     The reviewer is simply a wrapper called by the main script
+
+    Every backend (OpenAI, Anthropic, z.ai GLM) implements the same small
+    `Reviewer` interface (`llm_review_api.py`): `review(ctx) -> Review`.
+    The wrapper composes them imperatively in `review_pr`: optional triage,
+    then one or more model reviewers (run concurrently when there is more
+    than one), then an optional combiner that verifies and merges their
+    drafts into the final review. Stages are plain Python, so adding,
+    removing, or reordering them is an edit to `review_pr`, not a
+    restructuring of the codebase.
 
 
 #### OpenAI Reviewer
@@ -122,11 +130,38 @@ persistent `ssh DEST podman exec -i` pipe into an in-container agent
 (`containers/fairy_agent.py`) speaking a small JSON protocol, so there is
 no per-command ssh handshake and no shell-quoting of model output.
 
-#### Antropic Reviewer
-    Currently being worked on
+#### Anthropic / GLM Reviewer
 
-#### Z.ai Reviewer
-    Currently being worked on
+The Anthropic reviewer (`anthropic_reviewer.py`) speaks the Messages API:
+the model investigates through the same shell tool (a fresh ephemeral
+Podman container per reviewer) and returns its verdict by calling a
+`submit_review` tool whose schema is the shared `REVIEW_SCHEMA`. z.ai's
+GLM is the same reviewer pointed at z.ai's Anthropic-compatible endpoint.
+
+Keys are read from the environment or `.env`: `ANTHROPIC_API_KEY` for
+Anthropic, `ZAI_API_KEY` for GLM. The `anthropic` package is only needed
+when an Anthropic/GLM model is actually used (`pip install anthropic`);
+OpenAI-only deployments do not need it.
+
+#### Ensemble (multiple models + verify/combine)
+
+Run several models on the same PR and have a final model verify and merge
+their reviews. `--model` is the OpenAI main pass; add more with
+`--extra-model PROVIDER:MODEL` (repeatable), and merge with
+`--combine-model PROVIDER:MODEL` (required once there is more than one
+reviewer). Each reviewer gets its own isolated container shell, and the
+non-triage model reviewers run concurrently.
+
+    ./openai_pr_review_wrapper.py \
+        --podman --podman-ssh-dest fairy@HOST \
+        --repo-root ~/forgejo_fairy/ffmpeg \
+        --triage-model gpt-5.4-mini \
+        --model gpt-5.4 \
+        --extra-model anthropic:claude-opus-4 \
+        --extra-model zai:glm-4.6 \
+        --combine-model openai:gpt-5.4
+
+Provider prefixes: `openai:` (or a bare model name), `anthropic:`, `zai:`.
 
 #### Local GPU Reviewer
     TODO / PR VERY welcome

@@ -1,0 +1,71 @@
+2026-06-17T00:47:18.3382211Z     1	int x;
+2026-06-17T00:47:18.3382282Z END /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3382362Z gcc -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -std=c17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wmissing-prototypes -Wstrict-prototypes -Wunterminated-string-initialization -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-pointer-sign -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=implicit-function-declaration -Werror=missing-prototypes -Werror=format-security -Werror=return-type -Werror=vla -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3382495Z check_cxxflags -Werror=vla
+2026-06-17T00:47:18.3382569Z test_cxxflags -Werror=vla
+2026-06-17T00:47:18.3382644Z test_cxx -Werror=vla
+2026-06-17T00:47:18.3382721Z BEGIN /tmp/ffconf.BDhSXw5D/test.cpp
+2026-06-17T00:47:18.3382802Z     1	int x;
+2026-06-17T00:47:18.3382879Z END /tmp/ffconf.BDhSXw5D/test.cpp
+2026-06-17T00:47:18.3382956Z g++ -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -D__STDC_CONSTANT_MACROS -std=c++17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=format-security -Werror=return-type -Werror=vla -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.cpp
+2026-06-17T00:47:18.3383084Z check_objcflags -Werror=vla
+2026-06-17T00:47:18.3383154Z test_objcflags -Werror=vla
+2026-06-17T00:47:18.3383230Z test_objcc -Werror=vla
+2026-06-17T00:47:18.3383307Z BEGIN /tmp/ffconf.BDhSXw5D/test.m
+2026-06-17T00:47:18.3383376Z     1	int x;
+2026-06-17T00:47:18.3383445Z END /tmp/ffconf.BDhSXw5D/test.m
+2026-06-17T00:47:18.3383521Z gcc -Werror=missing-prototypes -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -std=c17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wmissing-prototypes -Wstrict-prototypes -Wunterminated-string-initialization -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-pointer-sign -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=implicit-function-declaration -Werror=missing-prototypes -Werror=format-security -Werror=return-type -Werror=vla -fPIC -pthread -g -Werror=vla -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.m
+2026-06-17T00:47:18.3383662Z gcc: fatal error: cannot execute 'cc1obj': posix_spawnp: No such file or directory
+2026-06-17T00:47:18.3383744Z compilation terminated.
+2026-06-17T00:47:18.3383816Z check_cflags -Wformat
+2026-06-17T00:47:18.3383889Z test_cflags -Wformat
+2026-06-17T00:47:18.3383960Z test_cc -Wformat
+2026-06-17T00:47:18.3384036Z BEGIN /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3384107Z     1	int x;
+2026-06-17T00:47:18.3384176Z END /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3384262Z gcc -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -std=c17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wmissing-prototypes -Wstrict-prototypes -Wunterminated-string-initialization -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-pointer-sign -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=implicit-function-declaration -Werror=missing-prototypes -Werror=format-security -Werror=return-type -Werror=vla -Wformat -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3384648Z check_cxxflags -Wformat
+2026-06-17T00:47:18.3384728Z test_cxxflags -Wformat
+2026-06-17T00:47:18.3384800Z test_cxx -Wformat
+2026-06-17T00:47:18.3384896Z BEGIN /tmp/ffconf.BDhSXw5D/test.cpp
+2026-06-17T00:47:18.3384973Z     1	int x;
+2026-06-17T00:47:18.3385042Z END /tmp/ffconf.BDhSXw5D/test.cpp
+2026-06-17T00:47:18.3385123Z g++ -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -D__STDC_CONSTANT_MACROS -std=c++17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=format-security -Werror=return-type -Werror=vla -Wformat -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.cpp
+2026-06-17T00:47:18.3385246Z check_objcflags -Wformat
+2026-06-17T00:47:18.3385316Z test_objcflags -Wformat
+2026-06-17T00:47:18.3385385Z test_objcc -Wformat
+2026-06-17T00:47:18.3385458Z BEGIN /tmp/ffconf.BDhSXw5D/test.m
+2026-06-17T00:47:18.3385530Z     1	int x;
+2026-06-17T00:47:18.3385602Z END /tmp/ffconf.BDhSXw5D/test.m
+2026-06-17T00:47:18.3385678Z gcc -Werror=missing-prototypes -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -std=c17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wmissing-prototypes -Wstrict-prototypes -Wunterminated-string-initialization -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-pointer-sign -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=implicit-function-declaration -Werror=missing-prototypes -Werror=format-security -Werror=return-type -Werror=vla -Wformat -fPIC -pthread -g -Wformat -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.m
+2026-06-17T00:47:18.3385822Z gcc: fatal error: cannot execute 'cc1obj': posix_spawnp: No such file or directory
+2026-06-17T00:47:18.3385902Z compilation terminated.
+2026-06-17T00:47:18.3385972Z check_cflags -fdiagnostics-color=auto
+2026-06-17T00:47:18.3386041Z test_cflags -fdiagnostics-color=auto
+2026-06-17T00:47:18.3386112Z test_cc -fdiagnostics-color=auto
+2026-06-17T00:47:18.3386182Z BEGIN /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3386259Z     1	int x;
+2026-06-17T00:47:18.3386329Z END /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3386535Z gcc -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -std=c17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wmissing-prototypes -Wstrict-prototypes -Wunterminated-string-initialization -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-pointer-sign -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=implicit-function-declaration -Werror=missing-prototypes -Werror=format-security -Werror=return-type -Werror=vla -Wformat -fdiagnostics-color=auto -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3386675Z check_cxxflags -fdiagnostics-color=auto
+2026-06-17T00:47:18.3386751Z test_cxxflags -fdiagnostics-color=auto
+2026-06-17T00:47:18.3386825Z test_cxx -fdiagnostics-color=auto
+2026-06-17T00:47:18.3386897Z BEGIN /tmp/ffconf.BDhSXw5D/test.cpp
+2026-06-17T00:47:18.3386970Z     1	int x;
+2026-06-17T00:47:18.3387044Z END /tmp/ffconf.BDhSXw5D/test.cpp
+2026-06-17T00:47:18.3387125Z g++ -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -D__STDC_CONSTANT_MACROS -std=c++17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=format-security -Werror=return-type -Werror=vla -Wformat -fdiagnostics-color=auto -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.cpp
+2026-06-17T00:47:18.3387250Z check_objcflags -fdiagnostics-color=auto
+2026-06-17T00:47:18.3387323Z test_objcflags -fdiagnostics-color=auto
+2026-06-17T00:47:18.3387395Z test_objcc -fdiagnostics-color=auto
+2026-06-17T00:47:18.3387469Z BEGIN /tmp/ffconf.BDhSXw5D/test.m
+2026-06-17T00:47:18.3387547Z     1	int x;
+2026-06-17T00:47:18.3387622Z END /tmp/ffconf.BDhSXw5D/test.m
+2026-06-17T00:47:18.3387699Z gcc -Werror=missing-prototypes -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -std=c17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wmissing-prototypes -Wstrict-prototypes -Wunterminated-string-initialization -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-pointer-sign -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=implicit-function-declaration -Werror=missing-prototypes -Werror=format-security -Werror=return-type -Werror=vla -Wformat -fdiagnostics-color=auto -fPIC -pthread -g -fdiagnostics-color=auto -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.m
+2026-06-17T00:47:18.3387851Z gcc: fatal error: cannot execute 'cc1obj': posix_spawnp: No such file or directory
+2026-06-17T00:47:18.3387937Z compilation terminated.
+2026-06-17T00:47:18.3388009Z test_cflags -Wmaybe-uninitialized
+2026-06-17T00:47:18.3388189Z test_cc -Wmaybe-uninitialized
+2026-06-17T00:47:18.3388262Z BEGIN /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3388337Z     1	int x;
+2026-06-17T00:47:18.3388411Z END /tmp/ffconf.BDhSXw5D/test.c
+2026-06-17T00:47:18.3388485Z gcc -D_ISOC11_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_POSIX_C_SOURCE=200112 -D_XOPEN_SOURCE=600 -DPIC -m32 -std=c17 -fomit-frame-pointer -fPIC -pthread -g -Wall -Wdisabled-optimization -Wpointer-arith -Wredundant-decls -Wwrite-strings -Wtype-limits -Wundef -Wempty-body -Wstack-usage=122880 -Wimplicit-fallthrough=5 -Wmissing-prototypes -Wstrict-prototypes -Wunterminated-string-initialization -Wno-parentheses -Wno-switch -Wno-format-zero-length -Wno-pointer-sign -Wno-unused-const-variable -Wno-bool-operation -Wno-char-subscripts -O3 -fno-math-errno -fno-signed-zeros -Werror=implicit-function-declaration -Werror=missing-prototypes -Werror=format-security -Werror=return-type -Werror=vla -Wformat -fdiagnostics-color=auto -Wmaybe-uninitialized -c -o /tmp/ffconf.BDhSXw5D/test.o /tmp/ffconf.BDhSXw5D/test.c

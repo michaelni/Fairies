@@ -1,0 +1,22 @@
+{
+  "source_file": "synthetic",
+  "must_survive": [
+    "Approve. The patch looks straightforward."
+  ],
+  "response": {
+    "id": "resp_synth_no_citations",
+    "status": "completed",
+    "output": [
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"classification\":\"approve\",\"message\":\"Approve. The patch looks straightforward.\"}",
+            "annotations": []
+          }
+        ]
+      }
+    ]
+  }
+}

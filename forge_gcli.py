@@ -29,7 +29,7 @@
 
 Shared gcli/subprocess helpers for the forgejo_fairy bots.
 
-Extracted from ``pr_auto_approve.py`` so additional entry points (in
+Extracted from ``fairy.py`` so additional entry points (in
 particular ``mail_fairy.py``) can reuse the same plumbing without
 importing the orchestrator module. The helpers are deliberately
 CLI-agnostic: they only consult ``args.gcli_account``,
@@ -60,6 +60,8 @@ What lives here:
   an empty list) because the result is consumed by dedupe logic.
 - ``post_issue_comment``: post a comment on a PR/issue using
   ``gcli comment``, routed through ``run_gcli_editor_submission``.
+- ``apply_issue_label_changes``: add/remove PR labels via
+  ``gcli pulls ... labels add/remove``.
 
 Plus the ``JsonValue`` / ``JsonPrimitive`` TypeAliases re-exported
 from ``common`` so callers can pick whichever entry point is closer
@@ -88,7 +90,7 @@ from threading import Thread
 from urllib.parse import quote
 
 # Re-exported for callers that do ``from forge_gcli import JsonValue``
-# (e.g. pr_auto_approve). Single source of truth lives in common.py;
+# (e.g. fairy). Single source of truth lives in common.py;
 # both forge_gcli and openai_common re-export the aliases so neither
 # subsystem has to depend on the other.
 from common import JsonPrimitive, JsonValue
@@ -110,7 +112,7 @@ def add_forge_repo_args(parser: argparse.ArgumentParser) -> None:
     """Add the standard --owner/--repo/--gcli-account/--forge-type arguments.
 
     These four flags are required by every CLI entry point in the
-    project (pr_auto_approve, mail_fairy, forgejo_export). Adding
+    project (fairy, mail_fairy, forgejo_export). Adding
     them through a single helper keeps the operator-facing surface
     consistent: --owner and --repo are required, --gcli-account is
     optional (falls through to gcli's configured default when
@@ -478,4 +480,193 @@ def post_issue_comment(
             f"abstraction for ``gcli comment`` may not yet support "
             f"that backend in the way mail_fairy expects. Please "
             f"report or patch forge_gcli.post_issue_comment."
+        )
+
+
+def build_repo_path(owner: str, repo: str, suffix: str) -> str:
+    """Build a ``/repos/{owner}/{repo}{suffix}`` API path.
+
+    Owner and repo are URL-quoted; the suffix is appended verbatim.
+    A leading slash on ``suffix`` is optional. Used for every repo-
+    scoped Forgejo / Gitea / GitHub endpoint the bot speaks to.
+    """
+    owner_q = quote(owner, safe="")
+    repo_q = quote(repo, safe="")
+    if not suffix.startswith("/"):
+        suffix = "/" + suffix
+    return f"/repos/{owner_q}/{repo_q}{suffix}"
+
+
+def _list_repo_endpoint(
+    args: argparse.Namespace,
+    owner: str,
+    repo: str,
+    suffix: str,
+    *,
+    what: str,
+) -> list[dict]:
+    """Fetch all pages of a repo-scoped list endpoint, raising on bad data.
+
+    Wraps ``gcli_api(.., all_pages=True)``, validates the response is
+    a JSON list, and drops non-dict items defensively (gcli should
+    never emit them but the projection at the consumer is robust to
+    it). ``what`` is a short human label included in the error
+    message so a failure points the operator at the right endpoint.
+    """
+    path = build_repo_path(owner, repo, suffix)
+    raw = gcli_api(args, path, all_pages=True)
+    if not isinstance(raw, list):
+        raise RuntimeError(
+            f"unexpected gcli response for {what} ({path}): "
+            f"{type(raw).__name__}"
+        )
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def list_pr_reviews(
+    args: argparse.Namespace, owner: str, repo: str, pr_number: int,
+) -> list[dict]:
+    """Return all reviews on ``owner/repo`` PR ``pr_number``."""
+    return _list_repo_endpoint(
+        args, owner, repo, f"/pulls/{pr_number}/reviews",
+        what=f"reviews for PR #{pr_number}",
+    )
+
+
+def list_pr_review_comments(
+    args: argparse.Namespace,
+    owner: str,
+    repo: str,
+    pr_number: int,
+    reviews: list[dict],
+) -> list[dict]:
+    """Return all inline (file/line-pinned) review comments for a PR.
+
+    Iterates the already-fetched ``reviews`` list and pulls per-review
+    inline comments. Reviews with explicit ``comments_count == 0``
+    are skipped so we don't fire an API call to confirm emptiness.
+    Per-review fetch errors are logged and skipped, not raised: one
+    bad review id should not block the rest of the discussion.
+    """
+    out: list[dict] = []
+    for review in reviews:
+        review_id = review.get("id")
+        if not isinstance(review_id, int) or review_id <= 0:
+            continue
+        comments_count = review.get("comments_count")
+        if isinstance(comments_count, int) and comments_count <= 0:
+            continue
+        try:
+            out.extend(_list_repo_endpoint(
+                args, owner, repo,
+                f"/pulls/{pr_number}/reviews/{review_id}/comments",
+                what=f"review comments for PR #{pr_number} review {review_id}",
+            ))
+        except Exception as exc:
+            logger.warning(
+                "failed to fetch inline review comments for "
+                "PR #%d review %d: %s",
+                pr_number, review_id, exc,
+            )
+    return out
+
+
+def list_issue_timeline(
+    args: argparse.Namespace, owner: str, repo: str, number: int,
+) -> list[dict]:
+    """Return the typed timeline events for ``owner/repo`` issue/PR ``number``.
+
+    The endpoint is ``/repos/{owner}/{repo}/issues/{n}/timeline`` for
+    both issues and PRs (PRs are issues in the data model). PR
+    timelines additionally include typed events like ``pull_push``,
+    ``pull_scheduled_merge`` and ``pull_cancel_scheduled_merge`` that
+    the plain comments endpoint omits, which is why the bot's
+    auto-merge detection and push-event tracking source from this
+    feed rather than from ``/issues/{n}/comments``.
+    """
+    return _list_repo_endpoint(
+        args, owner, repo, f"/issues/{number}/timeline",
+        what=f"timeline for #{number}",
+    )
+
+
+def list_pr_commits(
+    args: argparse.Namespace, owner: str, repo: str, pr_number: int,
+) -> list[dict]:
+    """Return the commits on ``owner/repo`` PR ``pr_number``'s head branch."""
+    return _list_repo_endpoint(
+        args, owner, repo, f"/pulls/{pr_number}/commits",
+        what=f"commits for PR #{pr_number}",
+    )
+
+
+def list_pr_files(
+    args: argparse.Namespace, owner: str, repo: str, pr_number: int,
+) -> list[dict]:
+    """Return the per-file change entries for ``owner/repo`` PR ``pr_number``."""
+    return _list_repo_endpoint(
+        args, owner, repo, f"/pulls/{pr_number}/files",
+        what=f"files for PR #{pr_number}",
+    )
+
+
+def apply_issue_label_changes(
+    args: argparse.Namespace,
+    owner: str,
+    repo: str,
+    number: int,
+    labels_add: list[str],
+    labels_remove: list[str],
+    current_label_names: set[str],
+) -> None:
+    """Add/remove PR labels by name via ``gcli pulls ... labels``.
+
+    Skips ``remove`` when the label is not currently on the PR so gcli
+    is not asked to delete something that is already absent.
+
+    Stock gcli (<= 2.12.0) cannot attach labels reliably on
+    Forgejo/Gitea: ``pulls labels add NAME`` resolves NAME to an id,
+    sends the id *as a JSON string*, and newer Gitea/Forgejo
+    releases then treat that string as another name lookup, don't
+    find it, and return 200 with no labels attached. Older servers
+    reject strings outright via ``[]int64`` binding. Org-level
+    labels are also unreachable because gcli only probes the repo's
+    labels for the lookup.
+
+    The bot requires a gcli built from a tree that includes both
+    ``gitea: send issue label ids as JSON numbers, not strings`` and
+    ``gitea: also look up org-level labels by name`` (see ``~/gcli``
+    on the deployment host; submitted upstream).
+    """
+    if not labels_add and not labels_remove:
+        return
+
+    label_args: list[str] = []
+    for name in labels_add:
+        label_args.extend(["add", name])
+    for name in labels_remove:
+        if name not in current_label_names:
+            logger.warning(
+                "pull label remove skipped: label=%r not on PR #%d",
+                name, number,
+            )
+            continue
+        label_args.extend(["remove", name])
+    if not label_args:
+        return
+
+    cmd = gcli_prefix(args) + [
+        "pulls",
+        "-o", owner,
+        "-r", repo,
+        "-i", str(number),
+        "labels",
+        *label_args,
+    ]
+    logger.info("+ %s", shlex.join(cmd))
+    cp = run_cmd(cmd, verbose=args.verbose)
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"gcli pulls labels failed for {owner}/{repo}#{number} "
+            f"(rc={cp.returncode}): {cp.stderr.strip()}"
         )

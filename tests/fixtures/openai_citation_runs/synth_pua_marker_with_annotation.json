@@ -1,0 +1,43 @@
+{
+  "source_file": "synthetic",
+  "must_survive": [
+    "Consider locking around the buffer"
+  ],
+  "response": {
+    "id": "resp_synth_pua_with_anno",
+    "status": "completed",
+    "output": [
+      {
+        "type": "file_search_call",
+        "results": [
+          {
+            "file_id": "file-abc123",
+            "filename": "decoder.c",
+            "attributes": {
+              "path": "src/decoder.c",
+              "title": "Decoder",
+              "blob_sha": "abc"
+            }
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"classification\":\"minor_issues_approve\",\"message\":\"Consider locking around the buffer \\ue200filecite\\ue202turn0file0\\ue201.\"}",
+            "annotations": [
+              {
+                "type": "file_citation",
+                "file_id": "file-abc123",
+                "filename": "decoder.c",
+                "index": 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

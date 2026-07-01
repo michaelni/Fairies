@@ -1,0 +1,43 @@
+{
+  "source_file": "synthetic",
+  "must_survive": [
+    "This change is correct and matches the existing convention."
+  ],
+  "response": {
+    "id": "resp_synth_anno_only",
+    "status": "completed",
+    "output": [
+      {
+        "type": "file_search_call",
+        "results": [
+          {
+            "file_id": "file-def456",
+            "filename": "stream.c",
+            "attributes": {
+              "path": "src/stream.c",
+              "title": "Stream",
+              "blob_sha": "def"
+            }
+          }
+        ]
+      },
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"classification\":\"approve\",\"message\":\"This change is correct and matches the existing convention.\"}",
+            "annotations": [
+              {
+                "type": "file_citation",
+                "file_id": "file-def456",
+                "filename": "stream.c",
+                "index": 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "source_file": "synthetic",
+  "must_survive": [
+    "BEFOREMARKER",
+    "BETWEENMARKERS",
+    "AFTERMARKERS"
+  ],
+  "response": {
+    "id": "resp_synth_truncated_marker_overstrip_guard",
+    "status": "completed",
+    "output": [
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"classification\":\"minor_issues_approve\",\"message\":\"BEFOREMARKER \\ue200filecite\\ue202turn0fileA BETWEENMARKERS \\ue200filecite\\ue202turn0fileB\\ue201 AFTERMARKERS\"}",
+            "annotations": []
+          }
+        ]
+      }
+    ]
+  }
+}

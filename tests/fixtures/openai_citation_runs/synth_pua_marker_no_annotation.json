@@ -1,0 +1,23 @@
+{
+  "source_file": "synthetic",
+  "must_survive": [
+    "Looks good, but the new path could underflow",
+    "in edge cases."
+  ],
+  "response": {
+    "id": "resp_synth_pua_no_anno",
+    "status": "completed",
+    "output": [
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"classification\":\"minor_issues_approve\",\"message\":\"Looks good, but the new path could underflow \\ue200filecite\\ue202turn0file3\\ue201 in edge cases.\"}",
+            "annotations": []
+          }
+        ]
+      }
+    ]
+  }
+}

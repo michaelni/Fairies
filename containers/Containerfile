@@ -1,0 +1,94 @@
+# Ephemeral developer environment for LLM-driven PR review.
+# Built once, instantiated fresh per review (`podman run --rm`),
+# destroyed afterwards. No host paths are bind-mounted here -- the
+# wrapper copies the patched repo in at start-up and treats the
+# container as untrusted for the rest of the review.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANG=C.UTF-8
+
+# i386 multiarch must be enabled before ``apt-get update`` so the
+# ``:i386`` packages installed below resolve.  We use multiarch
+# (``zlib1g-dev:i386`` etc.) for 32-bit support; we deliberately do
+# NOT install ``gcc-multilib`` because it depends on
+# ``libc6-dev-i386`` which conflicts with ``libc6:i386`` (multiarch).
+# Use ``i686-linux-gnu-gcc`` for explicit 32-bit compilation instead.
+RUN dpkg --add-architecture i386 \
+ && apt-get update
+
+# Native toolchain, debuggers, sanitizer runtimes, and fuzzers.
+RUN apt-get install -y --no-install-recommends \
+        build-essential clang lld lldb gdb strace ltrace \
+        clang-tools libclang-rt-dev \
+        afl++
+
+# Cross compilers.  ``gcc-i686-linux-gnu`` is the multiarch-friendly
+# replacement for ``gcc-multilib`` (which conflicts with i386 dpkg
+# multiarch).  qemu-user-static lets cross-built binaries run via
+# explicit ``qemu-<arch> ./prog`` invocation; we don't rely on
+# ``binfmt-support`` because /proc/sys/fs/binfmt_misc isn't
+# generally writable inside an unprivileged container.
+RUN apt-get install -y --no-install-recommends \
+        gcc-i686-linux-gnu g++-i686-linux-gnu \
+        gcc-aarch64-linux-gnu \
+        gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi \
+        gcc-mips-linux-gnu gcc-mipsel-linux-gnu \
+        gcc-mips64-linux-gnuabi64 gcc-mips64el-linux-gnuabi64 \
+        gcc-powerpc-linux-gnu gcc-powerpc64-linux-gnu gcc-powerpc64le-linux-gnu \
+        gcc-riscv64-linux-gnu \
+        qemu-user qemu-user-static
+
+# 32-bit (i386) development libraries via dpkg multiarch.  Add more
+# ``:i386`` packages here as concrete reviews require them.
+RUN apt-get install -y --no-install-recommends \
+        libc6-dev:i386 zlib1g-dev:i386
+
+# Assemblers, build helpers, binary inspection.
+RUN apt-get install -y --no-install-recommends \
+        nasm yasm pkg-config binutils elfutils file ccache
+
+# FFmpeg external libraries.  This is exactly Ubuntu 24.04's ffmpeg
+# source-package Build-Depends set (minus ffmpeg's own libav*-dev and
+# pure build tooling), so every entry is both a library FFmpeg's
+# configure can ``--enable-`` and present in the 24.04 archive.
+# Built on amd64 (matches the cross/qemu toolchain above); a couple of
+# entries are amd64-oriented (libvpl-dev = Intel QSV, libffmpeg-nvenc-dev
+# = NVENC headers) and would need trimming on other architectures.
+RUN apt-get install -y --no-install-recommends \
+        zlib1g-dev libbz2-dev liblzma-dev \
+        libx264-dev libx265-dev libvpx-dev libaom-dev libdav1d-dev \
+        librav1e-dev libsvtav1enc-dev libtheora-dev libxvidcore-dev \
+        libwebp-dev libopenjp2-7-dev libjxl-dev libzimg-dev \
+        libmp3lame-dev libopus-dev libvorbis-dev libspeex-dev \
+        libtwolame-dev libshine-dev libgsm1-dev libcodec2-dev \
+        libopencore-amrnb-dev libopencore-amrwb-dev libvo-amrwbenc-dev \
+        libopenmpt-dev libgme-dev libbs2b-dev libmysofa-dev \
+        libsoxr-dev librubberband-dev \
+        libass-dev libfreetype-dev libfontconfig-dev libfribidi-dev \
+        libharfbuzz-dev librsvg2-dev libzvbi-dev libaribb24-dev \
+        libtesseract-dev \
+        libbluray-dev libxml2-dev libsrt-gnutls-dev librist-dev \
+        libssh-gcrypt-dev librabbitmq-dev libsmbclient-dev libsctp-dev \
+        libzmq3-dev libsnappy-dev libchromaprint-dev libgnutls28-dev \
+        libdc1394-dev libiec61883-dev libavc1394-dev libjack-jackd2-dev \
+        libopenal-dev libpulse-dev libsdl2-dev libcaca-dev \
+        libxcb-shape0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxv-dev \
+        libgl-dev \
+        libva-dev libvdpau-dev libdrm-dev libvulkan-dev libplacebo-dev \
+        libvpl-dev libffmpeg-nvenc-dev ocl-icd-opencl-dev \
+        libvidstab-dev frei0r-plugins-dev ladspa-sdk liblilv-dev \
+        flite1-dev glslang-dev
+
+# CLI utilities and Python.
+RUN apt-get install -y --no-install-recommends \
+        git ripgrep fd-find jq curl wget ca-certificates \
+        unzip xz-utils zstd less procps \
+        python3 python3-pip python3-venv \
+        poppler-utils \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+CMD ["sleep", "infinity"]

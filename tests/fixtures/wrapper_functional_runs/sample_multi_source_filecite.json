@@ -1,0 +1,45 @@
+{
+  "response": {
+    "id": "resp_sample_multi_source_filecite",
+    "output": [
+      {
+        "content": [
+          {
+            "annotations": [
+              {
+                "filename": "first.c",
+                "type": "file_citation"
+              },
+              {
+                "filename": "second.c",
+                "type": "file_citation"
+              }
+            ],
+            "text": "{\"classification\":\"minor_issues_approve\",\"message\":\"Please review this section \\ue200filecite\\ue202turn5file10\\ue202turn5file4\\ue201 before merge.\"}",
+            "type": "output_text"
+          }
+        ],
+        "type": "message"
+      }
+    ],
+    "status": "completed"
+  },
+  "wrapper_request": {
+    "discussion": "",
+    "patch": "diff --git a/src/main.c b/src/main.c\nindex 1111111..2222222 100644\n--- a/src/main.c\n+++ b/src/main.c\n@@ -1 +1 @@\n-int x;\n+int y;\n",
+    "patch_truncated": false,
+    "pull_request": {
+      "additions": 1,
+      "author": "dev",
+      "base_ref": "main",
+      "changed_files": 1,
+      "deletions": 1,
+      "head_ref": "feat/citation",
+      "head_sha": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "html_url": "https://example.invalid/pr/1",
+      "number": 1,
+      "title": "Sample PR body"
+    },
+    "reviewer_username": "fairy-bot"
+  }
+}

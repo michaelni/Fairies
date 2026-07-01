@@ -113,7 +113,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import forge_gcli  # noqa: E402
-from common import atomic_write_pickle, setup_logging  # noqa: E402
+from common import add_color_arg, atomic_write_pickle, setup_logging  # noqa: E402
 
 
 logger = logging.getLogger("mail_fairy")
@@ -1247,12 +1247,8 @@ def _empty_state() -> dict:
 def load_state(path: Path) -> dict:
     """Read the mail-fairy state file, falling back to an empty state.
 
-    We deliberately do NOT use ``common.load_pickle_cache`` here even
-    though the on-disk shape is similar: that helper checks against
-    ``common._CACHE_VERSION`` (the version of pr_auto_approve's
-    ``repo_discussion_cache.pkl`` schema), which is unrelated to
-    mail-fairy's state schema. Owning our own version constant means
-    a future bump of either schema cannot silently reset the other.
+    Cold-warms on missing / corrupt / wrong-version pickles so a torn
+    write or a schema bump never crashes startup.
     """
     try:
         with path.open("rb") as f:
@@ -1280,7 +1276,7 @@ def record_forwarded(
 
 
 # ---------------------------------------------------------------------------
-# Manual prompt (matches pr_auto_approve.py's [yes/skip/defer/quit/retry])
+# Manual prompt (matches fairy.py's [yes/skip/defer/quit/retry])
 # ---------------------------------------------------------------------------
 
 
@@ -1347,7 +1343,7 @@ def _build_summary(decisions: list[MailDecision]) -> dict[str, int]:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
-    setup_logging(logger, bool(args.verbose), forge_gcli.logger)
+    setup_logging(logger, bool(args.verbose), forge_gcli.logger, color=args.color)
 
     maildirs = [Path(p).expanduser().resolve() for p in args.maildir]
     for d in maildirs:
@@ -1638,6 +1634,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Do not post; just log what would happen.",
     )
     p.add_argument("-v", "--verbose", action="count", default=0)
+    add_color_arg(p)
     return p
 
 

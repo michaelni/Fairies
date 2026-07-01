@@ -29,14 +29,16 @@
 """
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import pickle
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import tempfile
-from typing import Any, TypeAlias
+from typing import TypeAlias
 
 
 # JSON value type aliases shared by every module that touches gcli or
@@ -62,10 +64,76 @@ class _ThreadPrefixFilter(logging.Filter):
         return True
 
 
+# ANSI color codes used by ``_ColorFormatter`` to make non-INFO messages
+# stand out in interactive runs. DEBUG is rendered as dim gray so it
+# recedes; WARNING/ERROR/CRITICAL are rendered bold so they pop. INFO
+# is left uncolored as the visual baseline.
+#
+# DEBUG combines two attributes -- ``2`` (faint) and ``90`` (bright
+# black, i.e. gray) -- because neither alone renders reliably on every
+# terminal. ``2`` is widely ignored (xterm, many embedded terminals,
+# VS Code's integrated terminal commonly drop it); ``90`` is supported
+# universally as a 16-color foreground but on its own is just "gray",
+# not particularly dim. With both, terminals that honor only one still
+# get a visible reduction, and terminals that honor both get a clear
+# dim-gray that visibly recedes from the default-foreground baseline.
+# Without that combo a previous attempt with bare ``2`` was reported
+# as visually indistinguishable from default white, defeating the
+# whole point of dimming debug output.
+_COLOR_RESET = "\x1b[0m"
+_LEVEL_COLOR = {
+    logging.DEBUG:    "\x1b[2;90m",   # dim gray
+    logging.WARNING:  "\x1b[1;33m",   # bold yellow
+    logging.ERROR:    "\x1b[1;31m",   # bold red
+    logging.CRITICAL: "\x1b[1;31m",   # bold red
+}
+
+
+class _ColorFormatter(logging.Formatter):
+    """Wraps the formatted line in an ANSI color sequence per level.
+
+    Falls back to plain text for INFO and any unmapped level. ``setup_logging``
+    only installs this formatter when stderr is a real TTY and ``NO_COLOR``
+    is unset, so log redirection / piping / CI logs stay uncolored.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        text = super().format(record)
+        color = _LEVEL_COLOR.get(record.levelno)
+        if color is None:
+            return text
+        return f"{color}{text}{_COLOR_RESET}"
+
+
+def add_color_arg(parser: argparse.ArgumentParser) -> None:
+    """Register ``--color={auto,always,never}`` on ``parser``.
+
+    ``auto`` (default) enables color only when stderr is a real
+    TTY and ``NO_COLOR`` is unset, OR when ``CLICOLOR_FORCE`` is
+    set (so a single env var colors a whole pipeline of spawned
+    subprocesses without needing ``--color always`` on every
+    invocation). ``always`` forces color on even when stderr is a
+    pipe -- useful with ``2>&1 | tee logfile`` or similar setups
+    where the operator wants color in the live terminal and is
+    fine with ANSI escapes leaking into the log file. ``never``
+    disables color unconditionally and overrides ``CLICOLOR_FORCE``.
+    """
+    parser.add_argument(
+        "--color",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help=(
+            "Control ANSI color in log output (default: auto; "
+            "CLICOLOR_FORCE forces color in auto mode)."
+        ),
+    )
+
+
 def setup_logging(
     logger: logging.Logger,
     verbose: bool,
     *extra_loggers: logging.Logger,
+    color: str = "auto",
 ) -> None:
     """Configure given loggers to print DEBUG/INFO/WARNING with timestamps.
 
@@ -90,7 +158,31 @@ def setup_logging(
     """
     level = logging.DEBUG if verbose else logging.INFO
 
-    formatter = logging.Formatter(
+    # ``auto`` (default) keeps color tied to a real TTY and respects the
+    # de-facto NO_COLOR convention so CI logs and redirected runs stay
+    # plain. ``always`` forces it on even when stderr is a pipe (useful
+    # with ``2>&1 | tee logfile`` -- the live terminal stays colored at
+    # the cost of ANSI escapes in the log file). ``never`` disables
+    # color unconditionally.
+    #
+    # ``CLICOLOR_FORCE`` is the env-var counterpart to ``NO_COLOR`` (BSD /
+    # fish / coreutils convention): when set it forces color on even
+    # without a TTY. Honored only on the ``auto`` path -- explicit
+    # ``--color=never`` still disables. The advantage over ``--color
+    # always`` is that env vars are inherited by spawned subprocesses
+    # (e.g. ``fairy.py`` -> ``openai_pr_review_wrapper.py``),
+    # so a single env-var setting colors the whole pipeline rather than
+    # requiring ``--color always`` to be threaded through every command.
+    if color == "always":
+        use_color = True
+    elif color == "never":
+        use_color = False
+    elif os.environ.get("CLICOLOR_FORCE"):
+        use_color = True
+    else:
+        use_color = sys.stderr.isatty() and not os.environ.get("NO_COLOR")
+    formatter_cls = _ColorFormatter if use_color else logging.Formatter
+    formatter = formatter_cls(
         fmt='%(asctime)s %(thread_prefix)s%(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
     )
@@ -147,10 +239,37 @@ def setup_logging(
             target.addHandler(debug_handler)
 
 
-_CACHE_VERSION = 1
+_REPO_NAME_INVALID_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
-def default_cache_path(filename: str = "repo_discussion_cache.pkl") -> Path:
+def sanitize_repo_name(raw: str) -> str:
+    """Map an arbitrary directory name onto a safe in-container identifier.
+
+    Non-alphanumerics (other than ``._-``) collapse to ``-``; leading/
+    trailing punctuation is trimmed. Empty results fall back to
+    ``"repo"`` so callers always get a usable string.
+    """
+    return _REPO_NAME_INVALID_RE.sub("-", raw).strip("._-") or "repo"
+
+
+def dedup_with_suffix(name: str, used: set[str]) -> str:
+    """Return ``name`` if unused, else ``f"{name}-{N}"`` for the lowest free N>=2.
+
+    Mutates ``used`` to record the chosen result so subsequent calls
+    avoid the same value.
+    """
+    if name not in used:
+        used.add(name)
+        return name
+    suffix = 2
+    while f"{name}-{suffix}" in used:
+        suffix += 1
+    chosen = f"{name}-{suffix}"
+    used.add(chosen)
+    return chosen
+
+
+def default_cache_path(filename: str) -> Path:
     return Path.home() / ".fairy" / filename
 
 
@@ -180,19 +299,12 @@ def iso_to_dt(value: str | None) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
-def _empty_pickle_cache() -> dict[str, Any]:
-    return {"version": _CACHE_VERSION, "repos": {}}
-
-
-def load_pickle_cache(path: Path) -> dict[str, Any]:
-    try:
-        with path.open("rb") as f:
-            cache = pickle.load(f)
-        if cache["version"] != _CACHE_VERSION:
-            return _empty_pickle_cache()
-        return cache
-    except Exception:
-        return _empty_pickle_cache()
+def parse_iso_datetime_arg(value: str) -> datetime:
+    """``argparse`` ``type=`` adapter around :func:`iso_to_dt`."""
+    dt = iso_to_dt(value)
+    if dt is None:
+        raise argparse.ArgumentTypeError(f"invalid ISO date/time: {value!r}")
+    return dt
 
 
 def atomic_write_pickle(path: Path, obj: object) -> None:
@@ -200,7 +312,7 @@ def atomic_write_pickle(path: Path, obj: object) -> None:
 
     Companion to ``atomic_write_text``. Unlike that helper this one
     deliberately does NOT fsync before the rename: the existing
-    pickle-based caches (pr_auto_approve's discussion cache,
+    pickle-based caches (fairy's discussion cache,
     mail_fairy's forwarded-msgid state) treat themselves as advisory
     -- a torn write at process kill survives a fresh start because
     the loaders fall back to an empty cache on any deserialization

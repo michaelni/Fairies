@@ -1,0 +1,23 @@
+{
+  "source_file": "synthetic",
+  "must_survive": [
+    "Refactor the parser",
+    "before adding the new flag"
+  ],
+  "response": {
+    "id": "resp_synth_two_adjacent_markers",
+    "status": "completed",
+    "output": [
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"classification\":\"minor_issues_approve\",\"message\":\"Refactor the parser \\ue200filecite\\ue202turn0file1\\ue201\\ue200filecite\\ue202turn0file2\\ue201 before adding the new flag.\"}",
+            "annotations": []
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -498,13 +498,13 @@ produced by a different model, in the user message. Produce ONE final review.
 - Do not introduce a new issue that no draft raised, unless verifying a
   draft's point exposes a clearly-confirmed adjacent correctness problem.
 - If the drafts disagree, decide from the evidence and state briefly why when
-  it matters.
+  it matters. You can include both side of a disagreement if you like.
 - Classify the pull request with the same classes and rules as a normal
   review, based on the verified, merged issues.
-- The drafts are internal scaffolding: do NOT mention drafts, other models,
-  or the combination process in the posted message. Write it as one normal
-  review.
+- In the list of issue, prefix each by the name of the model that produced
+  it.
 """
+#- The drafts are internal scaffolding: do NOT mention drafts, other models, or the combination process in the posted message. Write it as one normal review.
 
 
 def make_combiner_developer_prompt(

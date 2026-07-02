@@ -496,13 +496,14 @@ def make_developer_prompt(
 
 C_PROMPT_COMBINER_TASK = """##Combiner task
 You are given several independent draft reviews of this pull request, each
-produced by a different model, in the user message. Produce ONE final review.
+produced by a different model, in the user message, produce a combined review.
 
 - Treat each draft as a set of claims, not as ground truth. Verify every
   issue a draft raises against the actual commit(s), attached files, prior
   discussion, and the tools available to you.
-- Drop any issue you cannot verify, that is incorrect, or that is mere style
-  or speculation. Keep only issues you can confirm.
+- Drop any issue that are incorrect, or that is mere style or speculation.
+  Issues that you can neither confirm nor show incorrect/style/speculation. Leave in
+  place but clearly mark as unverified.
 - Merge the surviving issues into a single, de-duplicated, well-organized
   review; do not make the same point twice.
 - Do not introduce a new issue that no draft raised, unless verifying a
@@ -730,9 +731,7 @@ def make_combiner_user_text(drafts: list[Review]) -> str:
     posted message.
     """
     parts = [
-        "Independent draft reviews to verify and combine. They are internal: "
-        "do not mention them, the other models, or the combination process in "
-        "your posted message.\n\n"
+        "Independent draft reviews to verify and combine. They are internal:\n\n"
     ]
     for index, draft in enumerate(drafts, start=1):
         parts.append(f"----- Draft {index} from {draft.model or 'unknown'} -----\n")

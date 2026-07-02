@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import llm_review_api  # noqa: E402
 import openai_pr_review_wrapper as wrapper  # noqa: E402
 
 # Real production output (message trimmed) that slipped past strict mode.
@@ -30,40 +31,40 @@ REAL_MISKEYED_REVIEW = {
 
 class CheckSchemaTests(unittest.TestCase):
     def test_valid_review_passes(self) -> None:
-        wrapper.check_schema(
+        llm_review_api.check_schema(
             {"classification": "ok_approve", "message": ""},
-            wrapper.REVIEW_SCHEMA["schema"],
+            llm_review_api.REVIEW_SCHEMA["schema"],
         )
 
     def test_real_miskeyed_review_is_rejected(self) -> None:
-        with self.assertRaises(wrapper.SchemaError) as ctx:
-            wrapper.check_schema(REAL_MISKEYED_REVIEW, wrapper.REVIEW_SCHEMA["schema"])
+        with self.assertRaises(llm_review_api.SchemaError) as ctx:
+            llm_review_api.check_schema(REAL_MISKEYED_REVIEW, llm_review_api.REVIEW_SCHEMA["schema"])
         # The error names the offending key rather than crashing opaquely.
         self.assertIn("class", str(ctx.exception))
 
     def test_bad_enum_value_is_rejected(self) -> None:
-        with self.assertRaises(wrapper.SchemaError):
-            wrapper.check_schema(
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_review_api.check_schema(
                 {"classification": "looks_good", "message": ""},
-                wrapper.REVIEW_SCHEMA["schema"],
+                llm_review_api.REVIEW_SCHEMA["schema"],
             )
 
     def test_wrong_type_is_rejected(self) -> None:
-        with self.assertRaises(wrapper.SchemaError):
-            wrapper.check_schema(
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_review_api.check_schema(
                 {"classification": "ok_approve", "message": 12},
-                wrapper.REVIEW_SCHEMA["schema"],
+                llm_review_api.REVIEW_SCHEMA["schema"],
             )
 
     def test_non_object_is_rejected(self) -> None:
-        with self.assertRaises(wrapper.SchemaError):
-            wrapper.check_schema("not a dict", wrapper.REVIEW_SCHEMA["schema"])
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_review_api.check_schema("not a dict", llm_review_api.REVIEW_SCHEMA["schema"])
 
     def test_generic_over_triage_schema(self) -> None:
         # The same checker validates a dynamically built schema with
         # nullable unions, nested arrays and per-item object schemas.
         schema = wrapper.build_triage_schema(["gpt-5.5"], ["needs-review"])["schema"]
-        wrapper.check_schema(
+        llm_review_api.check_schema(
             {
                 "route": "engage", "message": "", "reason": "ok",
                 "requested_models": [], "requested_effort": "high",
@@ -74,8 +75,8 @@ class CheckSchemaTests(unittest.TestCase):
             },
             schema,
         )
-        with self.assertRaises(wrapper.SchemaError):
-            wrapper.check_schema(
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_review_api.check_schema(
                 {
                     "route": "engage", "message": "", "reason": "ok",
                     "requested_models": [], "requested_effort": "high",
@@ -91,11 +92,11 @@ class CheckSchemaTests(unittest.TestCase):
         schema = wrapper.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])["schema"]
         base = {"route": "engage", "message": "", "reason": "ok",
                 "requested_effort": None}
-        wrapper.check_schema(
+        llm_review_api.check_schema(
             {**base, "requested_models": ["gpt-5.4", "zai:glm-5.2"]}, schema,
         )
-        with self.assertRaises(wrapper.SchemaError):
-            wrapper.check_schema(
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_review_api.check_schema(
                 {**base, "requested_models": ["gpt-5.4", "gpt-5.5", "zai:glm-5.2"]},
                 schema,
             )
@@ -103,7 +104,7 @@ class CheckSchemaTests(unittest.TestCase):
 
 class ValidateResultTests(unittest.TestCase):
     def test_real_miskeyed_review_raises_schema_error(self) -> None:
-        with self.assertRaises(wrapper.SchemaError):
+        with self.assertRaises(llm_review_api.SchemaError):
             wrapper.validate_result(REAL_MISKEYED_REVIEW)
 
     def test_valid_review_round_trips(self) -> None:

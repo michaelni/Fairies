@@ -36,10 +36,6 @@ via the ``shell`` tool (a ``ctx.new_shell()`` session) and returns its
 verdict by calling a ``submit_review`` tool whose ``input_schema`` is the
 shared ``REVIEW_SCHEMA``.
 
-Provider-neutral review I/O (``make_user_text``, ``REVIEW_SCHEMA``,
-``validate_result``) and the shared ``BadModelOutput`` error are reused from
-``openai_pr_review_wrapper`` where they currently live, so the schema and
-user-text assembly have a single definition rather than a duplicate here.
 Importing this module pulls in the ``anthropic`` package, so only the
 Anthropic / GLM code path imports it (lazily, via the reviewer factory).
 """
@@ -53,14 +49,16 @@ from anthropic import Anthropic
 
 from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import generate_llm_prompt, make_combiner_user_text, make_user_text
-from llm_review_api import Review, ReviewContext, Reviewer
+from llm_review_api import (
+    REVIEW_SCHEMA,
+    BadModelOutput,
+    Review,
+    ReviewContext,
+    Reviewer,
+    validate_review,
+)
 from anthropic_common import call_with_anthropic_retry, load_api_key
 from shell_tool import exec_shell_call
-from openai_pr_review_wrapper import (
-    BadModelOutput,
-    REVIEW_SCHEMA,
-    validate_result,
-)
 
 __all__ = ["DEFAULT_ANTHROPIC_MAX_TOKENS", "AnthropicReviewer"]
 
@@ -229,7 +227,7 @@ class AnthropicReviewer(Reviewer):
                 tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
                 submit = next((b for b in tool_uses if b.name == _SUBMIT_REVIEW), None)
                 if submit is not None:
-                    result = validate_result(submit.input)
+                    result = validate_review(submit.input)
                     if self.verbose:
                         logger.debug("anthropic verdict classification=%s", result["classification"])
                     return Review(

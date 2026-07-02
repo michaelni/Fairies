@@ -32,7 +32,10 @@ review pipeline all speak.
 
 What belongs here: the provider-neutral review vocabulary (``Review``,
 ``ReviewContext``, the ``Reviewer`` base class), the classification
-constants, and ``run_parallel`` (the single fan-out helper).
+constants, the review-output JSON schema with its validator
+(``REVIEW_SCHEMA``, ``check_schema``, ``validate_review``), the shared
+``BadModelOutput`` error, and ``run_parallel`` (the single fan-out
+helper).
 
 What does NOT belong: any provider/SDK-specific code (that lives in the
 ``*_reviewer`` modules), prompt text (``llm_prompt``), or pipeline wiring
@@ -57,11 +60,16 @@ __all__ = [
     "ISSUE_CLASSIFICATIONS",
     "TERMINAL_ROUTES",
     "ENGAGE",
+    "REVIEW_SCHEMA",
     "Z_AI_ANTHROPIC_URL",
+    "BadModelOutput",
     "Review",
     "ReviewContext",
     "Reviewer",
+    "SchemaError",
+    "check_schema",
     "run_parallel",
+    "validate_review",
 ]
 
 logger = logging.getLogger(__name__)
@@ -93,6 +101,117 @@ ENGAGE = "engage"
 # z.ai's Anthropic-compatible Messages endpoint. GLM is reached by pointing
 # the Anthropic reviewer at this base URL with a z.ai key.
 Z_AI_ANTHROPIC_URL = "https://api.z.ai/api/anthropic"
+
+
+REVIEW_SCHEMA = {
+    "name": "pr_review_result",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "classification": {
+                "type": "string",
+                "description": (
+                    "Overall disposition of the pull request."
+                ),
+                "enum": list(CLASSIFICATIONS),
+            },
+            "message": {
+                "type": "string",
+                "description": (
+                    "detailed Markdown comment body to post to Forgejo. "
+                    "Must be empty for ok_approve. "
+                    "Do not include HTML or markdown fences."
+                ),
+            },
+        },
+        "required": ["classification", "message"],
+    },
+}
+
+
+class SchemaError(ValueError):
+    """The model's JSON did not match the ``json_schema`` we requested.
+
+    OpenAI ``strict`` structured output is best-effort, not a guarantee:
+    it can silently slip (observed: emitting ``class`` instead of
+    ``classification``). So every response is re-validated against the
+    exact schema we sent before we trust it.
+    """
+
+
+class BadModelOutput(Exception):
+    """The model's JSON did not parse / match ``REVIEW_SCHEMA``.
+
+    Raised by the reviewers so the entrypoint exits
+    ``EXIT_BAD_MODEL_OUTPUT`` and the caller retries the run.
+    """
+
+
+_JSON_PY_TYPES: dict[str, type | tuple[type, ...]] = {
+    "string": str,
+    "boolean": bool,
+    "integer": int,
+    "number": (int, float),
+    "object": dict,
+    "array": list,
+    "null": type(None),
+}
+
+
+def _matches_json_type(value: object, json_type: str) -> bool:
+    # ``bool`` is a subclass of ``int``; keep the two distinct so a
+    # boolean never satisfies integer/number and vice versa.
+    if json_type == "boolean":
+        return isinstance(value, bool)
+    if json_type in ("integer", "number"):
+        return isinstance(value, _JSON_PY_TYPES[json_type]) and not isinstance(value, bool)
+    return isinstance(value, _JSON_PY_TYPES[json_type])
+
+
+def check_schema(value: object, schema: dict[str, object], path: str = "$") -> None:
+    """Validate ``value`` against the JSON Schema subset our request
+    schemas use: ``type`` (incl. nullable unions), ``enum``, object
+    ``properties`` / ``required`` / ``additionalProperties: false``, and
+    array ``items`` / ``maxItems``. Raise :class:`SchemaError` at the first mismatch,
+    naming the offending location. Deliberately not a general validator
+    -- it covers exactly what ``REVIEW_SCHEMA`` / ``build_triage_schema``
+    emit, so the next reader can trust the two stay in lockstep.
+    """
+    if "enum" in schema and value not in schema["enum"]:
+        raise SchemaError(f"{path}: {value!r} not in {schema['enum']}")
+    declared = schema.get("type")
+    types = declared if isinstance(declared, list) else [declared] if declared else []
+    if types and not any(_matches_json_type(value, t) for t in types):
+        raise SchemaError(f"{path}: expected type {declared!r}, got {type(value).__name__}")
+    if "object" in types and isinstance(value, dict):
+        properties = schema.get("properties", {})
+        for key in schema.get("required", []):
+            if key not in value:
+                raise SchemaError(f"{path}: missing required key {key!r}")
+        if schema.get("additionalProperties") is False:
+            unexpected = sorted(set(value) - set(properties))
+            if unexpected:
+                raise SchemaError(f"{path}: unexpected keys {unexpected}")
+        for key, subschema in properties.items():
+            if key in value:
+                check_schema(value[key], subschema, f"{path}.{key}")
+    if "array" in types and isinstance(value, list):
+        max_items = schema.get("maxItems")
+        if max_items is not None and len(value) > max_items:
+            raise SchemaError(f"{path}: {len(value)} items exceed maxItems {max_items}")
+        item_schema = schema.get("items")
+        if item_schema is not None:
+            for index, item in enumerate(value):
+                check_schema(item, item_schema, f"{path}[{index}]")
+
+
+def validate_review(obj: object) -> dict[str, str]:
+    """Check a review verdict against ``REVIEW_SCHEMA`` and return its fields."""
+    check_schema(obj, REVIEW_SCHEMA["schema"])
+    assert isinstance(obj, dict)  # narrowed by check_schema
+    return {"classification": obj["classification"], "message": obj["message"]}
 
 
 @dataclass(frozen=True)

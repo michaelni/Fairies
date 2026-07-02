@@ -95,12 +95,17 @@ from git_util import git_show_file
 from llm_review_api import (
     CLASSIFICATIONS,
     ENGAGE,
+    REVIEW_SCHEMA,
     TERMINAL_ROUTES,
     Z_AI_ANTHROPIC_URL,
+    BadModelOutput,
     Review,
     ReviewContext,
     Reviewer,
+    SchemaError,
+    check_schema,
     run_parallel,
+    validate_review,
 )
 import podman_host
 import podman_repos
@@ -240,102 +245,7 @@ def make_openai_http_client() -> DefaultHttpxClient:
         ),
     )
 
-REVIEW_SCHEMA = {
-    "name": "pr_review_result",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "classification": {
-                "type": "string",
-                "description": (
-                    "Overall disposition of the pull request."
-                ),
-                "enum": list(CLASSIFICATIONS),
-            },
-            "message": {
-                "type": "string",
-                "description": (
-                    "detailed Markdown comment body to post to Forgejo. "
-                    "Must be empty for ok_approve. "
-                    "Do not include HTML or markdown fences."
-                ),
-            },
-        },
-        "required": ["classification", "message"],
-    },
-}
-
 TRIAGE_ROUTES = (*TERMINAL_ROUTES, ENGAGE)
-
-
-class SchemaError(ValueError):
-    """The model's JSON did not match the ``json_schema`` we requested.
-
-    OpenAI ``strict`` structured output is best-effort, not a guarantee:
-    it can silently slip (observed: emitting ``class`` instead of
-    ``classification``). So every response is re-validated against the
-    exact schema we sent before we trust it.
-    """
-
-
-_JSON_PY_TYPES: dict[str, type | tuple[type, ...]] = {
-    "string": str,
-    "boolean": bool,
-    "integer": int,
-    "number": (int, float),
-    "object": dict,
-    "array": list,
-    "null": type(None),
-}
-
-
-def _matches_json_type(value: object, json_type: str) -> bool:
-    # ``bool`` is a subclass of ``int``; keep the two distinct so a
-    # boolean never satisfies integer/number and vice versa.
-    if json_type == "boolean":
-        return isinstance(value, bool)
-    if json_type in ("integer", "number"):
-        return isinstance(value, _JSON_PY_TYPES[json_type]) and not isinstance(value, bool)
-    return isinstance(value, _JSON_PY_TYPES[json_type])
-
-
-def check_schema(value: object, schema: dict[str, object], path: str = "$") -> None:
-    """Validate ``value`` against the JSON Schema subset our request
-    schemas use: ``type`` (incl. nullable unions), ``enum``, object
-    ``properties`` / ``required`` / ``additionalProperties: false``, and
-    array ``items`` / ``maxItems``. Raise :class:`SchemaError` at the first mismatch,
-    naming the offending location. Deliberately not a general validator
-    -- it covers exactly what ``REVIEW_SCHEMA`` / ``build_triage_schema``
-    emit, so the next reader can trust the two stay in lockstep.
-    """
-    if "enum" in schema and value not in schema["enum"]:
-        raise SchemaError(f"{path}: {value!r} not in {schema['enum']}")
-    declared = schema.get("type")
-    types = declared if isinstance(declared, list) else [declared] if declared else []
-    if types and not any(_matches_json_type(value, t) for t in types):
-        raise SchemaError(f"{path}: expected type {declared!r}, got {type(value).__name__}")
-    if "object" in types and isinstance(value, dict):
-        properties = schema.get("properties", {})
-        for key in schema.get("required", []):
-            if key not in value:
-                raise SchemaError(f"{path}: missing required key {key!r}")
-        if schema.get("additionalProperties") is False:
-            unexpected = sorted(set(value) - set(properties))
-            if unexpected:
-                raise SchemaError(f"{path}: unexpected keys {unexpected}")
-        for key, subschema in properties.items():
-            if key in value:
-                check_schema(value[key], subschema, f"{path}.{key}")
-    if "array" in types and isinstance(value, list):
-        max_items = schema.get("maxItems")
-        if max_items is not None and len(value) > max_items:
-            raise SchemaError(f"{path}: {len(value)} items exceed maxItems {max_items}")
-        item_schema = schema.get("items")
-        if item_schema is not None:
-            for index, item in enumerate(value):
-                check_schema(item, item_schema, f"{path}[{index}]")
 
 
 def triage_label_allowlist_from_request(request: JsonObject) -> list[str]:
@@ -1753,14 +1663,12 @@ def validate_result(
     annotations: list[object] | None = None,
     file_citation_metadata: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, str]:
-    check_schema(obj, REVIEW_SCHEMA["schema"])
-    assert isinstance(obj, dict)  # narrowed by check_schema
-    return {
-        "classification": obj["classification"],
-        "message": render_file_citations_for_markdown(
-            obj["message"], annotations or [], file_citation_metadata,
-        ),
-    }
+    """``validate_review`` plus rendering of OpenAI file citations."""
+    result = validate_review(obj)
+    result["message"] = render_file_citations_for_markdown(
+        result["message"], annotations or [], file_citation_metadata,
+    )
+    return result
 
 
 def validate_triage_result(
@@ -2077,14 +1985,6 @@ class OpenAIContainerUnhealthy(Exception):
     Raised by ``OpenAIReviewer`` so the entrypoint releases the lease and
     exits ``EXIT_CONTAINER_UNHEALTHY``, letting the caller retry against a
     freshly provisioned container.
-    """
-
-
-class BadModelOutput(Exception):
-    """The model's JSON did not parse / match ``REVIEW_SCHEMA``.
-
-    Raised by ``OpenAIReviewer`` so the entrypoint exits
-    ``EXIT_BAD_MODEL_OUTPUT`` and the caller retries the run.
     """
 
 

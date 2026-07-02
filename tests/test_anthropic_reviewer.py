@@ -135,6 +135,17 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         self.assertEqual("tool_use", second_msgs[1]["content"][0]["type"])
         self.assertEqual("tool_result", second_msgs[2]["content"][0]["type"])
 
+    def test_module_logger_names_match_wrapper_registration(self) -> None:
+        # openai_pr_review_wrapper.main() attaches log handlers to these
+        # loggers BY NAME because the modules are imported lazily. A module
+        # rename would silently detach their logs again (regression: GLM
+        # reviewer activity was invisible in run logs, 2026-07-02).
+        import anthropic_common
+        import shell_tool
+        self.assertEqual("anthropic_reviewer", anthropic_reviewer.logger.name)
+        self.assertEqual("anthropic_common", anthropic_common.logger.name)
+        self.assertEqual("shell_tool", shell_tool.logger.name)
+
     def test_no_shell_direct_submit(self) -> None:
         client = _ScriptedClient([
             _Message([_Block(type="tool_use", id="t1", name="submit_review",

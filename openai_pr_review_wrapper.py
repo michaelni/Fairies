@@ -2742,6 +2742,12 @@ def main() -> int:
         openai_container_pool.logger,
         podman_host.logger,
         podman_repos.logger,
+        # By name, not module attribute: the anthropic modules are imported
+        # lazily (only when an anthropic/zai model is requested) and fetching
+        # a logger from the registry does not import the module.
+        logging.getLogger("shell_tool"),
+        logging.getLogger("anthropic_common"),
+        logging.getLogger("anthropic_reviewer"),
         color=args.color,
     )
 

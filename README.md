@@ -197,6 +197,31 @@ Examples:
       bash simpast-runs/run.sh HEAD
 
 
+## Tools
+
+### Matching PRs to a branch
+
+`tools/match_prs_to_master.py` tells you which Commits and or PRs have already landed
+on a base branch. It uses hash, patchid, subject and commit and author dates.
+So it can still recognize slightly amended patches but favors better matches.
+It only needs git; with `--gcli` it also asks the
+forge for each PR's real open/closed/merged state (slower).
+
+First fetch the PR head refs the tool scans, e.g. for FFmpeg's forge:
+
+    git config --add remote.fforge.fetch \
+        '+refs/pull/*/head:refs/remotes/fforge/pr/*'
+    git fetch fforge
+
+Example:
+
+    match_prs_to_master.py \
+        --base origin/master \
+        --pr-glob 'refs/remotes/fforge/pr/*' \
+        --release-glob 'refs/remotes/fforge/release/*' \
+        --since '6 months ago' \
+        --verbose
+
 ## Supporte Forges
 * GitHub (untested)
 * GitLab (untested)

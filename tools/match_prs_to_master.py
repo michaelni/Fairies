@@ -194,8 +194,11 @@ def pr_pool(heads, base):
 
 
 def pr_divergent(head, pool, order):
-    """A PR's own commits as [(sha, subject, author_date, commit_date)], newest
-    first (the pool's git log order); its last, oldest entry is the fork point.
+    """A PR's own commits as [(sha, subject, author_date, commit_date)] in the
+    pool's git log order (commit date, newest first); its last, oldest entry is
+    the fork point. The union walk can date-sort a skewed ancestor shared with
+    another PR ahead of this PR's head, so the first entry is NOT guaranteed to
+    be the head; callers needing the tip must use the head ref itself.
 
     Merges are kept: an exact-SHA match can still place one on the base branch.
     """
@@ -431,11 +434,13 @@ def main():
 
     # Commits to match per PR: the tip always, plus its own commits with
     # --verbose (capped). Each is (sha, subject, author_date, commit_date).
+    # The tip is the head ref itself, never divergent[0]: the union walk's
+    # date order can put a skewed-date ancestor first (see pr_divergent).
     inspected = {}
     for pr_ref in pr_refs:
         head = pr_heads[pr_ref]
         div = divergent[pr_ref]
-        tip = div[0] if div else (head, *commit_meta(head))
+        tip = (head, *pool[head][1:]) if head in pool else (head, *commit_meta(head))
         commits = [tip]
         if args.verbose:
             capped = div[:args.max_commits] if args.max_commits else div

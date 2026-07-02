@@ -293,7 +293,7 @@ def check_schema(value: object, schema: dict[str, object], path: str = "$") -> N
     """Validate ``value`` against the JSON Schema subset our request
     schemas use: ``type`` (incl. nullable unions), ``enum``, object
     ``properties`` / ``required`` / ``additionalProperties: false``, and
-    array ``items``. Raise :class:`SchemaError` at the first mismatch,
+    array ``items`` / ``maxItems``. Raise :class:`SchemaError` at the first mismatch,
     naming the offending location. Deliberately not a general validator
     -- it covers exactly what ``REVIEW_SCHEMA`` / ``build_triage_schema``
     emit, so the next reader can trust the two stay in lockstep.
@@ -317,6 +317,9 @@ def check_schema(value: object, schema: dict[str, object], path: str = "$") -> N
             if key in value:
                 check_schema(value[key], subschema, f"{path}.{key}")
     if "array" in types and isinstance(value, list):
+        max_items = schema.get("maxItems")
+        if max_items is not None and len(value) > max_items:
+            raise SchemaError(f"{path}: {len(value)} items exceed maxItems {max_items}")
         item_schema = schema.get("items")
         if item_schema is not None:
             for index, item in enumerate(value):
@@ -379,9 +382,10 @@ def build_triage_schema(
     """Triage JSON schema; the override fields appear only if enabled.
 
     When ``allowed_models`` is non-empty the schema gains
-    ``requested_model`` (enum-constrained to the allowlist) and
-    ``requested_effort`` (enum-constrained to ``TRIAGE_REQUESTABLE_EFFORTS``).
-    Both are nullable. Strict mode enforces the enums on the wire so
+    ``requested_models`` (array, each entry enum-constrained to the
+    allowlist; at most two are honored) and ``requested_effort``
+    (nullable, enum-constrained to ``TRIAGE_REQUESTABLE_EFFORTS``).
+    Strict mode enforces the enums on the wire so
     ``validate_triage_result`` does not need to re-check the values.
     """
     properties: dict[str, object] = {
@@ -413,17 +417,21 @@ def build_triage_schema(
     }
     required = ["route", "message", "reason"]
     if allowed_models:
-        properties["requested_model"] = {
-            "type": ["string", "null"],
-            "enum": [None, *allowed_models],
-            "description": "Allowed model from an explicit user request, else null.",
+        properties["requested_models"] = {
+            "type": "array",
+            "maxItems": 2,
+            "items": {"type": "string", "enum": list(allowed_models)},
+            "description": (
+                "Models from an explicit user request, in request order "
+                "(at most two), else empty."
+            ),
         }
         properties["requested_effort"] = {
             "type": ["string", "null"],
             "enum": [None, *TRIAGE_REQUESTABLE_EFFORTS],
             "description": "Reasoning effort from an explicit user request, else null.",
         }
-        required.extend(["requested_model", "requested_effort"])
+        required.extend(["requested_models", "requested_effort"])
     label_allowlist = allowed_labels or []
     if label_allowlist:
         properties["label_changes"] = {
@@ -580,11 +588,13 @@ def parse_args() -> argparse.Namespace:
         "--allowed-model",
         action="append",
         default=[],
-        metavar="NAME",
+        metavar="[PROVIDER:]NAME",
         help=(
             "Permit commenters to request this model for the main review "
-            "pass (e.g. 'please re-review with gpt-5.5'). Repeat to allow "
-            "more models; Reasoning effort requests (medium/high/xhigh) are always honored."
+            "pass (e.g. 'please re-review with gpt-5.5'); up to two at once "
+            "review in parallel. Repeat to allow more models; same spec form "
+            "as --extra-model. Reasoning effort requests (medium/high/xhigh) "
+            "are always honored."
         ),
     )
     p.add_argument(
@@ -2102,9 +2112,10 @@ def validate_triage_result(
       with empty message (caller will fall through to the main reviewer
       pass). A warning is logged.
 
-    The optional ``requested_model`` / ``requested_effort`` fields are
-    constrained by the schema enums (see ``build_triage_schema``); we
-    just pass them through. Only the engage path consumes them.
+    The optional ``requested_models`` / ``requested_effort`` fields are
+    constrained by the schema (see ``build_triage_schema``); we just pass
+    them through, deduplicated (requesting the same model twice means one
+    run of it). Only the engage path consumes them.
     """
     if not isinstance(obj, dict):
         raise RuntimeError("triage model output is not a JSON object")
@@ -2120,7 +2131,7 @@ def validate_triage_result(
     if not isinstance(reason, str):
         reason = ""
 
-    requested_model = obj.get("requested_model")
+    requested_models = list(dict.fromkeys(obj.get("requested_models") or []))
     requested_effort = obj.get("requested_effort")
     label_changes = sanitize_label_changes(obj.get("label_changes"), allowed_labels or [])
 
@@ -2136,7 +2147,7 @@ def validate_triage_result(
         )
         return {
             "route": "engage", "message": "", "reason": reason,
-            "requested_model": requested_model,
+            "requested_models": requested_models,
             "requested_effort": requested_effort,
             "label_changes": label_changes,
         }
@@ -2153,7 +2164,7 @@ def validate_triage_result(
         "route": route,
         "message": rendered_message,
         "reason": reason,
-        "requested_model": requested_model,
+        "requested_models": requested_models,
         "requested_effort": requested_effort,
         "label_changes": label_changes,
     }
@@ -3025,6 +3036,7 @@ def main() -> int:
         )
 
         stashed_triage_label_changes: list[dict[str, object]] = []
+        requested_models: list[str] = []
 
         if args.triage_model:
             triage_result = run_triage_stage(
@@ -3106,17 +3118,15 @@ def main() -> int:
                 if route == "engage":
                     stashed_triage_label_changes = triage_label_changes
                     # Apply user-requested model / effort overrides for
-                    # the main pass. ``validate_triage_result`` has
-                    # already clamped these to the allowlist + effort
-                    # enum (or None), so a non-None value here is
-                    # guaranteed safe to pass through to OpenAI.
-                    requested_model = triage_result.get("requested_model")
-                    if requested_model:
+                    # the main pass. The triage schema has already
+                    # constrained these to the allowlist + effort enum,
+                    # so the values are safe to pass through.
+                    requested_models = list(triage_result.get("requested_models") or [])
+                    if requested_models:
                         logger.info(
-                            "main pass model overridden by user request: %r -> %r",
-                            args.model, requested_model,
+                            "main pass model lineup overridden by user request: %r -> %r",
+                            [args.model, *args.extra_model], requested_models,
                         )
-                        args.model = requested_model
                     requested_effort = triage_result.get("requested_effort")
                     if requested_effort:
                         logger.info(
@@ -3134,18 +3144,33 @@ def main() -> int:
                         route,
                     )
 
-        model_reviewers: list[Reviewer] = [
-            OpenAIReviewer(args, openai_resources, model=args.model, role="reviewer")
-        ]
-        for spec in args.extra_model:
-            model_reviewers.append(
+        if requested_models:
+            model_reviewers = [
                 make_reviewer(spec, args=args, resources=openai_resources, role="reviewer", verbose=args.verbose)
-            )
+                for spec in requested_models
+            ]
+        else:
+            model_reviewers = [
+                OpenAIReviewer(args, openai_resources, model=args.model, role="reviewer")
+            ]
+            for spec in args.extra_model:
+                model_reviewers.append(
+                    make_reviewer(spec, args=args, resources=openai_resources, role="reviewer", verbose=args.verbose)
+                )
         combiner = (
             make_reviewer(args.combine_model, args=args, resources=openai_resources, role="combiner", verbose=args.verbose)
             if args.combine_model
             else None
         )
+        if combiner is None and requested_models and len(model_reviewers) > 1:
+            # A user may request two models on a deployment configured
+            # without --combine-model; combine with the configured main
+            # model rather than rejecting the request.
+            logger.info(
+                "user requested %d models with no --combine-model configured; "
+                "combining with openai:%s", len(model_reviewers), args.model,
+            )
+            combiner = OpenAIReviewer(args, openai_resources, model=args.model, role="combiner")
         try:
             review = review_pr(review_ctx, model_reviewers, combiner)
         except OpenAIContainerUnhealthy:

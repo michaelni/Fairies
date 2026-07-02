@@ -1,12 +1,12 @@
 """Tests for user-requested model/effort overrides in triage.
 
-The triage stage emits two optional fields, ``requested_model`` and
-``requested_effort``, that propagate a commenter's request to use a
-specific model or reasoning effort to the main review pass. The
-schema returned by ``build_triage_schema`` enum-constrains both
-fields, so ``validate_triage_result`` just passes them through; the
-engage branch in ``main()`` then overrides ``args.model`` /
-``args.reasoning_effort`` before the main responses.create call.
+The triage stage emits two optional fields, ``requested_models`` and
+``requested_effort``, that propagate a commenter's request to run
+specific models (up to two, in parallel) or a reasoning effort in the
+main review pass. The schema returned by ``build_triage_schema``
+enum-constrains both fields, so ``validate_triage_result`` just passes
+them through (deduplicated); the engage branch in ``main()`` then
+builds the reviewer lineup from the request via ``make_reviewer``.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def _engage(**extra: object) -> dict[str, object]:
         "route": "engage",
         "message": "",
         "reason": "user explicitly asked for re-review with gpt-5.5",
-        "requested_model": None,
+        "requested_models": [],
         "requested_effort": None,
     }
     base.update(extra)
@@ -42,20 +42,23 @@ class TriageSchemaShapeTests(unittest.TestCase):
         schema = wrapper.build_triage_schema([])
         properties = schema["schema"]["properties"]
         required = schema["schema"]["required"]
-        self.assertNotIn("requested_model", properties)
+        self.assertNotIn("requested_models", properties)
         self.assertNotIn("requested_effort", properties)
-        self.assertNotIn("requested_model", required)
+        self.assertNotIn("requested_models", required)
         self.assertNotIn("requested_effort", required)
 
-    def test_enabled_schema_constrains_model_to_allowlist(self) -> None:
-        schema = wrapper.build_triage_schema(["gpt-5.4", "gpt-5.5"])
-        model_field = schema["schema"]["properties"]["requested_model"]
-        # Strict-mode schema enum is the boundary: the LLM cannot
-        # return a model name outside the allowlist (or null).
-        self.assertEqual(model_field["enum"], [None, "gpt-5.4", "gpt-5.5"])
+    def test_enabled_schema_constrains_models_to_allowlist(self) -> None:
+        schema = wrapper.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])
+        models_field = schema["schema"]["properties"]["requested_models"]
+        # Strict-mode schema is the boundary: the LLM cannot return a
+        # model name outside the allowlist, nor more than two entries.
+        self.assertEqual(
+            models_field["items"]["enum"], ["gpt-5.4", "gpt-5.5", "zai:glm-5.2"],
+        )
+        self.assertEqual(2, models_field["maxItems"])
         # Required list per strict mode.
         required = schema["schema"]["required"]
-        self.assertIn("requested_model", required)
+        self.assertIn("requested_models", required)
         self.assertIn("requested_effort", required)
 
     def test_enabled_schema_constrains_effort_to_requestable_set(self) -> None:
@@ -79,9 +82,18 @@ class TriageSchemaShapeTests(unittest.TestCase):
 class ValidateTriageResultPassthroughTests(unittest.TestCase):
     """The schema is the boundary; validate just extracts the fields."""
 
-    def test_model_passes_through(self) -> None:
-        result = wrapper.validate_triage_result(_engage(requested_model="gpt-5.5"))
-        self.assertEqual(result["requested_model"], "gpt-5.5")
+    def test_two_models_pass_through_in_request_order(self) -> None:
+        result = wrapper.validate_triage_result(
+            _engage(requested_models=["zai:glm-5.2", "gpt-5.5"]),
+        )
+        self.assertEqual(result["requested_models"], ["zai:glm-5.2", "gpt-5.5"])
+
+    def test_duplicate_model_request_is_deduplicated(self) -> None:
+        # "gpt-5.5 and gpt-5.5" means one run of gpt-5.5, not two.
+        result = wrapper.validate_triage_result(
+            _engage(requested_models=["gpt-5.5", "gpt-5.5"]),
+        )
+        self.assertEqual(result["requested_models"], ["gpt-5.5"])
 
     def test_effort_passes_through(self) -> None:
         for effort in wrapper.TRIAGE_REQUESTABLE_EFFORTS:
@@ -91,14 +103,14 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
                 )
                 self.assertEqual(result["requested_effort"], effort)
 
-    def test_missing_fields_become_none(self) -> None:
+    def test_missing_fields_get_defaults(self) -> None:
         # When the schema does not include the override fields (no
         # allowlist), the LLM response has no such keys and the
-        # validator must default to None rather than KeyError.
+        # validator must default rather than KeyError.
         result = wrapper.validate_triage_result({
             "route": "engage", "message": "", "reason": "ok",
         })
-        self.assertIsNone(result["requested_model"])
+        self.assertEqual(result["requested_models"], [])
         self.assertIsNone(result["requested_effort"])
 
     def test_non_engage_routes_preserve_override_fields(self) -> None:
@@ -112,11 +124,11 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
                     "route": route,
                     "message": "context" if route == "helpful_reply" else "",
                     "reason": "irrelevant",
-                    "requested_model": "gpt-5.5",
+                    "requested_models": ["gpt-5.5"],
                     "requested_effort": "high",
                 })
                 self.assertEqual(result["route"], route)
-                self.assertEqual(result["requested_model"], "gpt-5.5")
+                self.assertEqual(result["requested_models"], ["gpt-5.5"])
                 self.assertEqual(result["requested_effort"], "high")
 
 
@@ -128,9 +140,10 @@ class TriagePromptShapeTests(unittest.TestCase):
         self.assertEqual(wrapper.t_prompt_user_request([]), "")
 
     def test_allowlist_lists_supported_models_and_efforts(self) -> None:
-        text = wrapper.t_prompt_user_request(["gpt-5.4", "gpt-5.5"])
+        text = wrapper.t_prompt_user_request(["gpt-5.4", "zai:glm-5.2"])
         self.assertIn("gpt-5.4", text)
-        self.assertIn("gpt-5.5", text)
+        self.assertIn("zai:glm-5.2", text)
+        self.assertIn("up to two", text)
         for effort in wrapper.TRIAGE_REQUESTABLE_EFFORTS:
             self.assertIn(effort, text)
 

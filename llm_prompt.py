@@ -399,8 +399,9 @@ def t_prompt_user_request(allowed_models: list[str]) -> str:
         "## User-requested model / effort\n"
         f"Supported models: {', '.join(allowed_models)}. "
         f"Supported efforts: {', '.join(TRIAGE_REQUESTABLE_EFFORTS)}.\n"
-        "If the community in this PR/Issue explicitly asks for a specific\n"
-        "supported LLM model or effort, set ``requested_model`` and/or\n"
+        "If the community in this PR/Issue explicitly asks for specific\n"
+        "supported LLM models (up to two, which then review in parallel)\n"
+        "or an effort, set ``requested_models`` (in request order) and/or\n"
         "``requested_effort`` accordingly.\n"
         "If an unsupported model is requested, tell the user what is supported.\n"
     )

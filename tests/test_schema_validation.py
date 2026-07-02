@@ -66,7 +66,7 @@ class CheckSchemaTests(unittest.TestCase):
         wrapper.check_schema(
             {
                 "route": "engage", "message": "", "reason": "ok",
-                "requested_model": None, "requested_effort": "high",
+                "requested_models": [], "requested_effort": "high",
                 "label_changes": [
                     {"label": "needs-review", "op": "add",
                      "reason": "x", "post": True},
@@ -78,10 +78,25 @@ class CheckSchemaTests(unittest.TestCase):
             wrapper.check_schema(
                 {
                     "route": "engage", "message": "", "reason": "ok",
-                    "requested_model": None, "requested_effort": "high",
+                    "requested_models": [], "requested_effort": "high",
                     "label_changes": [{"label": "secret", "op": "add",
                                        "reason": "x", "post": True}],
                 },
+                schema,
+            )
+
+    def test_max_items_is_enforced(self) -> None:
+        # requested_models advertises maxItems=2 to the API; the local
+        # checker must enforce the same bound to stay in lockstep.
+        schema = wrapper.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])["schema"]
+        base = {"route": "engage", "message": "", "reason": "ok",
+                "requested_effort": None}
+        wrapper.check_schema(
+            {**base, "requested_models": ["gpt-5.4", "zai:glm-5.2"]}, schema,
+        )
+        with self.assertRaises(wrapper.SchemaError):
+            wrapper.check_schema(
+                {**base, "requested_models": ["gpt-5.4", "gpt-5.5", "zai:glm-5.2"]},
                 schema,
             )
 

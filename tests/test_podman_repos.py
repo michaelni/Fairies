@@ -112,6 +112,37 @@ class RemoteProvisionTests(unittest.TestCase):
             kwargs["ssh_command"],
         )
 
+    # Real push failure observed 2026-07-02 when two concurrent reviews
+    # synced the same head to the same mirror ref; the loser must retry
+    # rather than fail the review.
+    _LOST_RACE_ERROR = RuntimeError(
+        "git push 08f56d4898eafcaddc19b3aac9263e066e82f0c0->refs/fairy/heads/ffmpeg "
+        "to fairy@192.168.2.4:fairy-mirrors/ffmpeg.git from "
+        "/home/ai/cursor/forgejo_fairy/simpast-mirror/ffmpeg failed: "
+        "remote: error: cannot lock ref 'refs/fairy/heads/ffmpeg': "
+        "is at 08f56d4898eafcaddc19b3aac9263e066e82f0c0 but expected "
+        "3e2ebba1c421b1a63d7cebcb27e1a0c93d1d1638"
+    )
+
+    def test_sync_lost_race_retries_and_succeeds(self) -> None:
+        host = lc.RemoteHost("fairy@h")
+        with mock.patch.object(lr, "git_push_commit",
+                               side_effect=[self._LOST_RACE_ERROR, None]) as push, \
+                mock.patch.object(lr.time, "sleep") as slept:
+            lr.sync_repo_to_mirror(self._remote_spec(), host)
+        self.assertEqual(2, push.call_count)
+        delay = slept.call_args.args[0]
+        self.assertTrue(0.0 < delay <= 3.0)
+
+    def test_sync_push_failure_raises_after_max_attempts(self) -> None:
+        host = lc.RemoteHost("fairy@h")
+        with mock.patch.object(lr, "git_push_commit",
+                               side_effect=self._LOST_RACE_ERROR) as push, \
+                mock.patch.object(lr.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "cannot lock ref"):
+                lr.sync_repo_to_mirror(self._remote_spec(), host)
+        self.assertEqual(3, push.call_count)
+
     def test_remote_provision_sequence(self) -> None:
         host = lc.RemoteHost("fairy@h")
         handle = lc.ContainerHandle(

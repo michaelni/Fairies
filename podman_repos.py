@@ -49,6 +49,7 @@ holds the authoritative working tree -- is the only correct source.
 from __future__ import annotations
 
 import logging
+import random
 import shlex
 import time
 from dataclasses import dataclass
@@ -165,12 +166,15 @@ def ensure_remote_mirror(
 
 
 def sync_repo_to_mirror(
-    spec: RepoSpec, host: RemoteHost, *, timeout_s: float = 60.0,
+    spec: RepoSpec, host: RemoteHost, *, timeout_s: float = 60.0, attempts: int = 3,
 ) -> None:
     """Force-push ``spec.head_sha`` into the repo's remote bare mirror.
 
     Only objects the mirror lacks are sent (thin pack): cheap after the
-    one-time full seed.
+    one-time full seed. Concurrent reviews sync the same repo, and the
+    loser's push fails with a transient "cannot lock ref"; retry up to
+    ``attempts`` times with a short random delay (a retry pushing a SHA
+    the winner already placed succeeds as a no-op).
     """
     ssh_command = shlex.join(
         ["ssh", *host.ssh_opts, *(["-i", host.identity] if host.identity else [])]
@@ -181,10 +185,23 @@ def sync_repo_to_mirror(
         "syncing repo (push) name=%s head=%s -> %s %s",
         spec.name, spec.head_sha[:12], remote_url, dest_ref,
     )
-    git_push_commit(
-        spec.repo_root, remote_url, spec.head_sha, dest_ref,
-        ssh_command=ssh_command, timeout_s=timeout_s,
-    )
+    for attempt in range(1, attempts + 1):
+        try:
+            git_push_commit(
+                spec.repo_root, remote_url, spec.head_sha, dest_ref,
+                ssh_command=ssh_command, timeout_s=timeout_s,
+            )
+            return
+        except RuntimeError as exc:
+            if attempt == attempts:
+                raise
+            delay = random.uniform(0.5, 3.0)
+            logger.info(
+                "mirror push failed (attempt %d/%d) name=%s: %s; retrying in %.1fs",
+                attempt, attempts, spec.name,
+                str(exc).replace("\n", " "), delay,
+            )
+            time.sleep(delay)
 
 
 def _ssh_podman(host: RemoteHost, *args: str, timeout_s: float = 120.0) -> None:

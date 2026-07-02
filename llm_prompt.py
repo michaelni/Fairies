@@ -459,12 +459,14 @@ def make_developer_prompt(
     container_repo_mounts: list[str],
     *,
     ci_failures_present: bool = False,
+    role_task: str = "",
 ) -> str:
     return (
         R_PROMPT_OPENING
         + TR_PROMPT_GENERAL_RULES
         + _prompt_reviewer_identity(reviewer_username)
         + R_PROMPT_REVIEWER_ROLE
+        + role_task
         + _prompt_attached_context_and_tools(
             source_bundle_attached=source_bundle_attached,
             repo_roots=repo_roots,
@@ -521,20 +523,19 @@ def make_combiner_developer_prompt(
 ) -> str:
     # A combiner is a reviewer with one extra instruction block, so it
     # carries the full reviewer contract (roles, classifications, tools,
-    # verification) and only adds the verify-and-merge task on top.
-    return (
-        make_developer_prompt(
-            source_bundle_attached,
-            reviewer_username,
-            repo_roots,
-            vector_store_search_enabled,
-            web_search_enabled,
-            code_interpreter_enabled,
-            podman_shell_enabled,
-            container_repo_mounts,
-            ci_failures_present=ci_failures_present,
-        )
-        + C_PROMPT_COMBINER_TASK
+    # verification). The verify-and-merge task slots in right after the
+    # role description, before the context/output/message-rule sections.
+    return make_developer_prompt(
+        source_bundle_attached,
+        reviewer_username,
+        repo_roots,
+        vector_store_search_enabled,
+        web_search_enabled,
+        code_interpreter_enabled,
+        podman_shell_enabled,
+        container_repo_mounts,
+        ci_failures_present=ci_failures_present,
+        role_task=C_PROMPT_COMBINER_TASK,
     )
 
 

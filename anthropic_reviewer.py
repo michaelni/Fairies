@@ -55,6 +55,10 @@ from common import JsonObject
 from llm_prompt import generate_llm_prompt
 from llm_review_api import Review, ReviewContext, Reviewer
 from anthropic_common import call_with_anthropic_retry, load_api_key
+# The dump helper is vendor-neutral (model_dump + id-stem file naming
+# work on Anthropic Message objects too); reuse it so all providers'
+# calls land in the same --debug-response-dir with the same shape.
+from openai_common import dump_response_debug_artifacts
 from shell_tool import exec_shell_call
 from openai_pr_review_wrapper import (
     BadModelOutput,
@@ -134,6 +138,7 @@ class AnthropicReviewer(Reviewer):
         max_tool_rounds: int = 0,
         exec_timeout_s: float = 600.0,
         verbose: bool = False,
+        debug_dir: str | None = None,
     ) -> None:
         self.model = model
         self.name = name
@@ -144,6 +149,7 @@ class AnthropicReviewer(Reviewer):
         self.max_tool_rounds = max_tool_rounds
         self.exec_timeout_s = exec_timeout_s
         self.verbose = verbose
+        self.debug_dir = debug_dir
 
     def _client(self) -> Anthropic:
         api_key = load_api_key(self.api_key_env)
@@ -206,17 +212,25 @@ class AnthropicReviewer(Reviewer):
                     "anthropic messages.create model=%s round=%d shell=%s",
                     self.model, rounds, use_shell,
                 )
+                # Snapshot: ``messages`` grows across rounds and the dump
+                # must record what this round actually sent.
+                request_kwargs: JsonObject = {
+                    "model": self.model,
+                    "system": system,
+                    "messages": list(messages),
+                    "tools": tools,
+                    "max_tokens": self.max_tokens,
+                }
                 response = call_with_anthropic_retry(
-                    lambda: client.messages.create(
-                        model=self.model,
-                        system=system,
-                        messages=messages,
-                        tools=tools,
-                        max_tokens=self.max_tokens,
-                    ),
+                    lambda: client.messages.create(**request_kwargs),
                     what="messages.create",
                     verbose=self.verbose,
                 )
+                if self.debug_dir:
+                    dump_response_debug_artifacts(
+                        response, request_kwargs, wrapper_request=ctx.request,
+                        debug_dir=self.debug_dir, verbose=self.verbose,
+                    )
 
                 tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
                 submit = next((b for b in tool_uses if b.name == _SUBMIT_REVIEW), None)

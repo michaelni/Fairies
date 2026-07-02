@@ -1666,6 +1666,8 @@ def run_responses_resolving_podman_shell(
     max_shell_timeout_s: float,
     what: str,
     verbose: bool,
+    debug_dir: str | None = None,
+    wrapper_request: JsonObject | None = None,
 ) -> object:
     """Drive ``responses.create`` in a loop until no pending function calls.
 
@@ -1674,13 +1676,27 @@ def run_responses_resolving_podman_shell(
     an error ``function_call_output`` so the model can recover.
 
     ``max_tool_rounds <= 0`` means no cap on the number of rounds.
+
+    With ``debug_dir`` set, EVERY round's response is dumped (paired with
+    the exact kwargs that produced it), not just the final one -- the
+    intermediate rounds are where the function calls and their outputs
+    live, and each is a separately billed request.
     """
-    response = call_with_rate_limit_retry(
-        lambda: client.responses.create(**initial_kwargs),
-        what=what,
-        verbose=verbose,
-        retry_transient=False,
-    )
+    def create_and_dump(kwargs: ResponseKwargs, what_label: str) -> object:
+        resp = call_with_rate_limit_retry(
+            lambda: client.responses.create(**kwargs),
+            what=what_label,
+            verbose=verbose,
+            retry_transient=False,
+        )
+        if debug_dir:
+            dump_response_debug_artifacts(
+                resp, kwargs, wrapper_request=wrapper_request,
+                debug_dir=debug_dir, verbose=verbose,
+            )
+        return resp
+
+    response = create_and_dump(initial_kwargs, what)
     rounds = 0
     while True:
         pending = extract_function_calls_from_response(response)
@@ -1749,12 +1765,7 @@ def run_responses_resolving_podman_shell(
         mtc = initial_kwargs.get("max_tool_calls")
         if mtc is not None:
             follow["max_tool_calls"] = mtc
-        response = call_with_rate_limit_retry(
-            lambda: client.responses.create(**follow),
-            what=f"{what} (podman shell follow-up)",
-            verbose=verbose,
-            retry_transient=False,
-        )
+        response = create_and_dump(follow, f"{what} (podman shell follow-up)")
 
 
 def build_response_tools(
@@ -2296,6 +2307,8 @@ def run_triage_stage(
                 max_shell_timeout_s=args.podman_exec_timeout,
                 what="triage responses.create",
                 verbose=args.verbose,
+                debug_dir=args.debug_response_dir if debug_dir_specified else None,
+                wrapper_request=request,
             )
         else:
             triage_response = call_with_rate_limit_retry(
@@ -2337,7 +2350,9 @@ def run_triage_stage(
             "triage responses.create ok %s",
             format_response_stats(triage_response, elapsed_seconds=time.monotonic() - triage_started),
         )
-    if debug_dir_specified:
+    # The podman tool loop already dumps every round (including the final
+    # response) with the kwargs that actually produced it.
+    if debug_dir_specified and not use_podman_shell:
         dump_response_debug_artifacts(
             triage_response,
             triage_kwargs,
@@ -2544,6 +2559,8 @@ class OpenAIReviewer(Reviewer):
                     max_shell_timeout_s=args.podman_exec_timeout,
                     what="responses.create",
                     verbose=args.verbose,
+                    debug_dir=args.debug_response_dir if res.debug_dir_specified else None,
+                    wrapper_request=ctx.request,
                 )
             else:
                 response = call_with_rate_limit_retry(
@@ -2580,7 +2597,9 @@ class OpenAIReviewer(Reviewer):
 
         if args.verbose:
             logger.debug("responses.create ok %s", format_response_stats(response, elapsed_seconds=time.monotonic() - create_started))
-        if res.debug_dir_specified:
+        # The podman tool loop already dumps every round (including the
+        # final response) with the kwargs that actually produced it.
+        if res.debug_dir_specified and not args.podman:
             dump_response_debug_artifacts(
                 response,
                 response_kwargs,
@@ -2631,16 +2650,17 @@ def make_reviewer(
     spec: str,
     *,
     args: argparse.Namespace,
-    resources: OpenAIResources,
+    resources: OpenAIResources | None,
     role: str,
     verbose: bool,
 ) -> Reviewer:
     """Build a ``Reviewer`` from a ``provider:model`` spec.
 
     ``openai:<m>`` (or a bare ``<m>``) -> OpenAIReviewer reusing the shared
-    OpenAI resources. ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` ->
-    AnthropicReviewer pointed at z.ai's Anthropic endpoint (GLM). The
-    Anthropic module (and its SDK) is imported only when actually requested.
+    OpenAI resources (``resources`` must not be None for this provider).
+    ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` -> AnthropicReviewer
+    pointed at z.ai's Anthropic endpoint (GLM). The Anthropic module (and
+    its SDK) is imported only when actually requested.
     """
     provider, sep, model = spec.partition(":")
     if not sep:
@@ -2664,6 +2684,10 @@ def make_reviewer(
             max_tool_rounds=args.podman_max_tool_rounds,
             exec_timeout_s=args.podman_exec_timeout,
             verbose=verbose,
+            debug_dir=(
+                args.debug_response_dir
+                if resources is not None and resources.debug_dir_specified else None
+            ),
         )
     raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai)")
 

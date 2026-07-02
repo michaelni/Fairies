@@ -125,6 +125,53 @@ class RunPodmanShellLoopTests(unittest.TestCase):
         self.assertEqual(1, len(follow["input"]))
         self.assertEqual("function_call_output", follow["input"][0]["type"])
 
+    def test_every_round_is_dumped_with_its_own_kwargs(self) -> None:
+        # Regression: only the final response used to be dumped, losing the
+        # intermediate rounds where the function calls and outputs live
+        # (observed on the 2026-07-02 ensemble run: the combiner's shell
+        # call was visible on the OpenAI console but absent from openaidebug).
+        session = mock.Mock(spec=lc.ContainerShellSession)
+        session.exec.return_value = lc.ExecResult(
+            exit_code=0, stdout="", stderr="", duration_s=0.0,
+            stdout_truncated=False, stderr_truncated=False,
+        )
+        n = {"i": 0}
+
+        def dump(_rsp: object) -> dict:
+            n["i"] += 1
+            if n["i"] == 1:
+                return {"output": [{
+                    "type": "function_call", "call_id": "c1",
+                    "name": "shell", "arguments": json.dumps({"command": "true"}),
+                }]}
+            return {"output": [{"type": "message", "content": []}]}
+
+        client = mock.Mock()
+        client.responses.create.side_effect = lambda **kw: mock.Mock(id=f"r{n['i']}")
+        with mock.patch.object(wrapper, "response_to_debug_json", side_effect=dump), \
+                mock.patch.object(wrapper, "call_with_rate_limit_retry",
+                                  side_effect=lambda fn, **kw: fn()), \
+                mock.patch.object(wrapper, "dump_response_debug_artifacts") as dumped:
+            wrapper.run_responses_resolving_podman_shell(
+                client,
+                initial_kwargs={"model": "gpt-x", "tools": [{"type": "function", "name": "shell"}]},
+                podman_shell_session=session,
+                max_tool_rounds=10,
+                max_shell_timeout_s=60.0,
+                what="test",
+                verbose=False,
+                debug_dir="/tmp/dbg",
+                wrapper_request={"pull_request": {"number": 7}},
+            )
+        self.assertEqual(2, dumped.call_count)
+        first_kwargs = dumped.call_args_list[0].args[1]
+        follow_kwargs = dumped.call_args_list[1].args[1]
+        self.assertNotIn("previous_response_id", first_kwargs)
+        self.assertEqual("function_call_output", follow_kwargs["input"][0]["type"])
+        for call in dumped.call_args_list:
+            self.assertEqual("/tmp/dbg", call.kwargs["debug_dir"])
+            self.assertEqual({"pull_request": {"number": 7}}, call.kwargs["wrapper_request"])
+
     def test_max_tool_rounds_zero_means_unlimited(self) -> None:
         session = mock.Mock(spec=lc.ContainerShellSession)
         session.exec.return_value = lc.ExecResult(

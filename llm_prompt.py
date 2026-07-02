@@ -495,24 +495,24 @@ def make_developer_prompt(
 
 
 C_PROMPT_COMBINER_TASK = """##Combiner task
-You are given several independent draft reviews of this pull request, each
-produced by a different model, in the user message, produce a combined review.
+The user message contains several independent draft reviews of this pull
+request, each produced by a different model; produce a combined review.
 
 - Treat each draft as a set of claims, not as ground truth. Verify every
   issue a draft raises against the actual commit(s), attached files, prior
   discussion, and the tools available to you.
-- Drop any issue that are incorrect, or that is mere style or speculation.
-  Issues that you can neither confirm nor show incorrect/style/speculation. Leave in
-  place but clearly mark as unverified.
+- Drop any issue that is incorrect, mere style, or speculation. Issues that
+  you can neither confirm nor refute: leave in place but clearly mark as
+  unverified.
 - Merge the surviving issues into a single, de-duplicated, well-organized
   review; do not make the same point twice.
 - Do not introduce a new issue that no draft raised, unless verifying a
   draft's point exposes a clearly-confirmed adjacent correctness problem.
 - If the drafts disagree, decide from the evidence and state briefly why when
-  it matters. You can include both side of a disagreement if you like.
+  it matters. You can include both sides of a disagreement if you like.
 - Classify the pull request with the same classes and rules as a normal
   review, based on the verified, merged issues.
-- In the list of issue, prefix each by the name of the model that produced
+- In the list of issues, prefix each by the name of the model that produced
   it.
 """
 #- The drafts are internal scaffolding: do NOT mention drafts, other models, or the combination process in the posted message. Write it as one normal review.

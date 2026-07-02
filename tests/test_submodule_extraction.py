@@ -36,8 +36,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import openai_pr_review_wrapper as wrapper  # noqa: E402
 import patch_util  # noqa: E402
+import llm_prompt  # noqa: E402
 
 
 PATCH_ADD_SUBMODULE = """\
@@ -306,7 +306,7 @@ class MakeUserTextSubmoduleMetadataTests(unittest.TestCase):
     commit ...`` hunk hidden inside a multi-thousand-line diff."""
 
     def test_make_user_text_surfaces_submodule_changes(self) -> None:
-        text = wrapper.make_user_text(
+        text = llm_prompt.make_user_text(
             _make_request(patch=PATCH_ADD_SUBMODULE, number=12345),
             source_notes=[],
             source_files=[".gitmodules", "tests/regular.c"],
@@ -327,7 +327,7 @@ class MakeUserTextSubmoduleMetadataTests(unittest.TestCase):
             " int x = 1;\n"
             "+int y = 2;\n"
         )
-        text = wrapper.make_user_text(
+        text = llm_prompt.make_user_text(
             _make_request(patch=plain_patch, number=12346),
             source_notes=[],
             source_files=["x.c"],
@@ -342,7 +342,7 @@ class MakeTriageUserTextSubmoduleMetadataTests(unittest.TestCase):
     "external code is being pulled in" signal matters most."""
 
     def test_make_triage_user_text_surfaces_submodule_changes(self) -> None:
-        text = wrapper.make_triage_user_text(
+        text = llm_prompt.make_triage_user_text(
             _make_request(patch=PATCH_UPDATE_SUBMODULE, number=22000),
             patch_was_truncated=False,
         )

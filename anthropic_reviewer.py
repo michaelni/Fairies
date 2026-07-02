@@ -52,15 +52,13 @@ import logging
 from anthropic import Anthropic
 
 from common import JsonObject, dump_response_debug_artifacts
-from llm_prompt import generate_llm_prompt
+from llm_prompt import generate_llm_prompt, make_combiner_user_text, make_user_text
 from llm_review_api import Review, ReviewContext, Reviewer
 from anthropic_common import call_with_anthropic_retry, load_api_key
 from shell_tool import exec_shell_call
 from openai_pr_review_wrapper import (
     BadModelOutput,
     REVIEW_SCHEMA,
-    make_combiner_user_text,
-    make_user_text,
     validate_result,
 )
 

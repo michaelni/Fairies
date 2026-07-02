@@ -108,8 +108,11 @@ from shell_tool import exec_shell_call
 from llm_prompt import (
     TRIAGE_REQUESTABLE_EFFORTS,
     generate_llm_prompt,
+    make_combiner_user_text,
     make_developer_prompt,
     make_triage_developer_prompt,
+    make_triage_user_text,
+    make_user_text,
     t_prompt_triage_labels,
     t_prompt_user_request,
 )
@@ -913,25 +916,6 @@ def get_all_repo_roots(primary_root: Path | None, extra_roots: list[str]) -> lis
     return roots
 
 
-def _augment_info_with_submodule_changes(
-    info: dict[str, object], request: JsonObject
-) -> None:
-    """Add a ``submodule_changes`` entry to the prompt-metadata dict.
-
-    Submodules are silently filtered out of the source bundle (gitlinks
-    have no readable file content) and appear in the raw patch only as
-    terse ``mode 160000`` / ``Subproject commit <sha>`` markers, which
-    makes them easy for the model to overlook even though pulling
-    external code into the tree is exactly the kind of change the
-    reviewer should be looking at. The field is only added when
-    non-empty so the prompt stays compact for the common case.
-    """
-    patch = request.get("patch") if isinstance(request.get("patch"), str) else ""
-    submodule_changes = extract_submodule_changes_from_patch(patch)
-    if submodule_changes:
-        info["submodule_changes"] = submodule_changes
-
-
 def is_c_or_h_file(relpath: str) -> bool:
     return relpath.endswith((".c", ".h"))
 
@@ -1239,87 +1223,6 @@ def build_patch_bundle(patch: str, max_patch_bytes: int) -> tuple[str, bool]:
     )
     return bundle, truncated
 
-
-
-def make_user_text(
-    request: JsonObject,
-    source_notes: list[str],
-    source_files: list[str],
-    patch_was_truncated: bool,
-) -> str:
-    pr = request.get("pull_request")
-    if not isinstance(pr, dict):
-        pr = {}
-
-    body = pr.get("body") if isinstance(pr.get("body"), str) else ""
-    discussion = request.get("discussion")
-    if not isinstance(discussion, list):
-        discussion = []
-    reviewer_username = request.get("reviewer_username")
-    if not isinstance(reviewer_username, str):
-        reviewer_username = ""
-    info = {
-        "number": pr.get("number"),
-        "title": pr.get("title"),
-        "author": pr.get("author"),
-        "html_url": pr.get("html_url"),
-        "base_ref": pr.get("base_ref"),
-        "head_ref": pr.get("head_ref"),
-        "head_sha": pr.get("head_sha"),
-        "additions": pr.get("additions"),
-        "deletions": pr.get("deletions"),
-        "changed_files": pr.get("changed_files"),
-        "auto_merge": pr.get("auto_merge"),
-        "reviewer_username": reviewer_username,
-        "patch_truncated_by_caller": bool(request.get("patch_truncated")),
-        "patch_truncated_by_wrapper": patch_was_truncated,
-        "source_files_attached": source_files,
-        "source_notes": source_notes,
-        "discussion_items": len(discussion),
-        "vector_store_repo_heads": request.get("vector_store_repo_heads"),
-    }
-    _augment_info_with_submodule_changes(info, request)
-
-    discussion_text = json.dumps(discussion, ensure_ascii=False, indent=2)
-
-    parts = [
-        "Review this pull request.\n\n",
-        "Pull request metadata:\n",
-        f"{json.dumps(info, ensure_ascii=False, indent=2)}\n\n",
-        "Pull request body:\n",
-        f"{body}\n\n",
-        "Prior pull request discussion:\n",
-        f"{discussion_text}\n",
-    ]
-    ci = request.get("ci_triage")
-    if isinstance(ci, dict) and ci:
-        parts.extend(
-            [
-                "\nCommit CI status (head has ERROR/FAILURE job(s); "
-                "same payload as triage, JSON):\n",
-                f"{json.dumps(ci, ensure_ascii=False, indent=2)}\n",
-            ]
-        )
-    return "".join(parts)
-
-
-def make_combiner_user_text(drafts: list[Review]) -> str:
-    """Present the draft reviews the combiner must verify and merge.
-
-    Internal scaffolding for the combine stage; the combiner is instructed
-    (see ``C_PROMPT_COMBINER_TASK``) not to reference these drafts in its
-    posted message.
-    """
-    parts = [
-        "Independent draft reviews to verify and combine. They are internal: "
-        "do not mention them, the other models, or the combination process in "
-        "your posted message.\n\n"
-    ]
-    for index, draft in enumerate(drafts, start=1):
-        parts.append(f"----- Draft {index} from {draft.model or 'unknown'} -----\n")
-        parts.append(f"classification: {draft.classification}\n")
-        parts.append(f"message:\n{draft.message}\n\n")
-    return "".join(parts)
 
 
 def format_response_stats(response: object, *, elapsed_seconds: float | None = None) -> str:
@@ -1858,61 +1761,6 @@ def validate_result(
             obj["message"], annotations or [], file_citation_metadata,
         ),
     }
-
-
-def make_triage_user_text(request: JsonObject, patch_was_truncated: bool) -> str:
-    pr = request.get("pull_request")
-    if not isinstance(pr, dict):
-        pr = {}
-
-    body = pr.get("body") if isinstance(pr.get("body"), str) else ""
-    discussion = request.get("discussion")
-    if not isinstance(discussion, list):
-        discussion = []
-    reviewer_username = request.get("reviewer_username")
-    if not isinstance(reviewer_username, str):
-        reviewer_username = ""
-    info = {
-        "number": pr.get("number"),
-        "title": pr.get("title"),
-        "author": pr.get("author"),
-        "html_url": pr.get("html_url"),
-        "base_ref": pr.get("base_ref"),
-        "head_ref": pr.get("head_ref"),
-        "head_sha": pr.get("head_sha"),
-        "additions": pr.get("additions"),
-        "deletions": pr.get("deletions"),
-        "changed_files": pr.get("changed_files"),
-        "auto_merge": pr.get("auto_merge"),
-        "reviewer_username": reviewer_username,
-        "labels": [name for name in (pr.get("labels") or []) if isinstance(name, str) and name],
-        "patch_truncated_by_caller": bool(request.get("patch_truncated")),
-        "patch_truncated_by_wrapper": patch_was_truncated,
-        "discussion_items": len(discussion),
-        "vector_store_repo_heads": request.get("vector_store_repo_heads"),
-    }
-    _augment_info_with_submodule_changes(info, request)
-
-    discussion_text = json.dumps(discussion, ensure_ascii=False, indent=2)
-
-    parts = [
-        "Triage this pull request.\n\n",
-        "Pull request metadata:\n",
-        f"{json.dumps(info, ensure_ascii=False, indent=2)}\n\n",
-        "Pull request body:\n",
-        f"{body}\n\n",
-        "Prior pull request discussion:\n",
-        f"{discussion_text}\n",
-    ]
-    ci = request.get("ci_triage")
-    if isinstance(ci, dict) and ci:
-        parts.extend(
-            [
-                "\nCI triage data from the caller (commit statuses / dedup), JSON:\n",
-                f"{json.dumps(ci, ensure_ascii=False, indent=2)}\n",
-            ]
-        )
-    return "".join(parts)
 
 
 def validate_triage_result(

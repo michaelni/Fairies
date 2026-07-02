@@ -42,6 +42,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from typing import Sequence
 
 
 def git_show_file_bytes(repo_root: Path, revision: str, relpath: str) -> bytes | None:
@@ -119,16 +120,15 @@ def git_format_patch_series(
     return cp.stdout
 
 
-def git_push_commit(
+def git_push_refspecs(
     repo_root: Path,
     remote_url: str,
-    sha: str,
-    dest_ref: str,
+    refspecs: Sequence[str],
     *,
     ssh_command: str | None = None,
     timeout_s: float = 60.0,
 ) -> None:
-    """Force-push commit ``sha`` from ``repo_root`` to ``remote_url`` as ``dest_ref``.
+    """Force-push ``refspecs`` from ``repo_root`` to ``remote_url``.
 
     git negotiates a thin pack, so only objects the remote lacks are
     sent: the first push to a fresh mirror transfers full history, every
@@ -139,11 +139,11 @@ def git_push_commit(
     env = None
     if ssh_command is not None:
         env = {**os.environ, "GIT_SSH_COMMAND": ssh_command}
-    cmd = ["git", "-C", str(repo_root), "push", "--force", remote_url, f"{sha}:{dest_ref}"]
+    cmd = ["git", "-C", str(repo_root), "push", "--force", remote_url, *refspecs]
     cp = subprocess.run(cmd, env=env, capture_output=True, check=False, text=True, timeout=timeout_s)
     if cp.returncode != 0:
         raise RuntimeError(
-            f"git push {sha}->{dest_ref} to {remote_url} from {repo_root} failed: "
+            f"git push {' '.join(refspecs)} to {remote_url} from {repo_root} failed: "
             f"{cp.stderr.strip() or cp.stdout.strip()}"
         )
 

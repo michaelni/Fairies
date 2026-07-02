@@ -10,7 +10,10 @@ git, or ssh on PATH.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -97,15 +100,20 @@ class RemoteProvisionTests(unittest.TestCase):
             [c.args for c in r.call_args_list],
         )
 
-    def test_sync_pushes_head_with_ssh_command_and_ref(self) -> None:
+    def test_sync_pushes_head_ref_and_all_refs_with_ssh_command(self) -> None:
         host = lc.RemoteHost("fairy@h", identity="/k/id")
-        with mock.patch.object(lr, "git_push_commit") as push:
+        with mock.patch.object(lr, "git_push_refspecs") as push:
             lr.sync_repo_to_mirror(self._remote_spec(), host)
         args, kwargs = push.call_args
         self.assertEqual(Path("/srv/ffmpeg"), args[0])
         self.assertEqual("fairy@h:fairy-mirrors/ffmpeg.git", args[1])
-        self.assertEqual("a" * 40, args[2])
-        self.assertEqual("refs/fairy/heads/ffmpeg", args[3])
+        # The head-SHA refspec plus the complete-refs refspec: the mirror
+        # (and thus the container) carries every client ref, notably the
+        # fforge/pr/* PR heads reviewers inspect.
+        self.assertEqual(
+            [f"{'a' * 40}:refs/fairy/heads/ffmpeg", "refs/*:refs/*"],
+            args[2],
+        )
         self.assertEqual(
             "ssh -o BatchMode=yes -o ServerAliveInterval=30 "
             "-o ServerAliveCountMax=3 -i /k/id",
@@ -126,7 +134,7 @@ class RemoteProvisionTests(unittest.TestCase):
 
     def test_sync_lost_race_retries_and_succeeds(self) -> None:
         host = lc.RemoteHost("fairy@h")
-        with mock.patch.object(lr, "git_push_commit",
+        with mock.patch.object(lr, "git_push_refspecs",
                                side_effect=[self._LOST_RACE_ERROR, None]) as push, \
                 mock.patch.object(lr.time, "sleep") as slept:
             lr.sync_repo_to_mirror(self._remote_spec(), host)
@@ -136,7 +144,7 @@ class RemoteProvisionTests(unittest.TestCase):
 
     def test_sync_push_failure_raises_after_max_attempts(self) -> None:
         host = lc.RemoteHost("fairy@h")
-        with mock.patch.object(lr, "git_push_commit",
+        with mock.patch.object(lr, "git_push_refspecs",
                                side_effect=self._LOST_RACE_ERROR) as push, \
                 mock.patch.object(lr.time, "sleep"):
             with self.assertRaisesRegex(RuntimeError, "cannot lock ref"):
@@ -192,6 +200,58 @@ class RemoteProvisionTests(unittest.TestCase):
                                   return_value=_completed(1, stderr=b"no such container")):
             with self.assertRaisesRegex(RuntimeError, "remote-local"):
                 lr.provision_repos_into_container(handle, [self._remote_spec()], host)
+
+
+@unittest.skipUnless(shutil.which("git"), "git required")
+class FullRefsSyncTests(unittest.TestCase):
+    """Real-git check that the sync refspecs carry PR heads.
+
+    Regression for the 2026-07-02 ensemble run where reviewers could not
+    inspect PR head 1ce2a4db... inside /work/ffmpeg: only the review head
+    had been pushed to the mirror, so commits reachable solely from
+    ``refs/remotes/fforge/pr/*`` were missing from the container.
+    """
+
+    def test_pr_ref_unreachable_from_head_lands_in_mirror(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="fairy-fullsync-") as tmp:
+            repo = Path(tmp) / "src"
+            repo.mkdir()
+
+            def git(*args: str) -> str:
+                return subprocess.run(
+                    ["git", "-C", str(repo), "-c", "user.email=t@t",
+                     "-c", "user.name=t", *args],
+                    check=True, capture_output=True, text=True,
+                ).stdout
+
+            git("init", "--quiet")
+            (repo / "f").write_text("x\n")
+            git("add", "f")
+            git("commit", "-m", "base", "--quiet")
+            base = git("rev-parse", "HEAD").strip()
+            (repo / "g").write_text("y\n")
+            git("add", "g")
+            git("commit", "-m", "pr head", "--quiet")
+            pr_head = git("rev-parse", "HEAD").strip()
+            # Leave the PR commit reachable only from the fforge PR ref,
+            # exactly like an unmerged PR in the client ffmpeg repo.
+            git("update-ref", "refs/remotes/fforge/pr/123", pr_head)
+            git("reset", "--hard", base, "--quiet")
+
+            mirror = Path(tmp) / "mirror.git"
+            subprocess.run(["git", "init", "--bare", "--quiet", str(mirror)], check=True)
+            from git_util import git_push_refspecs
+            git_push_refspecs(
+                repo, str(mirror),
+                [f"{base}:refs/fairy/heads/src", "refs/*:refs/*"],
+            )
+
+            mirror_pr_sha = subprocess.run(
+                ["git", "--git-dir", str(mirror),
+                 "rev-parse", "refs/remotes/fforge/pr/123"],
+                check=True, capture_output=True, text=True,
+            ).stdout.strip()
+            self.assertEqual(pr_head, mirror_pr_sha)
 
 
 if __name__ == "__main__":

@@ -140,6 +140,7 @@ The commit(s) and metadata are attached
 Each repository is available under its path below as a normal checkout; ``rg``, ``git``, compilers, qemu user-mode, fuzzers, and sanitisers work as usual.
 {chr(10).join(f"- {p}" for p in container_repo_mounts)}
 The all_ffmpeg checkout aggregates project data as subtrees: pull-request comments & reviews in forgejo_git/pulls/<6-digit>.md (e.g. forgejo_git/pulls/021660.md), issues in forgejo_git/issues/<6-digit>.md, the fate server in fateserver/, the website incl. the security page in ffmpeg-web/ (ffmpeg-web/src/security), and multimedia specifications in for_ffmpeg/. Read them with rg/cat/git in the checkout; use web_search for specs not found there.
+In the ffmpeg checkout every pull request's head is a git revision fforge/pr/<number>, e.g. ``git log -p fforge/pr/21000`` shows pull request 21000's commits.
 
 """ if podman_shell_enabled and container_repo_mounts else ("The **shell** function tool runs shell commands in an isolated ephemeral Linux environment.\n\n" if podman_shell_enabled else "")}\
 {'''The container contains two bare git repos without checked out working trees rg will not work.

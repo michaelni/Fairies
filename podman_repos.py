@@ -57,7 +57,7 @@ from pathlib import Path
 from typing import Sequence
 
 from common import dedup_with_suffix, sanitize_repo_name
-from git_util import get_repo_head_sha, git_push_commit
+from git_util import get_repo_head_sha, git_push_refspecs
 from podman_host import ContainerHandle, RemoteHost, run_on_remote_host
 
 logger = logging.getLogger(__name__)
@@ -134,8 +134,10 @@ def provision_repos_into_container(
             "provisioning repo name=%s head=%s mirror=%s -> %s",
             spec.name, spec.head_sha[:12], spec.mirror_path, spec.container_path,
         )
+        t0 = time.monotonic()
         ensure_remote_mirror(host, spec.mirror_path)
         sync_repo_to_mirror(spec, host)
+        t_synced = time.monotonic()
         # All podman steps run on the host as the ssh user (same podman
         # the container was started in) so the cp source -- the mirror --
         # stays local to that machine.
@@ -146,6 +148,11 @@ def provision_repos_into_container(
                     "config", "core.bare", "false")
         _ssh_podman(host, "exec", cid, "git", "-C", spec.container_path,
                     "reset", "--hard", spec.head_sha)
+        done = time.monotonic()
+        logger.info(
+            "provisioned repo name=%s sync=%.3fs fill=%.3fs total=%.3fs",
+            spec.name, t_synced - t0, done - t_synced, done - t0,
+        )
 
 
 def ensure_remote_mirror(
@@ -166,30 +173,39 @@ def ensure_remote_mirror(
 
 
 def sync_repo_to_mirror(
-    spec: RepoSpec, host: RemoteHost, *, timeout_s: float = 60.0, attempts: int = 3,
+    spec: RepoSpec, host: RemoteHost, *, timeout_s: float = 600.0, attempts: int = 3,
 ) -> None:
-    """Force-push ``spec.head_sha`` into the repo's remote bare mirror.
+    """Force-push ``spec.head_sha`` and ALL client refs into the mirror.
 
-    Only objects the mirror lacks are sent (thin pack): cheap after the
-    one-time full seed. Concurrent reviews sync the same repo, and the
-    loser's push fails with a transient "cannot lock ref"; retry up to
-    ``attempts`` times with a short random delay (a retry pushing a SHA
-    the winner already placed succeeds as a no-op).
+    The full ``refs/*`` refspec carries every ref the client repo has --
+    for ffmpeg that includes the thousands of ``refs/remotes/fforge/pr/*``
+    PR heads -- so the container checkout can resolve any PR, not just
+    the review head. Only objects the mirror lacks are sent (thin pack):
+    cheap after the one-time full seed. Concurrent reviews sync the same
+    repo, and the loser's push fails with a transient "cannot lock ref";
+    retry up to ``attempts`` times with a short random delay (a retry
+    pushing SHAs the winner already placed succeeds as a no-op).
     """
     ssh_command = shlex.join(
         ["ssh", *host.ssh_opts, *(["-i", host.identity] if host.identity else [])]
     )
     remote_url = f"{host.ssh_dest}:{spec.mirror_path}"
     dest_ref = f"{MIRROR_REF_PREFIX}/{spec.name}"
+    refspecs = [f"{spec.head_sha}:{dest_ref}", "refs/*:refs/*"]
     logger.info(
-        "syncing repo (push) name=%s head=%s -> %s %s",
+        "syncing repo (push) name=%s head=%s -> %s %s + all refs",
         spec.name, spec.head_sha[:12], remote_url, dest_ref,
     )
+    t0 = time.monotonic()
     for attempt in range(1, attempts + 1):
         try:
-            git_push_commit(
-                spec.repo_root, remote_url, spec.head_sha, dest_ref,
+            git_push_refspecs(
+                spec.repo_root, remote_url, refspecs,
                 ssh_command=ssh_command, timeout_s=timeout_s,
+            )
+            logger.info(
+                "synced repo name=%s head=%s dt=%.3fs attempts=%d",
+                spec.name, spec.head_sha[:12], time.monotonic() - t0, attempt,
             )
             return
         except RuntimeError as exc:

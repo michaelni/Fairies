@@ -37,6 +37,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import openai_pr_review_wrapper as wrapper  # noqa: E402
+import patch_util  # noqa: E402
 
 
 PATCH_ADD_SUBMODULE = """\
@@ -186,7 +187,7 @@ index 0000000..deadbee
 class SubmoduleDetectionTests(unittest.TestCase):
     def test_added_submodule_path_is_in_set(self) -> None:
         self.assertEqual(
-            wrapper.extract_submodule_paths_from_patch(PATCH_ADD_SUBMODULE),
+            patch_util.extract_submodule_paths_from_patch(PATCH_ADD_SUBMODULE),
             {"tests/checkasm/ext"},
         )
 
@@ -195,24 +196,24 @@ class SubmoduleDetectionTests(unittest.TestCase):
         plus sign-prefixed ``Subproject commit`` lines, neither of which
         the older substring-only detector matched."""
         self.assertEqual(
-            wrapper.extract_submodule_paths_from_patch(PATCH_UPDATE_SUBMODULE),
+            patch_util.extract_submodule_paths_from_patch(PATCH_UPDATE_SUBMODULE),
             {"tests/checkasm/ext"},
         )
 
     def test_removed_submodule_path_is_in_set(self) -> None:
         self.assertEqual(
-            wrapper.extract_submodule_paths_from_patch(PATCH_REMOVE_SUBMODULE),
+            patch_util.extract_submodule_paths_from_patch(PATCH_REMOVE_SUBMODULE),
             {"tests/checkasm/ext"},
         )
 
     def test_changed_paths_excludes_added_submodule(self) -> None:
-        paths = wrapper.extract_changed_paths_from_patch(PATCH_ADD_SUBMODULE)
+        paths = patch_util.extract_changed_paths_from_patch(PATCH_ADD_SUBMODULE)
         self.assertNotIn("tests/checkasm/ext", paths)
         self.assertIn(".gitmodules", paths)
         self.assertIn("tests/regular.c", paths)
 
     def test_changed_paths_excludes_updated_submodule(self) -> None:
-        paths = wrapper.extract_changed_paths_from_patch(PATCH_UPDATE_SUBMODULE)
+        paths = patch_util.extract_changed_paths_from_patch(PATCH_UPDATE_SUBMODULE)
         self.assertNotIn("tests/checkasm/ext", paths)
 
 
@@ -222,7 +223,7 @@ class SubmoduleChangesExtractionTests(unittest.TestCase):
 
     def test_added_submodule_is_classified_with_new_commit_only(self) -> None:
         self.assertEqual(
-            wrapper.extract_submodule_changes_from_patch(PATCH_ADD_SUBMODULE),
+            patch_util.extract_submodule_changes_from_patch(PATCH_ADD_SUBMODULE),
             [
                 {
                     "path": "tests/checkasm/ext",
@@ -235,7 +236,7 @@ class SubmoduleChangesExtractionTests(unittest.TestCase):
 
     def test_updated_submodule_carries_both_old_and_new_commit(self) -> None:
         self.assertEqual(
-            wrapper.extract_submodule_changes_from_patch(PATCH_UPDATE_SUBMODULE),
+            patch_util.extract_submodule_changes_from_patch(PATCH_UPDATE_SUBMODULE),
             [
                 {
                     "path": "tests/checkasm/ext",
@@ -248,7 +249,7 @@ class SubmoduleChangesExtractionTests(unittest.TestCase):
 
     def test_removed_submodule_is_classified_with_old_commit_only(self) -> None:
         self.assertEqual(
-            wrapper.extract_submodule_changes_from_patch(PATCH_REMOVE_SUBMODULE),
+            patch_util.extract_submodule_changes_from_patch(PATCH_REMOVE_SUBMODULE),
             [
                 {
                     "path": "tests/checkasm/ext",
@@ -264,7 +265,7 @@ class SubmoduleChangesExtractionTests(unittest.TestCase):
         attributed to commit 1's last regular file when the patch is
         split on ``^diff --git`` and parsed for submodule action."""
         self.assertEqual(
-            wrapper.extract_submodule_changes_from_patch(PATCH_TWO_COMMITS),
+            patch_util.extract_submodule_changes_from_patch(PATCH_TWO_COMMITS),
             [
                 {
                     "path": "tests/checkasm/ext",

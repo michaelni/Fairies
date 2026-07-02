@@ -32,9 +32,9 @@ Shared OpenAI-SDK primitives used across the project.
 
 Collects the thin OpenAI-SDK-facing glue that more than one module
 needs: the retry wrapper for rate-limit / transient errors, file
-upload / delete / exists helpers, the response-text extractor and
-debug-dump helper, a few JSON type aliases, and small utilities like
-``_obj_get`` and ``log_progress``.
+upload / delete / exists helpers, the response-text extractor, a few
+JSON type aliases, and small utilities like ``_obj_get`` and
+``log_progress``.
 
 This is a leaf module: nothing here may import from
 ``openai_pr_review_wrapper`` or any of its siblings. The only allowed
@@ -68,6 +68,9 @@ from openai import (
 # openai_common re-export so neither subsystem has to depend on the
 # other.
 from common import JsonPrimitive, JsonValue, JsonObject
+# The debug-dump helpers are vendor-neutral and live in common; this
+# module's extract_response_text uses them for its failure dumps.
+from common import dump_response_debug_artifacts, response_to_debug_json
 
 
 logger = logging.getLogger(__name__)
@@ -324,46 +327,6 @@ def delete_uploaded_file(client: OpenAI, file_id: str, *, verbose: bool) -> None
     except Exception as exc:
         if verbose:
             logger.warning("failed to delete uploaded file %s: %s", file_id, exc)
-
-
-def response_to_debug_json(response: object) -> JsonObject:
-    if hasattr(response, "model_dump"):
-        dumped = response.model_dump()
-        if isinstance(dumped, dict):
-            return dumped
-    if isinstance(response, dict):
-        return response
-    return {"repr": repr(response)}
-
-
-def dump_response_debug_artifacts(
-    response: object,
-    response_kwargs: ResponseKwargs,
-    *,
-    wrapper_request: JsonObject | None = None,
-    debug_dir: str,
-    verbose: bool,
-) -> str | None:
-    try:
-        payload = {
-            "response": response_to_debug_json(response),
-            "request": response_kwargs,
-        }
-        if wrapper_request is not None:
-            payload["wrapper_request"] = wrapper_request
-        response_json = payload["response"]
-        response_id = response_json.get("id") if isinstance(response_json, dict) else None
-        stem = response_id if isinstance(response_id, str) and response_id else f"response_{int(time.time())}"
-        out_dir = Path(debug_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{stem}.json"
-        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        if verbose:
-            logger.warning("wrote response debug dump to %s", out_path)
-        return str(out_path)
-    except Exception as exc:
-        logger.warning("failed to write response debug dump: %s", exc)
-        return None
 
 
 def extract_response_text(

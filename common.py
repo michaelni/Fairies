@@ -30,15 +30,19 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import pickle
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import tempfile
 from typing import TypeAlias
+
+logger = logging.getLogger(__name__)
 
 
 # JSON value type aliases shared by every module that touches gcli or
@@ -50,6 +54,50 @@ from typing import TypeAlias
 JsonPrimitive: TypeAlias = None | bool | int | float | str
 JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
+
+
+def response_to_debug_json(response: object) -> JsonObject:
+    """Best-effort JSON view of any SDK response object (OpenAI and
+    Anthropic models are pydantic and expose ``model_dump``)."""
+    if hasattr(response, "model_dump"):
+        dumped = response.model_dump()
+        if isinstance(dumped, dict):
+            return dumped
+    if isinstance(response, dict):
+        return response
+    return {"repr": repr(response)}
+
+
+def dump_response_debug_artifacts(
+    response: object,
+    response_kwargs: dict[str, object],
+    *,
+    wrapper_request: JsonObject | None = None,
+    debug_dir: str,
+    verbose: bool,
+) -> str | None:
+    """Write one ``<response id>.json`` file pairing an LLM API response
+    with the exact request kwargs that produced it (vendor-neutral)."""
+    try:
+        payload = {
+            "response": response_to_debug_json(response),
+            "request": response_kwargs,
+        }
+        if wrapper_request is not None:
+            payload["wrapper_request"] = wrapper_request
+        response_json = payload["response"]
+        response_id = response_json.get("id") if isinstance(response_json, dict) else None
+        stem = response_id if isinstance(response_id, str) and response_id else f"response_{int(time.time())}"
+        out_dir = Path(debug_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{stem}.json"
+        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+        if verbose:
+            logger.warning("wrote response debug dump to %s", out_path)
+        return str(out_path)
+    except Exception as exc:
+        logger.warning("failed to write response debug dump: %s", exc)
+        return None
 
 
 class _ThreadPrefixFilter(logging.Filter):
@@ -137,12 +185,13 @@ def setup_logging(
 ) -> None:
     """Configure given loggers to print DEBUG/INFO/WARNING with timestamps.
 
-    Attaches shared stdout/stderr handlers to ``logger`` and each logger
-    in ``extra_loggers``. The caller is responsible for listing the
-    sibling module loggers it depends on -- ``common.py`` deliberately
-    does NOT know the set of consumers, so the dependency direction
-    stays one-way (top-level entry points know their helpers, the
-    shared utility module does not know its users).
+    Attaches shared stdout/stderr handlers to ``logger``, each logger in
+    ``extra_loggers``, and ``common``'s own module logger (this module
+    hosts shared helpers that log, and it does know itself). The caller
+    is responsible for listing the sibling module loggers it depends on
+    -- ``common.py`` deliberately does NOT know the set of consumers, so
+    the dependency direction stays one-way (top-level entry points know
+    their helpers, the shared utility module does not know its users).
 
     Why multiple loggers instead of configuring the root logger: we
     would rather not eagerly route every third-party library's DEBUG
@@ -226,7 +275,7 @@ def setup_logging(
     # De-dupe by identity so passing the same logger twice is a no-op
     # rather than attaching duplicate handlers.
     seen: set[int] = set()
-    for target in (logger, *extra_loggers):
+    for target in (logger, *extra_loggers, logging.getLogger(__name__)):
         if id(target) in seen:
             continue
         seen.add(id(target))

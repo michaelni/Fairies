@@ -51,14 +51,10 @@ import logging
 
 from anthropic import Anthropic
 
-from common import JsonObject
+from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import generate_llm_prompt
 from llm_review_api import Review, ReviewContext, Reviewer
 from anthropic_common import call_with_anthropic_retry, load_api_key
-# The dump helper is vendor-neutral (model_dump + id-stem file naming
-# work on Anthropic Message objects too); reuse it so all providers'
-# calls land in the same --debug-response-dir with the same shape.
-from openai_common import dump_response_debug_artifacts
 from shell_tool import exec_shell_call
 from openai_pr_review_wrapper import (
     BadModelOutput,

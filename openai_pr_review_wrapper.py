@@ -79,7 +79,12 @@ from pathlib import Path
 import httpx
 from openai import BadRequestError, DefaultHttpxClient, OpenAI
 
-from common import add_color_arg, setup_logging
+from common import (
+    add_color_arg,
+    dump_response_debug_artifacts,
+    response_to_debug_json,
+    setup_logging,
+)
 from git_util import git_show_file
 from llm_review_api import (
     CLASSIFICATIONS,
@@ -113,12 +118,10 @@ from openai_common import (
     _obj_get,
     call_with_rate_limit_retry,
     delete_uploaded_file,
-    dump_response_debug_artifacts,
     extract_response_text,
     load_api_key,
     log_progress,
     openai_file_exists,
-    response_to_debug_json,
     upload_local_file,
     upload_text_file,
 )

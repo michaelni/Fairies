@@ -734,7 +734,10 @@ def make_combiner_user_text(drafts: list[Review]) -> str:
         "Independent draft reviews to verify and combine. They are internal:\n\n"
     ]
     for index, draft in enumerate(drafts, start=1):
-        parts.append(f"----- Draft {index} from {draft.model or 'unknown'} -----\n")
+        # "openai:gpt-5.4" -> "gpt-5.4": model names are unique on their
+        # own, so drop the vendor prefix from the posted attribution.
+        label = (draft.model or "unknown").rpartition(":")[2]
+        parts.append(f"----- Draft {index} from {label} -----\n")
         parts.append(f"classification: {draft.classification}\n")
         parts.append(f"message:\n{draft.message}\n\n")
     return "".join(parts)

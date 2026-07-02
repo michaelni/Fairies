@@ -68,7 +68,31 @@ logger = logging.getLogger(__name__)
 # Retry budget for rate-limit (429) / overloaded (529) / 5xx responses.
 DEFAULT_ANTHROPIC_RETRIES = 30
 
+# z.ai signals a permanent "out of balance / no resource package" billing
+# state as an HTTP 429 with this error code. It is NOT a transient rate
+# limit, so it must not consume the retry budget (that just hammers a
+# dead-until-funded endpoint). Anthropic proper does not use this code.
+# Observed on z.ai's Anthropic-compatible endpoint 2026-06; the code is
+# stable per z.ai's error-code table.
+ZAI_INSUFFICIENT_BALANCE_CODE = "1113"
+
 T = TypeVar("T")
+
+
+def _is_balance_exhausted(exc: Exception) -> bool:
+    """True for a permanent billing/quota 429 (z.ai ``code 1113``).
+
+    ``exc.body`` is the vendor's JSON error object (attacker/vendor-shaped,
+    so checked structurally at this boundary); fall back to the human
+    message for shapes that don't carry the structured code.
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and str(error.get("code")) == ZAI_INSUFFICIENT_BALANCE_CODE:
+            return True
+    text = str(getattr(exc, "message", "") or exc).lower()
+    return "insufficient balance" in text or "no resource package" in text
 
 
 def load_api_key(env_var: str) -> str | None:
@@ -120,6 +144,15 @@ def call_with_anthropic_retry(func: Callable[[], T], *, what: str, verbose: bool
             # covers both. Propagate to the outer caller.
             raise
         except (RateLimitError, InternalServerError) as exc:
+            if isinstance(exc, RateLimitError) and _is_balance_exhausted(exc):
+                # Permanent billing state dressed as a 429: fail fast rather
+                # than retry, so an unfunded/exhausted account is not hammered.
+                logger.error(
+                    "anthropic %s during %s: balance exhausted / billing error; "
+                    "not retrying (fund the account)",
+                    type(exc).__name__, what,
+                )
+                raise
             last_exc = exc
             if attempt >= DEFAULT_ANTHROPIC_RETRIES:
                 raise

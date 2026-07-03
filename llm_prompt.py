@@ -504,7 +504,7 @@ request, each produced by a different model; produce a combined review.
 - Drop any issue that is incorrect, mere style, or speculation. Issues that
   you can neither confirm nor refute: leave in place but clearly mark as
   unverified.
-- Merge the surviving issues into a single, de-duplicated, well-organized
+- Merge the information into a single, de-duplicated, well-organized
   review; do not make the same point twice.
 - Do not introduce a new issue that no draft raised, unless verifying a
   draft's point exposes a clearly-confirmed adjacent correctness problem.
@@ -514,6 +514,10 @@ request, each produced by a different model; produce a combined review.
   review, based on the verified, merged issues.
 - In the list of issues, prefix each by the name of the model that produced
   it.
+- If a draft reports work its model performed (e.g. "build is clean",
+  "ran FATE", "fuzzed the decoder"), keep the relevant
+  ones and attribute each to that model.
+
 """
 #- The drafts are internal scaffolding: do NOT mention drafts, other models, or the combination process in the posted message. Write it as one normal review.
 

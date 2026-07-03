@@ -45,6 +45,7 @@ from pathlib import Path
 from common import JsonObject
 from llm_review_api import Review
 from patch_util import extract_submodule_changes_from_patch
+from podman_host import CONTAINER_CPUS, CONTAINER_MEMORY
 
 
 TRIAGE_REQUESTABLE_EFFORTS = ("medium", "high", "xhigh")
@@ -157,6 +158,7 @@ Each repository is available under its path below as a normal checkout; ``rg``, 
 The all_ffmpeg checkout aggregates project data as subtrees: pull-request comments & reviews in forgejo_git/pulls/<6-digit>.md (e.g. forgejo_git/pulls/021660.md), issues in forgejo_git/issues/<6-digit>.md, the fate server in fateserver/, the website incl. the security page in ffmpeg-web/ (ffmpeg-web/src/security), and multimedia specifications in for_ffmpeg/. Read them with rg/cat/git in the checkout; use web_search for specs not found there.
 In the ffmpeg checkout every pull request's head is a git revision fforge/pr/<number>, e.g. ``git log -p fforge/pr/21000`` shows pull request 21000's commits.
 A FATE sample-suite snapshot is at {CONTAINER_FATE_SUITE}; run fate tests with ``make fate-<name> SAMPLES={CONTAINER_FATE_SUITE}`` and refresh a stale sample with ``make fate-rsync SAMPLES={CONTAINER_FATE_SUITE}`` when needed.
+You have {CONTAINER_CPUS} x86-64 CPU cores, {CONTAINER_MEMORY} memory and tens of GB of SSD-backed disk space at your disposal.
 
 """ if podman_shell_enabled and container_repo_mounts else ("The **shell** function tool runs shell commands in an ephemeral Linux environment with internet access.\n\n" if podman_shell_enabled else "")}\
 {'''The container contains two bare git repos without checked out working trees rg will not work.

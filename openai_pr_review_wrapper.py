@@ -642,13 +642,17 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--podman-memory",
-        default="8g",
-        help="Memory limit passed to podman run (default: 8g).",
+        default=podman_host.CONTAINER_MEMORY,
+        help="Memory limit passed to podman run (default: %(default)s). "
+             "The prompt advertises the default, so prefer changing "
+             "podman_host.CONTAINER_MEMORY over this flag.",
     )
     p.add_argument(
         "--podman-cpus",
-        default="8",
-        help="CPU limit passed to podman run (default: 8).",
+        default=podman_host.CONTAINER_CPUS,
+        help="CPU limit passed to podman run (default: %(default)s). "
+             "The prompt advertises the default, so prefer changing "
+             "podman_host.CONTAINER_CPUS over this flag.",
     )
     p.add_argument(
         "--podman-max-tool-rounds",

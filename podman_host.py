@@ -453,13 +453,19 @@ def build_image_if_needed(
         )
 
 
+# Resource limits for ephemeral review containers. The prompt advertises
+# these to the model (llm_prompt), so change them here, not at call sites.
+CONTAINER_MEMORY = "8g"
+CONTAINER_CPUS = "8"
+
+
 def start_ephemeral_container(
     *,
     image: str,
     host: RemoteHost,
     network: str | None = None,
-    memory: str = "4g",
-    cpus: str = "2",
+    memory: str = CONTAINER_MEMORY,
+    cpus: str = CONTAINER_CPUS,
     extra_args: tuple[str, ...] = (),
 ) -> ContainerHandle:
     """Start a fresh container that lives only for one review.

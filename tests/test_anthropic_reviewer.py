@@ -186,17 +186,22 @@ class EffortThinkingTests(unittest.TestCase):
     def test_off_disables_thinking(self) -> None:
         self.assertEqual({"type": "disabled"}, self._run("off")["thinking"])
 
-    def test_effort_sets_budget_and_grows_max_tokens(self) -> None:
-        call = self._run("low")
-        budget = anthropic_reviewer.EFFORT_THINKING_BUDGETS["low"]
-        self.assertEqual({"type": "enabled", "budget_tokens": budget}, call["thinking"])
-        self.assertEqual(
-            anthropic_reviewer.DEFAULT_ANTHROPIC_MAX_TOKENS + budget, call["max_tokens"],
-        )
+    def test_effort_sets_adaptive_thinking(self) -> None:
+        # The named-effort dialect (thinking adaptive + output_config.effort)
+        # is what current Claude models require (manual budget_tokens gets a
+        # 400 there) and what z.ai's Anthropic endpoint honors for GLM
+        # (probed 2026-07-03: thinking volume scales low < high < max).
+        for effort in ("low", "xhigh", "max"):
+            call = self._run(effort)
+            self.assertEqual({"type": "adaptive"}, call["thinking"])
+            self.assertEqual({"effort": effort}, call["output_config"])
+            self.assertEqual(
+                anthropic_reviewer.DEFAULT_ANTHROPIC_MAX_TOKENS, call["max_tokens"],
+            )
 
     def test_unknown_effort_rejected(self) -> None:
         with self.assertRaises(ValueError):
-            anthropic_reviewer.AnthropicReviewer("glm-5.2", name="zai:glm-5.2", effort="xhigh")
+            anthropic_reviewer.AnthropicReviewer("glm-5.2", name="zai:glm-5.2", effort="turbo")
 
     def test_client_gets_explicit_timeout(self) -> None:
         # Regression (production 2026-07-03, PR 22592): with the SDK-default
@@ -204,10 +209,9 @@ class EffortThinkingTests(unittest.TestCase):
         # requests whose max_tokens could take >10 min to generate
         # ("Streaming is required for operations that may take longer than
         # 10 minutes", anthropic 0.115.0 _calculate_nonstreaming_timeout,
-        # threshold max_tokens > 128000*600/3600 = 21333). The "medium"
-        # thinking budget grew max_tokens to 16000+8192 = 24192, so every
-        # GLM draft died before a single request. An explicit client
-        # timeout opts out of that pre-flight.
+        # threshold max_tokens > 128000*600/3600 = 21333); every GLM draft
+        # died before a single request when max_tokens crossed it. An
+        # explicit client timeout opts out of that pre-flight.
         recorded: dict = {}
 
         class _Recorder:
@@ -222,10 +226,6 @@ class EffortThinkingTests(unittest.TestCase):
             )._client()
         self.assertEqual(
             anthropic_reviewer.ANTHROPIC_TIMEOUT_S, recorded["timeout"],
-        )
-        budget = anthropic_reviewer.EFFORT_THINKING_BUDGETS["medium"]
-        self.assertGreater(  # the exact config that hit the pre-flight
-            anthropic_reviewer.DEFAULT_ANTHROPIC_MAX_TOKENS + budget, 21333,
         )
 
     def test_thinking_blocks_are_replayed_with_signature(self) -> None:

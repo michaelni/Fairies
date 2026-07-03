@@ -413,7 +413,7 @@ def parse_args() -> argparse.Namespace:
             "pass plus each --extra-model) run on the same PR; with more than one "
             "you must pass --combine-model to merge their drafts. '@EFFORT' sets "
             "that reviewer's effort: an OpenAI reasoning effort, or off/low/"
-            "medium/high as an Anthropic/GLM thinking budget."
+            "medium/high/xhigh/max as the Anthropic/GLM thinking effort."
         ),
     )
     p.add_argument(
@@ -2258,8 +2258,8 @@ def make_reviewer(
 
     ``@effort`` sets that reviewer's effort: an OpenAI reasoning effort
     (overriding --reasoning-effort for this pass), or an Anthropic/GLM
-    extended-thinking budget key (``EFFORT_THINKING_BUDGETS``; no suffix
-    keeps the provider default).
+    thinking effort (``ANTHROPIC_EFFORTS``; no suffix keeps the provider
+    default).
     """
     spec_body, sep, effort = spec.partition("@")
     if not sep:

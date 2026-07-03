@@ -61,8 +61,8 @@ from anthropic_common import call_with_anthropic_retry, load_api_key
 from shell_tool import exec_shell_call
 
 __all__ = [
+    "ANTHROPIC_EFFORTS",
     "DEFAULT_ANTHROPIC_MAX_TOKENS",
-    "EFFORT_THINKING_BUDGETS",
     "AnthropicReviewer",
 ]
 
@@ -72,16 +72,20 @@ logger = logging.getLogger(__name__)
 # accepts; raise per-model via the constructor when a model allows more.
 DEFAULT_ANTHROPIC_MAX_TOKENS = 16_000
 
-# ``effort`` -> extended-thinking token budget. ``off`` disables thinking
-# entirely; no effort keeps the provider's default (no ``thinking`` sent).
-# ``max_tokens`` grows by the budget since it covers thinking + output.
-EFFORT_THINKING_BUDGETS = {"off": 0, "low": 2048, "medium": 8192, "high": 24576}
+# Valid ``effort`` values. ``off`` disables thinking explicitly; the named
+# levels enable adaptive thinking with ``output_config.effort`` -- the same
+# dialect current Claude models use (they reject manual budget_tokens) and
+# which z.ai's Anthropic endpoint honors for GLM (probed 2026-07-03:
+# thinking volume scales low < high < max). No effort sends no ``thinking``
+# at all, keeping the provider default (on z.ai: no thinking).
+ANTHROPIC_EFFORTS = ("off", "low", "medium", "high", "xhigh", "max")
 
-# Per-request timeout. Also opts out of the SDK's static pre-flight check
-# that rejects non-streaming requests whose max_tokens COULD take >10 min
-# to generate (raised for max_tokens > 21333, e.g. 16000 + the "medium"
-# thinking budget). Our tool-round responses stay far below max_tokens,
-# so the pessimistic estimate does not apply.
+# Per-request timeout, far above the longest single call observed (135s).
+# Also opts out of the SDK's static pre-flight check that rejects
+# non-streaming requests whose max_tokens COULD take >10 min to generate
+# (raised for max_tokens > 21333; killed every GLM draft on 2026-07-03 when
+# a thinking budget grew max_tokens past it). Our tool-round responses stay
+# far below max_tokens, so the pessimistic estimate does not apply.
 ANTHROPIC_TIMEOUT_S = 900.0
 
 _SUBMIT_REVIEW = "submit_review"
@@ -133,7 +137,7 @@ class AnthropicReviewer(Reviewer):
     ``name`` is the stable label recorded on the ``Review`` (e.g.
     ``"anthropic:claude-opus-4"`` or ``"zai:glm-4.6"``).
 
-    ``effort`` is an ``EFFORT_THINKING_BUDGETS`` key controlling extended
+    ``effort`` is an ``ANTHROPIC_EFFORTS`` name controlling extended
     thinking; ``None`` (default) sends no ``thinking`` parameter so the
     provider default applies.
     """
@@ -153,9 +157,9 @@ class AnthropicReviewer(Reviewer):
         verbose: bool = False,
         debug_dir: str | None = None,
     ) -> None:
-        if effort is not None and effort not in EFFORT_THINKING_BUDGETS:
+        if effort is not None and effort not in ANTHROPIC_EFFORTS:
             raise ValueError(
-                f"effort {effort!r} not in {sorted(EFFORT_THINKING_BUDGETS)}"
+                f"effort {effort!r} not in {ANTHROPIC_EFFORTS}"
             )
         self.model = model
         self.name = name
@@ -241,15 +245,11 @@ class AnthropicReviewer(Reviewer):
                     "tools": tools,
                     "max_tokens": self.max_tokens,
                 }
-                if self.effort is not None:
-                    budget = EFFORT_THINKING_BUDGETS[self.effort]
-                    if budget == 0:
-                        request_kwargs["thinking"] = {"type": "disabled"}
-                    else:
-                        request_kwargs["thinking"] = {
-                            "type": "enabled", "budget_tokens": budget,
-                        }
-                        request_kwargs["max_tokens"] = self.max_tokens + budget
+                if self.effort == "off":
+                    request_kwargs["thinking"] = {"type": "disabled"}
+                elif self.effort is not None:
+                    request_kwargs["thinking"] = {"type": "adaptive"}
+                    request_kwargs["output_config"] = {"effort": self.effort}
                 response = call_with_anthropic_retry(
                     lambda: client.messages.create(**request_kwargs),
                     what="messages.create",

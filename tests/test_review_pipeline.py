@@ -115,7 +115,7 @@ class MakeReviewerTests(unittest.TestCase):
 
     def test_invalid_anthropic_effort_rejected(self) -> None:
         with self.assertRaises(SystemExit):
-            wrapper.make_reviewer("zai:glm-5.2@xhigh", args=_args(), resources=None, role="reviewer", verbose=False)
+            wrapper.make_reviewer("zai:glm-5.2@turbo", args=_args(), resources=None, role="reviewer", verbose=False)
 
 
 class ReviewPrTests(unittest.TestCase):

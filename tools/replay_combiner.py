@@ -67,6 +67,7 @@ from openai import OpenAI  # noqa: E402
 from openai_common import load_api_key, upload_text_file, delete_uploaded_file  # noqa: E402
 import openai_pr_review_wrapper as wrapper  # noqa: E402
 import openai_reviewer  # noqa: E402
+import review_pipeline  # noqa: E402
 import podman_host  # noqa: E402
 import podman_repos  # noqa: E402
 
@@ -177,7 +178,7 @@ def main() -> int:
             uploaded_file_ids=uploaded_file_ids,
             debug_dir_specified=debug_dir_specified,
         )
-        combiner = wrapper.make_reviewer(
+        combiner = review_pipeline.make_reviewer(
             args.combine_model, args=args, resources=resources,
             role="combiner", verbose=args.verbose,
         )

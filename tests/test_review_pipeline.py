@@ -32,7 +32,8 @@ if "anthropic" not in sys.modules:
     sys.modules["anthropic"] = fake
 
 from llm_review_api import Review, ReviewContext, Reviewer, Z_AI_ANTHROPIC_URL  # noqa: E402
-import openai_pr_review_wrapper as wrapper  # noqa: E402
+import review_pipeline  # noqa: E402
+from openai_reviewer import OpenAIReviewer  # noqa: E402
 from anthropic_reviewer import AnthropicReviewer  # noqa: E402
 
 
@@ -73,20 +74,20 @@ class _FailingReviewer(Reviewer):
 class MakeReviewerTests(unittest.TestCase):
     def test_bare_and_openai_prefix_build_openai(self) -> None:
         for spec in ("gpt-5.4", "openai:gpt-5.4"):
-            r = wrapper.make_reviewer(spec, args=_args(), resources=None, role="reviewer", verbose=False)
-            self.assertIsInstance(r, wrapper.OpenAIReviewer)
+            r = review_pipeline.make_reviewer(spec, args=_args(), resources=None, role="reviewer", verbose=False)
+            self.assertIsInstance(r, OpenAIReviewer)
             self.assertEqual("openai:gpt-5.4", r.name)
             self.assertEqual("gpt-5.4", r.model)
 
     def test_zai_uses_anthropic_endpoint(self) -> None:
-        r = wrapper.make_reviewer("zai:glm-4.6", args=_args(), resources=None, role="reviewer", verbose=False)
+        r = review_pipeline.make_reviewer("zai:glm-4.6", args=_args(), resources=None, role="reviewer", verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
         self.assertEqual("zai:glm-4.6", r.name)
         self.assertEqual(Z_AI_ANTHROPIC_URL, r.base_url)
         self.assertEqual("ZAI_API_KEY", r.api_key_env)
 
     def test_anthropic_provider(self) -> None:
-        r = wrapper.make_reviewer("anthropic:claude-opus-4", args=_args(), resources=None, role="combiner", verbose=False)
+        r = review_pipeline.make_reviewer("anthropic:claude-opus-4", args=_args(), resources=None, role="combiner", verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
         self.assertEqual("anthropic:claude-opus-4", r.name)
         self.assertIsNone(r.base_url)
@@ -94,42 +95,42 @@ class MakeReviewerTests(unittest.TestCase):
 
     def test_unknown_provider_rejected(self) -> None:
         with self.assertRaises(SystemExit):
-            wrapper.make_reviewer("grok:x", args=_args(), resources=None, role="reviewer", verbose=False)
+            review_pipeline.make_reviewer("grok:x", args=_args(), resources=None, role="reviewer", verbose=False)
 
     def test_effort_suffix_overrides_openai_reasoning_effort(self) -> None:
-        r = wrapper.make_reviewer("openai:gpt-5.5@xhigh", args=_args(), resources=None, role="reviewer", verbose=False)
+        r = review_pipeline.make_reviewer("openai:gpt-5.5@xhigh", args=_args(), resources=None, role="reviewer", verbose=False)
         self.assertEqual("gpt-5.5", r.model)
         self.assertEqual("xhigh", r.effort)
         # Without a suffix the shared --reasoning-effort applies.
-        r = wrapper.make_reviewer("openai:gpt-5.5", args=_args(), resources=None, role="reviewer", verbose=False)
+        r = review_pipeline.make_reviewer("openai:gpt-5.5", args=_args(), resources=None, role="reviewer", verbose=False)
         self.assertEqual("high", r.effort)
 
     def test_effort_suffix_sets_anthropic_thinking_effort(self) -> None:
-        r = wrapper.make_reviewer("zai:glm-5.2@low", args=_args(), resources=None, role="reviewer", verbose=False)
+        r = review_pipeline.make_reviewer("zai:glm-5.2@low", args=_args(), resources=None, role="reviewer", verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
         self.assertEqual("glm-5.2", r.model)
         self.assertEqual("low", r.effort)
         self.assertIsNone(
-            wrapper.make_reviewer("zai:glm-5.2", args=_args(), resources=None, role="reviewer", verbose=False).effort
+            review_pipeline.make_reviewer("zai:glm-5.2", args=_args(), resources=None, role="reviewer", verbose=False).effort
         )
 
     def test_invalid_anthropic_effort_rejected(self) -> None:
         with self.assertRaises(SystemExit):
-            wrapper.make_reviewer("zai:glm-5.2@turbo", args=_args(), resources=None, role="reviewer", verbose=False)
+            review_pipeline.make_reviewer("zai:glm-5.2@turbo", args=_args(), resources=None, role="reviewer", verbose=False)
 
 
 class ReviewPrTests(unittest.TestCase):
     def test_single_reviewer_no_combiner_returns_draft(self) -> None:
         ctx = _ctx()
         draft = Review("minor_issues_approve", "nit", model="a")
-        out = wrapper.review_pr(ctx, [_FakeReviewer("a", draft)], None)
+        out = review_pipeline.review_pr(ctx, [_FakeReviewer("a", draft)], None)
         self.assertIs(out, draft)
         self.assertEqual([draft], ctx.drafts)
 
     def test_multiple_reviewers_require_combiner(self) -> None:
         ctx = _ctx()
         with self.assertRaises(SystemExit):
-            wrapper.review_pr(
+            review_pipeline.review_pr(
                 ctx,
                 [_FakeReviewer("a", Review("ok_approve", model="a")),
                  _FakeReviewer("b", Review("ok_approve", model="b"))],
@@ -142,7 +143,7 @@ class ReviewPrTests(unittest.TestCase):
         d2 = Review("major_request_changes", "issue2", model="b")
         merged = Review("major_request_changes", "verified+merged", model="combiner")
         combiner = _FakeReviewer("combiner", merged)
-        out = wrapper.review_pr(ctx, [_FakeReviewer("a", d1), _FakeReviewer("b", d2)], combiner)
+        out = review_pipeline.review_pr(ctx, [_FakeReviewer("a", d1), _FakeReviewer("b", d2)], combiner)
         self.assertIs(out, merged)
         self.assertEqual([d1, d2], ctx.drafts)
         self.assertEqual([d1, d2], combiner.seen_drafts)
@@ -155,7 +156,7 @@ class ReviewPrTests(unittest.TestCase):
         survivor = Review("major_request_changes", "found it", model="openai:gpt-5.4")
         combiner = _FakeReviewer("combiner", Review("ok_approve", model="combiner"))
         with self.assertLogs("llm_review_api", level="ERROR"):
-            out = wrapper.review_pr(
+            out = review_pipeline.review_pr(
                 ctx,
                 [_FakeReviewer("a", survivor), _FailingReviewer("zai:glm-5.2")],
                 combiner,
@@ -171,7 +172,7 @@ class ReviewPrTests(unittest.TestCase):
         merged = Review("major_request_changes", "merged", model="combiner")
         combiner = _FakeReviewer("combiner", merged)
         with self.assertLogs("llm_review_api", level="ERROR"):
-            out = wrapper.review_pr(
+            out = review_pipeline.review_pr(
                 ctx,
                 [_FakeReviewer("a", d1), _FailingReviewer("b"), _FakeReviewer("c", d3)],
                 combiner,
@@ -182,7 +183,7 @@ class ReviewPrTests(unittest.TestCase):
     def test_all_reviewers_failing_aborts(self) -> None:
         ctx = _ctx()
         with self.assertLogs("llm_review_api", level="ERROR"), self.assertRaises(RuntimeError):
-            wrapper.review_pr(
+            review_pipeline.review_pr(
                 ctx, [_FailingReviewer("a"), _FailingReviewer("b")], None,
             )
 

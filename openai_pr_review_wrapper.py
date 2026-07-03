@@ -93,13 +93,11 @@ from llm_review_api import (
     ENGAGE,
     EXIT_BAD_MODEL_OUTPUT,
     TERMINAL_ROUTES,
-    Z_AI_ANTHROPIC_URL,
     BadModelOutput,
-    Review,
     ReviewContext,
-    Reviewer,
-    run_parallel,
 )
+import review_pipeline
+from review_pipeline import make_reviewer, review_pr
 import podman_host
 import podman_repos
 from llm_prompt import (
@@ -1411,96 +1409,6 @@ def run_triage_stage(
     return dict(validated)
 
 
-def make_reviewer(
-    spec: str,
-    *,
-    args: argparse.Namespace,
-    resources: OpenAIResources | None,
-    role: str,
-    verbose: bool,
-) -> Reviewer:
-    """Build a ``Reviewer`` from a ``provider:model[@effort]`` spec.
-
-    ``openai:<m>`` (or a bare ``<m>``) -> OpenAIReviewer reusing the shared
-    OpenAI resources (``resources`` must not be None for this provider).
-    ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` -> AnthropicReviewer
-    pointed at z.ai's Anthropic endpoint (GLM). The Anthropic module (and
-    its SDK) is imported only when actually requested.
-
-    ``@effort`` sets that reviewer's effort: an OpenAI reasoning effort
-    (overriding --reasoning-effort for this pass), or an Anthropic/GLM
-    thinking effort (``ANTHROPIC_EFFORTS``; no suffix keeps the provider
-    default).
-    """
-    spec_body, sep, effort = spec.partition("@")
-    if not sep:
-        effort = None
-    provider, sep, model = spec_body.partition(":")
-    if not sep:
-        provider, model = "openai", spec_body
-    if not model:
-        raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
-
-    if provider == "openai":
-        return OpenAIReviewer(args, resources, model=model, role=role, effort=effort)
-    if provider in ("anthropic", "zai"):
-        from anthropic_reviewer import AnthropicReviewer
-
-        base_url = Z_AI_ANTHROPIC_URL if provider == "zai" else None
-        api_key_env = "ZAI_API_KEY" if provider == "zai" else "ANTHROPIC_API_KEY"
-        try:
-            return AnthropicReviewer(
-                model,
-                name=f"{provider}:{model}",
-                role=role,
-                base_url=base_url,
-                api_key_env=api_key_env,
-                max_tool_rounds=args.podman_max_tool_rounds,
-                exec_timeout_s=args.podman_exec_timeout,
-                effort=effort,
-                verbose=verbose,
-                debug_dir=(
-                    args.debug_response_dir
-                    if resources is not None and resources.debug_dir_specified else None
-                ),
-            )
-        except ValueError as exc:  # invalid @effort suffix
-            raise SystemExit(f"--model {spec!r}: {exc}")
-    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai)")
-
-
-def review_pr(
-    ctx: ReviewContext,
-    model_reviewers: list[Reviewer],
-    combiner: Reviewer | None,
-) -> Review:
-    """Run the model reviewers, then optionally the combiner, over ``ctx``.
-
-    One model reviewer runs inline; several run concurrently (each gets its
-    own shell via ``ctx.new_shell``) and reviewers that fail are dropped by
-    ``run_parallel``. Their drafts accumulate on ``ctx`` so the combiner can
-    verify and merge them; a single (configured or surviving) draft is
-    returned as-is since there is nothing to merge. Without a combiner
-    exactly one model reviewer is required.
-    """
-    if len(model_reviewers) == 1:
-        drafts = [model_reviewers[0].review(ctx)]
-    else:
-        drafts = run_parallel(model_reviewers, ctx)
-    ctx.drafts.extend(drafts)
-
-    if combiner is None:
-        if len(drafts) != 1:
-            raise SystemExit("more than one --model requires --combine-model to merge them")
-        return drafts[0]
-    if len(drafts) == 1:
-        logger.info("only one draft available; skipping the combine stage")
-        return drafts[0]
-
-    logger.info("combine stage: %s merging %d drafts", combiner.name, len(drafts))
-    return combiner.review(ctx)
-
-
 def open_review_container_shell(
     remote_host: podman_host.RemoteHost,
     repo_specs: list[podman_repos.RepoSpec],
@@ -1545,6 +1453,7 @@ def main() -> int:
         openai_common.logger,
         openai_reviewer.logger,
         openai_vector_store.logger,
+        review_pipeline.logger,
         openai_container.logger,
         openai_container_pool.logger,
         podman_host.logger,

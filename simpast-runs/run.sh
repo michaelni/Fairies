@@ -27,6 +27,8 @@
 #   TIER        OpenAI service tier            (default flex)
 #   BACKEND     LLM shell container backend    (default openai; or podman)
 #   PODMAN_SSH  ssh dest for BACKEND=podman    (e.g. fairy@192.168.2.4)
+#   TREE        checkout to run fairy from     (default this repo)
+#   WRAPPER_EXTRA  extra wrapper args, e.g. "--extra-model zai:glm-5.2 --combine-model openai:gpt-5.4"
 #
 # BACKEND=podman runs the LLM shell in an ephemeral Podman container on
 # PODMAN_SSH instead of the OpenAI container; provision that host first
@@ -48,8 +50,9 @@
 #     bash simpast-runs/run.sh 8fee6d5 experiment/test-base
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "${TREE:-$(dirname "$0")/..}"
 ROOT=$(pwd)
+WRAPPER_EXTRA=${WRAPPER_EXTRA:-}
 
 PRS=(${PRS:-22290 22337 22624 20997})
 CUTOFF=${CUTOFF:-2026-04-23T20:00:00+0000}
@@ -103,7 +106,7 @@ run_one() {
         --llm-parallelism "${#PRS[@]}" \
         --llm-review-cmd "./openai_pr_review_wrapper.py \
             --repo-root $PATCH_REPO $extra \
-            $CONTAINER_ARGS \
+            $CONTAINER_ARGS $WRAPPER_EXTRA \
             --model gpt-5.4 --triage-model gpt-5.4-mini \
             --reasoning-effort high \
             --service-tier $TIER --reasoning-summary detailed \

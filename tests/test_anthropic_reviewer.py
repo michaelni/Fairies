@@ -13,6 +13,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -196,6 +197,36 @@ class EffortThinkingTests(unittest.TestCase):
     def test_unknown_effort_rejected(self) -> None:
         with self.assertRaises(ValueError):
             anthropic_reviewer.AnthropicReviewer("glm-5.2", name="zai:glm-5.2", effort="xhigh")
+
+    def test_client_gets_explicit_timeout(self) -> None:
+        # Regression (production 2026-07-03, PR 22592): with the SDK-default
+        # client timeout, anthropic's static pre-flight rejects non-streaming
+        # requests whose max_tokens could take >10 min to generate
+        # ("Streaming is required for operations that may take longer than
+        # 10 minutes", anthropic 0.115.0 _calculate_nonstreaming_timeout,
+        # threshold max_tokens > 128000*600/3600 = 21333). The "medium"
+        # thinking budget grew max_tokens to 16000+8192 = 24192, so every
+        # GLM draft died before a single request. An explicit client
+        # timeout opts out of that pre-flight.
+        recorded: dict = {}
+
+        class _Recorder:
+            def __init__(self, **kwargs: object) -> None:
+                recorded.update(kwargs)
+
+        with mock.patch.object(anthropic_reviewer, "Anthropic", _Recorder), \
+                mock.patch.object(anthropic_reviewer, "load_api_key",
+                                  return_value="k"):
+            anthropic_reviewer.AnthropicReviewer(
+                "glm-5.2", name="zai:glm-5.2", effort="medium",
+            )._client()
+        self.assertEqual(
+            anthropic_reviewer.ANTHROPIC_TIMEOUT_S, recorded["timeout"],
+        )
+        budget = anthropic_reviewer.EFFORT_THINKING_BUDGETS["medium"]
+        self.assertGreater(  # the exact config that hit the pre-flight
+            anthropic_reviewer.DEFAULT_ANTHROPIC_MAX_TOKENS + budget, 21333,
+        )
 
     def test_thinking_blocks_are_replayed_with_signature(self) -> None:
         # The Messages API rejects tool-result turns unless the assistant's

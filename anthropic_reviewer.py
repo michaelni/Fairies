@@ -77,6 +77,13 @@ DEFAULT_ANTHROPIC_MAX_TOKENS = 16_000
 # ``max_tokens`` grows by the budget since it covers thinking + output.
 EFFORT_THINKING_BUDGETS = {"off": 0, "low": 2048, "medium": 8192, "high": 24576}
 
+# Per-request timeout. Also opts out of the SDK's static pre-flight check
+# that rejects non-streaming requests whose max_tokens COULD take >10 min
+# to generate (raised for max_tokens > 21333, e.g. 16000 + the "medium"
+# thinking budget). Our tool-round responses stay far below max_tokens,
+# so the pessimistic estimate does not apply.
+ANTHROPIC_TIMEOUT_S = 900.0
+
 _SUBMIT_REVIEW = "submit_review"
 _SHELL = "shell"
 
@@ -166,7 +173,9 @@ class AnthropicReviewer(Reviewer):
         api_key = load_api_key(self.api_key_env)
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is not set (env or .env)")
-        kwargs: dict[str, object] = {"api_key": api_key, "max_retries": 0}
+        kwargs: dict[str, object] = {
+            "api_key": api_key, "max_retries": 0, "timeout": ANTHROPIC_TIMEOUT_S,
+        }
         if self.base_url:
             kwargs["base_url"] = self.base_url
         return Anthropic(**kwargs)

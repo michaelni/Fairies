@@ -63,14 +63,20 @@ R_PROMPT_OPENING = """You are an expert software engineer reviewing a pull reque
 
 #- Do not do things that hinder or slow down advancing this pull request. #It was suggested many time this can be misundetstood and lead to unintended behavior
 
-TR_PROMPT_GENERAL_RULES = """##General Rules
+def model_label(model: str) -> str:
+    """User-facing model label: vendor prefix stripped, uppercased."""
+    return (model or "unknown").rpartition(":")[2].upper()
+
+
+def tr_prompt_general_rules(model: str) -> str:
+    return f"""##General Rules
 - if something looks odd, but you cannot determine if its wrong, you can ask the PR author if its intended.
 - determine whether the most useful contribution is: review, helpful reply, process clarification, or no action.
 - Do not invent issues.
 - Cite exactly the references relevant to your reply.
 - You can reply to questions asked to the current reviewer identity when they are on topic or help the FFmpeg Project.
 - Do not reply to off topic questions or requests
-- Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM" toward the begin of the message. Do not imply that you will not find more issues in a future review.
+- Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM-{model_label(model)}" toward the begin of the message. Do not imply that you will not find more issues in a future review.
 - workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.
 - try hard to find all issues
 
@@ -337,8 +343,8 @@ Pick exactly one value for ``route``:
   Put the FULL reply in ``message``. Keep it short, friendly, and
   focused on the single point being addressed. Follow the normal
   output guideline (Markdown, no HTML, no markdown fences, include
-  "LLM" near the beginning, do not link to places that sell
-  specifications).
+  the "LLM-..." prefix from the General Rules near the beginning,
+  do not link to places that sell specifications).
 
 - engage: a full reviewer pass should run now. Typical cases:
   * After our last reply, the author has pushed new code that needs
@@ -470,12 +476,13 @@ def make_developer_prompt(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     *,
+    model: str,
     ci_failures_present: bool = False,
     role_task: str = "",
 ) -> str:
     return (
         R_PROMPT_OPENING
-        + TR_PROMPT_GENERAL_RULES
+        + tr_prompt_general_rules(model)
         + _prompt_reviewer_identity(reviewer_username)
         + R_PROMPT_REVIEWER_ROLE
         + role_task
@@ -536,6 +543,7 @@ def make_combiner_developer_prompt(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     *,
+    model: str,
     ci_failures_present: bool = False,
 ) -> str:
     # A combiner is a reviewer with one extra instruction block, so it
@@ -551,6 +559,7 @@ def make_combiner_developer_prompt(
         code_interpreter_enabled,
         podman_shell_enabled,
         container_repo_mounts,
+        model=model,
         ci_failures_present=ci_failures_present,
         role_task=C_PROMPT_COMBINER_TASK,
     )
@@ -565,13 +574,14 @@ def make_triage_developer_prompt(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     *,
+    model: str,
     ci_triage_mode: bool = False,
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
 ) -> str:
     return (
         T_PROMPT_OPENING
-        + TR_PROMPT_GENERAL_RULES
+        + tr_prompt_general_rules(model)
         + _prompt_reviewer_identity(reviewer_username)
         + _prompt_attached_context_and_tools(
             # Triage never receives the source bundle; the bundle upload
@@ -745,8 +755,7 @@ def make_combiner_user_text(drafts: list[Review]) -> str:
         # "openai:gpt-5.4" -> "GPT-5.4": vendor prefix adds nothing, and
         # numbering the drafts made the combiner attribute issues to
         # "Draft 2" instead of the model name.
-        label = (draft.model or "unknown").rpartition(":")[2].upper()
-        parts.append(f"----- Draft review from {label} -----\n")
+        parts.append(f"----- Draft review from {model_label(draft.model)} -----\n")
         parts.append(f"classification: {draft.classification}\n")
         parts.append(f"message:\n{draft.message}\n\n")
     return "".join(parts)
@@ -779,12 +788,14 @@ def generate_llm_prompt(
 ) -> str:
     """Vendor-neutral developer-prompt entry point.
 
-    ``vendor`` and ``model`` are accepted today and recorded in the
-    signature so future Anthropic / local wrappers can plumb them
-    through; no per-vendor or per-model branching exists yet and none
-    should be added without a concrete second consumer to pin against.
+    ``model`` names the model this prompt is for; it is woven into the
+    general rules so posted messages carry an ``LLM-<MODEL>`` prefix.
+    ``vendor`` is accepted and recorded in the signature so future
+    wrappers can plumb it through; no per-vendor branching exists yet and
+    none should be added without a concrete second consumer to pin
+    against.
     """
-    del vendor, model  # reserved; see docstring
+    del vendor  # reserved; see docstring
 
     if role == "reviewer":
         return make_developer_prompt(
@@ -796,6 +807,7 @@ def generate_llm_prompt(
             "code_interpreter"     in features,
             "podman_shell"         in features,
             container_repo_mounts,
+            model=model,
             ci_failures_present=ci_triage_mode,
         )
     if role == "combiner":
@@ -808,6 +820,7 @@ def generate_llm_prompt(
             "code_interpreter"     in features,
             "podman_shell"         in features,
             container_repo_mounts,
+            model=model,
             ci_failures_present=ci_triage_mode,
         )
     if role == "triager":
@@ -819,6 +832,7 @@ def generate_llm_prompt(
             "code_interpreter"     in features,
             "podman_shell"         in features,
             container_repo_mounts,
+            model=model,
             ci_triage_mode=ci_triage_mode,
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,

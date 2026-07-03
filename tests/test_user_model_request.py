@@ -156,6 +156,7 @@ class TriagePromptShapeTests(unittest.TestCase):
             code_interpreter_enabled=False,
             podman_shell_enabled=False,
             container_repo_mounts=[],
+            model="gpt-5.4-mini",
             allowed_models=["gpt-5.5"],
         )
         self.assertIn("gpt-5.5", prompt)
@@ -172,6 +173,7 @@ class TriagePromptShapeTests(unittest.TestCase):
             code_interpreter_enabled=False,
             podman_shell_enabled=False,
             container_repo_mounts=[],
+            model="gpt-5.4-mini",
         )
         self.assertNotIn("requested_model", prompt)
         self.assertNotIn("requested_effort", prompt)
@@ -188,6 +190,7 @@ class PodmanContainerLocationsPromptTests(unittest.TestCase):
             vector_store_search_enabled=False, web_search_enabled=False,
             code_interpreter_enabled=False, podman_shell_enabled=True,
             container_repo_mounts=["/work/ffmpeg", "/work/all_ffmpeg"],
+            model="gpt-5.4",
         )
         self.assertIn("/work/all_ffmpeg", prompt)
         self.assertIn("forgejo_git/pulls/", prompt)

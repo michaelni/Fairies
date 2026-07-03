@@ -1410,6 +1410,13 @@ def run_responses_resolving_podman_shell(
         mtc = initial_kwargs.get("max_tool_calls")
         if mtc is not None:
             follow["max_tool_calls"] = mtc
+        # ``text`` (the json_schema output format) is per-request and NOT
+        # inherited via previous_response_id; without it a follow-up round
+        # can answer off-schema (seen: {"class": ...} instead of
+        # {"classification": ...}, failing the whole review attempt).
+        txt = initial_kwargs.get("text")
+        if txt is not None:
+            follow["text"] = txt
         response = create_and_dump(follow, f"{what} (podman shell follow-up)")
 
 

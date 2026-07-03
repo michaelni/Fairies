@@ -172,6 +172,54 @@ class RunPodmanShellLoopTests(unittest.TestCase):
             self.assertEqual("/tmp/dbg", call.kwargs["debug_dir"])
             self.assertEqual({"pull_request": {"number": 7}}, call.kwargs["wrapper_request"])
 
+    def test_follow_up_forwards_text_format(self) -> None:
+        # Regression: the json_schema output format is per-request and not
+        # inherited via previous_response_id. Without forwarding it, a
+        # review that ends after shell rounds could answer off-schema
+        # (observed 2026-07-03, ab-gptonly HEAD_3 PR 20997: three straight
+        # attempts returned {"class": ...} instead of {"classification":
+        # ...} and the review failed).
+        session = mock.Mock(spec=lc.ContainerShellSession)
+        session.exec.return_value = lc.ExecResult(
+            exit_code=0, stdout="", stderr="", duration_s=0.0,
+            stdout_truncated=False, stderr_truncated=False,
+        )
+        n = {"i": 0}
+
+        def dump(_rsp: object) -> dict:
+            n["i"] += 1
+            if n["i"] == 1:
+                return {"output": [{
+                    "type": "function_call", "call_id": "c1",
+                    "name": "shell", "arguments": json.dumps({"command": "true"}),
+                }]}
+            return {"output": [{"type": "message", "content": []}]}
+
+        text_format = {"format": {"type": "json_schema", "name": "review_verdict"}}
+        creates: list[dict] = []
+        client = mock.Mock()
+        client.responses.create.side_effect = (
+            lambda **kw: (creates.append(kw), mock.Mock(id=f"r{n['i']}"))[1]
+        )
+        with mock.patch.object(wrapper, "response_to_debug_json", side_effect=dump), \
+                mock.patch.object(wrapper, "call_with_rate_limit_retry",
+                                  side_effect=lambda fn, **kw: fn()):
+            wrapper.run_responses_resolving_podman_shell(
+                client,
+                initial_kwargs={
+                    "model": "gpt-x",
+                    "tools": [{"type": "function", "name": "shell"}],
+                    "text": text_format,
+                },
+                podman_shell_session=session,
+                max_tool_rounds=10,
+                max_shell_timeout_s=60.0,
+                what="test",
+                verbose=False,
+            )
+        self.assertEqual(2, len(creates))
+        self.assertEqual(text_format, creates[1]["text"])
+
     def test_max_tool_rounds_zero_means_unlimited(self) -> None:
         session = mock.Mock(spec=lc.ContainerShellSession)
         session.exec.return_value = lc.ExecResult(

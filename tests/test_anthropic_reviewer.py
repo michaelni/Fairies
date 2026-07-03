@@ -37,11 +37,15 @@ if "anthropic" not in sys.modules:
     class InternalServerError(_E):
         pass
 
+    class OverloadedError(_E):
+        pass
+
     fake.Anthropic = object  # replaced per-test via _client
     fake.APIConnectionError = APIConnectionError
     fake.APITimeoutError = APITimeoutError
     fake.RateLimitError = RateLimitError
     fake.InternalServerError = InternalServerError
+    fake.OverloadedError = OverloadedError
     sys.modules["anthropic"] = fake
 
 import podman_host  # noqa: E402

@@ -54,6 +54,7 @@ from anthropic import (
     APIConnectionError,
     APITimeoutError,
     InternalServerError,
+    OverloadedError,
     RateLimitError,
 )
 
@@ -68,19 +69,24 @@ logger = logging.getLogger(__name__)
 # Retry budget for rate-limit (429) / overloaded (529) / 5xx responses.
 DEFAULT_ANTHROPIC_RETRIES = 30
 
-# z.ai signals a permanent "out of balance / no resource package" billing
-# state as an HTTP 429 with this error code. It is NOT a transient rate
-# limit, so it must not consume the retry budget (that just hammers a
-# dead-until-funded endpoint). Anthropic proper does not use this code.
-# Observed on z.ai's Anthropic-compatible endpoint 2026-06; the code is
-# stable per z.ai's error-code table.
-ZAI_INSUFFICIENT_BALANCE_CODE = "1113"
+# z.ai signals two "stop calling, waiting won't help soon" states as an
+# HTTP 429 with these error codes (Anthropic proper uses neither; both
+# observed on z.ai's Anthropic-compatible endpoint and stable per z.ai's
+# error-code table):
+#   1113 -- out of balance / no resource package: dead until re-funded
+#           (observed 2026-06).
+#   1308 -- 5-hour usage window exhausted: dead until the window resets,
+#           which can be hours away (observed 2026-07).
+# Neither must consume the retry budget; retrying just hammers a dead
+# endpoint while the caller's deadline runs out.
+ZAI_QUOTA_EXHAUSTED_CODES = frozenset({"1113", "1308"})
 
 T = TypeVar("T")
 
 
-def _is_balance_exhausted(exc: Exception) -> bool:
-    """True for a permanent billing/quota 429 (z.ai ``code 1113``).
+def _is_quota_exhausted(exc: Exception) -> bool:
+    """True for a billing/quota 429 that retrying cannot fix soon
+    (``ZAI_QUOTA_EXHAUSTED_CODES``).
 
     ``exc.body`` is the vendor's JSON error object (attacker/vendor-shaped,
     so checked structurally at this boundary); fall back to the human
@@ -89,10 +95,11 @@ def _is_balance_exhausted(exc: Exception) -> bool:
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
         error = body.get("error")
-        if isinstance(error, dict) and str(error.get("code")) == ZAI_INSUFFICIENT_BALANCE_CODE:
+        if isinstance(error, dict) and str(error.get("code")) in ZAI_QUOTA_EXHAUSTED_CODES:
             return True
     text = str(getattr(exc, "message", "") or exc).lower()
-    return "insufficient balance" in text or "no resource package" in text
+    return ("insufficient balance" in text or "no resource package" in text
+            or "usage limit reached" in text)
 
 
 def load_api_key(env_var: str) -> str | None:
@@ -143,14 +150,19 @@ def call_with_anthropic_retry(func: Callable[[], T], *, what: str, verbose: bool
             # APITimeoutError is a subclass of APIConnectionError; one clause
             # covers both. Propagate to the outer caller.
             raise
-        except (RateLimitError, InternalServerError) as exc:
-            if isinstance(exc, RateLimitError) and _is_balance_exhausted(exc):
-                # Permanent billing state dressed as a 429: fail fast rather
-                # than retry, so an unfunded/exhausted account is not hammered.
+        # OverloadedError is the SDK's dedicated 529 class; it is NOT a
+        # subclass of InternalServerError (which only covers >=500 without
+        # a dedicated class), so it must be listed explicitly. Observed
+        # from z.ai as code 1305 during peak load 2026-07.
+        except (RateLimitError, InternalServerError, OverloadedError) as exc:
+            if isinstance(exc, RateLimitError) and _is_quota_exhausted(exc):
+                # Balance / usage-window exhaustion dressed as a 429: fail
+                # fast rather than hammer an endpoint that stays dead for
+                # hours (until re-funded or the usage window resets).
                 logger.error(
-                    "anthropic %s during %s: balance exhausted / billing error; "
-                    "not retrying (fund the account)",
-                    type(exc).__name__, what,
+                    "anthropic %s during %s: balance or usage window exhausted; "
+                    "not retrying: %s",
+                    type(exc).__name__, what, exc,
                 )
                 raise
             last_exc = exc

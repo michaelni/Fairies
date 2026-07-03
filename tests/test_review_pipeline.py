@@ -27,7 +27,7 @@ if "anthropic" not in sys.modules:
         pass
 
     fake.Anthropic = object
-    for _name in ("APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError"):
+    for _name in ("APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError", "OverloadedError"):
         setattr(fake, _name, type(_name, (_E,), {}))
     sys.modules["anthropic"] = fake
 

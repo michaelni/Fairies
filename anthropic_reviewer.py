@@ -60,13 +60,22 @@ from llm_review_api import (
 from anthropic_common import call_with_anthropic_retry, load_api_key
 from shell_tool import exec_shell_call
 
-__all__ = ["DEFAULT_ANTHROPIC_MAX_TOKENS", "AnthropicReviewer"]
+__all__ = [
+    "DEFAULT_ANTHROPIC_MAX_TOKENS",
+    "EFFORT_THINKING_BUDGETS",
+    "AnthropicReviewer",
+]
 
 logger = logging.getLogger(__name__)
 
 # Conservative output-token budget that every current Anthropic / GLM model
 # accepts; raise per-model via the constructor when a model allows more.
 DEFAULT_ANTHROPIC_MAX_TOKENS = 16_000
+
+# ``effort`` -> extended-thinking token budget. ``off`` disables thinking
+# entirely; no effort keeps the provider's default (no ``thinking`` sent).
+# ``max_tokens`` grows by the budget since it covers thinking + output.
+EFFORT_THINKING_BUDGETS = {"off": 0, "low": 2048, "medium": 8192, "high": 24576}
 
 _SUBMIT_REVIEW = "submit_review"
 _SHELL = "shell"
@@ -116,6 +125,10 @@ class AnthropicReviewer(Reviewer):
     Anthropic; pass z.ai's Anthropic endpoint + ``ZAI_API_KEY`` for GLM.
     ``name`` is the stable label recorded on the ``Review`` (e.g.
     ``"anthropic:claude-opus-4"`` or ``"zai:glm-4.6"``).
+
+    ``effort`` is an ``EFFORT_THINKING_BUDGETS`` key controlling extended
+    thinking; ``None`` (default) sends no ``thinking`` parameter so the
+    provider default applies.
     """
 
     def __init__(
@@ -129,9 +142,14 @@ class AnthropicReviewer(Reviewer):
         max_tokens: int = DEFAULT_ANTHROPIC_MAX_TOKENS,
         max_tool_rounds: int = 0,
         exec_timeout_s: float = 600.0,
+        effort: str | None = None,
         verbose: bool = False,
         debug_dir: str | None = None,
     ) -> None:
+        if effort is not None and effort not in EFFORT_THINKING_BUDGETS:
+            raise ValueError(
+                f"effort {effort!r} not in {sorted(EFFORT_THINKING_BUDGETS)}"
+            )
         self.model = model
         self.name = name
         self.role = role
@@ -140,6 +158,7 @@ class AnthropicReviewer(Reviewer):
         self.max_tokens = max_tokens
         self.max_tool_rounds = max_tool_rounds
         self.exec_timeout_s = exec_timeout_s
+        self.effort = effort
         self.verbose = verbose
         self.debug_dir = debug_dir
 
@@ -213,6 +232,15 @@ class AnthropicReviewer(Reviewer):
                     "tools": tools,
                     "max_tokens": self.max_tokens,
                 }
+                if self.effort is not None:
+                    budget = EFFORT_THINKING_BUDGETS[self.effort]
+                    if budget == 0:
+                        request_kwargs["thinking"] = {"type": "disabled"}
+                    else:
+                        request_kwargs["thinking"] = {
+                            "type": "enabled", "budget_tokens": budget,
+                        }
+                        request_kwargs["max_tokens"] = self.max_tokens + budget
                 response = call_with_anthropic_retry(
                     lambda: client.messages.create(**request_kwargs),
                     what="messages.create",
@@ -297,4 +325,16 @@ def _echo_content(content: list[object]) -> list[JsonObject]:
                 "name": block.name,
                 "input": block.input,
             })
+        # With extended thinking enabled the API rejects a tool-result
+        # turn unless the assistant's thinking blocks are replayed
+        # unmodified (signature included); see the Messages API extended
+        # thinking documentation ("Preserving thinking blocks").
+        elif kind == "thinking":
+            blocks.append({
+                "type": "thinking",
+                "thinking": block.thinking,
+                "signature": block.signature,
+            })
+        elif kind == "redacted_thinking":
+            blocks.append({"type": "redacted_thinking", "data": block.data})
     return blocks

@@ -47,6 +47,7 @@ def _ctx() -> ReviewContext:
 def _args() -> argparse.Namespace:
     return argparse.Namespace(
         model="gpt-5.4-mini", podman_max_tool_rounds=0, podman_exec_timeout=600.0,
+        reasoning_effort="high",
     )
 
 
@@ -94,6 +95,27 @@ class MakeReviewerTests(unittest.TestCase):
     def test_unknown_provider_rejected(self) -> None:
         with self.assertRaises(SystemExit):
             wrapper.make_reviewer("grok:x", args=_args(), resources=None, role="reviewer", verbose=False)
+
+    def test_effort_suffix_overrides_openai_reasoning_effort(self) -> None:
+        r = wrapper.make_reviewer("openai:gpt-5.5@xhigh", args=_args(), resources=None, role="reviewer", verbose=False)
+        self.assertEqual("gpt-5.5", r.model)
+        self.assertEqual("xhigh", r.effort)
+        # Without a suffix the shared --reasoning-effort applies.
+        r = wrapper.make_reviewer("openai:gpt-5.5", args=_args(), resources=None, role="reviewer", verbose=False)
+        self.assertEqual("high", r.effort)
+
+    def test_effort_suffix_sets_anthropic_thinking_effort(self) -> None:
+        r = wrapper.make_reviewer("zai:glm-5.2@low", args=_args(), resources=None, role="reviewer", verbose=False)
+        self.assertIsInstance(r, AnthropicReviewer)
+        self.assertEqual("glm-5.2", r.model)
+        self.assertEqual("low", r.effort)
+        self.assertIsNone(
+            wrapper.make_reviewer("zai:glm-5.2", args=_args(), resources=None, role="reviewer", verbose=False).effort
+        )
+
+    def test_invalid_anthropic_effort_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            wrapper.make_reviewer("zai:glm-5.2@xhigh", args=_args(), resources=None, role="reviewer", verbose=False)
 
 
 class ReviewPrTests(unittest.TestCase):

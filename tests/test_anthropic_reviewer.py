@@ -165,5 +165,62 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         self.assertEqual(1, len(client.calls[0]["tools"]))
 
 
+class EffortThinkingTests(unittest.TestCase):
+    def _submit(self) -> _Message:
+        return _Message([_Block(type="tool_use", id="t1", name="submit_review",
+                                input={"classification": "ok_approve", "message": ""})])
+
+    def _run(self, effort: str | None) -> dict:
+        client = _ScriptedClient([self._submit()])
+        reviewer = anthropic_reviewer.AnthropicReviewer(
+            "glm-5.2", name="zai:glm-5.2", effort=effort,
+        )
+        reviewer._client = lambda: client  # type: ignore[method-assign]
+        reviewer.review(_ctx(None))
+        return client.calls[0]
+
+    def test_default_sends_no_thinking_parameter(self) -> None:
+        self.assertNotIn("thinking", self._run(None))
+
+    def test_off_disables_thinking(self) -> None:
+        self.assertEqual({"type": "disabled"}, self._run("off")["thinking"])
+
+    def test_effort_sets_budget_and_grows_max_tokens(self) -> None:
+        call = self._run("low")
+        budget = anthropic_reviewer.EFFORT_THINKING_BUDGETS["low"]
+        self.assertEqual({"type": "enabled", "budget_tokens": budget}, call["thinking"])
+        self.assertEqual(
+            anthropic_reviewer.DEFAULT_ANTHROPIC_MAX_TOKENS + budget, call["max_tokens"],
+        )
+
+    def test_unknown_effort_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            anthropic_reviewer.AnthropicReviewer("glm-5.2", name="zai:glm-5.2", effort="xhigh")
+
+    def test_thinking_blocks_are_replayed_with_signature(self) -> None:
+        # The Messages API rejects tool-result turns unless the assistant's
+        # thinking blocks are echoed unmodified (signature included).
+        shell = _FakeShell()
+        client = _ScriptedClient([
+            _Message([
+                _Block(type="thinking", thinking="check the log", signature="sig1"),
+                _Block(type="tool_use", id="t1", name="shell",
+                       input={"command": "git log -1"}),
+            ]),
+            self._submit(),
+        ])
+        reviewer = anthropic_reviewer.AnthropicReviewer(
+            "glm-5.2", name="zai:glm-5.2", effort="medium",
+        )
+        reviewer._client = lambda: client  # type: ignore[method-assign]
+        reviewer.review(_ctx(shell))
+        echoed = client.calls[1]["messages"][1]["content"]
+        self.assertEqual(
+            {"type": "thinking", "thinking": "check the log", "signature": "sig1"},
+            echoed[0],
+        )
+        self.assertEqual("tool_use", echoed[1]["type"])
+
+
 if __name__ == "__main__":
     unittest.main()

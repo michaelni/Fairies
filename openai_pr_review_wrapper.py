@@ -406,18 +406,20 @@ def parse_args() -> argparse.Namespace:
         "--extra-model",
         action="append",
         default=[],
-        metavar="PROVIDER:MODEL",
+        metavar="PROVIDER:MODEL[@EFFORT]",
         help=(
             "Add another reviewer to the ensemble, e.g. 'anthropic:claude-opus-4' "
             "or 'zai:glm-4.6'. Repeat for more. All reviewers (the --model OpenAI "
             "pass plus each --extra-model) run on the same PR; with more than one "
-            "you must pass --combine-model to merge their drafts."
+            "you must pass --combine-model to merge their drafts. '@EFFORT' sets "
+            "that reviewer's effort: an OpenAI reasoning effort, or off/low/"
+            "medium/high as an Anthropic/GLM thinking budget."
         ),
     )
     p.add_argument(
         "--combine-model",
         default=None,
-        metavar="PROVIDER:MODEL",
+        metavar="PROVIDER:MODEL[@EFFORT]",
         help=(
             "Reviewer that verifies and combines the ensemble drafts into the "
             "final review (e.g. 'openai:gpt-5.4'). Required when more than one "
@@ -2027,11 +2029,13 @@ class OpenAIReviewer(Reviewer):
         *,
         model: str | None = None,
         role: str = "reviewer",
+        effort: str | None = None,
     ) -> None:
         self.args = args
         self.res = resources
         self.model = model or args.model
         self.role = role
+        self.effort = effort or args.reasoning_effort
         self.name = f"openai:{self.model}"
 
     def review(self, ctx: ReviewContext) -> Review:
@@ -2101,8 +2105,8 @@ class OpenAIReviewer(Reviewer):
         if args.top_p is not None:
             response_kwargs["top_p"] = args.top_p
         reasoning: JsonObject = {}
-        if args.reasoning_effort:
-            reasoning["effort"] = args.reasoning_effort
+        if self.effort:
+            reasoning["effort"] = self.effort
         if args.reasoning_summary:
             reasoning["summary"] = args.reasoning_summary
         if reasoning:
@@ -2123,7 +2127,7 @@ class OpenAIReviewer(Reviewer):
                 if isinstance(tool, dict)
             ]
             source_bundle_bytes = len(ctx.source_bundle.encode("utf-8")) if ctx.source_bundle is not None else 0
-            logger.debug("responses.create start model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.model, args.reasoning_effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, args.max_output_tokens)
+            logger.debug("responses.create start model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.model, self.effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, args.max_output_tokens)
 
         create_started = time.monotonic()
         try:
@@ -2233,41 +2237,53 @@ def make_reviewer(
     role: str,
     verbose: bool,
 ) -> Reviewer:
-    """Build a ``Reviewer`` from a ``provider:model`` spec.
+    """Build a ``Reviewer`` from a ``provider:model[@effort]`` spec.
 
     ``openai:<m>`` (or a bare ``<m>``) -> OpenAIReviewer reusing the shared
     OpenAI resources (``resources`` must not be None for this provider).
     ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` -> AnthropicReviewer
     pointed at z.ai's Anthropic endpoint (GLM). The Anthropic module (and
     its SDK) is imported only when actually requested.
+
+    ``@effort`` sets that reviewer's effort: an OpenAI reasoning effort
+    (overriding --reasoning-effort for this pass), or an Anthropic/GLM
+    extended-thinking budget key (``EFFORT_THINKING_BUDGETS``; no suffix
+    keeps the provider default).
     """
-    provider, sep, model = spec.partition(":")
+    spec_body, sep, effort = spec.partition("@")
     if not sep:
-        provider, model = "openai", spec
+        effort = None
+    provider, sep, model = spec_body.partition(":")
+    if not sep:
+        provider, model = "openai", spec_body
     if not model:
         raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
 
     if provider == "openai":
-        return OpenAIReviewer(args, resources, model=model, role=role)
+        return OpenAIReviewer(args, resources, model=model, role=role, effort=effort)
     if provider in ("anthropic", "zai"):
         from anthropic_reviewer import AnthropicReviewer
 
         base_url = Z_AI_ANTHROPIC_URL if provider == "zai" else None
         api_key_env = "ZAI_API_KEY" if provider == "zai" else "ANTHROPIC_API_KEY"
-        return AnthropicReviewer(
-            model,
-            name=f"{provider}:{model}",
-            role=role,
-            base_url=base_url,
-            api_key_env=api_key_env,
-            max_tool_rounds=args.podman_max_tool_rounds,
-            exec_timeout_s=args.podman_exec_timeout,
-            verbose=verbose,
-            debug_dir=(
-                args.debug_response_dir
-                if resources is not None and resources.debug_dir_specified else None
-            ),
-        )
+        try:
+            return AnthropicReviewer(
+                model,
+                name=f"{provider}:{model}",
+                role=role,
+                base_url=base_url,
+                api_key_env=api_key_env,
+                max_tool_rounds=args.podman_max_tool_rounds,
+                exec_timeout_s=args.podman_exec_timeout,
+                effort=effort,
+                verbose=verbose,
+                debug_dir=(
+                    args.debug_response_dir
+                    if resources is not None and resources.debug_dir_specified else None
+                ),
+            )
+        except ValueError as exc:  # invalid @effort suffix
+            raise SystemExit(f"--model {spec!r}: {exc}")
     raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai)")
 
 

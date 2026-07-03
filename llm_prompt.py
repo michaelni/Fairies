@@ -737,11 +737,12 @@ def make_combiner_user_text(drafts: list[Review]) -> str:
     parts = [
         "Independent draft reviews to verify and combine. They are internal:\n\n"
     ]
-    for index, draft in enumerate(drafts, start=1):
-        # "openai:gpt-5.4" -> "gpt-5.4": model names are unique on their
-        # own, so drop the vendor prefix from the posted attribution.
-        label = (draft.model or "unknown").rpartition(":")[2]
-        parts.append(f"----- Draft {index} from {label} -----\n")
+    for draft in drafts:
+        # "openai:gpt-5.4" -> "GPT-5.4": vendor prefix adds nothing, and
+        # numbering the drafts made the combiner attribute issues to
+        # "Draft 2" instead of the model name.
+        label = (draft.model or "unknown").rpartition(":")[2].upper()
+        parts.append(f"----- Draft review from {label} -----\n")
         parts.append(f"classification: {draft.classification}\n")
         parts.append(f"message:\n{draft.message}\n\n")
     return "".join(parts)

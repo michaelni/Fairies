@@ -230,6 +230,7 @@ class AnthropicReviewer(Reviewer):
         shell = ctx.new_shell() if use_shell else None
         nudged = False
         rounds = 0
+        conv_path: str | None = None
         try:
             while True:
                 logger.info(
@@ -256,10 +257,11 @@ class AnthropicReviewer(Reviewer):
                     verbose=self.verbose,
                 )
                 if self.debug_dir:
-                    dump_response_debug_artifacts(
+                    conv_path = dump_response_debug_artifacts(
                         response, request_kwargs, wrapper_request=ctx.request,
                         debug_dir=self.debug_dir, verbose=self.verbose,
-                    )
+                        conversation=conv_path,
+                    ) or conv_path
 
                 tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
                 submit = next((b for b in tool_uses if b.name == _SUBMIT_REVIEW), None)

@@ -171,6 +171,10 @@ class RunPodmanShellLoopTests(unittest.TestCase):
         for call in dumped.call_args_list:
             self.assertEqual("/tmp/dbg", call.kwargs["debug_dir"])
             self.assertEqual({"pull_request": {"number": 7}}, call.kwargs["wrapper_request"])
+        # Follow-up rounds append to the file the first round created.
+        self.assertIsNone(dumped.call_args_list[0].kwargs["conversation"])
+        self.assertIs(dumped.return_value,
+                      dumped.call_args_list[1].kwargs["conversation"])
 
     def test_follow_up_forwards_text_format(self) -> None:
         # Regression: the json_schema output format is per-request and not

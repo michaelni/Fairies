@@ -1329,9 +1329,13 @@ def run_responses_resolving_podman_shell(
     With ``debug_dir`` set, EVERY round's response is dumped (paired with
     the exact kwargs that produced it), not just the final one -- the
     intermediate rounds are where the function calls and their outputs
-    live, and each is a separately billed request.
+    live, and each is a separately billed request. All rounds append to
+    the same conversation file.
     """
+    conv_path: str | None = None
+
     def create_and_dump(kwargs: ResponseKwargs, what_label: str) -> object:
+        nonlocal conv_path
         resp = call_with_rate_limit_retry(
             lambda: client.responses.create(**kwargs),
             what=what_label,
@@ -1339,10 +1343,10 @@ def run_responses_resolving_podman_shell(
             retry_transient=False,
         )
         if debug_dir:
-            dump_response_debug_artifacts(
+            conv_path = dump_response_debug_artifacts(
                 resp, kwargs, wrapper_request=wrapper_request,
-                debug_dir=debug_dir, verbose=verbose,
-            )
+                debug_dir=debug_dir, verbose=verbose, conversation=conv_path,
+            ) or conv_path
         return resp
 
     response = create_and_dump(initial_kwargs, what)

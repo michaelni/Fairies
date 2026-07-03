@@ -75,9 +75,16 @@ def dump_response_debug_artifacts(
     wrapper_request: JsonObject | None = None,
     debug_dir: str,
     verbose: bool,
+    conversation: str | None = None,
 ) -> str | None:
-    """Write one ``<response id>.json`` file pairing an LLM API response
-    with the exact request kwargs that produced it (vendor-neutral)."""
+    """Dump one JSONL record pairing an LLM API response with the exact
+    request kwargs that produced it (vendor-neutral); returns the file path.
+
+    Without ``conversation`` a new ``<response id>.jsonl`` is created. Pass
+    a previous call's return value as ``conversation`` to append follow-up
+    tool rounds there, so a whole tool-use conversation lands in one file
+    instead of one file per round.
+    """
     try:
         payload = {
             "response": response_to_debug_json(response),
@@ -85,15 +92,23 @@ def dump_response_debug_artifacts(
         }
         if wrapper_request is not None:
             payload["wrapper_request"] = wrapper_request
-        response_json = payload["response"]
-        response_id = response_json.get("id") if isinstance(response_json, dict) else None
-        stem = response_id if isinstance(response_id, str) and response_id else f"response_{int(time.time())}"
-        out_dir = Path(debug_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"{stem}.json"
-        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-        if verbose:
-            logger.warning("wrote response debug dump to %s", out_path)
+        line = json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n"
+        if conversation:
+            out_path = Path(conversation)
+            with out_path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+            if verbose:
+                logger.warning("appended response debug dump to %s", out_path)
+        else:
+            response_json = payload["response"]
+            response_id = response_json.get("id") if isinstance(response_json, dict) else None
+            stem = response_id if isinstance(response_id, str) and response_id else f"response_{int(time.time())}"
+            out_dir = Path(debug_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"{stem}.jsonl"
+            out_path.write_text(line, encoding="utf-8")
+            if verbose:
+                logger.warning("wrote response debug dump to %s", out_path)
         return str(out_path)
     except Exception as exc:
         logger.warning("failed to write response debug dump: %s", exc)

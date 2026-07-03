@@ -283,6 +283,10 @@ class Reviewer(ABC):
 def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     """Run each reviewer concurrently; return their drafts in input order.
 
+    A reviewer that raises (provider outage, exhausted quota, ...) is
+    dropped with a logged traceback so the surviving drafts still produce
+    a review; only when every reviewer fails is the run aborted.
+
     Each reviewer obtains its own shell via ``ctx.new_shell`` so concurrent
     runs never share a container working tree. Results are gathered only
     after every thread finishes, so the shared ``ctx`` is never mutated
@@ -296,4 +300,18 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
         ", ".join(r.name for r in reviewers),
     )
     with ThreadPoolExecutor(max_workers=len(reviewers)) as executor:
-        return list(executor.map(lambda r: r.review(ctx), reviewers))
+        futures = [executor.submit(r.review, ctx) for r in reviewers]
+    drafts: list[Review] = []
+    failed: list[str] = []
+    for reviewer, future in zip(reviewers, futures):
+        try:
+            drafts.append(future.result())
+        except Exception:
+            failed.append(reviewer.name)
+            logger.exception(
+                "reviewer %s failed; continuing with the surviving drafts",
+                reviewer.name,
+            )
+    if not drafts:
+        raise RuntimeError(f"all reviewers failed: {', '.join(failed)}")
+    return drafts

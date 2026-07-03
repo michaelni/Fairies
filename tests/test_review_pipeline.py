@@ -61,6 +61,14 @@ class _FakeReviewer(Reviewer):
         return self._review
 
 
+class _FailingReviewer(Reviewer):
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def review(self, ctx: ReviewContext) -> Review:
+        raise RuntimeError(f"{self.name}: simulated provider failure")
+
+
 class MakeReviewerTests(unittest.TestCase):
     def test_bare_and_openai_prefix_build_openai(self) -> None:
         for spec in ("gpt-5.4", "openai:gpt-5.4"):
@@ -116,6 +124,45 @@ class ReviewPrTests(unittest.TestCase):
         self.assertIs(out, merged)
         self.assertEqual([d1, d2], ctx.drafts)
         self.assertEqual([d1, d2], combiner.seen_drafts)
+
+    def test_failed_reviewer_does_not_discard_surviving_draft(self) -> None:
+        # Regression: a z.ai quota exhaustion (RateLimitError 1308) used to
+        # abort the whole ensemble review; the GPT draft must survive and,
+        # being the only draft, be returned without a combine stage.
+        ctx = _ctx()
+        survivor = Review("major_request_changes", "found it", model="openai:gpt-5.4")
+        combiner = _FakeReviewer("combiner", Review("ok_approve", model="combiner"))
+        with self.assertLogs("llm_review_api", level="ERROR"):
+            out = wrapper.review_pr(
+                ctx,
+                [_FakeReviewer("a", survivor), _FailingReviewer("zai:glm-5.2")],
+                combiner,
+            )
+        self.assertIs(out, survivor)
+        self.assertEqual([survivor], ctx.drafts)
+        self.assertIsNone(combiner.seen_drafts)
+
+    def test_combiner_still_merges_when_two_of_three_survive(self) -> None:
+        ctx = _ctx()
+        d1 = Review("minor_issues_approve", "nit", model="a")
+        d3 = Review("major_request_changes", "bug", model="c")
+        merged = Review("major_request_changes", "merged", model="combiner")
+        combiner = _FakeReviewer("combiner", merged)
+        with self.assertLogs("llm_review_api", level="ERROR"):
+            out = wrapper.review_pr(
+                ctx,
+                [_FakeReviewer("a", d1), _FailingReviewer("b"), _FakeReviewer("c", d3)],
+                combiner,
+            )
+        self.assertIs(out, merged)
+        self.assertEqual([d1, d3], combiner.seen_drafts)
+
+    def test_all_reviewers_failing_aborts(self) -> None:
+        ctx = _ctx()
+        with self.assertLogs("llm_review_api", level="ERROR"), self.assertRaises(RuntimeError):
+            wrapper.review_pr(
+                ctx, [_FailingReviewer("a"), _FailingReviewer("b")], None,
+            )
 
 
 if __name__ == "__main__":

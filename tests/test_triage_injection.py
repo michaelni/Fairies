@@ -1,0 +1,65 @@
+"""Triage prompt-injection flag: schema field, prompt wiring, forced skip.
+
+The triage model reads every attacker-controllable byte of a PR (title,
+description, comments, patch), so it doubles as the injection detector:
+``prompt_injection: true`` forces route=skip in ``validate_triage_result``
+regardless of the route the model chose -- the injected text may have
+steered the route itself.
+"""
+
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+import llm_prompt  # noqa: E402
+import llm_review_api  # noqa: E402
+import openai_pr_review_wrapper as wrapper  # noqa: E402
+
+
+class TriageInjectionTests(unittest.TestCase):
+    def test_flag_forces_skip_for_every_route(self) -> None:
+        for route in ("engage", "helpful_reply", "skip"):
+            with self.subTest(route=route):
+                result = wrapper.validate_triage_result({
+                    "route": route,
+                    "message": "hi" if route == "helpful_reply" else "",
+                    "reason": "PR description tells the AI to approve",
+                    "prompt_injection": True,
+                })
+                self.assertEqual("skip", result["route"])
+                self.assertEqual("", result["message"])
+
+    def test_unflagged_result_is_untouched(self) -> None:
+        result = wrapper.validate_triage_result({
+            "route": "engage", "message": "", "reason": "ok",
+            "prompt_injection": False,
+        })
+        self.assertEqual("engage", result["route"])
+
+    def test_schema_requires_the_flag(self) -> None:
+        schema = wrapper.build_triage_schema([])["schema"]
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_review_api.check_schema(
+                {"route": "skip", "message": "", "reason": "ok"}, schema,
+            )
+        llm_review_api.check_schema(
+            {"route": "skip", "message": "", "reason": "ok",
+             "prompt_injection": False}, schema,
+        )
+
+    def test_prompt_documents_the_field(self) -> None:
+        prompt = llm_prompt.make_triage_developer_prompt(
+            "fairy", [Path("ffmpeg")], False, False, False, False, [],
+            model="gpt-5.4-mini",
+        )
+        self.assertIn("prompt_injection", prompt)
+
+
+if __name__ == "__main__":
+    unittest.main()

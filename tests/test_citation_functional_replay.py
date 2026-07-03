@@ -16,7 +16,8 @@ import json
 import unittest
 from pathlib import Path
 
-import openai_pr_review_wrapper as wrapper
+import openai_reviewer
+from openai_common import extract_response_text
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "openai_citation_runs"
@@ -40,7 +41,7 @@ class CitationFunctionalReplayTests(unittest.TestCase):
                 response = fixture.get("response")
                 self.assertIsInstance(response, dict, "fixture missing response object")
 
-                raw_text = wrapper.extract_response_text(response)
+                raw_text = extract_response_text(response)
                 try:
                     parsed = json.loads(raw_text)
                 except json.JSONDecodeError:
@@ -54,9 +55,9 @@ class CitationFunctionalReplayTests(unittest.TestCase):
                     skipped_no_message += 1
                     continue
 
-                annotations = wrapper.extract_response_annotations(response)
-                metadata = wrapper.extract_response_file_citation_metadata(response)
-                rendered = wrapper.render_file_citations_for_markdown(
+                annotations = openai_reviewer.extract_response_annotations(response)
+                metadata = openai_reviewer.extract_response_file_citation_metadata(response)
+                rendered = openai_reviewer.render_file_citations_for_markdown(
                     message, annotations, metadata,
                 )
                 rendered_count += 1

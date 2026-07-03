@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import podman_host as lc  # noqa: E402
 import openai_pr_review_wrapper as wrapper  # noqa: E402
+import openai_reviewer  # noqa: E402
 
 
 class BuildRemoteHostTests(unittest.TestCase):
@@ -33,7 +34,7 @@ class ExtractFunctionCallsTests(unittest.TestCase):
     def test_extracts_shell_calls_with_call_id(self) -> None:
         rsp = mock.Mock()
         rsp.id = "resp_1"
-        with mock.patch.object(wrapper, "response_to_debug_json", return_value={
+        with mock.patch.object(openai_reviewer, "response_to_debug_json", return_value={
             "output": [
                 {"type": "message", "id": "m1"},
                 {
@@ -44,14 +45,14 @@ class ExtractFunctionCallsTests(unittest.TestCase):
                 },
             ],
         }):
-            calls = wrapper.extract_function_calls_from_response(rsp)
+            calls = openai_reviewer.extract_function_calls_from_response(rsp)
         self.assertEqual(1, len(calls))
         self.assertEqual("shell", calls[0]["name"])
         self.assertEqual("fc_abc", calls[0]["call_id"])
 
     def test_falls_back_to_item_id(self) -> None:
         rsp = mock.Mock()
-        with mock.patch.object(wrapper, "response_to_debug_json", return_value={
+        with mock.patch.object(openai_reviewer, "response_to_debug_json", return_value={
             "output": [
                 {
                     "type": "function_call",
@@ -61,7 +62,7 @@ class ExtractFunctionCallsTests(unittest.TestCase):
                 },
             ],
         }):
-            calls = wrapper.extract_function_calls_from_response(rsp)
+            calls = openai_reviewer.extract_function_calls_from_response(rsp)
         self.assertEqual("item_xyz", calls[0]["call_id"])
 
 
@@ -103,9 +104,9 @@ class RunPodmanShellLoopTests(unittest.TestCase):
         client = mock.Mock()
         client.responses.create.side_effect = fake_create
 
-        with mock.patch.object(wrapper, "response_to_debug_json", side_effect=dump):
-            with mock.patch.object(wrapper, "call_with_rate_limit_retry", side_effect=lambda fn, **kw: fn()):
-                out = wrapper.run_responses_resolving_podman_shell(
+        with mock.patch.object(openai_reviewer, "response_to_debug_json", side_effect=dump):
+            with mock.patch.object(openai_reviewer, "call_with_rate_limit_retry", side_effect=lambda fn, **kw: fn()):
+                out = openai_reviewer.run_responses_resolving_podman_shell(
                     client,
                     initial_kwargs={
                         "model": "gpt-x",
@@ -148,11 +149,11 @@ class RunPodmanShellLoopTests(unittest.TestCase):
 
         client = mock.Mock()
         client.responses.create.side_effect = lambda **kw: mock.Mock(id=f"r{n['i']}")
-        with mock.patch.object(wrapper, "response_to_debug_json", side_effect=dump), \
-                mock.patch.object(wrapper, "call_with_rate_limit_retry",
+        with mock.patch.object(openai_reviewer, "response_to_debug_json", side_effect=dump), \
+                mock.patch.object(openai_reviewer, "call_with_rate_limit_retry",
                                   side_effect=lambda fn, **kw: fn()), \
-                mock.patch.object(wrapper, "dump_response_debug_artifacts") as dumped:
-            wrapper.run_responses_resolving_podman_shell(
+                mock.patch.object(openai_reviewer, "dump_response_debug_artifacts") as dumped:
+            openai_reviewer.run_responses_resolving_podman_shell(
                 client,
                 initial_kwargs={"model": "gpt-x", "tools": [{"type": "function", "name": "shell"}]},
                 podman_shell_session=session,
@@ -205,10 +206,10 @@ class RunPodmanShellLoopTests(unittest.TestCase):
         client.responses.create.side_effect = (
             lambda **kw: (creates.append(kw), mock.Mock(id=f"r{n['i']}"))[1]
         )
-        with mock.patch.object(wrapper, "response_to_debug_json", side_effect=dump), \
-                mock.patch.object(wrapper, "call_with_rate_limit_retry",
+        with mock.patch.object(openai_reviewer, "response_to_debug_json", side_effect=dump), \
+                mock.patch.object(openai_reviewer, "call_with_rate_limit_retry",
                                   side_effect=lambda fn, **kw: fn()):
-            wrapper.run_responses_resolving_podman_shell(
+            openai_reviewer.run_responses_resolving_podman_shell(
                 client,
                 initial_kwargs={
                     "model": "gpt-x",
@@ -245,9 +246,9 @@ class RunPodmanShellLoopTests(unittest.TestCase):
 
         client = mock.Mock()
         client.responses.create.side_effect = lambda **kw: mock.Mock(id="r")
-        with mock.patch.object(wrapper, "response_to_debug_json", side_effect=dump):
-            with mock.patch.object(wrapper, "call_with_rate_limit_retry", side_effect=lambda fn, **kw: fn()):
-                wrapper.run_responses_resolving_podman_shell(
+        with mock.patch.object(openai_reviewer, "response_to_debug_json", side_effect=dump):
+            with mock.patch.object(openai_reviewer, "call_with_rate_limit_retry", side_effect=lambda fn, **kw: fn()):
+                openai_reviewer.run_responses_resolving_podman_shell(
                     client,
                     initial_kwargs={"model": "gpt-x", "tools": [{"type": "function", "name": "shell"}]},
                     podman_shell_session=session,

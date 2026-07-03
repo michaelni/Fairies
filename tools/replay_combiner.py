@@ -66,6 +66,7 @@ from llm_review_api import Review, ReviewContext  # noqa: E402
 from openai import OpenAI  # noqa: E402
 from openai_common import load_api_key, upload_text_file, delete_uploaded_file  # noqa: E402
 import openai_pr_review_wrapper as wrapper  # noqa: E402
+import openai_reviewer  # noqa: E402
 import podman_host  # noqa: E402
 import podman_repos  # noqa: E402
 
@@ -118,7 +119,7 @@ def main() -> int:
     drafts = build_drafts(tool_args.drafts, tool_args.variant)
 
     client = OpenAI(api_key=load_api_key(), timeout=None, max_retries=0,
-                    http_client=wrapper.make_openai_http_client())
+                    http_client=openai_reviewer.make_openai_http_client())
     repo_root = wrapper.find_repo_root(args.repo_root)
     repo_roots = wrapper.get_all_repo_roots(repo_root, args.extra_repo_root)
     remote_host = wrapper._build_remote_host(args)
@@ -157,16 +158,16 @@ def main() -> int:
             repo_mount_paths=[s.container_path for s in repo_specs],
             drafts=drafts,
         )
-        resources = wrapper.OpenAIResources(
+        resources = openai_reviewer.OpenAIResources(
             client=client,
-            tools=wrapper.build_response_tools(
+            tools=openai_reviewer.build_response_tools(
                 vector_store_ids=[], file_search_max_num_results=None,
                 use_web_search=False, web_search_context_size=args.web_search_context_size,
                 web_search_cache_only=False, web_search_domains=[],
                 use_shell=False, shell_container_id=None,
                 code_interpreter_container_id=None, use_podman_shell=True,
             ),
-            include=wrapper.build_response_include(
+            include=openai_reviewer.build_response_include(
                 vector_store_ids=[], use_web_search=False, use_podman_shell=True,
             ),
             patch_file_id=patch_file_id,

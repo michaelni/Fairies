@@ -64,25 +64,21 @@ from __future__ import annotations
 
 import argparse
 import base64
-from dataclasses import dataclass
 import json
 import logging
 import os
 import re
-import socket
 import subprocess
 import sys
 import tarfile
 import time
 from pathlib import Path
 
-import httpx
-from openai import BadRequestError, DefaultHttpxClient, OpenAI
+from openai import OpenAI
 
 from common import (
     add_color_arg,
     dump_response_debug_artifacts,
-    response_to_debug_json,
     setup_logging,
 )
 from patch_util import (
@@ -95,41 +91,35 @@ from git_util import git_show_file
 from llm_review_api import (
     CLASSIFICATIONS,
     ENGAGE,
-    REVIEW_SCHEMA,
+    EXIT_BAD_MODEL_OUTPUT,
     TERMINAL_ROUTES,
     Z_AI_ANTHROPIC_URL,
     BadModelOutput,
     Review,
     ReviewContext,
     Reviewer,
-    SchemaError,
-    check_schema,
     run_parallel,
-    validate_review,
 )
 import podman_host
 import podman_repos
-from shell_tool import exec_shell_call
 from llm_prompt import (
     TRIAGE_REQUESTABLE_EFFORTS,
     generate_llm_prompt,
-    make_combiner_user_text,
     make_developer_prompt,
     make_triage_developer_prompt,
     make_triage_user_text,
-    make_user_text,
     t_prompt_triage_labels,
     t_prompt_user_request,
 )
 import openai_common
 import openai_container
 import openai_container_pool
+import openai_reviewer
 import openai_vector_store
 from openai_common import (
     InputContentItem,
     JsonObject,
     ResponseKwargs,
-    _obj_get,
     call_with_rate_limit_retry,
     delete_uploaded_file,
     extract_response_text,
@@ -139,23 +129,24 @@ from openai_common import (
     upload_local_file,
     upload_text_file,
 )
+from openai_reviewer import (
+    EXIT_CONTAINER_UNHEALTHY,
+    OpenAIContainerUnhealthy,
+    OpenAIResources,
+    OpenAIReviewer,
+    build_response_include,
+    build_response_tools,
+    extract_response_annotations,
+    extract_response_file_citation_metadata,
+    format_response_stats,
+    make_openai_http_client,
+    render_file_citations_for_markdown,
+    run_responses_resolving_podman_shell,
+)
 
 
 logger = logging.getLogger(__name__)
 
-
-# Distinct non-zero exit code the wrapper uses when it recognizes the
-# attached OpenAI container as unhealthy (expired, not running, ...).
-# The caller (e.g. fairy.py) just retries on any non-zero exit,
-# but a dedicated code makes these routine, retryable failures
-# trivially greppable in logs instead of indistinguishable from a crash.
-EXIT_CONTAINER_UNHEALTHY = 2
-
-# Distinct non-zero exit code for "the model's JSON did not match the
-# schema we requested" (see SchemaError). Same retry behavior as above;
-# a dedicated code keeps these model flakes greppable and distinct from
-# a real crash.
-EXIT_BAD_MODEL_OUTPUT = 3
 
 DEFAULT_PODMAN_IMAGE = "localhost/fairy-review:latest"
 # Empty: omit --network so podman uses its default (rootless = pasta).
@@ -177,28 +168,6 @@ def _build_remote_host(args: argparse.Namespace) -> podman_host.RemoteHost:
     return podman_host.RemoteHost(args.podman_ssh_dest, identity=args.podman_ssh_identity)
 
 
-# Match a well-formed unresolved citation marker:
-#   <E200> (filecite|cite) <E202> <id-bytes...> <E201>
-#
-# The negated character class includes BOTH closing sentinel \uE201 AND
-# opening sentinel \uE200. Including \uE200 means a truncated marker that
-# is missing its own \uE201 cannot greedily reach across a subsequent
-# well-formed marker's opener and consume both the intervening prose and
-# the next marker as its "content". With \uE200 in the negated set, such
-# a truncated marker simply fails to match and its orphan sentinel chars
-# are then handled by ORPHAN_PUA_SENTINEL_RE below.
-UNRESOLVED_CITATION_RE = re.compile(
-    "\\uE200(?:filecite|cite)\\uE202[^\\uE200\\uE201]*\\uE201"
-)
-
-# Catches stray PUA sentinel characters left over after the well-formed
-# strip pass: e.g. truncated/corrupted markers that did not match
-# UNRESOLVED_CITATION_RE. Stripping these prevents PUA chars from leaking
-# into the user-visible comment, and their presence is logged as a
-# warning so genuine upstream corruption is visible in operator logs.
-ORPHAN_PUA_SENTINEL_RE = re.compile("[\uE200-\uE202]")
-
-
 DEFAULT_MODEL = "gpt-5.4-mini"
 # Default budget for the mini-model triage pre-check when ``--triage-model``
 # is set. Triage output itself is a small JSON object, but the budget must
@@ -218,32 +187,6 @@ DEFAULT_MAX_OUTPUT_TOKENS = 40_000
 # request time very hard to predict, so we override it explicitly.
 DEFAULT_OPENAI_TIMEOUT_SECONDS = 0.0
 
-# TCP keepalive for every OpenAI HTTP connection. The main
-# ``responses.create`` call is non-streaming, so zero bytes arriving for
-# tens of minutes is normal and no read timeout can distinguish a slow
-# review from a connection that died without a RST (NAT/conntrack or
-# another middlebox reaping the mapping). Such dead sockets blocked
-# ``recv()`` forever, hanging reviews until the outer ``--llm-timeout``
-# (seen in production 2026-05-07 on three concurrent reviews, and
-# repeatedly under --simulate-past). Probing after 60s idle keeps the
-# mapping alive in the first place, and 8 unanswered probes 30s apart
-# surface a genuinely dead peer as a connection error within ~5
-# minutes, which the outer caller's existing retry handles.
-OPENAI_TCP_KEEPALIVE_SOCKET_OPTIONS = [
-    (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
-    (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60),
-    (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30),
-    (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 8),
-]
-
-
-def make_openai_http_client() -> DefaultHttpxClient:
-    """SDK-default httpx client, plus TCP keepalive on every socket."""
-    return DefaultHttpxClient(
-        transport=httpx.HTTPTransport(
-            socket_options=OPENAI_TCP_KEEPALIVE_SOCKET_OPTIONS,
-        ),
-    )
 
 TRIAGE_ROUTES = (*TERMINAL_ROUTES, ENGAGE)
 
@@ -1149,554 +1092,6 @@ def build_patch_bundle(patch: str, max_patch_bytes: int) -> tuple[str, bool]:
     return bundle, truncated
 
 
-
-def format_response_stats(response: object, *, elapsed_seconds: float | None = None) -> str:
-    dumped = response_to_debug_json(response)
-    parts: list[str] = []
-
-    if elapsed_seconds is not None:
-        parts.append(f"dt={elapsed_seconds:.3f}s")
-
-    # Echo the actual model the API reports back so the operator can
-    # confirm at a glance which tier/family ran (the ``start`` line
-    # logs the *requested* model, this one reflects what the server
-    # returned in case of any aliasing or fallback).
-    response_model = dumped.get("model") if isinstance(dumped, dict) else None
-    if isinstance(response_model, str) and response_model:
-        parts.append(f"model={response_model}")
-
-    response_id = dumped.get("id") if isinstance(dumped, dict) else None
-    if isinstance(response_id, str) and response_id:
-        parts.append(f"id={response_id}")
-
-    response_status = dumped.get("status") if isinstance(dumped, dict) else None
-    if isinstance(response_status, str) and response_status:
-        parts.append(f"status={response_status}")
-
-    service_tier = dumped.get("service_tier") if isinstance(dumped, dict) else None
-    if isinstance(service_tier, str) and service_tier:
-        parts.append(f"tier={service_tier}")
-
-    usage = dumped.get("usage") if isinstance(dumped, dict) else None
-    if isinstance(usage, dict):
-        input_tokens = usage.get("input_tokens")
-        output_tokens = usage.get("output_tokens")
-        total_tokens = usage.get("total_tokens")
-        input_details = usage.get("input_tokens_details")
-        output_details = usage.get("output_tokens_details")
-        cached_tokens = input_details.get("cached_tokens") if isinstance(input_details, dict) else None
-        reasoning_tokens = output_details.get("reasoning_tokens") if isinstance(output_details, dict) else None
-        if isinstance(input_tokens, int):
-            parts.append(f"in={input_tokens}")
-        if isinstance(cached_tokens, int):
-            parts.append(f"cache={cached_tokens}")
-        if isinstance(output_tokens, int):
-            parts.append(f"out={output_tokens}")
-        if isinstance(reasoning_tokens, int):
-            parts.append(f"reason={reasoning_tokens}")
-        if isinstance(total_tokens, int):
-            parts.append(f"total={total_tokens}")
-
-    output = dumped.get("output") if isinstance(dumped, dict) else None
-    if isinstance(output, list):
-        parts.append(f"items={len(output)}")
-        item_counts: dict[str, int] = {}
-        file_search_calls = 0
-        file_search_results = 0
-        web_search_calls = 0
-        web_search_sources = 0
-        code_interpreter_calls = 0
-        code_interpreter_outputs = 0
-        shell_calls = 0
-        shell_outputs = 0
-        function_calls = 0
-        function_outputs = 0
-        for item in output:
-            if not isinstance(item, dict):
-                continue
-            item_type = item.get("type")
-            if isinstance(item_type, str) and item_type:
-                item_counts[item_type] = item_counts.get(item_type, 0) + 1
-            if item_type == "file_search_call":
-                file_search_calls += 1
-                results = item.get("results")
-                if isinstance(results, list):
-                    file_search_results += len(results)
-            elif item_type == "web_search_call":
-                web_search_calls += 1
-                action = item.get("action")
-                sources = action.get("sources") if isinstance(action, dict) else None
-                if isinstance(sources, list):
-                    web_search_sources += len(sources)
-            elif item_type == "code_interpreter_call":
-                code_interpreter_calls += 1
-                outputs = item.get("outputs")
-                if isinstance(outputs, list):
-                    code_interpreter_outputs += len(outputs)
-            elif item_type == "shell_call":
-                shell_calls += 1
-            elif item_type == "shell_call_output":
-                shell_outputs += 1
-            elif item_type == "function_call":
-                function_calls += 1
-            elif item_type == "function_call_output":
-                function_outputs += 1
-        if item_counts:
-            item_counts_text = ",".join(f"{name}:{item_counts[name]}" for name in sorted(item_counts))
-            parts.append(f"item_types={item_counts_text}")
-        tool_parts: list[str] = []
-        if file_search_calls:
-            tool_parts.append(f"fs:{file_search_calls}/{file_search_results}")
-        if web_search_calls:
-            tool_parts.append(f"ws:{web_search_calls}/{web_search_sources}")
-        if code_interpreter_calls:
-            tool_parts.append(f"ci:{code_interpreter_calls}/{code_interpreter_outputs}")
-        if shell_calls or shell_outputs:
-            tool_parts.append(f"sh:{shell_calls}/{shell_outputs}")
-        if function_calls or function_outputs:
-            tool_parts.append(f"fn:{function_calls}/{function_outputs}")
-        if tool_parts:
-            parts.append(f"tools={','.join(tool_parts)}")
-
-    return " ".join(parts)
-
-
-def build_podman_shell_function_tool() -> JsonObject:
-    return {
-        "type": "function",
-        "name": "shell",
-        "description": (
-            "Run one shell command inside the ephemeral review container "
-            "(full working-tree repos under /work/...). Command runs via "
-            "``sh -c`` with an in-container timeout."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Shell command (``sh -c``).",
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Working directory inside the container (e.g. /work/ffmpeg).",
-                },
-                "timeout_seconds": {
-                    "type": "number",
-                    "description": "Max wall seconds for this command (capped by the wrapper).",
-                },
-            },
-            "required": ["command"],
-            "additionalProperties": False,
-        },
-        "strict": False,
-    }
-
-
-def extract_function_calls_from_response(response: object) -> list[dict[str, str]]:
-    dumped = response_to_debug_json(response)
-    output = dumped.get("output")
-    if not isinstance(output, list):
-        return []
-    calls: list[dict[str, str]] = []
-    for item in output:
-        if not isinstance(item, dict):
-            continue
-        if item.get("type") != "function_call":
-            continue
-        name = item.get("name")
-        call_id = item.get("call_id") or item.get("id")
-        arguments = item.get("arguments")
-        if not isinstance(name, str) or not isinstance(call_id, str):
-            continue
-        if not isinstance(arguments, str):
-            continue
-        calls.append({"name": name, "call_id": call_id, "arguments": arguments})
-    return calls
-
-
-def run_responses_resolving_podman_shell(
-    client: OpenAI,
-    *,
-    initial_kwargs: ResponseKwargs,
-    podman_shell_session: podman_host.ContainerShellSession,
-    max_tool_rounds: int,
-    max_shell_timeout_s: float,
-    what: str,
-    verbose: bool,
-    debug_dir: str | None = None,
-    wrapper_request: JsonObject | None = None,
-) -> object:
-    """Drive ``responses.create`` in a loop until no pending function calls.
-
-    Dispatches ``name=shell`` via the persistent
-    :class:`podman_host.ContainerShellSession`; other function names receive
-    an error ``function_call_output`` so the model can recover.
-
-    ``max_tool_rounds <= 0`` means no cap on the number of rounds.
-
-    With ``debug_dir`` set, EVERY round's response is dumped (paired with
-    the exact kwargs that produced it), not just the final one -- the
-    intermediate rounds are where the function calls and their outputs
-    live, and each is a separately billed request. All rounds append to
-    the same conversation file.
-    """
-    conv_path: str | None = None
-
-    def create_and_dump(kwargs: ResponseKwargs, what_label: str) -> object:
-        nonlocal conv_path
-        resp = call_with_rate_limit_retry(
-            lambda: client.responses.create(**kwargs),
-            what=what_label,
-            verbose=verbose,
-            retry_transient=False,
-        )
-        if debug_dir:
-            conv_path = dump_response_debug_artifacts(
-                resp, kwargs, wrapper_request=wrapper_request,
-                debug_dir=debug_dir, verbose=verbose, conversation=conv_path,
-            ) or conv_path
-        return resp
-
-    response = create_and_dump(initial_kwargs, what)
-    rounds = 0
-    while True:
-        pending = extract_function_calls_from_response(response)
-        if not pending:
-            return response
-        rounds += 1
-        if max_tool_rounds > 0 and rounds > max_tool_rounds:
-            raise RuntimeError(
-                f"{what}: exceeded podman shell function-call limit ({max_tool_rounds})"
-            )
-        output_items: list[JsonObject] = []
-        for call in pending:
-            if call["name"] != "shell":
-                payload = json.dumps(
-                    {"error": f"unsupported function {call['name']!r}"},
-                    ensure_ascii=False,
-                )
-                output_items.append({
-                    "type": "function_call_output",
-                    "call_id": call["call_id"],
-                    "output": payload,
-                })
-                continue
-            try:
-                args_obj: object = json.loads(call["arguments"])
-            except json.JSONDecodeError as exc:
-                output_items.append({
-                    "type": "function_call_output",
-                    "call_id": call["call_id"],
-                    "output": json.dumps(
-                        {"error": "invalid JSON in arguments", "detail": str(exc)},
-                        ensure_ascii=False,
-                    ),
-                })
-                continue
-            payload_obj = exec_shell_call(
-                podman_shell_session, args_obj, max_timeout_s=max_shell_timeout_s,
-            )
-            output_items.append({
-                "type": "function_call_output",
-                "call_id": call["call_id"],
-                "output": json.dumps(payload_obj, ensure_ascii=False),
-            })
-        rid = getattr(response, "id", None)
-        if not isinstance(rid, str) or not rid:
-            dumped_rid = response_to_debug_json(response)
-            rid2 = dumped_rid.get("id")
-            rid = rid2 if isinstance(rid2, str) else None
-        if not isinstance(rid, str) or not rid:
-            raise RuntimeError(f"{what}: response missing id for tool follow-up")
-        model = initial_kwargs.get("model")
-        if not isinstance(model, str):
-            raise RuntimeError(f"{what}: initial kwargs missing model string")
-        follow: ResponseKwargs = {
-            "model": model,
-            "previous_response_id": rid,
-            "input": output_items,
-            "parallel_tool_calls": False,
-        }
-        tools = initial_kwargs.get("tools")
-        if tools is not None:
-            follow["tools"] = tools
-        st = initial_kwargs.get("service_tier")
-        if st is not None:
-            follow["service_tier"] = st
-        mtc = initial_kwargs.get("max_tool_calls")
-        if mtc is not None:
-            follow["max_tool_calls"] = mtc
-        # ``text`` (the json_schema output format) is per-request and NOT
-        # inherited via previous_response_id; without it a follow-up round
-        # can answer off-schema (seen: {"class": ...} instead of
-        # {"classification": ...}, failing the whole review attempt).
-        txt = initial_kwargs.get("text")
-        if txt is not None:
-            follow["text"] = txt
-        response = create_and_dump(follow, f"{what} (podman shell follow-up)")
-
-
-def build_response_tools(
-    *,
-    vector_store_ids: list[str],
-    file_search_max_num_results: int | None,
-    use_web_search: bool,
-    web_search_context_size: str,
-    web_search_cache_only: bool,
-    web_search_domains: list[str],
-    use_shell: bool,
-    shell_container_id: str | None,
-    code_interpreter_container_id: str | None,
-    use_podman_shell: bool = False,
-) -> list[JsonObject]:
-    tools: list[JsonObject] = []
-    if vector_store_ids:
-        file_search_tool: JsonObject = {
-            "type": "file_search",
-            "vector_store_ids": vector_store_ids,
-        }
-        if file_search_max_num_results is not None:
-            file_search_tool["max_num_results"] = file_search_max_num_results
-        tools.append(file_search_tool)
-    if use_web_search:
-        web_search_tool: JsonObject = {
-            "type": "web_search",
-            "search_context_size": web_search_context_size,
-            "external_web_access": not web_search_cache_only,
-        }
-        if web_search_domains:
-            web_search_tool["filters"] = {"allowed_domains": web_search_domains}
-        tools.append(web_search_tool)
-    if use_podman_shell:
-        tools.append(build_podman_shell_function_tool())
-        return tools
-    if use_shell:
-        shell_tool: JsonObject = {"type": "shell"}
-        if shell_container_id:
-            shell_tool["environment"] = {
-                "type": "container_reference",
-                "container_id": shell_container_id,
-            }
-        else:
-            shell_tool["environment"] = {"type": "container_auto"}
-        tools.append(shell_tool)
-    code_interpreter_tool: JsonObject = {"type": "code_interpreter"}
-    code_interpreter_tool["container"] = code_interpreter_container_id if code_interpreter_container_id else {"type": "auto"}
-    tools.append(code_interpreter_tool)
-    return tools
-
-
-def build_response_include(
-    *,
-    vector_store_ids: list[str],
-    use_web_search: bool,
-    use_podman_shell: bool = False,
-) -> list[str]:
-    include: list[str] = []
-    # if vector_store_ids:
-    #     include.append("file_search_call.results")
-    # if use_web_search:
-    #     include.append("web_search_call.action.sources")
-    if not use_podman_shell:
-        include.append("code_interpreter_call.outputs")
-    return include
-
-
-def extract_response_annotations(response: object) -> list[object]:
-    dumped = response_to_debug_json(response)
-    output = dumped.get("output") if isinstance(dumped, dict) else None
-    if not isinstance(output, list):
-        return []
-
-    annotations: list[object] = []
-    for item in output:
-        if not isinstance(item, dict):
-            continue
-        content = item.get("content")
-        if not isinstance(content, list):
-            continue
-        for c in content:
-            if not isinstance(c, dict) or c.get("type") != "output_text":
-                continue
-            part_annotations = c.get("annotations")
-            if isinstance(part_annotations, list):
-                annotations.extend(part_annotations)
-    return annotations
-
-
-def extract_response_file_citation_metadata(response: object) -> dict[str, dict[str, str]]:
-    dumped = response_to_debug_json(response)
-    output = dumped.get("output") if isinstance(dumped, dict) else None
-    if not isinstance(output, list):
-        return {}
-
-    metadata: dict[str, dict[str, str]] = {}
-    for item in output:
-        if not isinstance(item, dict) or item.get("type") != "file_search_call":
-            continue
-        results = item.get("results")
-        if not isinstance(results, list):
-            continue
-        for result in results:
-            file_id = _obj_get(result, "file_id", None)
-            if not isinstance(file_id, str) or not file_id:
-                continue
-            attrs = _obj_get(result, "attributes", {})
-            if not isinstance(attrs, dict):
-                attrs = {}
-            filename = _obj_get(result, "filename", None)
-            path = attrs.get("path")
-            title = attrs.get("title")
-            blob_sha = attrs.get("blob_sha")
-            metadata[file_id] = {
-                "filename": filename if isinstance(filename, str) else "",
-                "path": path if isinstance(path, str) else "",
-                "title": title if isinstance(title, str) else "",
-                "blob_sha": blob_sha if isinstance(blob_sha, str) else "",
-            }
-    return metadata
-
-
-def format_file_citation_label(annotation: object, metadata: dict[str, dict[str, str]]) -> str:
-    file_id = _obj_get(annotation, "file_id", None)
-    if isinstance(file_id, str) and file_id:
-        entry = metadata.get(file_id)
-        if entry:
-            title = entry.get("title") or ""
-            path = entry.get("path") or ""
-
-            #HACK only 2 vector stores are allowed so we have a slightly ugly directory structure, clean this up here to make it look nicer to the reader
-            #we could rename these so this is more preseantable
-            path = path.replace("for_ffmpeg/","").replace("forgejo_git/","")
-
-            filename = entry.get("filename") or ""
-            if title and path:
-                return f"{title} (`{path}`)"
-            if title:
-                return title
-            if path:
-                return f"`{path}`"
-            if filename:
-                return f"`{filename}`"
-
-    filename = _obj_get(annotation, "filename", None)
-    if isinstance(filename, str) and filename:
-        return f"`{filename}`"
-    return ""
-
-
-def detect_mid_word_citation_corruption(
-    text: str, annotations: list[object],
-) -> list[dict[str, object]]:
-    """Flag ``file_citation`` annotations whose ``index`` lands strictly inside a word.
-
-    The OpenAI Responses API strips inline citation tokens out of the
-    model's token stream server-side and records each citation's
-    position as the ``index`` field on a ``file_citation`` annotation.
-    That stripping pass is occasionally destructive of adjacent
-    characters — e.g. a model sentence like
-    ``"in AV_TIME_BASE units, which implicitly accepts..."``
-    with a citation marker inside ``implicitly`` has been observed to
-    collapse into ``"in AV_TIME_BASE unitscitly accepts..."``, with
-    the annotation's ``index`` pointing exactly at the ``s|c``
-    junction of the fused word.
-
-    A well-formed citation always sits at a word boundary, so any
-    annotation whose ``index`` lies between two alphanumeric
-    characters is suspicious.
-    """
-    suspects: list[dict[str, object]] = []
-    for ann in annotations:
-        if not isinstance(ann, dict):
-            continue
-        if ann.get("type") not in ("file_citation", "container_file_citation"):
-            continue
-        idx = ann.get("index")
-        if not isinstance(idx, int):
-            continue
-        if not (0 < idx < len(text)):
-            continue
-        if text[idx - 1].isalnum() and text[idx].isalnum():
-            lo = max(0, idx - 20)
-            hi = min(len(text), idx + 20)
-            suspects.append(
-                {
-                    "index": idx,
-                    "filename": ann.get("filename") or ann.get("file_id"),
-                    "context": text[lo:idx] + "|" + text[idx:hi],
-                }
-            )
-    return suspects
-
-
-def render_file_citations_for_markdown(
-    text: str,
-    annotations: list[object],
-    metadata: dict[str, dict[str, str]] | None = None,
-) -> str:
-    for suspect in detect_mid_word_citation_corruption(text, annotations):
-        logger.warning(
-            "suspected OpenAI citation-token stripping corruption: "
-            "file_citation at text index=%d (filename=%s) lands mid-word; "
-            "context=%r (pipe marks citation index). The posted message "
-            "likely has fused/truncated words near this point.",
-            suspect["index"],
-            suspect["filename"],
-            suspect["context"],
-        )
-
-    text = UNRESOLVED_CITATION_RE.sub("", text)
-
-    orphan_count = len(ORPHAN_PUA_SENTINEL_RE.findall(text))
-    if orphan_count:
-        logger.warning(
-            "stripped %d orphan OpenAI citation sentinel char(s) from "
-            "rendered message; this usually indicates the upstream "
-            "Responses API emitted a malformed or truncated citation "
-            "marker. Text after well-formed strip (PUA chars shown as "
-            "<E200>/<E201>/<E202>): %r",
-            orphan_count,
-            text.replace("\uE200", "<E200>")
-                .replace("\uE201", "<E201>")
-                .replace("\uE202", "<E202>"),
-        )
-        text = ORPHAN_PUA_SENTINEL_RE.sub("", text)
-    text = text.rstrip()
-
-    labels: list[str] = []
-    seen: set[str] = set()
-    metadata = metadata or {}
-    for annotation in annotations:
-        if not isinstance(annotation, dict):
-            continue
-        if annotation.get("type") not in ("file_citation", "container_file_citation"):
-            continue
-        label = format_file_citation_label(annotation, metadata)
-        if label and label not in seen:
-            seen.add(label)
-            labels.append(label)
-
-    if not labels:
-        return text
-
-    sources = "\n".join(f"- {label}" for label in labels)
-    return f"{text}\n\nSources:\n{sources}" if text else f"Sources:\n{sources}"
-
-
-def validate_result(
-    obj: object,
-    annotations: list[object] | None = None,
-    file_citation_metadata: dict[str, dict[str, str]] | None = None,
-) -> dict[str, str]:
-    """``validate_review`` plus rendering of OpenAI file citations."""
-    result = validate_review(obj)
-    result["message"] = render_file_citations_for_markdown(
-        result["message"], annotations or [], file_citation_metadata,
-    )
-    return result
-
-
 def validate_triage_result(
     obj: object,
     annotations: list[object] | None = None,
@@ -2016,254 +1411,6 @@ def run_triage_stage(
     return dict(validated)
 
 
-class OpenAIContainerUnhealthy(Exception):
-    """The attached OpenAI container is unhealthy (expired / stopped).
-
-    Raised by ``OpenAIReviewer`` so the entrypoint releases the lease and
-    exits ``EXIT_CONTAINER_UNHEALTHY``, letting the caller retry against a
-    freshly provisioned container.
-    """
-
-
-@dataclass
-class OpenAIResources:
-    """OpenAI-specific per-run resources shared across reviewer calls.
-
-    Built once by the entrypoint after vector-store / container / podman
-    setup, so the single uploaded patch file, tool wiring and container ids
-    are reused rather than rebuilt per call. ``uploaded_file_ids`` is the
-    entrypoint's own cleanup list; the reviewer appends any file it uploads
-    (e.g. the source bundle) so the outer ``finally`` deletes it.
-    """
-
-    client: OpenAI
-    tools: list[JsonObject]
-    include: list[str]
-    patch_file_id: str
-    vector_store_ids: list[str]
-    shared_container_id: str | None
-    podman_shell_session: podman_host.ContainerShellSession | None
-    uploaded_file_ids: list[str]
-    debug_dir_specified: bool
-
-
-class OpenAIReviewer(Reviewer):
-    """One OpenAI Responses-API review pass behind the shared interface.
-
-    ``review(ctx)`` builds the developer/user input, runs the model
-    (driving the podman shell tool loop when ``--podman`` is set, else the
-    direct Responses call), validates the JSON against ``REVIEW_SCHEMA`` and
-    renders file citations. Raises ``OpenAIContainerUnhealthy`` /
-    ``BadModelOutput`` for the routine, retryable failure modes.
-    """
-
-    def __init__(
-        self,
-        args: argparse.Namespace,
-        resources: OpenAIResources,
-        *,
-        model: str | None = None,
-        role: str = "reviewer",
-        effort: str | None = None,
-    ) -> None:
-        self.args = args
-        self.res = resources
-        self.model = model or args.model
-        self.role = role
-        self.effort = effort or args.reasoning_effort
-        self.name = f"openai:{self.model}"
-
-    def review(self, ctx: ReviewContext) -> Review:
-        args = self.args
-        res = self.res
-        client = res.client
-
-        content: list[InputContentItem] = [
-            {
-                "type": "input_text",
-                "text": make_user_text(
-                    ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated
-                ),
-            },
-            {"type": "input_file", "file_id": res.patch_file_id},
-        ]
-        if self.role == "combiner":
-            content.append({
-                "type": "input_text",
-                "text": make_combiner_user_text(ctx.review_drafts()),
-            })
-        if ctx.source_bundle is not None:
-            source_file_id = upload_text_file(
-                client,
-                filename="source_bundle.txt",
-                text=ctx.source_bundle,
-                verbose=args.verbose,
-            )
-            res.uploaded_file_ids.append(source_file_id)
-            content.append({"type": "input_file", "file_id": source_file_id})
-
-        reviewer_features: set[str] = set()
-        if ctx.source_bundle is not None:
-            reviewer_features.add("source_bundle")
-        if res.vector_store_ids:
-            reviewer_features.add("vector_store_search")
-        if args.use_web_search:
-            reviewer_features.add("web_search")
-        if args.podman:
-            reviewer_features.add("podman_shell")
-        else:
-            reviewer_features.add("code_interpreter")
-
-        response_kwargs: ResponseKwargs = {
-            "model": self.model,
-            "input": [
-                {
-                    "role": "developer",
-                    "content": generate_llm_prompt(
-                        role=self.role,
-                        vendor="openai",
-                        model=self.model,
-                        features=reviewer_features,
-                        repo_roots=ctx.repo_roots,
-                        container_repo_mounts=ctx.repo_mount_paths,
-                        reviewer_username=ctx.reviewer_username,
-                        ci_triage_mode=ctx.ci_triage_mode,
-                    ),
-                },
-                {"role": "user", "content": content},
-            ],
-            "text": {"format": {"type": "json_schema", **REVIEW_SCHEMA}},
-            "max_output_tokens": args.max_output_tokens,
-        }
-        if args.verbosity is not None:
-            response_kwargs["text"]["verbosity"] = args.verbosity
-        if args.top_p is not None:
-            response_kwargs["top_p"] = args.top_p
-        reasoning: JsonObject = {}
-        if self.effort:
-            reasoning["effort"] = self.effort
-        if args.reasoning_summary:
-            reasoning["summary"] = args.reasoning_summary
-        if reasoning:
-            response_kwargs["reasoning"] = reasoning
-        if args.max_tool_calls is not None:
-            response_kwargs["max_tool_calls"] = args.max_tool_calls
-        if args.service_tier is not None:
-            response_kwargs["service_tier"] = args.service_tier
-        if res.tools:
-            response_kwargs["tools"] = res.tools
-        if res.include:
-            response_kwargs["include"] = res.include
-
-        if args.verbose:
-            tool_names = [
-                tool.get("type") if tool.get("type") != "function" else f"function:{tool.get('name')}"
-                for tool in res.tools
-                if isinstance(tool, dict)
-            ]
-            source_bundle_bytes = len(ctx.source_bundle.encode("utf-8")) if ctx.source_bundle is not None else 0
-            logger.debug("responses.create start model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.model, self.effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, args.max_output_tokens)
-
-        create_started = time.monotonic()
-        try:
-            if args.podman:
-                if res.podman_shell_session is None:
-                    raise RuntimeError("container shell session missing for main review pass")
-                response = run_responses_resolving_podman_shell(
-                    client,
-                    initial_kwargs=response_kwargs,
-                    podman_shell_session=res.podman_shell_session,
-                    max_tool_rounds=args.podman_max_tool_rounds,
-                    max_shell_timeout_s=args.podman_exec_timeout,
-                    what="responses.create",
-                    verbose=args.verbose,
-                    debug_dir=args.debug_response_dir if res.debug_dir_specified else None,
-                    wrapper_request=ctx.request,
-                )
-            else:
-                response = call_with_rate_limit_retry(
-                    lambda: client.responses.create(**response_kwargs),
-                    what="responses.create",
-                    verbose=args.verbose,
-                    # Main LLM request: APITimeoutError / APIConnectionError
-                    # are propagated to the outer caller (e.g. fairy.py)
-                    # which decides whether to retry the entire wrapper. These
-                    # requests are long and unpredictable, so silently re-issuing
-                    # them here would risk piling up duplicate billed runs.
-                    retry_transient=False,
-                )
-        except Exception as exc:
-            if args.verbose:
-                logger.debug("responses.create failed dt=%.3fs error=%s %s", time.monotonic() - create_started, type(exc).__name__, str(exc).replace("\n", " "))
-            if (
-                args.use_openai_container_repos
-                and ctx.repo_roots
-                and openai_container.is_container_unhealthy_error(exc)
-            ):
-                # Known, routine, retryable failure: surface a typed error
-                # so the entrypoint marks the lease unhealthy and exits with
-                # EXIT_CONTAINER_UNHEALTHY rather than dumping the full SDK
-                # traceback. The caller retries against a fresh container.
-                logger.warning(
-                    "openai container unhealthy during responses.create (%s); "
-                    "exiting with code %d so caller retries against a fresh container",
-                    str(exc).replace("\n", " "),
-                    EXIT_CONTAINER_UNHEALTHY,
-                )
-                raise OpenAIContainerUnhealthy() from exc
-            raise
-
-        if args.verbose:
-            logger.debug("responses.create ok %s", format_response_stats(response, elapsed_seconds=time.monotonic() - create_started))
-        # The podman tool loop already dumps every round (including the
-        # final response) with the kwargs that actually produced it.
-        if res.debug_dir_specified and not args.podman:
-            dump_response_debug_artifacts(
-                response,
-                response_kwargs,
-                wrapper_request=ctx.request,
-                debug_dir=args.debug_response_dir,
-                verbose=args.verbose,
-            )
-
-        annotations = extract_response_annotations(response)
-        file_citation_metadata = extract_response_file_citation_metadata(response)
-        raw_text = extract_response_text(
-            response,
-            response_kwargs=response_kwargs,
-            debug_dir=args.debug_response_dir,
-            verbose=args.verbose,
-        )
-        try:
-            result = validate_result(json.loads(raw_text), annotations, file_citation_metadata)
-        except (json.JSONDecodeError, SchemaError, RecursionError) as exc:
-            # The model returned text that isn't the JSON shape we asked for
-            # (OpenAI ``strict`` output is best-effort, not a guarantee).
-            # ``RecursionError`` covers a pathologically nested JSON payload
-            # (the model output is attacker-influenceable via prompt
-            # injection); json's own recursion guard turns that into a clean
-            # exception, not a crash. Discard the run with a typed error so
-            # the entrypoint exits EXIT_BAD_MODEL_OUTPUT and the caller
-            # retries.
-            logger.error(
-                "reviewer output did not match the requested schema (%s: %s); "
-                "discarding run, exiting %d so caller retries",
-                type(exc).__name__, str(exc).replace("\n", " "),
-                EXIT_BAD_MODEL_OUTPUT,
-            )
-            raise BadModelOutput() from exc
-
-        if args.verbose:
-            extra = f" vector_stores={','.join(res.vector_store_ids)}" if res.vector_store_ids else ""
-            logger.debug("classification=%s source_files=%d%s", result["classification"], len(ctx.source_files), extra)
-
-        return Review(
-            classification=result["classification"],
-            message=result["message"],
-            model=self.name,
-        )
-
-
 def make_reviewer(
     spec: str,
     *,
@@ -2396,6 +1543,7 @@ def main() -> int:
         logger,
         args.verbose,
         openai_common.logger,
+        openai_reviewer.logger,
         openai_vector_store.logger,
         openai_container.logger,
         openai_container_pool.logger,

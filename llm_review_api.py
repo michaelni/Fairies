@@ -57,6 +57,7 @@ from podman_host import ContainerShellSession
 
 __all__ = [
     "CLASSIFICATIONS",
+    "EXIT_BAD_MODEL_OUTPUT",
     "ISSUE_CLASSIFICATIONS",
     "TERMINAL_ROUTES",
     "ENGAGE",
@@ -147,6 +148,13 @@ class BadModelOutput(Exception):
     Raised by the reviewers so the entrypoint exits
     ``EXIT_BAD_MODEL_OUTPUT`` and the caller retries the run.
     """
+
+
+# Distinct non-zero exit code for "the model's JSON did not match the
+# schema we requested" (see SchemaError / BadModelOutput). The caller
+# (e.g. fairy.py) just retries on any non-zero exit, but a dedicated
+# code keeps these model flakes greppable and distinct from a crash.
+EXIT_BAD_MODEL_OUTPUT = 3
 
 
 _JSON_PY_TYPES: dict[str, type | tuple[type, ...]] = {

@@ -46,6 +46,7 @@ except ModuleNotFoundError:
     sys.modules["dotenv"] = fake_dotenv
 
 import openai_pr_review_wrapper as wrapper
+import openai_reviewer
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "wrapper_functional_runs"
@@ -162,7 +163,9 @@ def _run_wrapper_with_stubbed_triage(
         mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
         mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
         mock.patch.object(wrapper, "run_triage_stage", return_value=triage_result),
-        mock.patch.object(wrapper, "call_with_rate_limit_retry", side_effect=sentinel_create),
+        # The main pass runs inside OpenAIReviewer, so the sentinel must
+        # intercept openai_reviewer's namespace, not the wrapper's.
+        mock.patch.object(openai_reviewer, "call_with_rate_limit_retry", side_effect=sentinel_create),
         mock.patch.object(
             wrapper.sys, "argv",
             ["openai_pr_review_wrapper.py", "--no-source-bundle", "--triage-model", "gpt-x"],

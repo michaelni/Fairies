@@ -34,6 +34,7 @@ import openai_container
 import openai_container_pool
 import podman_repos
 import openai_pr_review_wrapper as wrapper
+import openai_reviewer
 
 
 class OpenAIContainerSupportTests(unittest.TestCase):
@@ -367,7 +368,7 @@ class OpenAIContainerSupportTests(unittest.TestCase):
             self.assertFalse((pool_dir / "cntr_456").exists())
 
     def test_build_response_tools_share_container_between_shell_and_python(self) -> None:
-        tools = wrapper.build_response_tools(
+        tools = openai_reviewer.build_response_tools(
             vector_store_ids=["vs_1"],
             file_search_max_num_results=7,
             use_web_search=False,
@@ -387,7 +388,7 @@ class OpenAIContainerSupportTests(unittest.TestCase):
         self.assertEqual("cntr_123", tools[2]["container"])
 
     def test_build_response_tools_default_code_interpreter_is_auto(self) -> None:
-        tools = wrapper.build_response_tools(
+        tools = openai_reviewer.build_response_tools(
             vector_store_ids=[],
             file_search_max_num_results=None,
             use_web_search=False,
@@ -402,7 +403,7 @@ class OpenAIContainerSupportTests(unittest.TestCase):
         self.assertEqual([{"type": "code_interpreter", "container": {"type": "auto"}}], tools)
 
     def test_build_response_tools_podman_shell_is_function_only_no_code_interpreter(self) -> None:
-        tools = wrapper.build_response_tools(
+        tools = openai_reviewer.build_response_tools(
             vector_store_ids=[],
             file_search_max_num_results=None,
             use_web_search=False,
@@ -419,7 +420,7 @@ class OpenAIContainerSupportTests(unittest.TestCase):
         self.assertEqual("shell", tools[0]["name"])
 
     def test_build_response_include_omits_code_interpreter_for_podman_shell(self) -> None:
-        inc = wrapper.build_response_include(
+        inc = openai_reviewer.build_response_include(
             vector_store_ids=[],
             use_web_search=False,
             use_podman_shell=True,

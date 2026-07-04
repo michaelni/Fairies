@@ -33,8 +33,9 @@ review pipeline all speak.
 What belongs here: the provider-neutral review vocabulary (``Review``,
 ``ReviewContext``, the ``Reviewer`` base class), the classification
 constants, the role output JSON schemas with their validators
-(``REVIEW_SCHEMA``, ``build_triage_schema``, ``check_schema``,
-``validate_review``, ``validate_triage_result``), the shared
+(``REVIEW_SCHEMA``, ``build_review_schema``, ``build_triage_schema``,
+``check_schema``, ``validate_review``, ``validate_review_result``,
+``validate_triage_result``), the shared
 ``BadModelOutput`` error, and ``run_parallel`` (the single fan-out
 helper).
 
@@ -72,11 +73,13 @@ __all__ = [
     "Reviewer",
     "RoleSpec",
     "SchemaError",
+    "build_review_schema",
     "build_triage_schema",
     "check_schema",
     "run_parallel",
     "sanitize_label_changes",
     "validate_review",
+    "validate_review_result",
     "validate_triage_result",
 ]
 
@@ -235,11 +238,32 @@ def validate_review(obj: object) -> dict[str, str]:
     return {"classification": obj["classification"], "message": obj["message"]}
 
 
+def validate_review_result(
+    obj: object,
+    allowed_labels: list[str],
+) -> dict[str, object]:
+    """``validate_review`` plus ``label_changes``.
+
+    The verdict fields stay strict (bad shape raises ``SchemaError`` and
+    the pass is retried); ``label_changes`` is best-effort side metadata,
+    so invalid entries are dropped with a warning by
+    ``sanitize_label_changes`` instead -- retrying an expensive review
+    pass is not worth one bad label.
+    """
+    if not isinstance(obj, dict):  # boundary: raw model JSON
+        raise SchemaError(f"$: expected type 'object', got {type(obj).__name__}")
+    result: dict[str, object] = dict(
+        validate_review({k: v for k, v in obj.items() if k != "label_changes"})
+    )
+    result["label_changes"] = sanitize_label_changes(obj.get("label_changes"), allowed_labels)
+    return result
+
+
 def sanitize_label_changes(
     raw: object,
     allowed_labels: list[str],
 ) -> list[dict[str, object]]:
-    """Validate the triager's ``label_changes`` against the allowlist.
+    """Validate a role's ``label_changes`` against the allowlist.
 
     Each kept item is ``{label, op, reason, post}``: ``label`` must be in
     the allowlist, ``op`` must be ``add``/``remove``, ``reason`` is a
@@ -304,6 +328,25 @@ def _label_changes_property(label_allowlist: list[str]) -> dict[str, object]:
                 },
             },
             "required": ["label", "op", "reason", "post"],
+        },
+    }
+
+
+def build_review_schema(allowed_labels: list[str]) -> dict[str, object]:
+    """``REVIEW_SCHEMA`` plus ``label_changes`` when a label allowlist exists."""
+    if not allowed_labels:
+        return REVIEW_SCHEMA
+    schema = REVIEW_SCHEMA["schema"]
+    return {
+        "name": REVIEW_SCHEMA["name"],
+        "strict": REVIEW_SCHEMA["strict"],
+        "schema": {
+            **schema,
+            "properties": {
+                **schema["properties"],
+                "label_changes": _label_changes_property(allowed_labels),
+            },
+            "required": [*schema["required"], "label_changes"],
         },
     }
 
@@ -572,6 +615,7 @@ class Reviewer(ABC):
         return Review(
             classification=result["classification"],
             message=result["message"],
+            label_changes=tuple(result.get("label_changes") or ()),
             model=self.name,
         )
 

@@ -60,6 +60,50 @@ class TriageLabelSchemaTests(unittest.TestCase):
         self.assertEqual(set(required), {"label", "op", "reason", "post"})
 
 
+class ReviewLabelSchemaTests(unittest.TestCase):
+    def test_no_allowlist_returns_plain_review_schema(self) -> None:
+        self.assertIs(llm_review_api.build_review_schema([]), llm_review_api.REVIEW_SCHEMA)
+
+    def test_allowlist_adds_required_label_changes(self) -> None:
+        schema = llm_review_api.build_review_schema(["needs sample", "stale"])
+        item = schema["schema"]["properties"]["label_changes"]["items"]
+        self.assertEqual(item["properties"]["label"]["enum"], ["needs sample", "stale"])
+        self.assertIn("label_changes", schema["schema"]["required"])
+        # The base schema object must not be mutated by the extension.
+        self.assertNotIn("label_changes", llm_review_api.REVIEW_SCHEMA["schema"]["properties"])
+
+    def test_validate_review_result_sanitizes_labels(self) -> None:
+        result = llm_review_api.validate_review_result(
+            {
+                "classification": "minor_issues_approve",
+                "message": "m",
+                "label_changes": [
+                    _change("stale", "add", "no activity", post=True),
+                    _change("secret", "add"),
+                ],
+            },
+            ["stale"],
+        )
+        self.assertEqual(result["classification"], "minor_issues_approve")
+        self.assertEqual([c["label"] for c in result["label_changes"]], ["stale"])
+
+    def test_review_packs_label_changes(self) -> None:
+        # Reviewer.review() must carry run()'s label_changes into the
+        # Review so the pipeline / wrapper can emit them.
+        class _R(llm_review_api.Reviewer):
+            name = "fake:m"
+
+            def run(self, ctx: object) -> dict[str, object]:
+                return {
+                    "classification": "minor_issues_approve",
+                    "message": "m",
+                    "label_changes": [_change("stale", "add", "r")],
+                }
+
+        review = _R().review(None)
+        self.assertEqual(review.label_changes, (_change("stale", "add", "r"),))
+
+
 class SanitizeLabelChangesTests(unittest.TestCase):
     def test_valid_change_passes_through(self) -> None:
         out = llm_review_api.sanitize_label_changes(

@@ -202,6 +202,7 @@ class AnthropicReviewer(Reviewer):
             repo_roots=ctx.repo_roots,
             container_repo_mounts=ctx.repo_mount_paths,
             reviewer_username=ctx.reviewer_username,
+            project_facts=ctx.project_facts,
             ci_triage_mode=ctx.ci_triage_mode,
             **self.role.prompt_kwargs,
         )

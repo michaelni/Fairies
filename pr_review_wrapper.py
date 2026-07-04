@@ -100,6 +100,7 @@ import podman_repos
 from llm_prompt import (
     COMBINER_ROLE,
     REVIEWER_ROLE,
+    load_project_facts,
     make_triager_role,
     role_with_labels,
 )
@@ -506,6 +507,15 @@ def parse_args() -> argparse.Namespace:
         "--include-direct-includes",
         action="store_true",
         help="Also include currently resolvable quoted include files directly in the attached source bundle.",
+    )
+    p.add_argument(
+        "--project-facts",
+        type=Path,
+        default=Path(__file__).resolve().parent / "project_facts" / "ffmpeg.md",
+        metavar="FILE",
+        help="Markdown file spliced into every role prompt as the project-facts "
+             "section; per-project deployments point this at their own file "
+             "(default: project_facts/ffmpeg.md next to this script).",
     )
     p.add_argument(
         "--use-vector-store-search",
@@ -1069,6 +1079,12 @@ def main() -> int:
     if not isinstance(reviewer_username, str):
         reviewer_username = ""
 
+    project_facts = load_project_facts(args.project_facts)
+    logger.debug(
+        "project facts loaded from %s (%d bytes)",
+        args.project_facts, len(project_facts),
+    )
+
     vector_store_ids: list[str] = []
     indexed_head_map: dict[str, str] = {}
     if args.use_vector_store_search:
@@ -1230,6 +1246,7 @@ def main() -> int:
             ci_triage_mode=ci_triage_active,
             repo_roots=repo_roots,
             repo_mount_paths=repo_mount_paths,
+            project_facts=project_facts,
             new_shell=new_shell if args.podman else None,
         )
         openai_resources = OpenAIResources(
@@ -1263,6 +1280,7 @@ def main() -> int:
                 ci_triage_mode=ci_triage_active,
                 repo_roots=repo_roots,
                 repo_mount_paths=repo_mount_paths,
+                project_facts=project_facts,
                 new_shell=new_shell if args.podman else None,
             )
             triager = make_reviewer(

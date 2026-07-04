@@ -190,23 +190,9 @@ And avoid posting the same point again if it was already raised by the current r
 
 #- Commit messages of workarounds should always list the cause of the underlaying bug and justify why the workaround is needed.
 
-TR_PROMPT_PROJECT_FACTS = """##FFmpeg project facts:
-
-Implementation definitions:
-* int is 32bit or more, 1 byte is 8 bit
-* two’s complement
-* Signed >> acts on negative numbers by sign extension
-
-The FFmpeg test suite is called FATE. Its tests must be portable.
-Each new codec, parser, filter and format should have a fate test, when possible.
-Multimedia files used in fate tests are stored in fate-suite.ffmpeg.org.
-To upload a new file to the fate samples, the pull request author has to send a mail to samples-request at ffmpeg dot org. (you can tell this email address and procedure when it seems that this is not understood)
-FATE samples that are 10kb (100kb for video) or less do not need to be trimmed. samples that are over 1mb should be trimmed if possible (sometimes its not possible and thats ok)
-API and FATE tests should not hard-code expected values in source code. Expected output belongs in tests/ref/*, with the test printing actual results and FATE comparing them against the reference files. It is ok to also print the expected result as part of printing the current value when the expected is very stable. Tests that compare to hardcoded values and fail directly should not be approved, even when hidden behind helper macros such as CHECK(). Exception is CMP = grep
-side data attached by ffmpeg code complies with the documented constraints of its type. Producers must ensure this; consumers may assume it.
-AVCodecContext.get_buffer2() buffers need to respect avcodec_align_dimensions2(). Decoders and Encoders may assume this additional padding has been allocated.
-
-Additional Minor issues:
+# Generic patch/commit hygiene, unlike the per-deployment project facts
+# it follows in the prompt.
+TR_PROMPT_MINOR_ISSUE_POLICY = """Additional Minor issues:
 * Unrelated changes should be in separate patches.
 * There should be no patches introducing an issue that is fixed in a subsequnet patch of the same pull request. Patches should be updated to not introduce issues. The only exception are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, thats the authors choice.
 * Commit messages should explain what is changed and why it is changed.
@@ -498,6 +484,7 @@ def make_developer_prompt(
     container_repo_mounts: list[str],
     *,
     model: str,
+    project_facts: str = "",
     ci_failures_present: bool = False,
     role_task: str = "",
     allowed_labels: list[str] | None = None,
@@ -518,7 +505,8 @@ def make_developer_prompt(
             container_repo_mounts=container_repo_mounts,
         )
         + (T_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
-        + TR_PROMPT_PROJECT_FACTS
+        + project_facts
+        + TR_PROMPT_MINOR_ISSUE_POLICY
         + R_ROMPT_AUDIENCE_AND_PURPOSE
         + TR_PROMPT_OUTPUT_GUIDELINE
         + R_PROMPT_REVIEW_CLASSIFICATIONS
@@ -567,6 +555,7 @@ def make_combiner_developer_prompt(
     container_repo_mounts: list[str],
     *,
     model: str,
+    project_facts: str = "",
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
 ) -> str:
@@ -584,6 +573,7 @@ def make_combiner_developer_prompt(
         podman_shell_enabled,
         container_repo_mounts,
         model=model,
+        project_facts=project_facts,
         ci_failures_present=ci_failures_present,
         role_task=C_PROMPT_COMBINER_TASK,
         allowed_labels=allowed_labels,
@@ -600,6 +590,7 @@ def make_triage_developer_prompt(
     container_repo_mounts: list[str],
     *,
     model: str,
+    project_facts: str = "",
     ci_triage_mode: bool = False,
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
@@ -620,7 +611,8 @@ def make_triage_developer_prompt(
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
         )
-        + TR_PROMPT_PROJECT_FACTS
+        + project_facts
+        + TR_PROMPT_MINOR_ISSUE_POLICY
         + TR_PROMPT_OUTPUT_GUIDELINE
         + T_PROMPT_TRIAGE_TASK
         + t_prompt_user_request(allowed_models or [])
@@ -798,6 +790,14 @@ PROMPT_FEATURES = frozenset({
 })
 
 
+def load_project_facts(path: Path) -> str:
+    """Read a deployment's project-facts prompt section (markdown with
+    its own ``##`` heading, e.g. ``project_facts/ffmpeg.md``), normalized
+    to end in one blank line so it splices between prompt sections."""
+    text = path.read_text(encoding="utf-8")
+    return text.rstrip() + "\n\n" if text.strip() else ""
+
+
 def generate_llm_prompt(
     *,
     role: str,                          # "reviewer" | "combiner" | "triager"
@@ -807,6 +807,7 @@ def generate_llm_prompt(
     repo_roots: list[Path],
     container_repo_mounts: list[str],
     reviewer_username: str,
+    project_facts: str = "",
     ci_triage_mode: bool = False,
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
@@ -818,7 +819,9 @@ def generate_llm_prompt(
     ``vendor`` is accepted and recorded in the signature so future
     wrappers can plumb it through; no per-vendor branching exists yet and
     none should be added without a concrete second consumer to pin
-    against.
+    against. ``project_facts`` is the deployment's project-facts prompt
+    section (see ``load_project_facts``); the prompt text here is
+    project-neutral.
     """
     del vendor  # reserved; see docstring
 
@@ -833,6 +836,7 @@ def generate_llm_prompt(
             "podman_shell"         in features,
             container_repo_mounts,
             model=model,
+            project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
         )
@@ -847,6 +851,7 @@ def generate_llm_prompt(
             "podman_shell"         in features,
             container_repo_mounts,
             model=model,
+            project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
         )
@@ -860,6 +865,7 @@ def generate_llm_prompt(
             "podman_shell"         in features,
             container_repo_mounts,
             model=model,
+            project_facts=project_facts,
             ci_triage_mode=ci_triage_mode,
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,

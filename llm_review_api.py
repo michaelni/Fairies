@@ -562,6 +562,7 @@ class ReviewContext:
     ci_triage_mode: bool
     repo_roots: list[Path]
     repo_mount_paths: list[str]
+    project_facts: str = ""
     new_shell: Callable[[], ContainerShellSession] | None = None
     drafts: list[Review] = field(default_factory=list)
 

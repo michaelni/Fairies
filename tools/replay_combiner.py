@@ -158,6 +158,7 @@ def main() -> int:
             ci_triage_mode=bool(request.get("ci_triage")),
             repo_roots=repo_roots,
             repo_mount_paths=[s.container_path for s in repo_specs],
+            project_facts=llm_prompt.load_project_facts(args.project_facts),
             drafts=drafts,
         )
         resources = openai_reviewer.OpenAIResources(

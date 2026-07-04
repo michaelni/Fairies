@@ -28,7 +28,8 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Review a pull request with the OpenAI API.
+Review a pull request with one or more LLM reviewers (OpenAI, Anthropic,
+z.ai GLM) and an optional combine stage.
 
 This wrapper is meant to be used as the `--llm-review-cmd` helper described
 for the PR auto-approval script. It reads one JSON object from stdin and prints
@@ -350,7 +351,7 @@ INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.MULTILINE)
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Review a PR with the OpenAI Responses API.")
+    p = argparse.ArgumentParser(description="Review a PR with one or more LLM reviewers.")
     p.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenAI model for the main review pass (default: {DEFAULT_MODEL})")
     p.add_argument(
         "--extra-model",

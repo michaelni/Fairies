@@ -19,7 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import openai_pr_review_wrapper as wrapper  # noqa: E402
+import pr_review_wrapper as wrapper  # noqa: E402
 
 
 def _engage(**extra: object) -> dict[str, object]:

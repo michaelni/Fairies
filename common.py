@@ -234,7 +234,7 @@ def setup_logging(
     # without a TTY. Honored only on the ``auto`` path -- explicit
     # ``--color=never`` still disables. The advantage over ``--color
     # always`` is that env vars are inherited by spawned subprocesses
-    # (e.g. ``fairy.py`` -> ``openai_pr_review_wrapper.py``),
+    # (e.g. ``fairy.py`` -> ``pr_review_wrapper.py``),
     # so a single env-var setting colors the whole pipeline rather than
     # requiring ``--color always`` to be threaded through every command.
     if color == "always":
@@ -254,7 +254,7 @@ def setup_logging(
 
     # INFO goes to stderr (not stdout) because several scripts that use
     # this logging setup also write machine-readable data to stdout
-    # (``openai_pr_review_wrapper.py`` writes the review-decision JSON,
+    # (``pr_review_wrapper.py`` writes the review-decision JSON,
     # ``--prepare-vector-store-only`` writes a vector-store dump). Any
     # INFO line on stdout would otherwise be concatenated with that data
     # and break the parent's JSON parse (e.g. the leading "2026" in a

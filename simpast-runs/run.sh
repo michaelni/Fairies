@@ -104,7 +104,7 @@ run_one() {
         --bot-state-cache "$outdir/bot_state.pkl" \
         --forced-only --force-review-non-open "${force[@]}" \
         --llm-parallelism "${#PRS[@]}" \
-        --llm-review-cmd "./openai_pr_review_wrapper.py \
+        --llm-review-cmd "./pr_review_wrapper.py \
             --repo-root $PATCH_REPO $extra \
             $CONTAINER_ARGS $WRAPPER_EXTRA \
             --model gpt-5.4 --triage-model gpt-5.4-mini \

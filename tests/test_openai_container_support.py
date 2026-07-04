@@ -33,7 +33,7 @@ except ModuleNotFoundError:
 import openai_container
 import openai_container_pool
 import podman_repos
-import openai_pr_review_wrapper as wrapper
+import pr_review_wrapper as wrapper
 import openai_reviewer
 
 

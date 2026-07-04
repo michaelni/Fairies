@@ -20,7 +20,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import llm_review_api  # noqa: E402
-import openai_pr_review_wrapper as wrapper  # noqa: E402
+import pr_review_wrapper as wrapper  # noqa: E402
 import openai_reviewer  # noqa: E402
 
 # Real production output (message trimmed) that slipped past strict mode.

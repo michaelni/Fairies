@@ -17,7 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import forge_gcli  # noqa: E402
-import openai_pr_review_wrapper as wrapper  # noqa: E402
+import pr_review_wrapper as wrapper  # noqa: E402
 from llm_prompt import t_prompt_triage_labels  # noqa: E402
 import fairy as paa  # noqa: E402
 

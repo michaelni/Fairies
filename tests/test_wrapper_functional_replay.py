@@ -1,6 +1,6 @@
 """Replay the full wrapper flow with captured request/response pairs.
 
-This test feeds saved stdin payloads into `openai_pr_review_wrapper.main()`
+This test feeds saved stdin payloads into `pr_review_wrapper.main()`
 while mocking external services, then verifies the final wrapper JSON output.
 It is needed as a top-level regression check so changes in wiring, parsing, or
 rendering do not silently break the end-to-end wrapper behavior.
@@ -45,7 +45,7 @@ except ModuleNotFoundError:
     fake_dotenv.dotenv_values = lambda *_args, **_kwargs: {}
     sys.modules["dotenv"] = fake_dotenv
 
-import openai_pr_review_wrapper as wrapper
+import pr_review_wrapper as wrapper
 import openai_reviewer
 
 
@@ -107,7 +107,7 @@ class WrapperFunctionalReplayTests(unittest.TestCase):
                     mock.patch.object(wrapper, "delete_uploaded_file", return_value=None),
                     mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
                     mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
-                    mock.patch.object(wrapper.sys, "argv", ["openai_pr_review_wrapper.py", "--no-source-bundle"]),
+                    mock.patch.object(wrapper.sys, "argv", ["pr_review_wrapper.py", "--no-source-bundle"]),
                     mock.patch.object(wrapper.sys, "stdin", io.StringIO(stdin_payload)),
                     mock.patch.object(wrapper.sys, "stdout", stdout_buffer),
                 ):
@@ -168,7 +168,7 @@ def _run_wrapper_with_stubbed_triage(
         mock.patch.object(openai_reviewer, "call_with_rate_limit_retry", side_effect=sentinel_create),
         mock.patch.object(
             wrapper.sys, "argv",
-            ["openai_pr_review_wrapper.py", "--no-source-bundle", "--triage-model", "gpt-x"],
+            ["pr_review_wrapper.py", "--no-source-bundle", "--triage-model", "gpt-x"],
         ),
         mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(request_obj))),
         mock.patch.object(wrapper.sys, "stdout", stdout_buffer),

@@ -40,7 +40,7 @@ differs from the original combine call only in the drafts presented.
 Usage:
   tools/replay_combiner.py --request request.json --drafts drafts.json \
       --variant control|swap-labels|swap-order \
-      -- <openai_pr_review_wrapper.py flags of the original run>
+      -- <pr_review_wrapper.py flags of the original run>
 
 ``drafts.json`` maps arbitrary keys to ``{"model", "classification",
 "message"}``; presentation order is file order. ``swap-labels`` keeps
@@ -65,7 +65,7 @@ from common import setup_logging  # noqa: E402
 from llm_review_api import Review, ReviewContext  # noqa: E402
 from openai import OpenAI  # noqa: E402
 from openai_common import load_api_key, upload_text_file, delete_uploaded_file  # noqa: E402
-import openai_pr_review_wrapper as wrapper  # noqa: E402
+import pr_review_wrapper as wrapper  # noqa: E402
 import openai_reviewer  # noqa: E402
 import review_pipeline  # noqa: E402
 import podman_host  # noqa: E402
@@ -105,7 +105,7 @@ def main() -> int:
     rest = tool_args.rest
     if rest and rest[0] == "--":
         rest = rest[1:]
-    sys.argv = ["openai_pr_review_wrapper.py", *rest]
+    sys.argv = ["pr_review_wrapper.py", *rest]
     args = wrapper.parse_args()
     if not args.podman or not args.combine_model:
         raise SystemExit("replay requires the original run's --podman and --combine-model flags")

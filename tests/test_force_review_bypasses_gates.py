@@ -202,7 +202,7 @@ class ForceReviewSkipPayloadTests(unittest.TestCase):
     the only thing fairy owns is putting the flag into the
     request payload it writes to that process's stdin. Pin that each
     field appears only when asked, so the cross-process contract with
-    openai_pr_review_wrapper does not silently drift.
+    pr_review_wrapper does not silently drift.
     """
 
     def _payload_for(self, **flags: bool) -> dict:

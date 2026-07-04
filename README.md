@@ -115,7 +115,7 @@ launcher script so the image and mirrors stay current with one command.
 
 Then point the reviewer at the host, either directly:
 
-    ./openai_pr_review_wrapper.py --podman --podman-ssh-dest fairy@HOST \
+    ./pr_review_wrapper.py --podman --podman-ssh-dest fairy@HOST \
         --repo-root ~/forgejo_fairy/ffmpeg \
         --extra-repo-root ~/forgejo_fairy/all_ffmpeg ...
 
@@ -152,7 +152,7 @@ their reviews. `--model` is the OpenAI main pass; add more with
 reviewer). Each reviewer gets its own isolated container shell, and the
 non-triage model reviewers run concurrently.
 
-    ./openai_pr_review_wrapper.py \
+    ./pr_review_wrapper.py \
         --podman --podman-ssh-dest fairy@HOST \
         --repo-root ~/forgejo_fairy/ffmpeg \
         --triage-model gpt-5.4-mini \

@@ -2,7 +2,7 @@
 """Inspect saved OpenAI reviewer responses for analysis.
 
 Reads the ``resp_*.json`` dumps written by
-``openai_pr_review_wrapper.py --debug-response-dir`` and surfaces the
+``pr_review_wrapper.py --debug-response-dir`` and surfaces the
 parts that matter when comparing runs: the reasoning summaries (what
 the model was thinking), the code_interpreter tool calls (what it
 actually inspected in the repo), and the final review message.

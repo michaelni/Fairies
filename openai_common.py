@@ -37,7 +37,7 @@ JSON type aliases, and small utilities like ``_obj_get`` and
 ``log_progress``.
 
 This is a leaf module: nothing here may import from
-``openai_pr_review_wrapper`` or any of its siblings. The only allowed
+``pr_review_wrapper`` or any of its siblings. The only allowed
 in-repo dependency is ``common``.
 """
 
@@ -63,7 +63,7 @@ from openai import (
 )
 
 # Re-exported for callers that do ``from openai_common import JsonObject``
-# (e.g. openai_pr_review_wrapper, openai_container, openai_vector_store).
+# (e.g. pr_review_wrapper, openai_container, openai_vector_store).
 # Single source of truth lives in common.py; both forge_gcli and
 # openai_common re-export so neither subsystem has to depend on the
 # other.

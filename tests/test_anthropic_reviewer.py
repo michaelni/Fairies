@@ -141,7 +141,7 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         self.assertEqual("tool_result", second_msgs[2]["content"][0]["type"])
 
     def test_module_logger_names_match_wrapper_registration(self) -> None:
-        # openai_pr_review_wrapper.main() attaches log handlers to these
+        # pr_review_wrapper.main() attaches log handlers to these
         # loggers BY NAME because the modules are imported lazily. A module
         # rename would silently detach their logs again (regression: GLM
         # reviewer activity was invisible in run logs, 2026-07-02).

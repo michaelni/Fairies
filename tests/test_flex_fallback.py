@@ -38,7 +38,7 @@ class FlexFallbackExtraArgsTests(unittest.TestCase):
         self.assertEqual(fairy.flex_fallback_extra_args(""), [])
 
     def test_no_service_tier_returns_empty(self) -> None:
-        cmd = "./openai_pr_review_wrapper.py --model gpt-5.4 --reasoning-effort high"
+        cmd = "./pr_review_wrapper.py --model gpt-5.4 --reasoning-effort high"
         self.assertEqual(fairy.flex_fallback_extra_args(cmd), [])
 
     def test_non_flex_tier_returns_empty(self) -> None:
@@ -92,7 +92,7 @@ class FlexFallbackExtraArgsTests(unittest.TestCase):
         # motivated the fallback guards against future quoting / flag
         # re-orderings silently regressing the match.
         cmd = (
-            "./openai_pr_review_wrapper.py --repo-root ffmpeg --model gpt-5.4 "
+            "./pr_review_wrapper.py --repo-root ffmpeg --model gpt-5.4 "
             "--triage-model gpt-5.4-mini --extra-repo-root all_ffmpeg "
             "--use-vector-store-search --reasoning-effort high --verbose "
             "--debug-response-dir openaidebug --use-web-search "

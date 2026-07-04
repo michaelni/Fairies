@@ -392,7 +392,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "When the head commit has failing CI jobs (ERROR/FAILURE), do not stop "
             "immediately. If your LLM review command is configured for triage "
-            "(e.g. openai_pr_review_wrapper.py with --triage-model), run it so the "
+            "(e.g. pr_review_wrapper.py with --triage-model), run it so the "
             "mini model can post a short helpful_reply pointing at the failure. "
             "If every failing context was already mentioned in a prior comment by the "
             "bot, the wrapper is not invoked. Requires --llm-review-cmd and a "

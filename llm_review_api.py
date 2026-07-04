@@ -277,6 +277,37 @@ def sanitize_label_changes(
     return out
 
 
+def _label_changes_property(label_allowlist: list[str]) -> dict[str, object]:
+    return {
+        "type": "array",
+        "description": (
+            "Per-label add/remove changes for the PR; empty when no "
+            "label should change."
+        ),
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "label": {"type": "string", "enum": label_allowlist},
+                "op": {"type": "string", "enum": ["add", "remove"]},
+                "reason": {
+                    "type": "string",
+                    "description": "One concrete sentence justifying this label change.",
+                },
+                "post": {
+                    "type": "boolean",
+                    "description": (
+                        "true if the reason is needed to understand the "
+                        "label and should be posted to the PR as a comment; "
+                        "false if it only serves logs."
+                    ),
+                },
+            },
+            "required": ["label", "op", "reason", "post"],
+        },
+    }
+
+
 def build_triage_schema(
     allowed_models: list[str],
     allowed_labels: list[str] | None = None,
@@ -345,34 +376,7 @@ def build_triage_schema(
         required.extend(["requested_models", "requested_effort"])
     label_allowlist = allowed_labels or []
     if label_allowlist:
-        properties["label_changes"] = {
-            "type": "array",
-            "description": (
-                "Per-label add/remove changes for the PR; empty when no "
-                "label should change."
-            ),
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "label": {"type": "string", "enum": label_allowlist},
-                    "op": {"type": "string", "enum": ["add", "remove"]},
-                    "reason": {
-                        "type": "string",
-                        "description": "One concrete sentence justifying this label change.",
-                    },
-                    "post": {
-                        "type": "boolean",
-                        "description": (
-                            "true if the reason is needed to understand the "
-                            "label and should be posted to the PR as a comment; "
-                            "false if it only serves logs."
-                        ),
-                    },
-                },
-                "required": ["label", "op", "reason", "post"],
-            },
-        }
+        properties["label_changes"] = _label_changes_property(label_allowlist)
         required.append("label_changes")
     return {
         "name": "pr_triage_result",

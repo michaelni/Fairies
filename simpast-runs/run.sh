@@ -101,7 +101,7 @@ run_one() {
         --patch-repo "$PATCH_REPO" \
         --patch-pr-ref-template "fforge/pr/{number}" \
         --cache "$outdir/cache.pkl" \
-        --bot-state-cache "$outdir/bot_state.pkl" \
+        --fairy-state-cache "$outdir/bot_state.pkl" \
         --forced-only --force-review-non-open "${force[@]}" \
         --llm-parallelism "${#PRS[@]}" \
         --llm-review-cmd "./pr_review_wrapper.py \

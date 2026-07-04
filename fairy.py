@@ -528,7 +528,7 @@ def parse_args() -> argparse.Namespace:
              "(default: ~/.fairy/pr_data_cache.pkl).",
     )
     p.add_argument(
-        "--bot-state-cache",
+        "--fairy-state-cache",
         type=Path,
         default=default_cache_path("bot_state.pkl"),
         help="Pickle path for the LLM-skip backoff bookkeeping; "
@@ -2982,7 +2982,7 @@ def start_review_pipeline(
             try:
                 logger.debug("cache save after prepare phase start path=%s", args.cache)
                 gcli_cache.save_cache(args.cache, cache)
-                bot_state.save(args.bot_state_cache, state)
+                bot_state.save(args.fairy_state_cache, state)
                 logger.debug("cache save after prepare phase ok path=%s", args.cache)
             except Exception as exc:
                 logger.warning("failed to save cache after prepare phase %s: %s", args.cache, exc)
@@ -3057,7 +3057,7 @@ def main() -> int:
     wip_prefixes = DEFAULT_WIP_PREFIXES + (args.wip_prefixes or [])
     wip_re = compile_wip_regex(wip_prefixes)
     cache = gcli_cache.load_cache(args.cache)
-    state = bot_state.load(args.bot_state_cache)
+    state = bot_state.load(args.fairy_state_cache)
     discussion_cache_max_age = timedelta(hours=args.discussion_cache_max_age_hours)
 
     try:
@@ -3234,7 +3234,7 @@ def main() -> int:
             llm_queue.put(_LLM_REVIEW_DONE)
         try:
             gcli_cache.save_cache(args.cache, cache)
-            bot_state.save(args.bot_state_cache, state)
+            bot_state.save(args.fairy_state_cache, state)
         except Exception as exc:
             logger.warning("failed to save PR-data cache %s: %s", args.cache, exc)
 

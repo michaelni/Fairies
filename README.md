@@ -47,7 +47,7 @@ adding, removing or reordering them is an edit, not a restructuring.
 6. Copy `fairy-ref.sh` to your own launcher and adjust `--owner`, `--repo`,
    `--gcli-account`, `--patch-repo`, the models, and your forge's labels
    (`--triage-label`, repeatable). To run fairies for several repositories
-   concurrently, give each launcher its own `--cache`, `--bot-state-cache`
+   concurrently, give each launcher its own `--cache`, `--fairy-state-cache`
    and `--debug-response-dir`.
 
 ### Self-hosted Podman container

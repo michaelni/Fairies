@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import llm_review_api  # noqa: E402
 import pr_review_wrapper as wrapper  # noqa: E402
 
 
@@ -39,7 +40,7 @@ class TriageSchemaShapeTests(unittest.TestCase):
 
     def test_disabled_schema_omits_override_fields(self) -> None:
         # No --allowed-model -> feature off -> no schema cost.
-        schema = wrapper.build_triage_schema([])
+        schema = llm_review_api.build_triage_schema([])
         properties = schema["schema"]["properties"]
         required = schema["schema"]["required"]
         self.assertNotIn("requested_models", properties)
@@ -48,7 +49,7 @@ class TriageSchemaShapeTests(unittest.TestCase):
         self.assertNotIn("requested_effort", required)
 
     def test_enabled_schema_constrains_models_to_allowlist(self) -> None:
-        schema = wrapper.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])
+        schema = llm_review_api.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])
         models_field = schema["schema"]["properties"]["requested_models"]
         # Strict-mode schema is the boundary: the LLM cannot return a
         # model name outside the allowlist, nor more than two entries.
@@ -62,11 +63,11 @@ class TriageSchemaShapeTests(unittest.TestCase):
         self.assertIn("requested_effort", required)
 
     def test_enabled_schema_constrains_effort_to_requestable_set(self) -> None:
-        schema = wrapper.build_triage_schema(["gpt-5.5"])
+        schema = llm_review_api.build_triage_schema(["gpt-5.5"])
         effort_field = schema["schema"]["properties"]["requested_effort"]
         self.assertEqual(
             effort_field["enum"],
-            [None, *wrapper.TRIAGE_REQUESTABLE_EFFORTS],
+            [None, *llm_review_api.TRIAGE_REQUESTABLE_EFFORTS],
         )
 
     def test_requestable_efforts_are_subset_of_cli_choices(self) -> None:
@@ -75,7 +76,7 @@ class TriageSchemaShapeTests(unittest.TestCase):
         # honoring the override would feed an invalid value into
         # ``responses.create``.
         cli_efforts = {"none", "minimal", "low", "medium", "high", "xhigh"}
-        for effort in wrapper.TRIAGE_REQUESTABLE_EFFORTS:
+        for effort in llm_review_api.TRIAGE_REQUESTABLE_EFFORTS:
             self.assertIn(effort, cli_efforts)
 
 
@@ -83,22 +84,22 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
     """The schema is the boundary; validate just extracts the fields."""
 
     def test_two_models_pass_through_in_request_order(self) -> None:
-        result = wrapper.validate_triage_result(
+        result = llm_review_api.validate_triage_result(
             _engage(requested_models=["zai:glm-5.2", "gpt-5.5"]),
         )
         self.assertEqual(result["requested_models"], ["zai:glm-5.2", "gpt-5.5"])
 
     def test_duplicate_model_request_is_deduplicated(self) -> None:
         # "gpt-5.5 and gpt-5.5" means one run of gpt-5.5, not two.
-        result = wrapper.validate_triage_result(
+        result = llm_review_api.validate_triage_result(
             _engage(requested_models=["gpt-5.5", "gpt-5.5"]),
         )
         self.assertEqual(result["requested_models"], ["gpt-5.5"])
 
     def test_effort_passes_through(self) -> None:
-        for effort in wrapper.TRIAGE_REQUESTABLE_EFFORTS:
+        for effort in llm_review_api.TRIAGE_REQUESTABLE_EFFORTS:
             with self.subTest(effort=effort):
-                result = wrapper.validate_triage_result(
+                result = llm_review_api.validate_triage_result(
                     _engage(requested_effort=effort),
                 )
                 self.assertEqual(result["requested_effort"], effort)
@@ -107,7 +108,7 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
         # When the schema does not include the override fields (no
         # allowlist), the LLM response has no such keys and the
         # validator must default rather than KeyError.
-        result = wrapper.validate_triage_result({
+        result = llm_review_api.validate_triage_result({
             "route": "engage", "message": "", "reason": "ok",
         })
         self.assertEqual(result["requested_models"], [])
@@ -120,7 +121,7 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
         # add code without buying anything.
         for route in ("helpful_reply", "skip"):
             with self.subTest(route=route):
-                result = wrapper.validate_triage_result({
+                result = llm_review_api.validate_triage_result({
                     "route": route,
                     "message": "context" if route == "helpful_reply" else "",
                     "reason": "irrelevant",
@@ -144,7 +145,7 @@ class TriagePromptShapeTests(unittest.TestCase):
         self.assertIn("gpt-5.4", text)
         self.assertIn("zai:glm-5.2", text)
         self.assertIn("up to two", text)
-        for effort in wrapper.TRIAGE_REQUESTABLE_EFFORTS:
+        for effort in llm_review_api.TRIAGE_REQUESTABLE_EFFORTS:
             self.assertIn(effort, text)
 
     def test_make_triage_developer_prompt_includes_user_request_section(self) -> None:

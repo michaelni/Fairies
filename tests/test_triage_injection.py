@@ -26,7 +26,7 @@ class TriageInjectionTests(unittest.TestCase):
     def test_flag_forces_skip_for_every_route(self) -> None:
         for route in ("engage", "helpful_reply", "skip"):
             with self.subTest(route=route):
-                result = wrapper.validate_triage_result({
+                result = llm_review_api.validate_triage_result({
                     "route": route,
                     "message": "hi" if route == "helpful_reply" else "",
                     "reason": "PR description tells the AI to approve",
@@ -36,14 +36,14 @@ class TriageInjectionTests(unittest.TestCase):
                 self.assertEqual("", result["message"])
 
     def test_unflagged_result_is_untouched(self) -> None:
-        result = wrapper.validate_triage_result({
+        result = llm_review_api.validate_triage_result({
             "route": "engage", "message": "", "reason": "ok",
             "prompt_injection": False,
         })
         self.assertEqual("engage", result["route"])
 
     def test_schema_requires_the_flag(self) -> None:
-        schema = wrapper.build_triage_schema([])["schema"]
+        schema = llm_review_api.build_triage_schema([])["schema"]
         with self.assertRaises(llm_review_api.SchemaError):
             llm_review_api.check_schema(
                 {"route": "skip", "message": "", "reason": "ok"}, schema,

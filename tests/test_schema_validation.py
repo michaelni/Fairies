@@ -64,7 +64,7 @@ class CheckSchemaTests(unittest.TestCase):
     def test_generic_over_triage_schema(self) -> None:
         # The same checker validates a dynamically built schema with
         # nullable unions, nested arrays and per-item object schemas.
-        schema = wrapper.build_triage_schema(["gpt-5.5"], ["needs-review"])["schema"]
+        schema = llm_review_api.build_triage_schema(["gpt-5.5"], ["needs-review"])["schema"]
         llm_review_api.check_schema(
             {
                 "route": "engage", "message": "", "reason": "ok",
@@ -92,7 +92,7 @@ class CheckSchemaTests(unittest.TestCase):
     def test_max_items_is_enforced(self) -> None:
         # requested_models advertises maxItems=2 to the API; the local
         # checker must enforce the same bound to stay in lockstep.
-        schema = wrapper.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])["schema"]
+        schema = llm_review_api.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])["schema"]
         base = {"route": "engage", "message": "", "reason": "ok",
                 "prompt_injection": False, "requested_effort": None}
         llm_review_api.check_schema(

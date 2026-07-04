@@ -17,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import forge_gcli  # noqa: E402
+import llm_review_api  # noqa: E402
 import pr_review_wrapper as wrapper  # noqa: E402
 from llm_prompt import t_prompt_triage_labels  # noqa: E402
 import fairy as paa  # noqa: E402
@@ -39,12 +40,12 @@ def _change(label: str, op: str, reason: str = "", post: bool = False) -> dict[s
 
 class TriageLabelSchemaTests(unittest.TestCase):
     def test_disabled_schema_omits_label_field(self) -> None:
-        schema = wrapper.build_triage_schema([], [])
+        schema = llm_review_api.build_triage_schema([], [])
         self.assertNotIn("label_changes", schema["schema"]["properties"])
         self.assertNotIn("label_changes", schema["schema"]["required"])
 
     def test_enabled_schema_constrains_labels_to_allowlist(self) -> None:
-        schema = wrapper.build_triage_schema([], ["needs-review", "stale"])
+        schema = llm_review_api.build_triage_schema([], ["needs-review", "stale"])
         item = schema["schema"]["properties"]["label_changes"]["items"]
         self.assertEqual(item["properties"]["label"]["enum"], ["needs-review", "stale"])
         self.assertEqual(item["properties"]["op"]["enum"], ["add", "remove"])
@@ -54,14 +55,14 @@ class TriageLabelSchemaTests(unittest.TestCase):
         # Forcing reason + post per change is what makes a label both
         # auditable (reason) and self-explanatory on the PR when needed
         # (post); both must be required alongside label/op.
-        schema = wrapper.build_triage_schema([], ["needs-review"])
+        schema = llm_review_api.build_triage_schema([], ["needs-review"])
         required = schema["schema"]["properties"]["label_changes"]["items"]["required"]
         self.assertEqual(set(required), {"label", "op", "reason", "post"})
 
 
 class SanitizeLabelChangesTests(unittest.TestCase):
     def test_valid_change_passes_through(self) -> None:
-        out = wrapper.sanitize_label_changes(
+        out = llm_review_api.sanitize_label_changes(
             [_change("needs-review", "add", "a maintainer asked", post=True)],
             ["needs-review", "stale"],
         )
@@ -70,36 +71,36 @@ class SanitizeLabelChangesTests(unittest.TestCase):
         ])
 
     def test_unknown_label_dropped(self) -> None:
-        out = wrapper.sanitize_label_changes(
+        out = llm_review_api.sanitize_label_changes(
             [_change("secret", "add"), _change("stale", "remove")],
             ["needs-review", "stale"],
         )
         self.assertEqual([c["label"] for c in out], ["stale"])
 
     def test_bad_op_dropped(self) -> None:
-        out = wrapper.sanitize_label_changes(
+        out = llm_review_api.sanitize_label_changes(
             [_change("stale", "toggle")], ["stale"],
         )
         self.assertEqual(out, [])
 
     def test_no_allowlist_yields_empty(self) -> None:
-        out = wrapper.sanitize_label_changes([_change("needs-review", "add")], [])
+        out = llm_review_api.sanitize_label_changes([_change("needs-review", "add")], [])
         self.assertEqual(out, [])
 
     def test_duplicate_label_op_deduped(self) -> None:
-        out = wrapper.sanitize_label_changes(
+        out = llm_review_api.sanitize_label_changes(
             [_change("stale", "add"), _change("stale", "add")], ["stale"],
         )
         self.assertEqual(len(out), 1)
 
     def test_missing_reason_and_post_default(self) -> None:
-        out = wrapper.sanitize_label_changes([{"label": "stale", "op": "add"}], ["stale"])
+        out = llm_review_api.sanitize_label_changes([{"label": "stale", "op": "add"}], ["stale"])
         self.assertEqual(out, [{"label": "stale", "op": "add", "reason": "", "post": False}])
 
 
 class ValidateTriageLabelTests(unittest.TestCase):
     def test_label_changes_pass_through(self) -> None:
-        result = wrapper.validate_triage_result(
+        result = llm_review_api.validate_triage_result(
             _triage_result(label_changes=[_change("needs-review", "add", "x", post=True)]),
             allowed_labels=["needs-review", "stale"],
         )
@@ -108,14 +109,14 @@ class ValidateTriageLabelTests(unittest.TestCase):
         ])
 
     def test_unknown_label_changes_dropped(self) -> None:
-        result = wrapper.validate_triage_result(
+        result = llm_review_api.validate_triage_result(
             _triage_result(label_changes=[_change("secret", "add"), _change("stale", "remove")]),
             allowed_labels=["needs-review", "stale"],
         )
         self.assertEqual([c["label"] for c in result["label_changes"]], ["stale"])
 
     def test_no_allowlist_yields_empty(self) -> None:
-        result = wrapper.validate_triage_result(
+        result = llm_review_api.validate_triage_result(
             _triage_result(label_changes=[_change("needs-review", "add")]),
         )
         self.assertEqual(result["label_changes"], [])

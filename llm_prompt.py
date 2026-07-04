@@ -43,12 +43,9 @@ import json
 from pathlib import Path
 
 from common import JsonObject
-from llm_review_api import Review
+from llm_review_api import TRIAGE_REQUESTABLE_EFFORTS, Review
 from patch_util import extract_submodule_changes_from_patch
 from podman_host import CONTAINER_CPUS, CONTAINER_MEMORY
-
-
-TRIAGE_REQUESTABLE_EFFORTS = ("medium", "high", "xhigh")
 
 # Where the review container's Containerfile puts the FATE sample suite.
 CONTAINER_FATE_SUITE = "/opt/fate-suite"

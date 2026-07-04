@@ -10,17 +10,21 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
     LANG=C.UTF-8
 
-# i386 multiarch must be enabled before ``apt-get update`` so the
+# i386 multiarch must be enabled before any ``apt-get update`` so the
 # ``:i386`` packages installed below resolve.  We use multiarch
 # (``zlib1g-dev:i386`` etc.) for 32-bit support; we deliberately do
 # NOT install ``gcc-multilib`` because it depends on
 # ``libc6-dev-i386`` which conflicts with ``libc6:i386`` (multiarch).
 # Use ``i686-linux-gnu-gcc`` for explicit 32-bit compilation instead.
-RUN dpkg --add-architecture i386 \
- && apt-get update
+RUN dpkg --add-architecture i386
+
+# Every install layer runs its own ``apt-get update``: layers rebuild
+# independently (podman caches the unchanged ones), and an install
+# re-run against another layer's months-old cached lists 404s on any
+# package the archive has since replaced.
 
 # Native toolchain, debuggers, sanitizer runtimes, and fuzzers.
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential clang lld lldb gdb strace ltrace \
         clang-tools libclang-rt-dev \
         afl++
@@ -31,7 +35,7 @@ RUN apt-get install -y --no-install-recommends \
 # explicit ``qemu-<arch> ./prog`` invocation; we don't rely on
 # ``binfmt-support`` because /proc/sys/fs/binfmt_misc isn't
 # generally writable inside an unprivileged container.
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-i686-linux-gnu g++-i686-linux-gnu \
         gcc-aarch64-linux-gnu \
         gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi \
@@ -43,11 +47,11 @@ RUN apt-get install -y --no-install-recommends \
 
 # 32-bit (i386) development libraries via dpkg multiarch.  Add more
 # ``:i386`` packages here as concrete reviews require them.
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         libc6-dev:i386 zlib1g-dev:i386
 
 # Assemblers, build helpers, binary inspection.
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         nasm yasm pkg-config binutils elfutils file ccache
 
 # FFmpeg external libraries.  This is exactly Ubuntu 24.04's ffmpeg
@@ -57,7 +61,7 @@ RUN apt-get install -y --no-install-recommends \
 # Built on amd64 (matches the cross/qemu toolchain above); a couple of
 # entries are amd64-oriented (libvpl-dev = Intel QSV, libffmpeg-nvenc-dev
 # = NVENC headers) and would need trimming on other architectures.
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
         zlib1g-dev libbz2-dev liblzma-dev \
         libx264-dev libx265-dev libvpx-dev libaom-dev libdav1d-dev \
         librav1e-dev libsvtav1enc-dev libtheora-dev libxvidcore-dev \
@@ -82,14 +86,15 @@ RUN apt-get install -y --no-install-recommends \
         libvidstab-dev frei0r-plugins-dev ladspa-sdk liblilv-dev \
         flite1-dev glslang-dev
 
-# CLI utilities and Python.
-RUN apt-get install -y --no-install-recommends \
+# CLI utilities and Python. The apt lists are deliberately kept (no
+# ``rm -rf /var/lib/apt/lists``): the model apt-installs extra packages
+# during reviews, and the ~80MB is noise next to the FATE layer below.
+RUN apt-get update && apt-get install -y --no-install-recommends \
         git ripgrep fd-find jq curl wget rsync ca-certificates \
         unzip xz-utils zstd less procps \
         python3 python3-pip python3-venv \
         poppler-utils \
-        nodejs npm \
- && rm -rf /var/lib/apt/lists/*
+        nodejs npm
 
 # ffmpeg-web build tooling: the site's Makefile runs ``lessc
 # --clean-css`` (the plugin package) and ``make DEV=1`` needs bower.

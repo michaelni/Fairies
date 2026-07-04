@@ -72,14 +72,12 @@ import re
 import subprocess
 import sys
 import tarfile
-import time
 from pathlib import Path
 
 from openai import OpenAI
 
 from common import (
     add_color_arg,
-    dump_response_debug_artifacts,
     setup_logging,
 )
 from patch_util import (
@@ -91,22 +89,20 @@ from patch_util import (
 from git_util import git_show_file
 import llm_review_api
 from llm_review_api import (
-    CLASSIFICATIONS,
     EXIT_BAD_MODEL_OUTPUT,
     BadModelOutput,
     ReviewContext,
-    build_triage_schema,
-    validate_triage_result,
 )
 import review_pipeline
-from review_pipeline import make_reviewer, review_pr
+from review_pipeline import make_reviewer, review_pr, run_triage
 import podman_host
 import podman_repos
 from llm_prompt import (
-    generate_llm_prompt,
+    COMBINER_ROLE,
+    REVIEWER_ROLE,
     make_developer_prompt,
+    make_triager_role,
     make_triage_developer_prompt,
-    make_triage_user_text,
     t_prompt_triage_labels,
     t_prompt_user_request,
 )
@@ -116,12 +112,8 @@ import openai_container_pool
 import openai_reviewer
 import openai_vector_store
 from openai_common import (
-    InputContentItem,
     JsonObject,
-    ResponseKwargs,
-    call_with_rate_limit_retry,
     delete_uploaded_file,
-    extract_response_text,
     load_api_key,
     log_progress,
     openai_file_exists,
@@ -135,12 +127,7 @@ from openai_reviewer import (
     OpenAIReviewer,
     build_response_include,
     build_response_tools,
-    extract_response_annotations,
-    extract_response_file_citation_metadata,
-    format_response_stats,
     make_openai_http_client,
-    render_file_citations_for_markdown,
-    run_responses_resolving_podman_shell,
 )
 
 
@@ -227,13 +214,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--triage-model",
         default=None,
+        metavar="[PROVIDER:]MODEL[@EFFORT]",
         help=(
-            "Optional smaller/cheaper model to run a pre-check that classifies the PR "
-            "as skip / helpful_reply / engage before the main review model is invoked. "
-            "When unset (default), triage is disabled and the main model is called directly. "
-            "The triage model gets the same tool access (file_search / web_search / "
-            "code_interpreter / shell) as the main model, but is NOT given the source bundle; "
-            "the source bundle is only uploaded if triage routes to engage."
+            "Optional model to run a pre-check that classifies the PR as "
+            "skip / helpful_reply / engage before the main review. Same "
+            "``provider:model[@effort]`` form as --extra-model (default "
+            "provider is openai). When unset, triage is disabled. The "
+            "triager gets podman shell and/or OpenAI file_search / "
+            "web_search when configured, but not the source bundle."
         ),
     )
     p.add_argument(
@@ -951,230 +939,6 @@ def emit_review_stdout(
     sys.stdout.write("\n")
 
 
-def run_triage_stage(
-    client: OpenAI,
-    *,
-    args: argparse.Namespace,
-    request: JsonObject,
-    patch_file_id: str,
-    patch_was_truncated: bool,
-    reviewer_username: str,
-    repo_roots: list[Path],
-    vector_store_ids: list[str],
-    repo_mount_paths: list[str],
-    use_podman_shell: bool,
-    podman_shell_session: podman_host.ContainerShellSession | None,
-    tools: list[JsonObject],
-    include: list[str],
-    debug_dir_specified: bool,
-) -> dict[str, object] | None:
-    """Run the optional mini-model triage pre-check.
-
-    Returns a dict with ``route`` / ``message`` / ``reason`` keys on
-    success. Returns ``None`` on triage failure (API error, refusal,
-    parse error), signalling that the caller should fall through to
-    the main reviewer pass.
-
-    When the container went unhealthy during triage, the returned dict
-    also contains ``container_unhealthy=True`` so the caller can surface
-    ``EXIT_CONTAINER_UNHEALTHY`` without running the main pass on the
-    dead container.
-    """
-    triage_content: list[InputContentItem] = [
-        {"type": "input_text", "text": make_triage_user_text(request, patch_was_truncated)},
-        {"type": "input_file", "file_id": patch_file_id},
-    ]
-
-    ci_triage_mode = bool(
-        isinstance(request.get("ci_triage"), dict) and request.get("ci_triage")
-    )
-    triage_label_allowlist = triage_label_allowlist_from_request(request)
-
-    triage_features: set[str] = set()
-    if vector_store_ids:
-        triage_features.add("vector_store_search")
-    if args.use_web_search:
-        triage_features.add("web_search")
-    if use_podman_shell:
-        triage_features.add("podman_shell")
-    else:
-        triage_features.add("code_interpreter")
-
-    triage_kwargs: ResponseKwargs = {
-        "model": args.triage_model,
-        "input": [
-            {
-                "role": "developer",
-                "content": generate_llm_prompt(
-                    role="triager",
-                    vendor="openai",
-                    model=args.triage_model,
-                    features=triage_features,
-                    repo_roots=repo_roots,
-                    container_repo_mounts=repo_mount_paths,
-                    reviewer_username=reviewer_username,
-                    ci_triage_mode=ci_triage_mode,
-                    allowed_models=args.allowed_model,
-                    allowed_labels=triage_label_allowlist,
-                ),
-            },
-            {"role": "user", "content": triage_content},
-        ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                **build_triage_schema(args.allowed_model, triage_label_allowlist),
-            },
-        },
-        "max_output_tokens": args.triage_max_output_tokens,
-    }
-    if args.verbosity is not None:
-        triage_kwargs["text"]["verbosity"] = args.verbosity
-    if args.top_p is not None:
-        triage_kwargs["top_p"] = args.top_p
-    triage_reasoning: JsonObject = {}
-    if args.triage_reasoning_effort:
-        triage_reasoning["effort"] = args.triage_reasoning_effort
-    if args.reasoning_summary:
-        triage_reasoning["summary"] = args.reasoning_summary
-    if triage_reasoning:
-        triage_kwargs["reasoning"] = triage_reasoning
-    if args.max_tool_calls is not None:
-        triage_kwargs["max_tool_calls"] = args.max_tool_calls
-    # The triage tier is independent of ``--service-tier`` -- it is only
-    # applied when the user explicitly asks for it via
-    # ``--triage-service-tier``. We do NOT inherit from ``--service-tier``
-    # here because the two stages have very different cost/latency
-    # profiles and silently coupling them surprises users who only
-    # wanted the main pass on a non-default tier.
-    if args.triage_service_tier is not None:
-        triage_kwargs["service_tier"] = args.triage_service_tier
-    if tools:
-        triage_kwargs["tools"] = tools
-    if include:
-        triage_kwargs["include"] = include
-
-    if args.verbose and ci_triage_mode:
-        logger.debug("triage developer prompt: CI failure mode (ci_triage payload present)")
-
-    if args.verbose:
-        tool_names = [
-            tool.get("type") if tool.get("type") != "function" else f"function:{tool.get('name')}"
-            for tool in tools
-            if isinstance(tool, dict)
-        ]
-        logger.debug(
-            "triage responses.create start model=%s effort=%s tier=%s tools=%s vector_stores=%d max_output_tokens=%d",
-            args.triage_model,
-            args.triage_reasoning_effort or "-",
-            args.triage_service_tier or "-",
-            ",".join(tool_names) if tool_names else "-",
-            len(vector_store_ids),
-            args.triage_max_output_tokens,
-        )
-
-    triage_started = time.monotonic()
-    try:
-        if use_podman_shell:
-            if podman_shell_session is None:
-                raise RuntimeError("podman shell triage requires a container session")
-            triage_response = run_responses_resolving_podman_shell(
-                client,
-                initial_kwargs=triage_kwargs,
-                podman_shell_session=podman_shell_session,
-                max_tool_rounds=args.podman_max_tool_rounds,
-                max_shell_timeout_s=args.podman_exec_timeout,
-                what="triage responses.create",
-                verbose=args.verbose,
-                debug_dir=args.debug_response_dir if debug_dir_specified else None,
-                wrapper_request=request,
-            )
-        else:
-            triage_response = call_with_rate_limit_retry(
-                lambda: client.responses.create(**triage_kwargs),
-                what="triage responses.create",
-                verbose=args.verbose,
-                # Like the main request, let the outer caller decide whether
-                # to retry on transient timeouts rather than silently piling
-                # up duplicate billed runs here.
-                retry_transient=False,
-            )
-    except Exception as exc:
-        if args.verbose:
-            logger.debug(
-                "triage responses.create failed dt=%.3fs error=%s %s",
-                time.monotonic() - triage_started,
-                type(exc).__name__,
-                str(exc).replace("\n", " "),
-            )
-        if (
-            args.use_openai_container_repos
-            and repo_roots
-            and openai_container.is_container_unhealthy_error(exc)
-        ):
-            logger.warning(
-                "openai container unhealthy during triage responses.create (%s)",
-                str(exc).replace("\n", " "),
-            )
-            return {"route": "engage", "message": "", "reason": "", "container_unhealthy": True}
-        logger.warning(
-            "triage stage failed with %s: %s; will fall through to main reviewer pass",
-            type(exc).__name__,
-            str(exc).replace("\n", " "),
-        )
-        return None
-
-    if args.verbose:
-        logger.debug(
-            "triage responses.create ok %s",
-            format_response_stats(triage_response, elapsed_seconds=time.monotonic() - triage_started),
-        )
-    # The podman tool loop already dumps every round (including the final
-    # response) with the kwargs that actually produced it.
-    if debug_dir_specified and not use_podman_shell:
-        dump_response_debug_artifacts(
-            triage_response,
-            triage_kwargs,
-            wrapper_request=request,
-            debug_dir=args.debug_response_dir,
-            verbose=args.verbose,
-        )
-
-    try:
-        triage_annotations = extract_response_annotations(triage_response)
-        triage_file_citation_metadata = extract_response_file_citation_metadata(triage_response)
-        triage_raw_text = extract_response_text(
-            triage_response,
-            response_kwargs=triage_kwargs,
-            debug_dir=args.debug_response_dir,
-            verbose=args.verbose,
-        )
-        parsed = json.loads(triage_raw_text)
-        # OpenAI-specific: resolve file-citation markup into the final
-        # posted text before the neutral validation applies its
-        # message rules to it.
-        if isinstance(parsed, dict) and isinstance(parsed.get("message"), str):
-            parsed["message"] = render_file_citations_for_markdown(
-                parsed["message"], triage_annotations, triage_file_citation_metadata,
-            )
-        validated = validate_triage_result(parsed, allowed_labels=triage_label_allowlist)
-    except Exception as exc:
-        logger.warning(
-            "triage stage output could not be parsed (%s: %s); falling through to main reviewer pass",
-            type(exc).__name__,
-            str(exc).replace("\n", " "),
-        )
-        return None
-
-    logger.info(
-        "triage decision route=%s message_chars=%d reason=%r",
-        validated["route"],
-        len(validated["message"]),
-        validated.get("reason", ""),
-    )
-    return dict(validated)
-
-
 def open_review_container_shell(
     remote_host: podman_host.RemoteHost,
     repo_specs: list[podman_repos.RepoSpec],
@@ -1487,22 +1251,35 @@ def main() -> int:
         requested_models: list[str] = []
 
         if args.triage_model:
-            triage_result = run_triage_stage(
-                client,
-                args=args,
-                request=request,
-                patch_file_id=patch_file_id,
-                patch_was_truncated=patch_was_truncated,
-                reviewer_username=reviewer_username,
-                repo_roots=repo_roots,
-                vector_store_ids=vector_store_ids,
-                repo_mount_paths=repo_mount_paths,
-                use_podman_shell=args.podman,
-                podman_shell_session=podman_shell_session,
-                tools=tools,
-                include=include,
-                debug_dir_specified=debug_dir_specified,
+            triage_label_allowlist = triage_label_allowlist_from_request(request)
+            triager_role = make_triager_role(
+                allowed_models=args.allowed_model,
+                allowed_labels=triage_label_allowlist,
             )
+            triage_ctx = ReviewContext(
+                request=request,
+                patch_text=patch_bundle,
+                patch_truncated=patch_was_truncated,
+                source_bundle=None,
+                source_files=[],
+                source_notes=[],
+                reviewer_username=reviewer_username,
+                ci_triage_mode=ci_triage_active,
+                repo_roots=repo_roots,
+                repo_mount_paths=repo_mount_paths,
+                new_shell=new_shell if args.podman else None,
+            )
+            triager = make_reviewer(
+                args.triage_model,
+                args=args,
+                resources=openai_resources,
+                role=triager_role,
+                verbose=args.verbose,
+                default_effort=args.triage_reasoning_effort,
+                max_output_tokens=args.triage_max_output_tokens,
+                service_tier=args.triage_service_tier,
+            )
+            triage_result = run_triage(triager, triage_ctx)
             if triage_result is None:
                 if ci_triage_active and not force_engage:
                     logger.warning(
@@ -1594,19 +1371,19 @@ def main() -> int:
 
         if requested_models:
             model_reviewers = [
-                make_reviewer(spec, args=args, resources=openai_resources, role="reviewer", verbose=args.verbose)
+                make_reviewer(spec, args=args, resources=openai_resources, role=REVIEWER_ROLE, verbose=args.verbose)
                 for spec in requested_models
             ]
         else:
             model_reviewers = [
-                OpenAIReviewer(args, openai_resources, model=args.model, role="reviewer")
+                OpenAIReviewer(args, openai_resources, model=args.model)
             ]
             for spec in args.extra_model:
                 model_reviewers.append(
-                    make_reviewer(spec, args=args, resources=openai_resources, role="reviewer", verbose=args.verbose)
+                    make_reviewer(spec, args=args, resources=openai_resources, role=REVIEWER_ROLE, verbose=args.verbose)
                 )
         combiner = (
-            make_reviewer(args.combine_model, args=args, resources=openai_resources, role="combiner", verbose=args.verbose)
+            make_reviewer(args.combine_model, args=args, resources=openai_resources, role=COMBINER_ROLE, verbose=args.verbose)
             if args.combine_model
             else None
         )
@@ -1618,7 +1395,7 @@ def main() -> int:
                 "user requested %d models with no --combine-model configured; "
                 "combining with openai:%s", len(model_reviewers), args.model,
             )
-            combiner = OpenAIReviewer(args, openai_resources, model=args.model, role="combiner")
+            combiner = OpenAIReviewer(args, openai_resources, model=args.model, role=COMBINER_ROLE)
         try:
             review = review_pr(review_ctx, model_reviewers, combiner)
         except OpenAIContainerUnhealthy:

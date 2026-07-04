@@ -34,7 +34,7 @@ Anthropic-compatible endpoint (``base_url`` + ``ZAI_API_KEY``).
 Structured output uses Anthropic's tool-use idiom: the model investigates
 via the ``shell`` tool (a ``ctx.new_shell()`` session) and returns its
 verdict by calling a ``submit_review`` tool whose ``input_schema`` is the
-shared ``REVIEW_SCHEMA``.
+role's output schema.
 
 Importing this module pulls in the ``anthropic`` package, so only the
 Anthropic / GLM code path imports it (lazily, via the reviewer factory).
@@ -48,14 +48,12 @@ import logging
 from anthropic import Anthropic
 
 from common import JsonObject, dump_response_debug_artifacts
-from llm_prompt import generate_llm_prompt, make_combiner_user_text, make_user_text
+from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import (
-    REVIEW_SCHEMA,
     BadModelOutput,
-    Review,
     ReviewContext,
     Reviewer,
-    validate_review,
+    RoleSpec,
 )
 from anthropic_common import call_with_anthropic_retry, load_api_key
 from shell_tool import exec_shell_call
@@ -92,14 +90,14 @@ _SUBMIT_REVIEW = "submit_review"
 _SHELL = "shell"
 
 
-def _build_submit_review_tool() -> JsonObject:
+def _build_submit_review_tool(role: RoleSpec) -> JsonObject:
     return {
         "name": _SUBMIT_REVIEW,
         "description": (
-            "Return your final pull-request review verdict. Call this exactly "
-            "once, when finished, with the classification and message."
+            "Return your final verdict. Call this exactly once, when "
+            "finished, filling every schema field."
         ),
-        "input_schema": REVIEW_SCHEMA["schema"],
+        "input_schema": role.schema["schema"],
     }
 
 
@@ -124,13 +122,15 @@ def _build_shell_tool() -> JsonObject:
 
 
 class AnthropicReviewer(Reviewer):
-    """One Anthropic Messages-API review pass behind the shared interface.
+    """One Anthropic Messages-API pass of a ``RoleSpec`` behind the shared
+    interface.
 
-    ``review(ctx)`` builds the system/user prompt, runs the Messages tool
-    loop (driving a ``ctx.new_shell()`` session when one is available), and
-    returns the verdict the model submits via the ``submit_review`` tool,
-    validated against ``REVIEW_SCHEMA``. Raises ``BadModelOutput`` when the
-    model never produces a schema-valid verdict.
+    ``run(ctx)`` builds the system/user prompt from the role, runs the
+    Messages tool loop (driving a ``ctx.new_shell()`` session when one is
+    available), and returns the result the model submits via the
+    ``submit_review`` tool, validated by the role. Raises
+    ``BadModelOutput`` when the model never produces a schema-valid
+    verdict.
 
     ``base_url`` + ``api_key_env`` select the backend: defaults reach
     Anthropic; pass z.ai's Anthropic endpoint + ``ZAI_API_KEY`` for GLM.
@@ -147,7 +147,7 @@ class AnthropicReviewer(Reviewer):
         model: str,
         *,
         name: str,
-        role: str = "reviewer",
+        role: RoleSpec = REVIEWER_ROLE,
         base_url: str | None = None,
         api_key_env: str = "ANTHROPIC_API_KEY",
         max_tokens: int = DEFAULT_ANTHROPIC_MAX_TOKENS,
@@ -184,7 +184,7 @@ class AnthropicReviewer(Reviewer):
             kwargs["base_url"] = self.base_url
         return Anthropic(**kwargs)
 
-    def review(self, ctx: ReviewContext) -> Review:
+    def run(self, ctx: ReviewContext) -> dict[str, object]:
         client = self._client()
 
         features: set[str] = set()
@@ -195,7 +195,7 @@ class AnthropicReviewer(Reviewer):
             features.add("podman_shell")
 
         system = generate_llm_prompt(
-            role=self.role,
+            role=self.role.name,
             vendor="anthropic",
             model=self.model,
             features=features,
@@ -203,19 +203,19 @@ class AnthropicReviewer(Reviewer):
             container_repo_mounts=ctx.repo_mount_paths,
             reviewer_username=ctx.reviewer_username,
             ci_triage_mode=ctx.ci_triage_mode,
+            **self.role.prompt_kwargs,
         )
 
         # Anthropic has no file-upload primitive, so the patch and source
         # bundle are inlined as text blocks (OpenAI uploads them as files).
+        user_texts = self.role.user_texts(ctx)
         user_blocks: list[JsonObject] = [
-            {"type": "text", "text": make_user_text(
-                ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated)},
+            {"type": "text", "text": user_texts[0]},
             {"type": "text", "text": ctx.patch_text},
         ]
         if ctx.source_bundle is not None:
             user_blocks.append({"type": "text", "text": ctx.source_bundle})
-        if self.role == "combiner":
-            user_blocks.append({"type": "text", "text": make_combiner_user_text(ctx.review_drafts())})
+        user_blocks.extend({"type": "text", "text": text} for text in user_texts[1:])
         user_blocks.append({
             "type": "text",
             "text": "Return your final verdict by calling the submit_review tool. "
@@ -223,7 +223,7 @@ class AnthropicReviewer(Reviewer):
         })
 
         messages: list[JsonObject] = [{"role": "user", "content": user_blocks}]
-        tools: list[JsonObject] = [_build_submit_review_tool()]
+        tools: list[JsonObject] = [_build_submit_review_tool(self.role)]
         if use_shell:
             tools.append(_build_shell_tool())
 
@@ -234,8 +234,8 @@ class AnthropicReviewer(Reviewer):
         try:
             while True:
                 logger.info(
-                    "anthropic messages.create model=%s round=%d shell=%s",
-                    self.model, rounds, use_shell,
+                    "anthropic messages.create role=%s model=%s round=%d shell=%s",
+                    self.role.name, self.model, rounds, use_shell,
                 )
                 # Snapshot: ``messages`` grows across rounds and the dump
                 # must record what this round actually sent.
@@ -266,14 +266,11 @@ class AnthropicReviewer(Reviewer):
                 tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
                 submit = next((b for b in tool_uses if b.name == _SUBMIT_REVIEW), None)
                 if submit is not None:
-                    result = validate_review(submit.input)
+                    result = self.role.validate(submit.input)
                     if self.verbose:
-                        logger.debug("anthropic verdict classification=%s", result["classification"])
-                    return Review(
-                        classification=result["classification"],
-                        message=result["message"],
-                        model=self.name,
-                    )
+                        verdict = result.get("classification") or result.get("route") or "-"
+                        logger.debug("anthropic %s verdict=%s", self.role.name, verdict)
+                    return result
 
                 if not tool_uses:
                     if nudged:

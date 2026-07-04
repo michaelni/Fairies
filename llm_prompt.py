@@ -32,9 +32,10 @@ LLM prompt building, vendor-neutral.
 
 Holds the developer-prompt strings and assembly plus the user-message
 builders (``make_user_text`` and friends) so every provider wrapper
-gets its text from here without duplicating it. Naming convention
-preserved from the original location: ``R_*`` reviewer-only, ``T_*``
-triager-only, ``TR_*`` shared.
+gets its text from here without duplicating it, and the standard
+``RoleSpec`` instances binding each role's prompt to its output schema
+and validator. Naming convention preserved from the original location:
+``R_*`` reviewer-only, ``T_*`` triager-only, ``TR_*`` shared.
 """
 
 from __future__ import annotations
@@ -43,7 +44,16 @@ import json
 from pathlib import Path
 
 from common import JsonObject
-from llm_review_api import TRIAGE_REQUESTABLE_EFFORTS, Review
+from llm_review_api import (
+    REVIEW_SCHEMA,
+    TRIAGE_REQUESTABLE_EFFORTS,
+    Review,
+    RoleSpec,
+    build_triage_schema,
+    check_schema,
+    validate_review,
+    validate_triage_result,
+)
 from patch_util import extract_submodule_changes_from_patch
 from podman_host import CONTAINER_CPUS, CONTAINER_MEMORY
 
@@ -846,3 +856,53 @@ def generate_llm_prompt(
             allowed_labels=allowed_labels,
         )
     raise ValueError(f"unknown role: {role!r}")
+
+
+# The standard pipeline roles, as data. Defined here -- not in
+# llm_review_api, which must stay a leaf -- because a role is mostly its
+# prompt: the role id ``generate_llm_prompt`` resolves plus the user-text
+# builders above; schema and validator come from llm_review_api.
+REVIEWER_ROLE = RoleSpec(
+    name="reviewer",
+    schema=REVIEW_SCHEMA,
+    user_texts=lambda ctx: [
+        make_user_text(ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated),
+    ],
+    validate=validate_review,
+)
+
+COMBINER_ROLE = RoleSpec(
+    name="combiner",
+    schema=REVIEW_SCHEMA,
+    user_texts=lambda ctx: [
+        make_user_text(ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated),
+        make_combiner_user_text(ctx.review_drafts()),
+    ],
+    validate=validate_review,
+)
+
+
+def make_triager_role(
+    *,
+    allowed_models: list[str],
+    allowed_labels: list[str],
+) -> RoleSpec:
+    """Build a triager ``RoleSpec`` for this run's model/label allowlists."""
+    schema = build_triage_schema(allowed_models, allowed_labels)
+
+    def validate(obj: object) -> dict[str, object]:
+        check_schema(obj, schema["schema"])
+        return validate_triage_result(obj, allowed_labels=allowed_labels)
+
+    return RoleSpec(
+        name="triager",
+        schema=schema,
+        user_texts=lambda ctx: [
+            make_triage_user_text(ctx.request, ctx.patch_truncated),
+        ],
+        validate=validate,
+        prompt_kwargs={
+            "allowed_models": allowed_models,
+            "allowed_labels": allowed_labels,
+        },
+    )

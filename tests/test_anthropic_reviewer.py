@@ -165,6 +165,26 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         # submit_review only (no shell tool) when the context has no shell.
         self.assertEqual(1, len(client.calls[0]["tools"]))
 
+    def test_triager_role_via_submit_review(self) -> None:
+        from llm_prompt import make_triager_role
+
+        client = _ScriptedClient([
+            _Message([_Block(type="tool_use", id="t1", name="submit_review",
+                             input={"route": "engage", "message": "", "reason": "new code",
+                                    "prompt_injection": False})]),
+        ])
+        role = make_triager_role(allowed_models=[], allowed_labels=[])
+        reviewer = anthropic_reviewer.AnthropicReviewer(
+            "glm-5.2", name="zai:glm-5.2", role=role,
+        )
+        reviewer._client = lambda: client  # type: ignore[method-assign]
+
+        result = reviewer.run(_ctx(None))
+
+        self.assertEqual("engage", result["route"])
+        self.assertEqual("submit_review", client.calls[0]["tools"][0]["name"])
+        self.assertIn("route", client.calls[0]["tools"][0]["input_schema"]["properties"])
+
 
 class EffortThinkingTests(unittest.TestCase):
     def _submit(self) -> _Message:

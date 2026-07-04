@@ -44,16 +44,19 @@ import logging
 
 from llm_review_api import (
     Z_AI_ANTHROPIC_URL,
+    BadModelOutput,
     Review,
     ReviewContext,
     Reviewer,
+    RoleSpec,
     run_parallel,
 )
-from openai_reviewer import OpenAIResources, OpenAIReviewer
+from openai_reviewer import OpenAIContainerUnhealthy, OpenAIResources, OpenAIReviewer
 
 __all__ = [
     "make_reviewer",
     "review_pr",
+    "run_triage",
 ]
 
 logger = logging.getLogger(__name__)
@@ -64,8 +67,11 @@ def make_reviewer(
     *,
     args: argparse.Namespace,
     resources: OpenAIResources | None,
-    role: str,
+    role: RoleSpec,
     verbose: bool,
+    default_effort: str | None = None,
+    max_output_tokens: int | None = None,
+    service_tier: str | None = None,
 ) -> Reviewer:
     """Build a ``Reviewer`` from a ``provider:model[@effort]`` spec.
 
@@ -78,11 +84,10 @@ def make_reviewer(
     ``@effort`` sets that reviewer's effort: an OpenAI reasoning effort
     (overriding --reasoning-effort for this pass), or an Anthropic/GLM
     thinking effort (``ANTHROPIC_EFFORTS``; no suffix keeps the provider
-    default).
+    default). When the spec has no ``@effort``, ``default_effort`` applies.
     """
-    spec_body, sep, effort = spec.partition("@")
-    if not sep:
-        effort = None
+    spec_body, sep, spec_effort = spec.partition("@")
+    effort = spec_effort if sep else default_effort
     provider, sep, model = spec_body.partition(":")
     if not sep:
         provider, model = "openai", spec_body
@@ -90,7 +95,10 @@ def make_reviewer(
         raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
 
     if provider == "openai":
-        return OpenAIReviewer(args, resources, model=model, role=role, effort=effort)
+        return OpenAIReviewer(
+            args, resources, model=model, role=role, effort=effort,
+            max_output_tokens=max_output_tokens, service_tier=service_tier,
+        )
     if provider in ("anthropic", "zai"):
         from anthropic_reviewer import AnthropicReviewer
 
@@ -115,6 +123,44 @@ def make_reviewer(
         except ValueError as exc:  # invalid @effort suffix
             raise SystemExit(f"--model {spec!r}: {exc}")
     raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai)")
+
+
+def run_triage(triager: Reviewer, ctx: ReviewContext) -> dict[str, object] | None:
+    """Run the triager role over ``ctx``.
+
+    Returns the validated triage dict on success. Returns ``None`` on
+    failure (API error, bad output, refusal) so the caller falls through
+    to the main reviewer pass. When the OpenAI container dies during
+    triage, returns ``container_unhealthy=True`` so the caller can exit
+    ``EXIT_CONTAINER_UNHEALTHY``.
+    """
+    try:
+        result = triager.run(ctx)
+    except OpenAIContainerUnhealthy:
+        logger.warning("openai container unhealthy during triage")
+        return {"route": "engage", "message": "", "reason": "", "container_unhealthy": True}
+    except BadModelOutput as exc:
+        logger.warning(
+            "triage stage output did not match the requested schema (%s); "
+            "falling through to main reviewer pass",
+            str(exc).replace("\n", " "),
+        )
+        return None
+    except Exception as exc:
+        logger.warning(
+            "triage stage failed with %s: %s; will fall through to main reviewer pass",
+            type(exc).__name__,
+            str(exc).replace("\n", " "),
+        )
+        return None
+
+    logger.info(
+        "triage decision route=%s message_chars=%d reason=%r",
+        result.get("route"),
+        len(str(result.get("message") or "")),
+        result.get("reason", ""),
+    )
+    return result
 
 
 def review_pr(

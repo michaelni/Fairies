@@ -31,6 +31,7 @@ if "anthropic" not in sys.modules:
         setattr(fake, _name, type(_name, (_E,), {}))
     sys.modules["anthropic"] = fake
 
+from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import Review, ReviewContext, Reviewer, Z_AI_ANTHROPIC_URL  # noqa: E402
 import review_pipeline  # noqa: E402
 from openai_reviewer import OpenAIReviewer  # noqa: E402
@@ -58,6 +59,9 @@ class _FakeReviewer(Reviewer):
         self._review = review
         self.seen_drafts: list[Review] | None = None
 
+    def run(self, ctx: ReviewContext) -> dict[str, object]:
+        raise NotImplementedError
+
     def review(self, ctx: ReviewContext) -> Review:
         self.seen_drafts = list(ctx.review_drafts())
         return self._review
@@ -67,56 +71,56 @@ class _FailingReviewer(Reviewer):
     def __init__(self, name: str) -> None:
         self.name = name
 
-    def review(self, ctx: ReviewContext) -> Review:
+    def run(self, ctx: ReviewContext) -> dict[str, object]:
         raise RuntimeError(f"{self.name}: simulated provider failure")
 
 
 class MakeReviewerTests(unittest.TestCase):
     def test_bare_and_openai_prefix_build_openai(self) -> None:
         for spec in ("gpt-5.4", "openai:gpt-5.4"):
-            r = review_pipeline.make_reviewer(spec, args=_args(), resources=None, role="reviewer", verbose=False)
+            r = review_pipeline.make_reviewer(spec, args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
             self.assertIsInstance(r, OpenAIReviewer)
             self.assertEqual("openai:gpt-5.4", r.name)
             self.assertEqual("gpt-5.4", r.model)
 
     def test_zai_uses_anthropic_endpoint(self) -> None:
-        r = review_pipeline.make_reviewer("zai:glm-4.6", args=_args(), resources=None, role="reviewer", verbose=False)
+        r = review_pipeline.make_reviewer("zai:glm-4.6", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
         self.assertEqual("zai:glm-4.6", r.name)
         self.assertEqual(Z_AI_ANTHROPIC_URL, r.base_url)
         self.assertEqual("ZAI_API_KEY", r.api_key_env)
 
     def test_anthropic_provider(self) -> None:
-        r = review_pipeline.make_reviewer("anthropic:claude-opus-4", args=_args(), resources=None, role="combiner", verbose=False)
+        r = review_pipeline.make_reviewer("anthropic:claude-opus-4", args=_args(), resources=None, role=COMBINER_ROLE, verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
         self.assertEqual("anthropic:claude-opus-4", r.name)
         self.assertIsNone(r.base_url)
-        self.assertEqual("combiner", r.role)
+        self.assertIs(COMBINER_ROLE, r.role)
 
     def test_unknown_provider_rejected(self) -> None:
         with self.assertRaises(SystemExit):
-            review_pipeline.make_reviewer("grok:x", args=_args(), resources=None, role="reviewer", verbose=False)
+            review_pipeline.make_reviewer("grok:x", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
 
     def test_effort_suffix_overrides_openai_reasoning_effort(self) -> None:
-        r = review_pipeline.make_reviewer("openai:gpt-5.5@xhigh", args=_args(), resources=None, role="reviewer", verbose=False)
+        r = review_pipeline.make_reviewer("openai:gpt-5.5@xhigh", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
         self.assertEqual("gpt-5.5", r.model)
         self.assertEqual("xhigh", r.effort)
         # Without a suffix the shared --reasoning-effort applies.
-        r = review_pipeline.make_reviewer("openai:gpt-5.5", args=_args(), resources=None, role="reviewer", verbose=False)
+        r = review_pipeline.make_reviewer("openai:gpt-5.5", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
         self.assertEqual("high", r.effort)
 
     def test_effort_suffix_sets_anthropic_thinking_effort(self) -> None:
-        r = review_pipeline.make_reviewer("zai:glm-5.2@low", args=_args(), resources=None, role="reviewer", verbose=False)
+        r = review_pipeline.make_reviewer("zai:glm-5.2@low", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
         self.assertEqual("glm-5.2", r.model)
         self.assertEqual("low", r.effort)
         self.assertIsNone(
-            review_pipeline.make_reviewer("zai:glm-5.2", args=_args(), resources=None, role="reviewer", verbose=False).effort
+            review_pipeline.make_reviewer("zai:glm-5.2", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False).effort
         )
 
     def test_invalid_anthropic_effort_rejected(self) -> None:
         with self.assertRaises(SystemExit):
-            review_pipeline.make_reviewer("zai:glm-5.2@turbo", args=_args(), resources=None, role="reviewer", verbose=False)
+            review_pipeline.make_reviewer("zai:glm-5.2@turbo", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
 
 
 class ReviewPrTests(unittest.TestCase):
@@ -186,6 +190,30 @@ class ReviewPrTests(unittest.TestCase):
             review_pipeline.review_pr(
                 ctx, [_FailingReviewer("a"), _FailingReviewer("b")], None,
             )
+
+
+class RunTriageTests(unittest.TestCase):
+    class _Triager(Reviewer):
+        def __init__(self, result: dict[str, object] | None = None, *, fail: bool = False) -> None:
+            self.name = "fake:triager"
+            self.role = REVIEWER_ROLE
+            self._result = result or {"route": "engage", "message": "", "reason": "ok"}
+            self._fail = fail
+
+        def run(self, ctx: ReviewContext) -> dict[str, object]:
+            if self._fail:
+                raise RuntimeError("simulated triage failure")
+            return dict(self._result)
+
+    def test_returns_validated_dict(self) -> None:
+        result = review_pipeline.run_triage(
+            self._Triager({"route": "skip", "message": "", "reason": "waiting"}),
+            _ctx(),
+        )
+        self.assertEqual("skip", result["route"])
+
+    def test_failure_returns_none(self) -> None:
+        self.assertIsNone(review_pipeline.run_triage(self._Triager(fail=True), _ctx()))
 
 
 if __name__ == "__main__":

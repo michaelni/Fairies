@@ -62,6 +62,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from common import setup_logging  # noqa: E402
+import llm_prompt  # noqa: E402
 from llm_review_api import Review, ReviewContext  # noqa: E402
 from openai import OpenAI  # noqa: E402
 from openai_common import load_api_key, upload_text_file, delete_uploaded_file  # noqa: E402
@@ -180,7 +181,7 @@ def main() -> int:
         )
         combiner = review_pipeline.make_reviewer(
             args.combine_model, args=args, resources=resources,
-            role="combiner", verbose=args.verbose,
+            role=llm_prompt.COMBINER_ROLE, verbose=args.verbose,
         )
         logger.info("replay combine stage: %s variant=%s merging %d drafts",
                     combiner.name, tool_args.variant, len(drafts))

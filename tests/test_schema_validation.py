@@ -20,8 +20,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import llm_review_api  # noqa: E402
-import pr_review_wrapper as wrapper  # noqa: E402
-import openai_reviewer  # noqa: E402
 
 # Real production output (message trimmed) that slipped past strict mode.
 REAL_MISKEYED_REVIEW = {
@@ -105,13 +103,13 @@ class CheckSchemaTests(unittest.TestCase):
             )
 
 
-class ValidateResultTests(unittest.TestCase):
+class ValidateReviewTests(unittest.TestCase):
     def test_real_miskeyed_review_raises_schema_error(self) -> None:
         with self.assertRaises(llm_review_api.SchemaError):
-            openai_reviewer.validate_result(REAL_MISKEYED_REVIEW)
+            llm_review_api.validate_review(REAL_MISKEYED_REVIEW)
 
     def test_valid_review_round_trips(self) -> None:
-        result = openai_reviewer.validate_result(
+        result = llm_review_api.validate_review(
             {"classification": "minor_issues_approve", "message": "looks ok"},
         )
         self.assertEqual(result["classification"], "minor_issues_approve")

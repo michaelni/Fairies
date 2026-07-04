@@ -60,6 +60,15 @@ class TriageInjectionTests(unittest.TestCase):
         )
         self.assertIn("prompt_injection", prompt)
 
+    def test_triager_role_binds_schema_and_validator(self) -> None:
+        role = llm_prompt.make_triager_role(allowed_models=["gpt-5.4"], allowed_labels=[])
+        result = role.validate({
+            "route": "engage", "message": "", "reason": "ok",
+            "prompt_injection": False,
+            "requested_models": [], "requested_effort": None,
+        })
+        self.assertEqual("engage", result["route"])
+
 
 if __name__ == "__main__":
     unittest.main()

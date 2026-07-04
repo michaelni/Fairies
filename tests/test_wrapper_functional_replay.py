@@ -162,7 +162,7 @@ def _run_wrapper_with_stubbed_triage(
         mock.patch.object(wrapper, "delete_uploaded_file", return_value=None),
         mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
         mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
-        mock.patch.object(wrapper, "run_triage_stage", return_value=triage_result),
+        mock.patch.object(wrapper, "run_triage", return_value=triage_result),
         # The main pass runs inside OpenAIReviewer, so the sentinel must
         # intercept openai_reviewer's namespace, not the wrapper's.
         mock.patch.object(openai_reviewer, "call_with_rate_limit_retry", side_effect=sentinel_create),

@@ -70,6 +70,7 @@ __all__ = [
     "Review",
     "ReviewContext",
     "Reviewer",
+    "RoleSpec",
     "SchemaError",
     "build_triage_schema",
     "check_schema",
@@ -523,17 +524,52 @@ class ReviewContext:
         return [d for d in self.drafts if d.classification in CLASSIFICATIONS]
 
 
+@dataclass(frozen=True)
+class RoleSpec:
+    """One pipeline role (reviewer / combiner / triager / ...), as data.
+
+    ``name`` selects the role's developer prompt (``llm_prompt`` role id).
+    ``user_texts(ctx)`` returns the role's user-message text blocks in
+    order; the provider attaches its patch / source-bundle artifacts
+    around them. ``schema`` is the strict output schema the model must
+    satisfy and ``validate(obj)`` checks + normalizes the parsed output.
+    ``prompt_kwargs`` are extra ``generate_llm_prompt`` arguments the role
+    needs (e.g. the triager's ``allowed_models`` / ``allowed_labels``).
+
+    The standard instances live in ``llm_prompt`` next to the prompt
+    text they bind.
+    """
+
+    name: str
+    schema: JsonObject
+    user_texts: Callable[[ReviewContext], list[str]]
+    validate: Callable[[object], dict[str, object]]
+    prompt_kwargs: JsonObject = field(default_factory=dict)
+
+
 class Reviewer(ABC):
     """The interface every model backend and the pipeline share.
 
     ``name`` is a short stable label (e.g. ``"openai:gpt-5.4"``) used in
-    logs and recorded on the produced ``Review``.
+    logs and recorded on the produced ``Review``. ``role`` is the
+    ``RoleSpec`` the instance executes.
     """
 
     name: str
+    role: RoleSpec
 
     @abstractmethod
-    def review(self, ctx: ReviewContext) -> Review: ...
+    def run(self, ctx: ReviewContext) -> dict[str, object]:
+        """Execute ``role`` over ``ctx``; return its validated result dict."""
+
+    def review(self, ctx: ReviewContext) -> Review:
+        """``run`` for the verdict roles, packed into a ``Review``."""
+        result = self.run(ctx)
+        return Review(
+            classification=result["classification"],
+            message=result["message"],
+            model=self.name,
+        )
 
 
 def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:

@@ -7,7 +7,7 @@ carrying ``file_citation`` annotations end with a ``Sources:`` footer. It is
 needed to catch regressions that only show up with real response payload
 shapes.
 
-The renderer (not ``validate_result``) is exercised directly so that both
+The renderer (not the role validators) is exercised directly so that both
 review and triage envelopes are covered. Both schemas embed the user-facing
 text under a top-level ``message`` field; the schema-specific envelope
 validation is covered by other tests.

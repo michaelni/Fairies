@@ -54,16 +54,14 @@ import httpx
 from openai import DefaultHttpxClient, OpenAI
 
 from common import dump_response_debug_artifacts, response_to_debug_json
-from llm_prompt import generate_llm_prompt, make_combiner_user_text, make_user_text
+from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import (
     EXIT_BAD_MODEL_OUTPUT,
-    REVIEW_SCHEMA,
     BadModelOutput,
-    Review,
     ReviewContext,
     Reviewer,
+    RoleSpec,
     SchemaError,
-    validate_review,
 )
 import openai_container
 from openai_common import (
@@ -93,7 +91,6 @@ __all__ = [
     "make_openai_http_client",
     "render_file_citations_for_markdown",
     "run_responses_resolving_podman_shell",
-    "validate_result",
 ]
 
 logger = logging.getLogger(__name__)
@@ -689,19 +686,6 @@ def render_file_citations_for_markdown(
     return f"{text}\n\nSources:\n{sources}" if text else f"Sources:\n{sources}"
 
 
-def validate_result(
-    obj: object,
-    annotations: list[object] | None = None,
-    file_citation_metadata: dict[str, dict[str, str]] | None = None,
-) -> dict[str, str]:
-    """``validate_review`` plus rendering of OpenAI file citations."""
-    result = validate_review(obj)
-    result["message"] = render_file_citations_for_markdown(
-        result["message"], annotations or [], file_citation_metadata,
-    )
-    return result
-
-
 class OpenAIContainerUnhealthy(Exception):
     """The attached OpenAI container is unhealthy (expired / stopped).
 
@@ -734,13 +718,15 @@ class OpenAIResources:
 
 
 class OpenAIReviewer(Reviewer):
-    """One OpenAI Responses-API review pass behind the shared interface.
+    """One OpenAI Responses-API pass of a ``RoleSpec`` behind the shared
+    interface.
 
-    ``review(ctx)`` builds the developer/user input, runs the model
-    (driving the podman shell tool loop when ``--podman`` is set, else the
-    direct Responses call), validates the JSON against ``REVIEW_SCHEMA`` and
-    renders file citations. Raises ``OpenAIContainerUnhealthy`` /
-    ``BadModelOutput`` for the routine, retryable failure modes.
+    ``run(ctx)`` builds the developer/user input from the role, runs the
+    model (driving the podman shell tool loop when ``--podman`` is set,
+    else the direct Responses call), renders file citations into the
+    message and validates against the role's schema. Raises
+    ``OpenAIContainerUnhealthy`` / ``BadModelOutput`` for the routine,
+    retryable failure modes.
     """
 
     def __init__(
@@ -749,35 +735,31 @@ class OpenAIReviewer(Reviewer):
         resources: OpenAIResources,
         *,
         model: str | None = None,
-        role: str = "reviewer",
+        role: RoleSpec = REVIEWER_ROLE,
         effort: str | None = None,
+        max_output_tokens: int | None = None,
+        service_tier: str | None = None,
     ) -> None:
         self.args = args
         self.res = resources
         self.model = model or args.model
         self.role = role
-        self.effort = effort or args.reasoning_effort
+        self.effort = effort if effort is not None else args.reasoning_effort
+        self.max_output_tokens = max_output_tokens
+        self.service_tier = service_tier
         self.name = f"openai:{self.model}"
 
-    def review(self, ctx: ReviewContext) -> Review:
+    def run(self, ctx: ReviewContext) -> dict[str, object]:
         args = self.args
         res = self.res
         client = res.client
 
+        user_texts = self.role.user_texts(ctx)
         content: list[InputContentItem] = [
-            {
-                "type": "input_text",
-                "text": make_user_text(
-                    ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated
-                ),
-            },
+            {"type": "input_text", "text": user_texts[0]},
             {"type": "input_file", "file_id": res.patch_file_id},
         ]
-        if self.role == "combiner":
-            content.append({
-                "type": "input_text",
-                "text": make_combiner_user_text(ctx.review_drafts()),
-            })
+        content.extend({"type": "input_text", "text": text} for text in user_texts[1:])
         if ctx.source_bundle is not None:
             source_file_id = upload_text_file(
                 client,
@@ -806,7 +788,7 @@ class OpenAIReviewer(Reviewer):
                 {
                     "role": "developer",
                     "content": generate_llm_prompt(
-                        role=self.role,
+                        role=self.role.name,
                         vendor="openai",
                         model=self.model,
                         features=reviewer_features,
@@ -814,12 +796,17 @@ class OpenAIReviewer(Reviewer):
                         container_repo_mounts=ctx.repo_mount_paths,
                         reviewer_username=ctx.reviewer_username,
                         ci_triage_mode=ctx.ci_triage_mode,
+                        **self.role.prompt_kwargs,
                     ),
                 },
                 {"role": "user", "content": content},
             ],
-            "text": {"format": {"type": "json_schema", **REVIEW_SCHEMA}},
-            "max_output_tokens": args.max_output_tokens,
+            "text": {"format": {"type": "json_schema", **self.role.schema}},
+            "max_output_tokens": (
+                self.max_output_tokens
+                if self.max_output_tokens is not None
+                else args.max_output_tokens
+            ),
         }
         if args.verbosity is not None:
             response_kwargs["text"]["verbosity"] = args.verbosity
@@ -834,8 +821,9 @@ class OpenAIReviewer(Reviewer):
             response_kwargs["reasoning"] = reasoning
         if args.max_tool_calls is not None:
             response_kwargs["max_tool_calls"] = args.max_tool_calls
-        if args.service_tier is not None:
-            response_kwargs["service_tier"] = args.service_tier
+        tier = self.service_tier if self.service_tier is not None else args.service_tier
+        if tier is not None:
+            response_kwargs["service_tier"] = tier
         if res.tools:
             response_kwargs["tools"] = res.tools
         if res.include:
@@ -848,7 +836,7 @@ class OpenAIReviewer(Reviewer):
                 if isinstance(tool, dict)
             ]
             source_bundle_bytes = len(ctx.source_bundle.encode("utf-8")) if ctx.source_bundle is not None else 0
-            logger.debug("responses.create start model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.model, self.effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, args.max_output_tokens)
+            logger.debug("responses.create start role=%s model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.role.name, self.model, self.effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, args.max_output_tokens)
 
         create_started = time.monotonic()
         try:
@@ -921,7 +909,15 @@ class OpenAIReviewer(Reviewer):
             verbose=args.verbose,
         )
         try:
-            result = validate_result(json.loads(raw_text), annotations, file_citation_metadata)
+            parsed = json.loads(raw_text)
+            # Model output at the process boundary: render citation markup
+            # into the message only when the shape is plausible; the role
+            # validator rejects anything else right after.
+            if isinstance(parsed, dict) and isinstance(parsed.get("message"), str):
+                parsed["message"] = render_file_citations_for_markdown(
+                    parsed["message"], annotations, file_citation_metadata,
+                )
+            result = self.role.validate(parsed)
         except (json.JSONDecodeError, SchemaError, RecursionError) as exc:
             # The model returned text that isn't the JSON shape we asked for
             # (OpenAI ``strict`` output is best-effort, not a guarantee).
@@ -932,19 +928,16 @@ class OpenAIReviewer(Reviewer):
             # the entrypoint exits EXIT_BAD_MODEL_OUTPUT and the caller
             # retries.
             logger.error(
-                "reviewer output did not match the requested schema (%s: %s); "
+                "%s output did not match the requested schema (%s: %s); "
                 "discarding run, exiting %d so caller retries",
-                type(exc).__name__, str(exc).replace("\n", " "),
+                self.role.name, type(exc).__name__, str(exc).replace("\n", " "),
                 EXIT_BAD_MODEL_OUTPUT,
             )
             raise BadModelOutput() from exc
 
         if args.verbose:
             extra = f" vector_stores={','.join(res.vector_store_ids)}" if res.vector_store_ids else ""
-            logger.debug("classification=%s source_files=%d%s", result["classification"], len(ctx.source_files), extra)
+            verdict = result.get("classification") or result.get("route") or "-"
+            logger.debug("classification=%s source_files=%d%s", verdict, len(ctx.source_files), extra)
 
-        return Review(
-            classification=result["classification"],
-            message=result["message"],
-            model=self.name,
-        )
+        return result

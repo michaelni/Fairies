@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 import forge_gcli  # noqa: E402
 import llm_review_api  # noqa: E402
 import pr_review_wrapper as wrapper  # noqa: E402
+import llm_prompt  # noqa: E402
 from llm_prompt import t_prompt_triage_labels  # noqa: E402
 import fairy as paa  # noqa: E402
 
@@ -102,6 +103,40 @@ class ReviewLabelSchemaTests(unittest.TestCase):
 
         review = _R().review(None)
         self.assertEqual(review.label_changes, (_change("stale", "add", "r"),))
+
+
+class RoleWithLabelsTests(unittest.TestCase):
+    def test_empty_allowlist_returns_role_unchanged(self) -> None:
+        self.assertIs(
+            llm_prompt.role_with_labels(llm_prompt.REVIEWER_ROLE, []),
+            llm_prompt.REVIEWER_ROLE,
+        )
+
+    def test_labelled_role_gains_schema_validator_and_prompt(self) -> None:
+        role = llm_prompt.role_with_labels(llm_prompt.COMBINER_ROLE, ["stale"])
+        self.assertEqual(role.name, "combiner")
+        self.assertIs(role.user_texts, llm_prompt.COMBINER_ROLE.user_texts)
+        self.assertIn("label_changes", role.schema["schema"]["properties"])
+        self.assertEqual(role.prompt_kwargs["allowed_labels"], ["stale"])
+        result = role.validate({
+            "classification": "minor_issues_approve",
+            "message": "m",
+            "label_changes": [_change("stale", "add", "r")],
+        })
+        self.assertEqual([c["label"] for c in result["label_changes"]], ["stale"])
+
+    def test_reviewer_and_combiner_prompts_gain_label_section(self) -> None:
+        for role in ("reviewer", "combiner"):
+            with self.subTest(role=role):
+                kwargs = dict(
+                    role=role, vendor="openai", model="m", features=set(),
+                    repo_roots=[], container_repo_mounts=[], reviewer_username="fairy",
+                )
+                self.assertNotIn("## Labels", llm_prompt.generate_llm_prompt(**kwargs))
+                self.assertIn(
+                    "## Labels",
+                    llm_prompt.generate_llm_prompt(**kwargs, allowed_labels=["needs docs"]),
+                )
 
 
 class SanitizeLabelChangesTests(unittest.TestCase):

@@ -41,6 +41,7 @@ and validator. Naming convention preserved from the original location:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from common import JsonObject
@@ -49,9 +50,11 @@ from llm_review_api import (
     TRIAGE_REQUESTABLE_EFFORTS,
     Review,
     RoleSpec,
+    build_review_schema,
     build_triage_schema,
     check_schema,
     validate_review,
+    validate_review_result,
     validate_triage_result,
 )
 from patch_util import extract_submodule_changes_from_patch
@@ -497,6 +500,7 @@ def make_developer_prompt(
     model: str,
     ci_failures_present: bool = False,
     role_task: str = "",
+    allowed_labels: list[str] | None = None,
 ) -> str:
     return (
         R_PROMPT_OPENING
@@ -518,6 +522,7 @@ def make_developer_prompt(
         + R_ROMPT_AUDIENCE_AND_PURPOSE
         + TR_PROMPT_OUTPUT_GUIDELINE
         + R_PROMPT_REVIEW_CLASSIFICATIONS
+        + t_prompt_triage_labels(allowed_labels or [])
         + TR_PROMPT_PERSISTENCE_AND_VERIFICATION
         + R_PROMPT_REVIEW_EXAMPLES_AND_MESSAGE_RULES
     )
@@ -563,6 +568,7 @@ def make_combiner_developer_prompt(
     *,
     model: str,
     ci_failures_present: bool = False,
+    allowed_labels: list[str] | None = None,
 ) -> str:
     # A combiner is a reviewer with one extra instruction block, so it
     # carries the full reviewer contract (roles, classifications, tools,
@@ -580,6 +586,7 @@ def make_combiner_developer_prompt(
         model=model,
         ci_failures_present=ci_failures_present,
         role_task=C_PROMPT_COMBINER_TASK,
+        allowed_labels=allowed_labels,
     )
 
 
@@ -827,6 +834,7 @@ def generate_llm_prompt(
             container_repo_mounts,
             model=model,
             ci_failures_present=ci_triage_mode,
+            allowed_labels=allowed_labels,
         )
     if role == "combiner":
         return make_combiner_developer_prompt(
@@ -840,6 +848,7 @@ def generate_llm_prompt(
             container_repo_mounts,
             model=model,
             ci_failures_present=ci_triage_mode,
+            allowed_labels=allowed_labels,
         )
     if role == "triager":
         return make_triage_developer_prompt(
@@ -880,6 +889,21 @@ COMBINER_ROLE = RoleSpec(
     ],
     validate=validate_review,
 )
+
+
+def role_with_labels(role: RoleSpec, allowed_labels: list[str]) -> RoleSpec:
+    """A verdict role (reviewer/combiner) that additionally owns the PR's
+    labels: its schema and prompt gain ``label_changes`` constrained to
+    ``allowed_labels``. With an empty allowlist the role is returned
+    unchanged."""
+    if not allowed_labels:
+        return role
+    return replace(
+        role,
+        schema=build_review_schema(allowed_labels),
+        validate=lambda obj: validate_review_result(obj, allowed_labels),
+        prompt_kwargs={**role.prompt_kwargs, "allowed_labels": allowed_labels},
+    )
 
 
 def make_triager_role(

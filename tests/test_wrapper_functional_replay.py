@@ -47,6 +47,7 @@ except ModuleNotFoundError:
 
 import pr_review_wrapper as wrapper
 import openai_reviewer
+from llm_review_api import Review
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "wrapper_functional_runs"
@@ -132,6 +133,7 @@ class _MainPassReached(Exception):
 def _run_wrapper_with_stubbed_triage(
     request_obj: dict,
     triage_result: dict,
+    review_pr_stub: object = None,
 ) -> tuple[int | None, str, bool]:
     """Run ``wrapper.main()`` with external services mocked and the triage
     stage stubbed to ``triage_result``.
@@ -139,6 +141,9 @@ def _run_wrapper_with_stubbed_triage(
     Returns ``(exit_code, stdout, main_pass_reached)``. ``main_pass_reached``
     is True iff control reached the main reviewer ``responses.create`` call
     (a sentinel is raised there), in which case ``exit_code`` is None.
+    ``review_pr_stub``, when given, replaces ``wrapper.review_pr`` so the
+    main pass completes with a canned ``Review`` instead of hitting the
+    sentinel.
     """
     fixture = json.loads(
         (FIXTURE_DIR / "sample_multi_source_filecite.json").read_text(encoding="utf-8")
@@ -163,6 +168,7 @@ def _run_wrapper_with_stubbed_triage(
         mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
         mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
         mock.patch.object(wrapper, "run_triage", return_value=triage_result),
+        mock.patch.object(wrapper, "review_pr", side_effect=review_pr_stub or wrapper.review_pr),
         # The main pass runs inside OpenAIReviewer, so the sentinel must
         # intercept openai_reviewer's namespace, not the wrapper's.
         mock.patch.object(openai_reviewer, "call_with_rate_limit_retry", side_effect=sentinel_create),
@@ -261,6 +267,45 @@ class CiTriageEngageTests(unittest.TestCase):
         )
         self.assertTrue(reached)
         self.assertEqual(out, "")
+
+
+class EngageLabelOwnershipTests(unittest.TestCase):
+    """On engage the final verdict author owns the labels: the wrapper
+    emits the review's label_changes and discards the triage guesses."""
+
+    TRIAGE_ENGAGE_WITH_LABELS = {
+        "route": "engage",
+        "reason": "worth a look",
+        "label_changes": [
+            {"label": "enhancement", "op": "add", "reason": "triage guess", "post": False},
+        ],
+    }
+
+    def test_reviewer_labels_emitted_triage_labels_discarded(self) -> None:
+        reviewer_labels = (
+            {"label": "needs docs", "op": "add", "reason": "doc mismatch", "post": True},
+        )
+        seen: dict[str, object] = {}
+
+        def stub(ctx: object, reviewers: list, combiner: object) -> Review:
+            seen["reviewers"] = reviewers
+            seen["combiner"] = combiner
+            return Review(
+                "minor_issues_approve", "docs drifted",
+                label_changes=reviewer_labels, model="openai:x",
+            )
+
+        exit_code, out, _reached = _run_wrapper_with_stubbed_triage(
+            _fixture_request(triage_label_allowlist=["needs docs", "enhancement"]),
+            self.TRIAGE_ENGAGE_WITH_LABELS,
+            review_pr_stub=stub,
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(json.loads(out)["label_changes"], list(reviewer_labels))
+        # Single-reviewer run: the reviewer role itself owns label_changes.
+        (reviewer,) = seen["reviewers"]
+        self.assertIn("label_changes", reviewer.role.schema["schema"]["properties"])
+        self.assertIsNone(seen["combiner"])
 
 
 if __name__ == "__main__":

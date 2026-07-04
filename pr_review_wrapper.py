@@ -103,6 +103,7 @@ from llm_prompt import (
     make_developer_prompt,
     make_triager_role,
     make_triage_developer_prompt,
+    role_with_labels,
     t_prompt_triage_labels,
     t_prompt_user_request,
 )
@@ -1247,11 +1248,10 @@ def main() -> int:
             debug_dir_specified=debug_dir_specified,
         )
 
-        stashed_triage_label_changes: list[dict[str, object]] = []
+        triage_label_allowlist = triage_label_allowlist_from_request(request)
         requested_models: list[str] = []
 
         if args.triage_model:
-            triage_label_allowlist = triage_label_allowlist_from_request(request)
             triager_role = make_triager_role(
                 allowed_models=args.allowed_model,
                 allowed_labels=triage_label_allowlist,
@@ -1341,7 +1341,12 @@ def main() -> int:
                     )
                     return 0
                 if route == "engage":
-                    stashed_triage_label_changes = triage_label_changes
+                    if triage_label_changes:
+                        # The reviewer pass owns labels on engage: it sees
+                        # the source bundle and does the deep analysis the
+                        # triager cannot, so shallow triage guesses are
+                        # discarded rather than merged.
+                        logger.info("discarding triage label_changes; reviewer pass owns labels")
                     # Apply user-requested model / effort overrides for
                     # the main pass. The triage schema has already
                     # constrained these to the allowlist + effort enum,
@@ -1369,21 +1374,30 @@ def main() -> int:
                         route,
                     )
 
+        # The final verdict author owns the labels: the combiner in an
+        # ensemble, else the single reviewer. The combine stage only runs
+        # with >=2 drafts (so a lone reviewer keeps them even when
+        # --combine-model is set); if reviewer failures shrink an
+        # ensemble to one draft, that run simply changes no labels.
+        n_reviewers = len(requested_models) if requested_models else 1 + len(args.extra_model)
+        reviewer_role = role_with_labels(REVIEWER_ROLE, [] if n_reviewers > 1 else triage_label_allowlist)
+        combiner_role = role_with_labels(COMBINER_ROLE, triage_label_allowlist)
+
         if requested_models:
             model_reviewers = [
-                make_reviewer(spec, args=args, resources=openai_resources, role=REVIEWER_ROLE, verbose=args.verbose)
+                make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose)
                 for spec in requested_models
             ]
         else:
             model_reviewers = [
-                OpenAIReviewer(args, openai_resources, model=args.model)
+                OpenAIReviewer(args, openai_resources, model=args.model, role=reviewer_role)
             ]
             for spec in args.extra_model:
                 model_reviewers.append(
-                    make_reviewer(spec, args=args, resources=openai_resources, role=REVIEWER_ROLE, verbose=args.verbose)
+                    make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose)
                 )
         combiner = (
-            make_reviewer(args.combine_model, args=args, resources=openai_resources, role=COMBINER_ROLE, verbose=args.verbose)
+            make_reviewer(args.combine_model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose)
             if args.combine_model
             else None
         )
@@ -1395,7 +1409,7 @@ def main() -> int:
                 "user requested %d models with no --combine-model configured; "
                 "combining with openai:%s", len(model_reviewers), args.model,
             )
-            combiner = OpenAIReviewer(args, openai_resources, model=args.model, role=COMBINER_ROLE)
+            combiner = OpenAIReviewer(args, openai_resources, model=args.model, role=combiner_role)
         try:
             review = review_pr(review_ctx, model_reviewers, combiner)
         except OpenAIContainerUnhealthy:
@@ -1408,7 +1422,7 @@ def main() -> int:
 
         emit_review_stdout(
             review.classification, review.message,
-            label_changes=stashed_triage_label_changes,
+            label_changes=list(review.label_changes),
         )
         return 0
     finally:

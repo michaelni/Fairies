@@ -78,6 +78,7 @@ from shell_tool import exec_shell_call
 
 __all__ = [
     "EXIT_CONTAINER_UNHEALTHY",
+    "INHERIT_SERVICE_TIER",
     "OPENAI_TCP_KEEPALIVE_SOCKET_OPTIONS",
     "OpenAIContainerUnhealthy",
     "OpenAIResources",
@@ -95,6 +96,11 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+
+# Default for the ``service_tier`` constructor parameter: inherit
+# ``--service-tier``. Distinct from an explicit ``None``, which sends no
+# tier at all (account default).
+INHERIT_SERVICE_TIER = "__inherit__"
 
 # Distinct non-zero exit code the wrapper uses when it recognizes the
 # attached OpenAI container as unhealthy (expired, not running, ...).
@@ -738,7 +744,7 @@ class OpenAIReviewer(Reviewer):
         role: RoleSpec = REVIEWER_ROLE,
         effort: str | None = None,
         max_output_tokens: int | None = None,
-        service_tier: str | None = None,
+        service_tier: str | None = INHERIT_SERVICE_TIER,
     ) -> None:
         self.args = args
         self.res = resources
@@ -746,7 +752,10 @@ class OpenAIReviewer(Reviewer):
         self.role = role
         self.effort = effort if effort is not None else args.reasoning_effort
         self.max_output_tokens = max_output_tokens
-        self.service_tier = service_tier
+        # An explicit ``service_tier=None`` sends no tier: the triage call
+        # is documented (--triage-service-tier) as independent of
+        # --service-tier, so it must not inherit it.
+        self.service_tier = args.service_tier if service_tier is INHERIT_SERVICE_TIER else service_tier
         self.name = f"openai:{self.model}"
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
@@ -821,9 +830,8 @@ class OpenAIReviewer(Reviewer):
             response_kwargs["reasoning"] = reasoning
         if args.max_tool_calls is not None:
             response_kwargs["max_tool_calls"] = args.max_tool_calls
-        tier = self.service_tier if self.service_tier is not None else args.service_tier
-        if tier is not None:
-            response_kwargs["service_tier"] = tier
+        if self.service_tier is not None:
+            response_kwargs["service_tier"] = self.service_tier
         if res.tools:
             response_kwargs["tools"] = res.tools
         if res.include:

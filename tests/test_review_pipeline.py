@@ -49,7 +49,7 @@ def _ctx() -> ReviewContext:
 def _args() -> argparse.Namespace:
     return argparse.Namespace(
         model="gpt-5.4-mini", podman_max_tool_rounds=0, podman_exec_timeout=600.0,
-        reasoning_effort="high",
+        reasoning_effort="high", service_tier="flex",
     )
 
 
@@ -121,6 +121,16 @@ class MakeReviewerTests(unittest.TestCase):
     def test_invalid_anthropic_effort_rejected(self) -> None:
         with self.assertRaises(SystemExit):
             review_pipeline.make_reviewer("zai:glm-5.2@turbo", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+
+    def test_explicit_none_service_tier_is_not_inherited(self) -> None:
+        # Regression: the triager passes --triage-service-tier verbatim,
+        # documented as independent of --service-tier. An explicit None
+        # must send no tier even when --service-tier is set (flex here);
+        # only leaving the parameter unset inherits it.
+        r = review_pipeline.make_reviewer("openai:gpt-5.4-mini", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False, service_tier=None)
+        self.assertIsNone(r.service_tier)
+        r = review_pipeline.make_reviewer("openai:gpt-5.4-mini", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+        self.assertEqual("flex", r.service_tier)
 
 
 class ReviewPrTests(unittest.TestCase):

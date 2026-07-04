@@ -51,7 +51,12 @@ from llm_review_api import (
     RoleSpec,
     run_parallel,
 )
-from openai_reviewer import OpenAIContainerUnhealthy, OpenAIResources, OpenAIReviewer
+from openai_reviewer import (
+    INHERIT_SERVICE_TIER,
+    OpenAIContainerUnhealthy,
+    OpenAIResources,
+    OpenAIReviewer,
+)
 
 __all__ = [
     "make_reviewer",
@@ -71,7 +76,7 @@ def make_reviewer(
     verbose: bool,
     default_effort: str | None = None,
     max_output_tokens: int | None = None,
-    service_tier: str | None = None,
+    service_tier: str | None = INHERIT_SERVICE_TIER,
 ) -> Reviewer:
     """Build a ``Reviewer`` from a ``provider:model[@effort]`` spec.
 
@@ -85,6 +90,9 @@ def make_reviewer(
     (overriding --reasoning-effort for this pass), or an Anthropic/GLM
     thinking effort (``ANTHROPIC_EFFORTS``; no suffix keeps the provider
     default). When the spec has no ``@effort``, ``default_effort`` applies.
+
+    ``service_tier`` (OpenAI only) is used verbatim; ``None`` sends no
+    tier. Leaving it unset inherits ``--service-tier``.
     """
     spec_body, sep, spec_effort = spec.partition("@")
     effort = spec_effort if sep else default_effort

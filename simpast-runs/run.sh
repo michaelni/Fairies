@@ -107,10 +107,10 @@ run_one() {
         --llm-review-cmd "./pr_review_wrapper.py \
             --repo-root $PATCH_REPO $extra \
             $CONTAINER_ARGS $WRAPPER_EXTRA \
-            --model gpt-5.4 --triage-model gpt-5.4-mini \
+            --model openai:gpt-5.4 --triage-model openai:gpt-5.4-mini \
             --reasoning-effort high \
             --service-tier $TIER --reasoning-summary detailed \
-            --allowed-model gpt-5.5 --allowed-model gpt-5.4 \
+            --allowed-model openai:gpt-5.5 --allowed-model openai:gpt-5.4 \
             --debug-response-dir $outdir/openaidebug --verbose" \
         --verbose 2 2>&1 | tee "$outdir/run.log" | sed -u "$pfx"
     then

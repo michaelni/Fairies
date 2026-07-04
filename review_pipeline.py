@@ -80,7 +80,7 @@ def make_reviewer(
 ) -> Reviewer:
     """Build a ``Reviewer`` from a ``provider:model[@effort]`` spec.
 
-    ``openai:<m>`` (or a bare ``<m>``) -> OpenAIReviewer reusing the shared
+    ``openai:<m>`` -> OpenAIReviewer reusing the shared
     OpenAI resources (``resources`` must not be None for this provider).
     ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` -> AnthropicReviewer
     pointed at z.ai's Anthropic endpoint (GLM). The Anthropic module (and
@@ -98,7 +98,9 @@ def make_reviewer(
     effort = spec_effort if sep else default_effort
     provider, sep, model = spec_body.partition(":")
     if not sep:
-        provider, model = "openai", spec_body
+        raise SystemExit(
+            f"--model {spec!r}: missing provider prefix (use openai:/anthropic:/zai:)"
+        )
     if not model:
         raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
 

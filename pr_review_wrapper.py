@@ -122,7 +122,6 @@ from openai_reviewer import (
     EXIT_CONTAINER_UNHEALTHY,
     OpenAIContainerUnhealthy,
     OpenAIResources,
-    OpenAIReviewer,
     build_response_include,
     build_response_tools,
     make_openai_http_client,
@@ -152,7 +151,6 @@ def _build_remote_host(args: argparse.Namespace) -> podman_host.RemoteHost:
     return podman_host.RemoteHost(args.podman_ssh_dest, identity=args.podman_ssh_identity)
 
 
-DEFAULT_MODEL = "gpt-5.4-mini"
 # Default budget for the mini-model triage pre-check when ``--triage-model``
 # is set. Triage output itself is a small JSON object, but the budget must
 # also cover reasoning tokens, so keep it well above the raw schema size.
@@ -184,7 +182,12 @@ INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.MULTILINE)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Review a PR with one or more LLM reviewers.")
-    p.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenAI model for the main review pass (default: {DEFAULT_MODEL})")
+    p.add_argument(
+        "--model",
+        required=True,
+        metavar="PROVIDER:MODEL[@EFFORT]",
+        help="Reviewer for the main review pass, e.g. 'openai:gpt-5.4' or 'anthropic:claude-opus-4'.",
+    )
     p.add_argument(
         "--extra-model",
         action="append",
@@ -192,8 +195,8 @@ def parse_args() -> argparse.Namespace:
         metavar="PROVIDER:MODEL[@EFFORT]",
         help=(
             "Add another reviewer to the ensemble, e.g. 'anthropic:claude-opus-4' "
-            "or 'zai:glm-4.6'. Repeat for more. All reviewers (the --model OpenAI "
-            "pass plus each --extra-model) run on the same PR; with more than one "
+            "or 'zai:glm-4.6'. Repeat for more. All reviewers (--model plus each "
+            "--extra-model) run on the same PR; with more than one "
             "you must pass --combine-model to merge their drafts. '@EFFORT' sets "
             "that reviewer's effort: an OpenAI reasoning effort, or off/low/"
             "medium/high/xhigh/max as the Anthropic/GLM thinking effort."
@@ -212,12 +215,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--triage-model",
         default=None,
-        metavar="[PROVIDER:]MODEL[@EFFORT]",
+        metavar="PROVIDER:MODEL[@EFFORT]",
         help=(
             "Optional model to run a pre-check that classifies the PR as "
             "skip / helpful_reply / engage before the main review. Same "
-            "``provider:model[@effort]`` form as --extra-model (default "
-            "provider is openai). When unset, triage is disabled. The "
+            "``provider:model[@effort]`` form as --extra-model. "
+            "When unset, triage is disabled. The "
             "triager gets podman shell and/or OpenAI file_search / "
             "web_search when configured, but not the source bundle."
         ),
@@ -296,7 +299,7 @@ def parse_args() -> argparse.Namespace:
         "--allowed-model",
         action="append",
         default=[],
-        metavar="[PROVIDER:]NAME",
+        metavar="PROVIDER:MODEL",
         help=(
             "Permit commenters to request this model for the main review "
             "pass (e.g. 'please re-review with gpt-5.5'); up to two at once "
@@ -1404,7 +1407,7 @@ def main() -> int:
             ]
         else:
             model_reviewers = [
-                OpenAIReviewer(args, openai_resources, model=args.model, role=reviewer_role)
+                make_reviewer(args.model, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose)
             ]
             for spec in args.extra_model:
                 model_reviewers.append(
@@ -1421,9 +1424,9 @@ def main() -> int:
             # model rather than rejecting the request.
             logger.info(
                 "user requested %d models with no --combine-model configured; "
-                "combining with openai:%s", len(model_reviewers), args.model,
+                "combining with %s", len(model_reviewers), args.model,
             )
-            combiner = OpenAIReviewer(args, openai_resources, model=args.model, role=combiner_role)
+            combiner = make_reviewer(args.model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose)
         try:
             review = review_pr(review_ctx, model_reviewers, combiner)
         except OpenAIContainerUnhealthy:

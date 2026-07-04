@@ -91,18 +91,18 @@ per-command ssh handshake and no shell-quoting of model output.
 
 ### Ensemble (multiple models + verify/combine)
 
-`--model` is the OpenAI main pass; add more reviewers with
+`--model` is the main pass; add more reviewers with
 `--extra-model PROVIDER:MODEL` (repeatable) and merge with
 `--combine-model PROVIDER:MODEL` (required once there is more than one
-reviewer). Provider prefixes: `openai:` (or a bare model name), `anthropic:`,
+reviewer). Provider prefixes: `openai:`, `anthropic:`,
 `zai:`. Each reviewer gets its own isolated container shell; the model
 reviewers run concurrently. A local-GPU backend is TODO -- PRs very welcome.
 
     ./pr_review_wrapper.py \
         --podman --podman-ssh-dest fairy@HOST \
         --repo-root ~/forgejo_fairy/ffmpeg \
-        --triage-model gpt-5.4-mini \
-        --model gpt-5.4 \
+        --triage-model openai:gpt-5.4-mini \
+        --model openai:gpt-5.4 \
         --extra-model anthropic:claude-opus-4 \
         --extra-model zai:glm-4.6 \
         --combine-model openai:gpt-5.4

@@ -76,12 +76,16 @@ class _FailingReviewer(Reviewer):
 
 
 class MakeReviewerTests(unittest.TestCase):
-    def test_bare_and_openai_prefix_build_openai(self) -> None:
-        for spec in ("gpt-5.4", "openai:gpt-5.4"):
-            r = review_pipeline.make_reviewer(spec, args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
-            self.assertIsInstance(r, OpenAIReviewer)
-            self.assertEqual("openai:gpt-5.4", r.name)
-            self.assertEqual("gpt-5.4", r.model)
+    def test_openai_prefix_builds_openai(self) -> None:
+        r = review_pipeline.make_reviewer("openai:gpt-5.4", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+        self.assertIsInstance(r, OpenAIReviewer)
+        self.assertEqual("openai:gpt-5.4", r.name)
+        self.assertEqual("gpt-5.4", r.model)
+
+    def test_bare_model_name_rejected(self) -> None:
+        # No default provider: openai needs its prefix like everyone else.
+        with self.assertRaises(SystemExit):
+            review_pipeline.make_reviewer("gpt-5.4", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
 
     def test_zai_uses_anthropic_endpoint(self) -> None:
         r = review_pipeline.make_reviewer("zai:glm-4.6", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)

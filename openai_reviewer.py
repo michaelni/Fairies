@@ -844,7 +844,7 @@ class OpenAIReviewer(Reviewer):
                 if isinstance(tool, dict)
             ]
             source_bundle_bytes = len(ctx.source_bundle.encode("utf-8")) if ctx.source_bundle is not None else 0
-            logger.debug("responses.create start role=%s model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.role.name, self.model, self.effort or "-", args.verbosity or "-", args.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, args.max_output_tokens)
+            logger.debug("responses.create start role=%s model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.role.name, self.model, self.effort or "-", args.verbosity or "-", self.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, response_kwargs["max_output_tokens"])
 
         create_started = time.monotonic()
         try:

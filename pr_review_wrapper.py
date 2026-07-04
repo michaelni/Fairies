@@ -100,12 +100,8 @@ import podman_repos
 from llm_prompt import (
     COMBINER_ROLE,
     REVIEWER_ROLE,
-    make_developer_prompt,
     make_triager_role,
-    make_triage_developer_prompt,
     role_with_labels,
-    t_prompt_triage_labels,
-    t_prompt_user_request,
 )
 import openai_common
 import openai_container

@@ -20,7 +20,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import llm_review_api  # noqa: E402
-import pr_review_wrapper as wrapper  # noqa: E402
+import llm_prompt  # noqa: E402
 
 
 def _engage(**extra: object) -> dict[str, object]:
@@ -138,10 +138,10 @@ class TriagePromptShapeTests(unittest.TestCase):
 
     def test_no_allowlist_emits_empty_prompt_section(self) -> None:
         # Feature off -> no LLM-visible prompt content for the override.
-        self.assertEqual(wrapper.t_prompt_user_request([]), "")
+        self.assertEqual(llm_prompt.t_prompt_user_request([]), "")
 
     def test_allowlist_lists_supported_models_and_efforts(self) -> None:
-        text = wrapper.t_prompt_user_request(["gpt-5.4", "zai:glm-5.2"])
+        text = llm_prompt.t_prompt_user_request(["gpt-5.4", "zai:glm-5.2"])
         self.assertIn("gpt-5.4", text)
         self.assertIn("zai:glm-5.2", text)
         self.assertIn("up to two", text)
@@ -149,7 +149,7 @@ class TriagePromptShapeTests(unittest.TestCase):
             self.assertIn(effort, text)
 
     def test_make_triage_developer_prompt_includes_user_request_section(self) -> None:
-        prompt = wrapper.make_triage_developer_prompt(
+        prompt = llm_prompt.make_triage_developer_prompt(
             reviewer_username="bot",
             repo_roots=[],
             vector_store_search_enabled=False,
@@ -166,7 +166,7 @@ class TriagePromptShapeTests(unittest.TestCase):
         # When the feature is off the developer prompt must contain
         # no mention of the override fields so the LLM does not see
         # any conflicting instruction.
-        prompt = wrapper.make_triage_developer_prompt(
+        prompt = llm_prompt.make_triage_developer_prompt(
             reviewer_username="bot",
             repo_roots=[],
             vector_store_search_enabled=False,
@@ -186,7 +186,7 @@ class PodmanContainerLocationsPromptTests(unittest.TestCase):
     container's bare-repo /mnt/data git-dir paths)."""
 
     def test_podman_prompt_points_at_work_tree_locations(self) -> None:
-        prompt = wrapper.make_developer_prompt(
+        prompt = llm_prompt.make_developer_prompt(
             source_bundle_attached=False, reviewer_username="bot", repo_roots=[],
             vector_store_search_enabled=False, web_search_enabled=False,
             code_interpreter_enabled=False, podman_shell_enabled=True,

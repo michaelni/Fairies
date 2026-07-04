@@ -98,7 +98,7 @@ def dump_response_debug_artifacts(
             with out_path.open("a", encoding="utf-8") as fh:
                 fh.write(line)
             if verbose:
-                logger.warning("appended response debug dump to %s", out_path)
+                logger.debug("appended response debug dump to %s", out_path)
         else:
             response_json = payload["response"]
             response_id = response_json.get("id") if isinstance(response_json, dict) else None
@@ -108,7 +108,7 @@ def dump_response_debug_artifacts(
             out_path = out_dir / f"{stem}.jsonl"
             out_path.write_text(line, encoding="utf-8")
             if verbose:
-                logger.warning("wrote response debug dump to %s", out_path)
+                logger.debug("wrote response debug dump to %s", out_path)
         return str(out_path)
     except Exception as exc:
         logger.warning("failed to write response debug dump: %s", exc)

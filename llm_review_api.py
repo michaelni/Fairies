@@ -283,10 +283,10 @@ def sanitize_label_changes(
         label = item.get("label")
         op = item.get("op")
         if not isinstance(label, str) or label not in allowed:
-            logger.warning("triage dropped label change with unknown label: %r", label)
+            logger.warning("dropped label change with unknown label: %r", label)
             continue
         if op not in ("add", "remove"):
-            logger.warning("triage dropped label change %r with bad op: %r", label, op)
+            logger.warning("dropped label change %r with bad op: %r", label, op)
             continue
         if (label, op) in seen:
             continue

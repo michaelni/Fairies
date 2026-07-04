@@ -37,11 +37,14 @@ class ProjectFactsTests(unittest.TestCase):
                 # Generic patch hygiene stays shared, not per-deployment.
                 self.assertIn("Additional Minor issues:", prompt)
 
-    def test_shipped_ffmpeg_facts_load(self) -> None:
-        facts = llm_prompt.load_project_facts(REPO_ROOT / "project_facts" / "ffmpeg.md")
-        self.assertIn("##FFmpeg project facts:", facts)
-        facts = llm_prompt.load_project_facts(REPO_ROOT / "project_facts" / "ffmpeg-web.md")
-        self.assertIn("ffmpeg-web", facts)
+    def test_shipped_facts_files_load(self) -> None:
+        files = sorted((REPO_ROOT / "project_facts").glob("*.md"))
+        self.assertGreaterEqual(len(files), 3)
+        for path in files:
+            with self.subTest(path=path.name):
+                facts = llm_prompt.load_project_facts(path)
+                self.assertTrue(facts.startswith("##"))
+                self.assertTrue(facts.endswith("\n\n"))
 
 
 if __name__ == "__main__":

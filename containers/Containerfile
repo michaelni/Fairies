@@ -100,6 +100,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --clean-css`` (the plugin package) and ``make DEV=1`` needs bower.
 RUN npm install -g less less-plugin-clean-css bower
 
+# fateserver runtime: Perl CGI scripts using CGI, HTML::Entities,
+# Time::Zone and URI::Escape.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        perl libcgi-pm-perl libhtml-parser-perl libtimedate-perl liburi-perl
+
 # FATE sample suite snapshot (~1.4 GB), so fate tests can run without
 # each container re-downloading samples. A model needing newer samples
 # runs ``make fate-rsync SAMPLES=/opt/fate-suite`` (incremental).

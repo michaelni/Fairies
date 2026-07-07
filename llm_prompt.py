@@ -520,8 +520,8 @@ def make_developer_prompt(
 
 
 C_PROMPT_COMBINER_TASK = """##Combiner task
-The user message contains several independent draft reviews of this pull
-request, each produced by a different model; produce a combined review.
+The user message contains independent draft reviews of this pull request,
+each produced by a different model; produce one combined review.
 
 - Treat each draft as a set of claims, not as ground truth. Verify every
   issue a draft raises against the actual commit(s), attached files, prior

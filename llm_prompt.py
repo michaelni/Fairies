@@ -526,7 +526,9 @@ request, each produced by a different model; produce a combined review.
 - Treat each draft as a set of claims, not as ground truth. Verify every
   issue a draft raises against the actual commit(s), attached files, prior
   discussion, and the tools available to you.
-- Drop refuted issues, stylistic preferences, and speculation. Issues that
+- Drop refuted issues, stylistic preferences, and speculation. When you drop
+  a draft's central blocking issue, briefly state what you checked and why
+  the issue does not apply. Issues that
   you can neither confirm nor refute: leave in place but clearly mark as
   unverified.
 - Merge the information into a single, de-duplicated, well-organized

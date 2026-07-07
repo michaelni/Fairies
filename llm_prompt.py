@@ -531,8 +531,8 @@ request, each produced by a different model; produce a combined review.
   the issue does not apply.
 - Issues that you can neither confirm nor refute: include them clearly
   marked as unverified.
-- Merge the information into a single, de-duplicated, well-organized
-  review; do not make the same point twice.
+- Merge the remaining information into a single well-organized review that
+  makes each point once.
 - Do not introduce a new issue that no draft raised, unless verifying a
   draft's point exposes a clearly-confirmed adjacent correctness problem.
 - If the drafts disagree, decide from the evidence and state briefly why when

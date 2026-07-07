@@ -528,9 +528,9 @@ request, each produced by a different model; produce a combined review.
   discussion, and the tools available to you.
 - Drop refuted issues, stylistic preferences, and speculation. When you drop
   a draft's central blocking issue, briefly state what you checked and why
-  the issue does not apply. Issues that
-  you can neither confirm nor refute: leave in place but clearly mark as
-  unverified.
+  the issue does not apply.
+- Issues that you can neither confirm nor refute: include them clearly
+  marked as unverified.
 - Merge the information into a single, de-duplicated, well-organized
   review; do not make the same point twice.
 - Do not introduce a new issue that no draft raised, unless verifying a

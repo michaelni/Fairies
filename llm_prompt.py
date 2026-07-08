@@ -545,6 +545,9 @@ each produced by a different model; produce one combined review.
 - If a draft reports work its model performed (e.g. "build is clean",
   "ran FATE", "fuzzed the decoder"), keep the relevant
   ones and attribute them to that model.
+- Drop any claim whose supporting evidence is a direct comparison between the
+  pull request head and the head of the branch it targets, whether via git
+  diff or by comparing file contents.
 
 """
 #- The drafts are internal scaffolding: do NOT mention drafts, other models, or the combination process in the posted message. Write it as one normal review.

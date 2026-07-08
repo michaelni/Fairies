@@ -25,6 +25,7 @@
 #   SAMPLES     samples per arm                (default 3)
 #   PAR         concurrent samples per arm     (default SAMPLES: one wave)
 #   TIER        OpenAI service tier            (default flex)
+#   MODEL       main reviewer model            (default openai:gpt-5.4)
 #   PODMAN_SSH  ssh dest for the podman host   (e.g. fairy@192.168.2.4)
 #   TREE        checkout to run fairy from     (default this repo)
 #   WRAPPER_EXTRA  extra wrapper args, e.g. "--extra-model zai:glm-5.2 --combine-model openai:gpt-5.4"
@@ -64,6 +65,7 @@ OUTROOT=${OUTROOT:-simpast-runs/out}; [[ "$OUTROOT" = /* ]] || OUTROOT="$ROOT/$O
 SAMPLES=${SAMPLES:-3}
 PAR=${PAR:-$SAMPLES}
 TIER=${TIER:-flex}
+MODEL=${MODEL:-openai:gpt-5.4}
 PODMAN_SSH=${PODMAN_SSH:-}
 [[ -n "$PODMAN_SSH" ]] || { echo "PODMAN_SSH=user@host required (podman only; OpenAI containers are deprecated for tests)" >&2; exit 2; }
 CONTAINER_ARGS="--podman --podman-ssh-dest $PODMAN_SSH --podman-max-tool-rounds 100"
@@ -103,7 +105,7 @@ run_one() {
         --llm-review-cmd "./pr_review_wrapper.py \
             --repo-root $PATCH_REPO $extra \
             $CONTAINER_ARGS $WRAPPER_EXTRA \
-            --model openai:gpt-5.4 --triage-model openai:gpt-5.4-mini \
+            --model $MODEL --triage-model openai:gpt-5.4-mini \
             --reasoning-effort high \
             --service-tier $TIER --reasoning-summary detailed \
             --allowed-model openai:gpt-5.5 --allowed-model openai:gpt-5.4 \

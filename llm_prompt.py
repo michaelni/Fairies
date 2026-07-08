@@ -87,7 +87,7 @@ def tr_prompt_general_rules(model: str) -> str:
 - Cite exactly the references relevant to your reply.
 - You can reply to questions asked to the current reviewer identity when they are on topic or help the FFmpeg Project.
 - Do not reply to off topic questions or requests
-- Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM-{model_label(model)}" toward the begin of the message. Do not imply that you will not find more issues in a future review.
+- Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM-{model_label(model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
 - workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.
 - try hard to find all issues
 
@@ -206,7 +206,7 @@ TR_PROMPT_MINOR_ISSUE_POLICY = """Additional Minor issues:
 """
 
 
-R_ROMPT_AUDIENCE_AND_PURPOSE = """##Audience and purpose:
+R_PROMPT_AUDIENCE_AND_PURPOSE = """##Audience and purpose:
 
 The pull request author may be inexperienced and new or highly experienced and senior.
 The decision makers (who make the final decision to accept or reject a pull request) are generally experienced and senior. But they do not always have deep knowledge in the details of the specific part changed.
@@ -230,8 +230,8 @@ R_PROMPT_REVIEW_CLASSIFICATIONS = """Classify the pull request into exactly one 
 - minor_issues_approve: only minor or pre-existing issues, non-blocking issues or suggestions or helpful comments; the PR can be merged in its current form but there is some additional comment you would like to make
 - moderate_issues_comment: You do not want to approve the PR but the current code would not be worse off if its merged
 - major_request_changes: You do not want to approve the PR and the current code would be worse off if its merged
-- helpful_reply: You have a comment without making a decission on the PRs approval or blockage.
-- skip: you have no comment or want to make no comment, and make no decission on the PRs approval or blockage.
+- helpful_reply: You have a comment without making a decision on the PRs approval or blockage.
+- skip: you have no comment or want to make no comment, and make no decision on the PRs approval or blockage.
 
 """
 
@@ -510,7 +510,7 @@ def make_developer_prompt(
         + (T_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
         + TR_PROMPT_MINOR_ISSUE_POLICY
-        + R_ROMPT_AUDIENCE_AND_PURPOSE
+        + R_PROMPT_AUDIENCE_AND_PURPOSE
         + TR_PROMPT_OUTPUT_GUIDELINE
         + R_PROMPT_REVIEW_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])

@@ -25,15 +25,16 @@
 #   SAMPLES     samples per arm                (default 3)
 #   PAR         concurrent samples per arm     (default SAMPLES: one wave)
 #   TIER        OpenAI service tier            (default flex)
-#   BACKEND     LLM shell container backend    (default openai; or podman)
-#   PODMAN_SSH  ssh dest for BACKEND=podman    (e.g. fairy@192.168.2.4)
+#   PODMAN_SSH  ssh dest for the podman host   (e.g. fairy@192.168.2.4)
 #   TREE        checkout to run fairy from     (default this repo)
 #   WRAPPER_EXTRA  extra wrapper args, e.g. "--extra-model zai:glm-5.2 --combine-model openai:gpt-5.4"
 #
-# BACKEND=podman runs the LLM shell in an ephemeral Podman container on
-# PODMAN_SSH instead of the OpenAI container; provision that host first
+# The LLM shell always runs in an ephemeral Podman container on
+# PODMAN_SSH, matching production; OpenAI-hosted containers are
+# deprecated and produce non-comparable results, so this harness
+# refuses to use them. Provision the host first
 # (containers/provision_remote.py --ssh PODMAN_SSH <repo> ...). Keep PAR
-# modest for podman so one host is not swamped by concurrent containers.
+# modest so one host is not swamped by concurrent containers.
 #
 # Examples:
 #   # 4-PR suite, baseline vs a prompt branch
@@ -63,14 +64,9 @@ OUTROOT=${OUTROOT:-simpast-runs/out}; [[ "$OUTROOT" = /* ]] || OUTROOT="$ROOT/$O
 SAMPLES=${SAMPLES:-3}
 PAR=${PAR:-$SAMPLES}
 TIER=${TIER:-flex}
-BACKEND=${BACKEND:-openai}
 PODMAN_SSH=${PODMAN_SSH:-}
-case "$BACKEND" in
-    openai) CONTAINER_ARGS="--use-openai-container-repos --max-tool-calls 100" ;;
-    podman) [[ -n "$PODMAN_SSH" ]] || { echo "BACKEND=podman requires PODMAN_SSH=user@host" >&2; exit 2; }
-            CONTAINER_ARGS="--podman --podman-ssh-dest $PODMAN_SSH --podman-max-tool-rounds 100" ;;
-    *) echo "unknown BACKEND=$BACKEND (use openai|podman)" >&2; exit 2 ;;
-esac
+[[ -n "$PODMAN_SSH" ]] || { echo "PODMAN_SSH=user@host required (podman only; OpenAI containers are deprecated for tests)" >&2; exit 2; }
+CONTAINER_ARGS="--podman --podman-ssh-dest $PODMAN_SSH --podman-max-tool-rounds 100"
 (($# >= 1)) || { echo "usage: $0 <arm-ref> [arm-ref ...]" >&2; exit 2; }
 
 # Write the prompt to the working tree only (never the index), so a

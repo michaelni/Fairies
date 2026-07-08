@@ -117,7 +117,8 @@ class AnthropicReviewLoopTests(unittest.TestCase):
                              input={"command": "git log -1"})]),
             _Message([_Block(type="tool_use", id="t2", name="submit_review",
                              input={"classification": "minor_issues_approve",
-                                    "message": "LLM review: one nit."})]),
+                                    "message": "LLM review: one nit.",
+                                    "head_vs_branch_diff_evidence": False})]),
         ])
         reviewer = anthropic_reviewer.AnthropicReviewer(
             "glm-4.6", name="zai:glm-4.6",
@@ -154,7 +155,8 @@ class AnthropicReviewLoopTests(unittest.TestCase):
     def test_no_shell_direct_submit(self) -> None:
         client = _ScriptedClient([
             _Message([_Block(type="tool_use", id="t1", name="submit_review",
-                             input={"classification": "ok_approve", "message": ""})]),
+                             input={"classification": "ok_approve", "message": "",
+                                    "head_vs_branch_diff_evidence": False})]),
         ])
         reviewer = anthropic_reviewer.AnthropicReviewer("claude-opus-4", name="anthropic:claude-opus-4")
         reviewer._client = lambda: client  # type: ignore[method-assign]
@@ -189,7 +191,8 @@ class AnthropicReviewLoopTests(unittest.TestCase):
 class EffortThinkingTests(unittest.TestCase):
     def _submit(self) -> _Message:
         return _Message([_Block(type="tool_use", id="t1", name="submit_review",
-                                input={"classification": "ok_approve", "message": ""})])
+                                input={"classification": "ok_approve", "message": "",
+                                       "head_vs_branch_diff_evidence": False})])
 
     def _run(self, effort: str | None) -> dict:
         client = _ScriptedClient([self._submit()])

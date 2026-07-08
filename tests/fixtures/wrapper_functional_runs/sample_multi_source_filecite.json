@@ -15,7 +15,7 @@
                 "type": "file_citation"
               }
             ],
-            "text": "{\"classification\":\"minor_issues_approve\",\"message\":\"Please review this section \\ue200filecite\\ue202turn5file10\\ue202turn5file4\\ue201 before merge.\"}",
+            "text": "{\"classification\":\"minor_issues_approve\",\"message\":\"Please review this section \\ue200filecite\\ue202turn5file10\\ue202turn5file4\\ue201 before merge.\",\"head_vs_branch_diff_evidence\":false}",
             "type": "output_text"
           }
         ],

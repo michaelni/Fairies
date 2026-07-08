@@ -78,6 +78,7 @@ class ReviewLabelSchemaTests(unittest.TestCase):
             {
                 "classification": "minor_issues_approve",
                 "message": "m",
+                "head_vs_branch_diff_evidence": False,
                 "label_changes": [
                     _change("stale", "add", "no activity", post=True),
                     _change("secret", "add"),
@@ -121,6 +122,7 @@ class RoleWithLabelsTests(unittest.TestCase):
         result = role.validate({
             "classification": "minor_issues_approve",
             "message": "m",
+            "head_vs_branch_diff_evidence": False,
             "label_changes": [_change("stale", "add", "r")],
         })
         self.assertEqual([c["label"] for c in result["label_changes"]], ["stale"])

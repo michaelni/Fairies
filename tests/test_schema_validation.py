@@ -31,7 +31,8 @@ REAL_MISKEYED_REVIEW = {
 class CheckSchemaTests(unittest.TestCase):
     def test_valid_review_passes(self) -> None:
         llm_review_api.check_schema(
-            {"classification": "ok_approve", "message": ""},
+            {"classification": "ok_approve", "message": "",
+             "head_vs_branch_diff_evidence": False},
             llm_review_api.REVIEW_SCHEMA["schema"],
         )
 
@@ -44,14 +45,16 @@ class CheckSchemaTests(unittest.TestCase):
     def test_bad_enum_value_is_rejected(self) -> None:
         with self.assertRaises(llm_review_api.SchemaError):
             llm_review_api.check_schema(
-                {"classification": "looks_good", "message": ""},
+                {"classification": "looks_good", "message": "",
+                 "head_vs_branch_diff_evidence": False},
                 llm_review_api.REVIEW_SCHEMA["schema"],
             )
 
     def test_wrong_type_is_rejected(self) -> None:
         with self.assertRaises(llm_review_api.SchemaError):
             llm_review_api.check_schema(
-                {"classification": "ok_approve", "message": 12},
+                {"classification": "ok_approve", "message": 12,
+                 "head_vs_branch_diff_evidence": False},
                 llm_review_api.REVIEW_SCHEMA["schema"],
             )
 
@@ -110,10 +113,25 @@ class ValidateReviewTests(unittest.TestCase):
 
     def test_valid_review_round_trips(self) -> None:
         result = llm_review_api.validate_review(
-            {"classification": "minor_issues_approve", "message": "looks ok"},
+            {"classification": "minor_issues_approve", "message": "looks ok",
+             "head_vs_branch_diff_evidence": False},
         )
         self.assertEqual(result["classification"], "minor_issues_approve")
         self.assertEqual(result["message"], "looks ok")
+
+    def test_self_reported_diff_evidence_raises(self) -> None:
+        # Real bogus verdict (PR #23553, resp_0b30b334ceafa773...): the
+        # blocking issue rested on diffing the PR head against the master
+        # tip. With the flag set, the verdict must be rejected so the
+        # draft is dropped / the pass retried.
+        with self.assertRaises(llm_review_api.SelfReportedViolation) as ctx:
+            llm_review_api.validate_review({
+                "classification": "major_request_changes",
+                "message": "LLM-GPT-5.4: this patch drops the current "
+                           "master fix for reference-only resource reuse.",
+                "head_vs_branch_diff_evidence": True,
+            })
+        self.assertIn("major_request_changes", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -35,9 +35,9 @@ What belongs here: the provider-neutral review vocabulary (``Review``,
 constants, the role output JSON schemas with their validators
 (``REVIEW_SCHEMA``, ``build_review_schema``, ``build_triage_schema``,
 ``check_schema``, ``validate_review``, ``validate_review_result``,
-``validate_triage_result``), the shared
-``BadModelOutput`` error, and ``run_parallel`` (the single fan-out
-helper).
+``validate_triage_result``), the shared ``BadModelOutput`` and
+``SelfReportedViolation`` errors, and ``run_parallel`` (the single
+fan-out helper).
 
 What does NOT belong: any provider/SDK-specific code (that lives in the
 ``*_reviewer`` modules), prompt text (``llm_prompt``), or pipeline wiring
@@ -73,6 +73,7 @@ __all__ = [
     "Reviewer",
     "RoleSpec",
     "SchemaError",
+    "SelfReportedViolation",
     "build_review_schema",
     "build_triage_schema",
     "check_schema",
@@ -142,8 +143,17 @@ REVIEW_SCHEMA = {
                     "Do not include HTML or markdown fences."
                 ),
             },
+            "head_vs_branch_diff_evidence": {
+                "type": "boolean",
+                "description": (
+                    "True when any material issue in the review relies on "
+                    "evidence from directly diffing or comparing a pull "
+                    "request head against a branch tip or another commit "
+                    "that is not an ancestor of that head."
+                ),
+            },
         },
-        "required": ["classification", "message"],
+        "required": ["classification", "message", "head_vs_branch_diff_evidence"],
     },
 }
 
@@ -155,6 +165,16 @@ class SchemaError(ValueError):
     it can silently slip (observed: emitting ``class`` instead of
     ``classification``). So every response is re-validated against the
     exact schema we sent before we trust it.
+    """
+
+
+class SelfReportedViolation(Exception):
+    """The model itself flagged that a material issue rests on invalid
+    evidence (``head_vs_branch_diff_evidence``).
+
+    Raised by ``validate_review`` so a parallel draft is dropped by
+    ``run_parallel`` and a solo or combine pass fails and is retried by
+    the outer caller.
     """
 
 
@@ -232,9 +252,18 @@ def check_schema(value: object, schema: dict[str, object], path: str = "$") -> N
 
 
 def validate_review(obj: object) -> dict[str, str]:
-    """Check a review verdict against ``REVIEW_SCHEMA`` and return its fields."""
+    """Check a review verdict against ``REVIEW_SCHEMA`` and return its fields.
+
+    Raises :class:`SelfReportedViolation` when the model set
+    ``head_vs_branch_diff_evidence``."""
     check_schema(obj, REVIEW_SCHEMA["schema"])
     assert isinstance(obj, dict)  # narrowed by check_schema
+    if obj["head_vs_branch_diff_evidence"]:
+        raise SelfReportedViolation(
+            f"model flagged head_vs_branch_diff_evidence=true "
+            f"(classification={obj['classification']}); "
+            f"message starts: {obj['message'][:200]!r}"
+        )
     return {"classification": obj["classification"], "message": obj["message"]}
 
 

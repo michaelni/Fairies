@@ -466,6 +466,9 @@ Pick exactly one value for ``route``:
     and a brief answer will unblock them.
   * Someone mis-states project process in a way a brief correction
     would fix.
+  * Someone stated that they will do something relavant for this PR
+    over a month ago and this is holding up progress. Maybe they forgot
+    and a reminder or clarification question would help them.
   * A simple factual clarification is useful and clearly on-topic.
   Put the FULL reply in ``message``. Keep it short, friendly, and
   focused on the single point being addressed. Follow the normal

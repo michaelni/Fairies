@@ -116,14 +116,14 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
 
     def test_non_engage_routes_preserve_override_fields(self) -> None:
         # The override fields are only consumed on the engage path.
-        # For helpful_reply / skip we leave the values untouched --
+        # For reply_no_verdict / skip we leave the values untouched --
         # they're moot anyway and special-casing them here would just
         # add code without buying anything.
-        for route in ("helpful_reply", "skip"):
+        for route in ("reply_no_verdict", "skip"):
             with self.subTest(route=route):
                 result = llm_review_api.validate_triage_result({
                     "route": route,
-                    "message": "context" if route == "helpful_reply" else "",
+                    "message": "context" if route == "reply_no_verdict" else "",
                     "reason": "irrelevant",
                     "requested_models": ["gpt-5.5"],
                     "requested_effort": "high",

@@ -231,7 +231,7 @@ class CiTriageEngageTests(unittest.TestCase):
     """Routing on a CI-red request (``ci_triage`` present).
 
     ``engage`` reaches the main reviewer pass even on red CI (the old code
-    forced such requests to skip). ``helpful_reply`` still short-circuits,
+    forced such requests to skip). ``reply_no_verdict`` still short-circuits,
     and ``force_engage`` (fairy's --force-engage) makes the
     wrapper run the full pass regardless of the triage route.
     """
@@ -239,7 +239,7 @@ class CiTriageEngageTests(unittest.TestCase):
     CI_TRIAGE = {"head_ref": "pr-head", "failures": ["Test / Fate"]}
     TRIAGE_ENGAGE = {"route": "engage", "reason": "worth a look", "label_changes": []}
     TRIAGE_REPLY = {
-        "route": "helpful_reply",
+        "route": "reply_no_verdict",
         "reason": "tree is red",
         "message": "Heads-up: CI is red.",
         "label_changes": [],
@@ -252,15 +252,15 @@ class CiTriageEngageTests(unittest.TestCase):
         self.assertTrue(reached)
         self.assertEqual(out, "")
 
-    def test_helpful_reply_short_circuits_on_red_ci(self) -> None:
+    def test_reply_no_verdict_short_circuits_on_red_ci(self) -> None:
         exit_code, out, reached = _run_wrapper_with_stubbed_triage(
             _fixture_request(ci_triage=self.CI_TRIAGE), self.TRIAGE_REPLY,
         )
         self.assertFalse(reached)
         self.assertEqual(exit_code, 0)
-        self.assertEqual(json.loads(out)["classification"], "helpful_reply")
+        self.assertEqual(json.loads(out)["classification"], "reply_no_verdict")
 
-    def test_force_engage_overrides_helpful_reply_on_red_ci(self) -> None:
+    def test_force_engage_overrides_reply_no_verdict_on_red_ci(self) -> None:
         _exit, out, reached = _run_wrapper_with_stubbed_triage(
             _fixture_request(ci_triage=self.CI_TRIAGE, force_engage=True),
             self.TRIAGE_REPLY,

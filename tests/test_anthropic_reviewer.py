@@ -155,7 +155,7 @@ class AnthropicReviewLoopTests(unittest.TestCase):
     def test_no_shell_direct_submit(self) -> None:
         client = _ScriptedClient([
             _Message([_Block(type="tool_use", id="t1", name="submit_review",
-                             input={"classification": "ok_approve", "message": "",
+                             input={"classification": "approve", "message": "",
                                     "head_vs_branch_diff_evidence": False})]),
         ])
         reviewer = anthropic_reviewer.AnthropicReviewer("claude-opus-4", name="anthropic:claude-opus-4")
@@ -163,7 +163,7 @@ class AnthropicReviewLoopTests(unittest.TestCase):
 
         review = reviewer.review(_ctx(None))
 
-        self.assertEqual("ok_approve", review.classification)
+        self.assertEqual("approve", review.classification)
         # submit_review only (no shell tool) when the context has no shell.
         self.assertEqual(1, len(client.calls[0]["tools"]))
 
@@ -191,7 +191,7 @@ class AnthropicReviewLoopTests(unittest.TestCase):
 class EffortThinkingTests(unittest.TestCase):
     def _submit(self) -> _Message:
         return _Message([_Block(type="tool_use", id="t1", name="submit_review",
-                                input={"classification": "ok_approve", "message": "",
+                                input={"classification": "approve", "message": "",
                                        "head_vs_branch_diff_evidence": False})])
 
     def _run(self, effort: str | None) -> dict:

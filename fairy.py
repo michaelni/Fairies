@@ -47,10 +47,10 @@ external reviewer command. That command receives JSON on stdin containing a fixe
 review prompt, PR metadata, and the patch text. It must return JSON with one of
 these classifications:
 
-- ok_approve
+- approve
 - minor_issues_approve
-- moderate_issues_comment
-- major_request_changes
+- moderate_issues
+- major_issues
 - skip
 
 The script uses `gcli api` for reads and `gcli pulls ... approve` for approval.
@@ -220,7 +220,7 @@ class PreparedPR:
     ignore_triage_skip: bool = False
     # Stronger sibling of ``ignore_triage_skip`` (see --force-engage):
     # when True, the wrapper engages its full reviewer pass regardless of
-    # the triage route (skip / helpful_reply) and even on CI-red PRs.
+    # the triage route (skip / reply_no_verdict) and even on CI-red PRs.
     # Travels as the ``force_engage`` field in the wrapper's stdin request.
     force_engage: bool = False
 
@@ -393,7 +393,7 @@ def parse_args() -> argparse.Namespace:
             "When the head commit has failing CI jobs (ERROR/FAILURE), do not stop "
             "immediately. If your LLM review command is configured for triage "
             "(e.g. pr_review_wrapper.py with --triage-model), run it so the "
-            "mini model can post a short helpful_reply pointing at the failure. "
+            "mini model can post a short reply_no_verdict pointing at the failure. "
             "If every failing context was already mentioned in a prior comment by the "
             "bot, the wrapper is not invoked. Requires --llm-review-cmd and a "
             "command line that includes --triage-model."
@@ -494,7 +494,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="When reviewing a PR named via --force-review-pr, run the full "
              "reviewer pass regardless of the triage route (overrides both "
-             "``skip`` and ``helpful_reply``) and even when the head CI is red. "
+             "``skip`` and ``reply_no_verdict``) and even when the head CI is red. "
              "Stronger than --force-review-skip. Only applies to PRs named with "
              "--force-review-pr (not @mention / requested-reviewer engagements).",
     )
@@ -1678,13 +1678,18 @@ def format_action(d: Decision) -> str:
 def format_llm_classification(classification: str) -> str:
     mapping = {
         "-": "-",
-        "ok_approve": "ok",
+        "approve": "ok",
         "minor_issues_approve": "minor",
-        "moderate_issues_comment": "moderate",
-        "helpful_reply": "reply",
-        "major_request_changes": "major",
+        "moderate_issues": "moderate",
+        "reply_no_verdict": "reply",
+        "major_issues": "major",
         "skip": "skip",
         "error": "error",
+        # pre-rename names persisted in bot state (last_llm_decision)
+        "ok_approve": "ok",
+        "moderate_issues_comment": "moderate",
+        "major_request_changes": "major",
+        "helpful_reply": "reply",
     }
     return mapping.get(classification, classification)
 
@@ -1896,7 +1901,7 @@ def run_llm_review(
     force_engage: bool = False,
 ) -> LLMReview:
     if not args.llm_review_cmd:
-        return LLMReview("ok_approve", "")
+        return LLMReview("approve", "")
 
     base_sha, head_sha = patch_shas_for_run(args, pr)
     patch_text, patch_truncated = fetch_patch_for_llm(
@@ -1965,16 +1970,16 @@ def run_llm_review(
 
     classification = classification.strip()
     allowed = {
-        "ok_approve",
+        "approve",
         "minor_issues_approve",
-        "moderate_issues_comment",
-        "major_request_changes",
-        "helpful_reply",
+        "moderate_issues",
+        "major_issues",
+        "reply_no_verdict",
         "skip",
     }
     if classification not in allowed:
         raise RuntimeError(f"unsupported LLM classification: {classification!r}")
-    if classification == "ok_approve":
+    if classification == "approve":
         message = ""
     label_changes = parse_label_changes(data.get("label_changes"), label_allowlist)
     return LLMReview(
@@ -2061,7 +2066,7 @@ def apply_llm_review(
 
     reason = base_reason
     label_kwargs = {"label_changes": review.label_changes}
-    if review.classification == "ok_approve":
+    if review.classification == "approve":
         return Decision(
             number, title, author, auto_merge, "approve", reason, last_activity,
             review.classification, "", **label_kwargs,
@@ -2079,7 +2084,7 @@ def apply_llm_review(
             review.message,
             **label_kwargs,
         )
-    if review.classification == "moderate_issues_comment":
+    if review.classification == "moderate_issues":
         return Decision(
             number,
             title,
@@ -2092,7 +2097,7 @@ def apply_llm_review(
             review.message,
             **label_kwargs,
         )
-    if review.classification == "helpful_reply":
+    if review.classification == "reply_no_verdict":
         return Decision(
             number,
             title,
@@ -2105,7 +2110,7 @@ def apply_llm_review(
             review.message,
             **label_kwargs,
         )
-    if review.classification == "major_request_changes":
+    if review.classification == "major_issues":
         return Decision(
             number,
             title,

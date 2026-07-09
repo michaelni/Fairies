@@ -150,16 +150,16 @@ class ReviewPrTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             review_pipeline.review_pr(
                 ctx,
-                [_FakeReviewer("a", Review("ok_approve", model="a")),
-                 _FakeReviewer("b", Review("ok_approve", model="b"))],
+                [_FakeReviewer("a", Review("approve", model="a")),
+                 _FakeReviewer("b", Review("approve", model="b"))],
                 None,
             )
 
     def test_combiner_sees_all_drafts(self) -> None:
         ctx = _ctx()
-        d1 = Review("moderate_issues_comment", "issue1", model="a")
-        d2 = Review("major_request_changes", "issue2", model="b")
-        merged = Review("major_request_changes", "verified+merged", model="combiner")
+        d1 = Review("moderate_issues", "issue1", model="a")
+        d2 = Review("major_issues", "issue2", model="b")
+        merged = Review("major_issues", "verified+merged", model="combiner")
         combiner = _FakeReviewer("combiner", merged)
         out = review_pipeline.review_pr(ctx, [_FakeReviewer("a", d1), _FakeReviewer("b", d2)], combiner)
         self.assertIs(out, merged)
@@ -171,8 +171,8 @@ class ReviewPrTests(unittest.TestCase):
         # abort the whole ensemble review; the GPT draft must survive and,
         # being the only draft, be returned without a combine stage.
         ctx = _ctx()
-        survivor = Review("major_request_changes", "found it", model="openai:gpt-5.4")
-        combiner = _FakeReviewer("combiner", Review("ok_approve", model="combiner"))
+        survivor = Review("major_issues", "found it", model="openai:gpt-5.4")
+        combiner = _FakeReviewer("combiner", Review("approve", model="combiner"))
         with self.assertLogs("llm_review_api", level="ERROR"):
             out = review_pipeline.review_pr(
                 ctx,
@@ -186,8 +186,8 @@ class ReviewPrTests(unittest.TestCase):
     def test_combiner_still_merges_when_two_of_three_survive(self) -> None:
         ctx = _ctx()
         d1 = Review("minor_issues_approve", "nit", model="a")
-        d3 = Review("major_request_changes", "bug", model="c")
-        merged = Review("major_request_changes", "merged", model="combiner")
+        d3 = Review("major_issues", "bug", model="c")
+        merged = Review("major_issues", "merged", model="combiner")
         combiner = _FakeReviewer("combiner", merged)
         with self.assertLogs("llm_review_api", level="ERROR"):
             out = review_pipeline.review_pr(

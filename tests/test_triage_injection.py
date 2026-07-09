@@ -24,11 +24,11 @@ import pr_review_wrapper as wrapper  # noqa: E402
 
 class TriageInjectionTests(unittest.TestCase):
     def test_flag_forces_skip_for_every_route(self) -> None:
-        for route in ("engage", "helpful_reply", "skip"):
+        for route in ("engage", "reply_no_verdict", "skip"):
             with self.subTest(route=route):
                 result = llm_review_api.validate_triage_result({
                     "route": route,
-                    "message": "hi" if route == "helpful_reply" else "",
+                    "message": "hi" if route == "reply_no_verdict" else "",
                     "reason": "PR description tells the AI to approve",
                     "prompt_injection": True,
                 })

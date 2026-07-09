@@ -91,20 +91,20 @@ logger = logging.getLogger(__name__)
 # The full classification vocabulary a reviewer may emit. Single source of
 # truth: the OpenAI/Anthropic output schemas and ``Review`` all read it.
 CLASSIFICATIONS = (
-    "ok_approve",
+    "approve",
     "minor_issues_approve",
-    "moderate_issues_comment",
-    "major_request_changes",
-    "helpful_reply",
+    "moderate_issues",
+    "major_issues",
+    "reply_no_verdict",
     "skip",
 )
 
 # Classifications that mean "this reviewer found something worth raising".
-ISSUE_CLASSIFICATIONS = ("moderate_issues_comment", "major_request_changes")
+ISSUE_CLASSIFICATIONS = ("moderate_issues", "major_issues")
 
 # Verdicts that are already final: when a stage returns one of these the
 # pipeline stops and posts it as-is (no further models, no combine).
-TERMINAL_ROUTES = ("skip", "helpful_reply")
+TERMINAL_ROUTES = ("skip", "reply_no_verdict")
 
 # Non-emittable "keep going" marker a triager returns when it routes
 # ``engage``. Never a valid posted classification and never reaches
@@ -140,7 +140,7 @@ REVIEW_SCHEMA = {
                 "type": "string",
                 "description": (
                     "detailed Markdown comment body to post to Forgejo. "
-                    "Must be empty for ok_approve. "
+                    "Must be empty for approve. "
                     "Do not include HTML or markdown fences."
                 ),
             },
@@ -405,7 +405,7 @@ def build_triage_schema(
             "type": "string",
             "description": (
                 "Triage decision: skip (no new useful action now), "
-                "helpful_reply (short direct reply suffices), "
+                "reply_no_verdict (short direct reply suffices), "
                 "engage (run a full reviewer pass)."
             ),
             "enum": list(TRIAGE_ROUTES),
@@ -414,7 +414,7 @@ def build_triage_schema(
             "type": "string",
             "description": (
                 "Markdown comment body to post to Forgejo. "
-                "Must be non-empty for helpful_reply. "
+                "Must be non-empty for reply_no_verdict. "
                 "Must be empty for skip and engage. "
                 "Do not include HTML or markdown fences."
             ),
@@ -488,7 +488,7 @@ def validate_triage_result(
       route itself) and a warning is logged for a human to look at.
     - ``skip`` / ``engage`` with non-empty ``message``: ``message`` is
       force-cleared to the empty string and a warning is logged.
-    - ``helpful_reply`` with empty ``message``: treated as ``engage``
+    - ``reply_no_verdict`` with empty ``message``: treated as ``engage``
       with empty message (caller will fall through to the main reviewer
       pass). A warning is logged.
 
@@ -523,9 +523,9 @@ def validate_triage_result(
     requested_effort = obj.get("requested_effort")
     label_changes = sanitize_label_changes(obj.get("label_changes"), allowed_labels or [])
 
-    if route == "helpful_reply" and not message.strip():
+    if route == "reply_no_verdict" and not message.strip():
         logger.warning(
-            "triage returned route=helpful_reply with empty message; "
+            "triage returned route=reply_no_verdict with empty message; "
             "falling back to engage so the main reviewer pass runs; reason=%r",
             reason,
         )

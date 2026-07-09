@@ -47,7 +47,7 @@ class LlmPrefixPromptTests(unittest.TestCase):
     def test_combiner_user_text_uses_the_same_labels(self) -> None:
         text = llm_prompt.make_combiner_user_text([
             Review("minor_issues_approve", "a", model="openai:gpt-5.4"),
-            Review("major_request_changes", "b", model="zai:glm-5.2"),
+            Review("major_issues", "b", model="zai:glm-5.2"),
         ])
         self.assertIn("Draft review from GPT-5.4", text)
         self.assertIn("Draft review from GLM-5.2", text)

@@ -219,7 +219,7 @@ class ForceReviewSkipPayloadTests(unittest.TestCase):
             captured["input_text"] = input_text
             return SimpleNamespace(
                 returncode=0,
-                stdout='{"classification": "ok_approve", "message": ""}',
+                stdout='{"classification": "approve", "message": ""}',
             )
 
         with (

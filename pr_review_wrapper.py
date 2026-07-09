@@ -46,12 +46,12 @@ Input JSON keys expected:
 
 Output JSON keys:
   - classification: one of
-      ok_approve
+      approve
       minor_issues_approve
-      moderate_issues_comment
-      major_request_changes
+      moderate_issues
+      major_issues
       skip
-  - message: short review message, may be empty for ok_approve
+  - message: short review message, may be empty for approve
 
 The wrapper enriches the review with source code context from a local git
 checkout. It always includes touched files from pull_request.head_sha when a
@@ -218,7 +218,7 @@ def parse_args() -> argparse.Namespace:
         metavar="PROVIDER:MODEL[@EFFORT]",
         help=(
             "Optional model to run a pre-check that classifies the PR as "
-            "skip / helpful_reply / engage before the main review. Same "
+            "skip / reply_no_verdict / engage before the main review. Same "
             "``provider:model[@effort]`` form as --extra-model. "
             "When unset, triage is disabled. The "
             "triager gets podman shell and/or OpenAI file_search / "
@@ -1073,7 +1073,7 @@ def main() -> int:
     # run the full reviewer pass even when triage votes ``skip``.
     ignore_triage_skip = bool(request.get("ignore_triage_skip"))
     # Cross-process contract with fairy's --force-engage: run the
-    # full reviewer pass regardless of the triage route (skip / helpful_reply)
+    # full reviewer pass regardless of the triage route (skip / reply_no_verdict)
     # and even when triage itself fails on a CI-red request.
     force_engage = bool(request.get("force_engage"))
 
@@ -1346,13 +1346,13 @@ def main() -> int:
                     )
                     emit_review_stdout("skip", "", label_changes=triage_label_changes)
                     return 0
-                if route == "helpful_reply":
+                if route == "reply_no_verdict":
                     logger.info(
-                        "triage route=helpful_reply; reason=%r; skipping main reviewer pass",
+                        "triage route=reply_no_verdict; reason=%r; skipping main reviewer pass",
                         triage_result.get("reason", ""),
                     )
                     emit_review_stdout(
-                        "helpful_reply",
+                        "reply_no_verdict",
                         str(triage_result.get("message") or ""),
                         label_changes=triage_label_changes,
                     )

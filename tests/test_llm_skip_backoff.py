@@ -105,7 +105,7 @@ class ComputeLlmSkipBackoffTests(unittest.TestCase):
 
     def test_non_skip_last_decision_does_not_suppress(self) -> None:
         entry = _skip_entry(consec=1, last_at=T0)
-        entry["last_llm_decision"] = "ok_approve"
+        entry["last_llm_decision"] = "approve"
         self.assertIsNone(
             fairy.compute_llm_skip_backoff(entry, HEAD, LAST_ACT, T0),
         )
@@ -229,9 +229,9 @@ class WritebackLlmSkipBackoffTests(unittest.TestCase):
             "last_llm_decision": "skip",
             "consecutive_skip_count": 7,
         }
-        self._writeback(state, "ok_approve")
+        self._writeback(state, "approve")
         entry = state.entries[self.KEY]
-        self.assertEqual(entry["last_llm_decision"], "ok_approve")
+        self.assertEqual(entry["last_llm_decision"], "approve")
         self.assertEqual(entry["consecutive_skip_count"], 0)
 
     def test_error_classification_writes_nothing(self) -> None:

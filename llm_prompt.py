@@ -523,7 +523,7 @@ def make_developer_prompt(
     )
 
 
-C_PROMPT_COMBINER_TASK = """##Combiner task
+C_PROMPT_COMBINER_TASK = f"""##Combiner task
 The user message contains independent draft reviews of this pull request,
 each produced by a different model; produce one combined review.
 
@@ -548,10 +548,14 @@ each produced by a different model; produce one combined review.
 - If a draft reports work its model performed (e.g. "build is clean",
   "ran FATE", "fuzzed the decoder"), keep the relevant
   ones and attribute them to that model.
+- state the scope and depth of each draft's review when the draft provided
+  this information; do not guess when it is not provided.
+- Carry through help a draft provides beyond issues: helpful replies,
+  answers, questions to the pull request author, and process clarifications.
 - Drop any claim whose supporting evidence is a direct comparison between the
   pull request head and the head of the branch it targets, whether via git
   diff or by comparing file contents.
-
+{TR_PROMPT_WORKAROUND_LANGUAGE}
 """
 #- The drafts are internal scaffolding: do NOT mention drafts, other models, or the combination process in the posted message. Write it as one normal review.
 
@@ -578,8 +582,8 @@ def make_combiner_developer_prompt(
         "You are an expert software engineer combining independent draft reviews of a pull request into one final review.\n\n"
         + tr_prompt_general_rules(model)
         + _prompt_reviewer_identity(reviewer_username)
-        + R_PROMPT_REVIEWER_ROLE
         + C_PROMPT_COMBINER_TASK
+        + TR_PROMPT_CLASSIFICATION_AUDIENCE
         + _prompt_attached_context_and_tools(
             source_bundle_attached=source_bundle_attached,
             repo_roots=repo_roots,

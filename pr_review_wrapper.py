@@ -1391,13 +1391,12 @@ def main() -> int:
                         route,
                     )
 
-        # The final verdict author owns the labels: the combiner in an
-        # ensemble, else the single reviewer. The combine stage only runs
-        # with >=2 drafts (so a lone reviewer keeps them even when
-        # --combine-model is set); if reviewer failures shrink an
-        # ensemble to one draft, that run simply changes no labels.
+        # The final verdict author owns the labels: the combiner whenever
+        # one is configured (it runs even on a single draft), else the
+        # single reviewer.
         n_reviewers = len(requested_models) if requested_models else 1 + len(args.extra_model)
-        reviewer_role = role_with_labels(REVIEWER_ROLE, [] if n_reviewers > 1 else triage_label_allowlist)
+        reviewer_labels = [] if n_reviewers > 1 or args.combine_model else triage_label_allowlist
+        reviewer_role = role_with_labels(REVIEWER_ROLE, reviewer_labels)
         combiner_role = role_with_labels(COMBINER_ROLE, triage_label_allowlist)
 
         if requested_models:

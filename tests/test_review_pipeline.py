@@ -168,20 +168,30 @@ class ReviewPrTests(unittest.TestCase):
 
     def test_failed_reviewer_does_not_discard_surviving_draft(self) -> None:
         # Regression: a z.ai quota exhaustion (RateLimitError 1308) used to
-        # abort the whole ensemble review; the GPT draft must survive and,
-        # being the only draft, be returned without a combine stage.
+        # abort the whole ensemble review; the GPT draft must survive and
+        # still be verified by the combine stage.
         ctx = _ctx()
         survivor = Review("major_issues", "found it", model="openai:gpt-5.4")
-        combiner = _FakeReviewer("combiner", Review("approve", model="combiner"))
+        merged = Review("major_issues", "verified", model="combiner")
+        combiner = _FakeReviewer("combiner", merged)
         with self.assertLogs("llm_review_api", level="ERROR"):
             out = review_pipeline.review_pr(
                 ctx,
                 [_FakeReviewer("a", survivor), _FailingReviewer("zai:glm-5.2")],
                 combiner,
             )
-        self.assertIs(out, survivor)
+        self.assertIs(out, merged)
         self.assertEqual([survivor], ctx.drafts)
-        self.assertIsNone(combiner.seen_drafts)
+        self.assertEqual([survivor], combiner.seen_drafts)
+
+    def test_single_reviewer_with_combiner_still_combines(self) -> None:
+        ctx = _ctx()
+        draft = Review("moderate_issues", "issue", model="a")
+        merged = Review("minor_issues_approve", "verified", model="combiner")
+        combiner = _FakeReviewer("combiner", merged)
+        out = review_pipeline.review_pr(ctx, [_FakeReviewer("a", draft)], combiner)
+        self.assertIs(out, merged)
+        self.assertEqual([draft], combiner.seen_drafts)
 
     def test_combiner_still_merges_when_two_of_three_survive(self) -> None:
         ctx = _ctx()

@@ -183,9 +183,10 @@ def review_pr(
     One model reviewer runs inline; several run concurrently (each gets its
     own shell via ``ctx.new_shell``) and reviewers that fail are dropped by
     ``run_parallel``. Their drafts accumulate on ``ctx`` so the combiner can
-    verify and merge them; a single (configured or surviving) draft is
-    returned as-is since there is nothing to merge. Without a combiner
-    exactly one model reviewer is required.
+    verify and merge them. A configured combiner runs even on a single
+    (configured or surviving) draft: since its prompt diverged from the
+    reviewer's, its verification and grading are no longer redundant.
+    Without a combiner exactly one model reviewer is required.
     """
     if len(model_reviewers) == 1:
         drafts = [model_reviewers[0].review(ctx)]
@@ -197,9 +198,6 @@ def review_pr(
         if len(drafts) != 1:
             raise SystemExit("more than one --model requires --combine-model to merge them")
         return drafts[0]
-    if len(drafts) == 1:
-        logger.info("only one draft available; skipping the combine stage")
-        return drafts[0]
 
-    logger.info("combine stage: %s merging %d drafts", combiner.name, len(drafts))
+    logger.info("combine stage: %s merging %d draft(s)", combiner.name, len(drafts))
     return combiner.review(ctx)

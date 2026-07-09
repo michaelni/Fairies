@@ -460,8 +460,8 @@ def t_prompt_user_request(allowed_models: list[str]) -> str:
 # tagged as "needs docs").
 TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
     "important": "should be set for crash, security, ... fixes, and also major features that a lot of users would want or benefit from. It should not be set for just source level UB like integer overflows in dsp code, timeouts or OOM.",
-    "enhancement": "should be set for PRs that add a feature",
-    "fix/bug": "should be set for PRs that fix a bug",
+    "enhancement": "should be set for PRs that primarily add a feature",
+    "fix/bug": "should be set for PRs that primarily fix a bug",
     "fix/regression": "should be set for PRs that fix a regression",
     "invalid": "should be set for PRs/issues that arent valid PRs/issues, like jokes, trolls, spam",
     "API": "Introduces new API that warants a minor bump",

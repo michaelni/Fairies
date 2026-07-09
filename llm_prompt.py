@@ -490,7 +490,6 @@ def make_developer_prompt(
     model: str,
     project_facts: str = "",
     ci_failures_present: bool = False,
-    role_task: str = "",
     allowed_labels: list[str] | None = None,
 ) -> str:
     return (
@@ -498,7 +497,6 @@ def make_developer_prompt(
         + tr_prompt_general_rules(model)
         + _prompt_reviewer_identity(reviewer_username)
         + R_PROMPT_REVIEWER_ROLE
-        + role_task
         + _prompt_attached_context_and_tools(
             source_bundle_attached=source_bundle_attached,
             repo_roots=repo_roots,
@@ -568,24 +566,33 @@ def make_combiner_developer_prompt(
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
 ) -> str:
-    # A combiner is a reviewer with one extra instruction block, so it
-    # carries the full reviewer contract (roles, classifications, tools,
-    # verification). The verify-and-merge task slots in right after the
-    # role description, before the context/output/message-rule sections.
-    return make_developer_prompt(
-        source_bundle_attached,
-        reviewer_username,
-        repo_roots,
-        vector_store_search_enabled,
-        web_search_enabled,
-        code_interpreter_enabled,
-        podman_shell_enabled,
-        container_repo_mounts,
-        model=model,
-        project_facts=project_facts,
-        ci_failures_present=ci_failures_present,
-        role_task=C_PROMPT_COMBINER_TASK,
-        allowed_labels=allowed_labels,
+    # Assembled from the same sections as the reviewer prompt, but owned
+    # here so combiner-only sections can be swapped or dropped without
+    # touching the reviewer.
+    return (
+        R_PROMPT_OPENING
+        + tr_prompt_general_rules(model)
+        + _prompt_reviewer_identity(reviewer_username)
+        + R_PROMPT_REVIEWER_ROLE
+        + C_PROMPT_COMBINER_TASK
+        + _prompt_attached_context_and_tools(
+            source_bundle_attached=source_bundle_attached,
+            repo_roots=repo_roots,
+            vector_store_search_enabled=vector_store_search_enabled,
+            web_search_enabled=web_search_enabled,
+            code_interpreter_enabled=code_interpreter_enabled,
+            podman_shell_enabled=podman_shell_enabled,
+            container_repo_mounts=container_repo_mounts,
+        )
+        + (T_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
+        + project_facts
+        + TR_PROMPT_MINOR_ISSUE_POLICY
+        + R_PROMPT_AUDIENCE_AND_PURPOSE
+        + TR_PROMPT_OUTPUT_GUIDELINE
+        + R_PROMPT_REVIEW_CLASSIFICATIONS
+        + t_prompt_triage_labels(allowed_labels or [])
+        + TR_PROMPT_PERSISTENCE_AND_VERIFICATION
+        + R_PROMPT_REVIEW_EXAMPLES_AND_MESSAGE_RULES
     )
 
 

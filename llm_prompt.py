@@ -550,8 +550,10 @@ each produced by a different model; produce one combined review.
 - If a draft reports work its model performed (e.g. "build is clean",
   "ran FATE", "fuzzed the decoder"), keep the relevant
   ones and attribute them to that model.
-- state the scope and depth of each draft's review when the draft provided
-  this information; do not guess when it is not provided.
+- Carry through the depth and scope of each model's review prefixed by the
+  model's name; it is understood that this cannot be verified. Do not guess
+  it when it is not provided, and if it was provided and you drop it,
+  explain why.
 - Carry through help a draft provides beyond issues: helpful replies,
   answers, questions to the pull request author, and process clarifications.
 {"- Drop any claim whose supporting evidence is a direct comparison between the pull request head and the head of the branch it targets, whether via git diff or by comparing file contents.\n" * model_needs_diff_tripwire(model)}\

@@ -243,7 +243,8 @@ R_PROMPT_REVIEW_CLASSIFICATIONS = """Classify the pull request into exactly one 
 """
 
 
-TR_PROMPT_PERSISTENCE_AND_VERIFICATION = """<tool_persistence_rules>
+def tr_prompt_persistence_and_verification(combiner: bool = False) -> str:
+    return f"""<tool_persistence_rules>
 - Use tools whenever they materially improve correctness, completeness, or grounding.
 - Do not stop early when another tool call is likely to materially improve correctness or completeness.
 - Keep calling tools until:
@@ -261,7 +262,8 @@ Before finalizing:
 - Check sanity: do any reported numeric or semantic conclusions contradict known limits, invariants, or the cited specification/context? If yes, re-check before reporting.
 - Check uncertainty: if any important point is not well verified, did you mark it as uncertain?
 - Check requests: Have you identified all open requests and open problems related to this pull request and attempted to help?
-- Check coverage: did you consider every changed hunk for issues, or note that you did not inspect it?
+{"- Check coverage: did you consider every changed hunk for issues, or note that you did not inspect it?\n" * (not combiner)}\
+{"- Check coverage: did you verify, refute, or explicitly mark as unverified every material point a draft raised? No point may be silently dropped.\n" * combiner}\
 </verification_loop>
 
 """
@@ -519,7 +521,7 @@ def make_developer_prompt(
         + TR_PROMPT_OUTPUT_GUIDELINE
         + R_PROMPT_REVIEW_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
-        + TR_PROMPT_PERSISTENCE_AND_VERIFICATION
+        + tr_prompt_persistence_and_verification()
         + R_PROMPT_REVIEW_EXAMPLES_AND_MESSAGE_RULES
     )
 
@@ -601,7 +603,7 @@ def make_combiner_developer_prompt(
         + TR_PROMPT_OUTPUT_GUIDELINE
         + R_PROMPT_REVIEW_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
-        + TR_PROMPT_PERSISTENCE_AND_VERIFICATION
+        + tr_prompt_persistence_and_verification(combiner=True)
         + R_PROMPT_REVIEW_EXAMPLES_AND_MESSAGE_RULES
     )
 
@@ -644,7 +646,7 @@ def make_triage_developer_prompt(
         + t_prompt_user_request(allowed_models or [])
         + t_prompt_triage_labels(allowed_labels or [])
         + (T_PROMPT_TRIAGE_CI_MODE if ci_triage_mode else "")
-        + TR_PROMPT_PERSISTENCE_AND_VERIFICATION
+        + tr_prompt_persistence_and_verification()
     )
 
 

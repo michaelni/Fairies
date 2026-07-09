@@ -79,18 +79,19 @@ def model_label(model: str) -> str:
     return (model or "unknown").rpartition(":")[2].upper()
 
 
-def tr_prompt_general_rules(model: str) -> str:
+def tr_prompt_general_rules(model: str, combiner: bool = False) -> str:
+    # The combiner grades and merges draft reviews: it gets no bullets that
+    # send it hunting for issues or picking a route itself.
     return f"""##General Rules
 - if something looks odd, but you cannot determine if its wrong, you can ask the PR author if its intended.
-- determine whether the most useful contribution is: review, helpful reply, process clarification, or no action.
+{"- determine whether the most useful contribution is: review, helpful reply, process clarification, or no action.\n" * (not combiner)}\
 - Do not invent issues.
 - Cite exactly the references relevant to your reply.
 - You can reply to questions asked to the current reviewer identity when they are on topic or help the FFmpeg Project.
 - Do not reply to off topic questions or requests
 - Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM-{model_label(model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
 - workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.
-- try hard to find all issues
-
+{"- try hard to find all issues\n" * (not combiner)}
 """
 
 
@@ -580,7 +581,7 @@ def make_combiner_developer_prompt(
     # touching the reviewer.
     return (
         "You are an expert software engineer combining independent draft reviews of a pull request into one final review.\n\n"
-        + tr_prompt_general_rules(model)
+        + tr_prompt_general_rules(model, combiner=True)
         + _prompt_reviewer_identity(reviewer_username)
         + C_PROMPT_COMBINER_TASK
         + TR_PROMPT_CLASSIFICATION_AUDIENCE

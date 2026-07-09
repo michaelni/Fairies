@@ -570,7 +570,7 @@ def make_combiner_developer_prompt(
     # here so combiner-only sections can be swapped or dropped without
     # touching the reviewer.
     return (
-        R_PROMPT_OPENING
+        "You are an expert software engineer combining independent draft reviews of a pull request into one final review.\n\n"
         + tr_prompt_general_rules(model)
         + _prompt_reviewer_identity(reviewer_username)
         + R_PROMPT_REVIEWER_ROLE

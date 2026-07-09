@@ -196,13 +196,26 @@ And avoid posting the same point again if it was already raised by the current r
 
 # Generic patch/commit hygiene, unlike the per-deployment project facts
 # it follows in the prompt.
-TR_PROMPT_MINOR_ISSUE_POLICY = """Additional Minor issues:
+TR_PROMPT_MINOR_ISSUE_POLICY = """
+For classifying the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
+
+Additional Minor issues:
 * Unrelated changes should be in separate patches.
-* There should be no patches introducing an issue that is fixed in a subsequnet patch of the same pull request. Patches should be updated to not introduce issues. The only exception are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, thats the authors choice.
 * Commit messages should explain what is changed and why it is changed.
-* Security fixes should credit the researcher finding them.
 * Duplicated code should be avoided, existing helper functions should be used when appropriate.
-* Public API should be documented
+* Minor inconsistencies between commit message, documentation and implementation.
+* Signed integer overflows in timestamps or sample values as long as they don't lead to out of array accesses and don't affect normal real use cases.
+
+Additional Moderate issues:
+* There should be no patches introducing an issue that is fixed in a subsequent patch of the same pull request. Patches should be updated to not introduce issues. The only exception are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, that's the author's choice.
+* Security fixes should credit the researcher finding them.
+* Public API should be documented.
+* Major inconsistencies between commit message, documentation and implementation.
+
+Additional Major issues:
+* Out of array access.
+* Double free.
+* Infinite loop.
 
 """
 

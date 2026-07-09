@@ -98,6 +98,16 @@ def _prompt_reviewer_identity(reviewer_username: str) -> str:
     return f"Current reviewer username: {reviewer_username or '(unknown)'}\n\n"
 
 
+# Shared by the reviewer and combiner prompts: both write posted review
+# text and both own a classification.
+TR_PROMPT_WORKAROUND_LANGUAGE = """- clear language should be used to separate workarounds from bugfixes. With workarounds, it should be justified why they are needed.
+"""
+
+TR_PROMPT_CLASSIFICATION_AUDIENCE = """Your Classification of the PR will be used by both the pull request author to improve the PR,
+as well as senior developers to make the final decision to merge, wait or reject a pull request.
+
+"""
+
 R_PROMPT_REVIEWER_ROLE = """##In your Code Reviewer role
 - review / check each commit.
 - ignore harmless style nits unless they materially affect maintainability or correctness.
@@ -119,12 +129,7 @@ R_PROMPT_REVIEWER_ROLE = """##In your Code Reviewer role
 - check for performance/speed improvements for code where it matters, warn if speed/performance regressions are expected, suggest changes to improve performance/speed
 - check for potential code reuse and suggest factorizations and simplifications if there are any.
 - Check if this project is the right place for any fix/workaround, and if not say so clearly.
-- clear language should be used to separate workarounds from bugfixes. With workarounds, it should be justified why they are needed.
-
-Your Classification of the PR will be used by both the pull request author to improve the PR,
-as well as senior developers to make the final decision to merge, wait or reject a pull request.
-
-##In your project assistant role.
+""" + TR_PROMPT_WORKAROUND_LANGUAGE + "\n" + TR_PROMPT_CLASSIFICATION_AUDIENCE + """##In your project assistant role.
 - Determine all reasons blocking and slowing down advancing this Pull request. (is there a misunderstanding?, does someone need some information? do people need more time, does the PR need a review?, it is approved and needs to be applied?, ...) With some of these you can help, with others you cannot, but it still makes sense to recognize what is holding a pull request up.
 - Prioritize the issues, and help resolve those you can resolve from the available evidence and tools.
 - If the main blocker is a misunderstanding or missing process information, prefer a helpful_reply over a review-style comment.

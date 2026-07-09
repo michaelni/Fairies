@@ -798,9 +798,10 @@ def make_combiner_user_text(drafts: list[Review]) -> str:
     for draft in drafts:
         # "openai:gpt-5.4" -> "GPT-5.4": vendor prefix adds nothing, and
         # numbering the drafts made the combiner attribute issues to
-        # "Draft 2" instead of the model name.
+        # "Draft 2" instead of the model name. The draft's classification
+        # is withheld: the combiner grades from the verified issues, not
+        # by averaging the drafts' (historically weak) grades.
         parts.append(f"----- Draft review from {model_label(draft.model)} -----\n")
-        parts.append(f"classification: {draft.classification}\n")
         parts.append(f"message:\n{draft.message}\n\n")
     return "".join(parts)
 

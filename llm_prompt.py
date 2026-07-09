@@ -218,6 +218,7 @@ Additional Major issues:
 * Use after free.
 * Double free.
 * Infinite loop.
+* Introduces an avoidable regression.
 
 """
 

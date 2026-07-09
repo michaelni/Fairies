@@ -214,6 +214,8 @@ Additional Moderate issues:
 
 Additional Major issues:
 * Out of array access.
+* NULL pointer dereference.
+* Use after free.
 * Double free.
 * Infinite loop.
 

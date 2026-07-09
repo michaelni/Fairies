@@ -466,7 +466,7 @@ TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
     "fix/bug": "should be set for PRs that primarily fix a bug",
     "fix/regression": "should be set for PRs that fix a regression",
     "invalid": "should be set for PRs/issues that arent valid PRs/issues, like jokes, trolls, spam",
-    "API": "Introduces new API that warants a minor bump",
+    "API": "Introduces new API that warrants a minor bump",
     "API major": "Changes the API in a major way, needing a major bump",
     "needs sample": "if a bug is about a specific file that has not been provided. Or if a feature is about a new codec/format for which we do not have a media sample file, and none was provided. Do not ask for security related samples, these cannot be publically shared",
     "needs docs": "should be set when the PR changes the Implementation in a way thats intended and introduces a mismatch between Implementation and documentation.",

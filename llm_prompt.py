@@ -269,10 +269,12 @@ Before finalizing:
 """
 
 
-R_PROMPT_REVIEW_EXAMPLES_AND_MESSAGE_RULES = """Examples:
+R_PROMPT_REVIEW_EXAMPLES = """Examples:
 If you review a commit touching profiles and pixel formats in APV, inspect the RFC9924 specification about profiles and pixel formats
 
-Message Rules:
+"""
+
+R_PROMPT_MESSAGE_RULES = """Message Rules:
 - message must be empty for ok_approve.
 - the message is in Markdown and will be posted to Forgejo
 """
@@ -522,7 +524,8 @@ def make_developer_prompt(
         + R_PROMPT_REVIEW_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
         + tr_prompt_persistence_and_verification()
-        + R_PROMPT_REVIEW_EXAMPLES_AND_MESSAGE_RULES
+        + R_PROMPT_REVIEW_EXAMPLES
+        + R_PROMPT_MESSAGE_RULES
     )
 
 
@@ -604,7 +607,7 @@ def make_combiner_developer_prompt(
         + R_PROMPT_REVIEW_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
         + tr_prompt_persistence_and_verification(combiner=True)
-        + R_PROMPT_REVIEW_EXAMPLES_AND_MESSAGE_RULES
+        + R_PROMPT_MESSAGE_RULES
     )
 
 

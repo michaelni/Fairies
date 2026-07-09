@@ -565,7 +565,8 @@ each produced by a different model; produce one combined review.
 - If a draft reports work its model performed (e.g. "build is clean",
   "ran FATE", "fuzzed the decoder"), keep the relevant
   ones and attribute them to that model.
-- Start the review with one "Scope <model>: ..." line per draft giving the
+- After your LLM-{model_label(model)} identification, put one
+  "Scope <model>: ..." line per draft giving the
   depth and scope of that model's review as the draft stated it (it is
   understood this cannot be verified); omit models whose draft stated none,
   never guess. Add one "Scope <your model>: ..." line for what you verified

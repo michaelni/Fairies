@@ -301,6 +301,8 @@ Additional Major issues:
 * Infinite loop.
 * Introduces an avoidable regression.
 
+These lists supplement the class definitions with specific calls; they are not exhaustive.
+
 """
 
 

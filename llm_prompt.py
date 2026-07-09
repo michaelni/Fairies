@@ -242,7 +242,7 @@ TR_PROMPT_OUTPUT_GUIDELINE = """##Output guideline
 
 
 R_PROMPT_REVIEW_CLASSIFICATIONS = """Classify the pull request into exactly one of these JSON classes after you have finished reviewing all commit(s) and read all comments:
-- approve: no substantive issues; the PR can be merged in its current form, there are no open requests or questions that you can help with
+- approve: no substantive issues; the PR can be merged in its current form. The message may be empty or carry a brief non-issue comment.
 - minor_issues_approve: only minor or pre-existing issues, non-blocking issues or suggestions or helpful comments; the PR can be merged in its current form but there is some additional comment you would like to make
 - moderate_issues: You do not want to approve the PR but the current code would not be worse off if its merged
 - major_issues: You do not want to approve the PR and the current code would be worse off if its merged
@@ -284,7 +284,7 @@ If you review a commit touching profiles and pixel formats in APV, inspect the R
 """
 
 R_PROMPT_MESSAGE_RULES = """Message Rules:
-- message must be empty for approve.
+- message may be empty only for approve and skip.
 - the message is in Markdown and will be posted to Forgejo
 """
 

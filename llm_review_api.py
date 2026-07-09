@@ -140,7 +140,7 @@ REVIEW_SCHEMA = {
                 "type": "string",
                 "description": (
                     "detailed Markdown comment body to post to Forgejo. "
-                    "Must be empty for approve. "
+                    "May be empty for approve. "
                     "Do not include HTML or markdown fences."
                 ),
             },

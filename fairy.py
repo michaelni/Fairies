@@ -1979,8 +1979,6 @@ def run_llm_review(
     }
     if classification not in allowed:
         raise RuntimeError(f"unsupported LLM classification: {classification!r}")
-    if classification == "approve":
-        message = ""
     label_changes = parse_label_changes(data.get("label_changes"), label_allowlist)
     return LLMReview(
         classification=classification,
@@ -2069,7 +2067,7 @@ def apply_llm_review(
     if review.classification == "approve":
         return Decision(
             number, title, author, auto_merge, "approve", reason, last_activity,
-            review.classification, "", **label_kwargs,
+            review.classification, review.message, **label_kwargs,
         )
     if review.classification == "minor_issues_approve":
         return Decision(

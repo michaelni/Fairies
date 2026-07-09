@@ -53,6 +53,7 @@ from llm_review_api import (
     build_review_schema,
     build_triage_schema,
     check_schema,
+    model_needs_diff_tripwire,
     validate_review,
     validate_review_result,
     validate_triage_result,
@@ -147,6 +148,7 @@ When the PR refers to a issue or other PR that is materially relevant, inspect t
 
 def _prompt_attached_context_and_tools(
     *,
+    model: str,
     source_bundle_attached: bool,
     repo_roots: list[Path],
     vector_store_search_enabled: bool,
@@ -176,7 +178,7 @@ Each repository is available under its path below as a normal checkout; ``rg``, 
 {chr(10).join(f"- {p}" for p in container_repo_mounts)}
 {"The all_ffmpeg checkout aggregates project data as subtrees: pull-request comments & reviews in forgejo_git/pulls/<6-digit>.md (e.g. forgejo_git/pulls/021660.md), issues in forgejo_git/issues/<6-digit>.md, the fate server in fateserver/, the website incl. the security page in ffmpeg-web/ (ffmpeg-web/src/security), and multimedia specifications in for_ffmpeg/. Read them with rg/cat/git in the checkout; use web_search for specs not found there." + chr(10) if "all_ffmpeg" in mount_names else ""}\
 In the {mount_names[0]} checkout every pull request's head is a git revision fforge/pr/<number>. With TARGET being the branch the pull request targets (base_ref in the metadata, usually master), ``git log -p TARGET..fforge/pr/21000`` shows pull request 21000's commits and ``git diff $(git merge-base TARGET fforge/pr/21000) fforge/pr/21000`` its combined diff.
-The changes a pull request makes are its own commits: the diff from its merge base with the target branch to its head.
+{"The changes a pull request makes are its own commits: the diff from its merge base with the target branch to its head.\n" * model_needs_diff_tripwire(model)}\
 {f"A FATE sample-suite snapshot is at {CONTAINER_FATE_SUITE}; run fate tests with ``make fate-<name> SAMPLES={CONTAINER_FATE_SUITE}`` and refresh a stale sample with ``make fate-rsync SAMPLES={CONTAINER_FATE_SUITE}`` when needed." + chr(10) if "ffmpeg" in mount_names else ""}\
 You have {CONTAINER_CPUS} x86-64 CPU cores, {CONTAINER_MEMORY} memory and tens of GB of SSD-backed disk space at your disposal.
 
@@ -508,6 +510,7 @@ def make_developer_prompt(
         + _prompt_reviewer_identity(reviewer_username)
         + R_PROMPT_REVIEWER_ROLE
         + _prompt_attached_context_and_tools(
+            model=model,
             source_bundle_attached=source_bundle_attached,
             repo_roots=repo_roots,
             vector_store_search_enabled=vector_store_search_enabled,
@@ -529,7 +532,8 @@ def make_developer_prompt(
     )
 
 
-C_PROMPT_COMBINER_TASK = f"""##Combiner task
+def c_prompt_combiner_task(model: str) -> str:
+    return f"""##Combiner task
 The user message contains independent draft reviews of this pull request,
 each produced by a different model; produce one combined review.
 
@@ -558,9 +562,7 @@ each produced by a different model; produce one combined review.
   this information; do not guess when it is not provided.
 - Carry through help a draft provides beyond issues: helpful replies,
   answers, questions to the pull request author, and process clarifications.
-- Drop any claim whose supporting evidence is a direct comparison between the
-  pull request head and the head of the branch it targets, whether via git
-  diff or by comparing file contents.
+{"- Drop any claim whose supporting evidence is a direct comparison between the pull request head and the head of the branch it targets, whether via git diff or by comparing file contents.\n" * model_needs_diff_tripwire(model)}\
 {TR_PROMPT_WORKAROUND_LANGUAGE}
 """
 #- The drafts are internal scaffolding: do NOT mention drafts, other models, or the combination process in the posted message. Write it as one normal review.
@@ -588,9 +590,10 @@ def make_combiner_developer_prompt(
         "You are an expert software engineer combining independent draft reviews of a pull request into one final review.\n\n"
         + tr_prompt_general_rules(model, combiner=True)
         + _prompt_reviewer_identity(reviewer_username)
-        + C_PROMPT_COMBINER_TASK
+        + c_prompt_combiner_task(model)
         + TR_PROMPT_CLASSIFICATION_AUDIENCE
         + _prompt_attached_context_and_tools(
+            model=model,
             source_bundle_attached=source_bundle_attached,
             repo_roots=repo_roots,
             vector_store_search_enabled=vector_store_search_enabled,
@@ -631,6 +634,7 @@ def make_triage_developer_prompt(
         + tr_prompt_general_rules(model)
         + _prompt_reviewer_identity(reviewer_username)
         + _prompt_attached_context_and_tools(
+            model=model,
             # Triage never receives the source bundle; the bundle upload
             # is deferred until engage to avoid paying that cost when we
             # route to skip / helpful_reply.
@@ -793,7 +797,7 @@ def make_combiner_user_text(drafts: list[Review]) -> str:
     """Present the draft reviews the combiner must verify and merge.
 
     Internal scaffolding for the combine stage; the combiner is instructed
-    (see ``C_PROMPT_COMBINER_TASK``) not to reference these drafts in its
+    (see ``c_prompt_combiner_task``) not to reference these drafts in its
     posted message.
     """
     parts = [

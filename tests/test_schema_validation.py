@@ -119,19 +119,34 @@ class ValidateReviewTests(unittest.TestCase):
         self.assertEqual(result["classification"], "minor_issues_approve")
         self.assertEqual(result["message"], "looks ok")
 
-    def test_self_reported_diff_evidence_raises(self) -> None:
+    def _review_flagged(self, name: str) -> llm_review_api.Review:
         # Real bogus verdict (PR #23553, resp_0b30b334ceafa773...): the
-        # blocking issue rested on diffing the PR head against the master
-        # tip. With the flag set, the verdict must be rejected so the
-        # draft is dropped / the pass retried.
-        with self.assertRaises(llm_review_api.SelfReportedViolation) as ctx:
-            llm_review_api.validate_review({
-                "classification": "major_request_changes",
-                "message": "LLM-GPT-5.4: this patch drops the current "
-                           "master fix for reference-only resource reuse.",
-                "head_vs_branch_diff_evidence": True,
-            })
-        self.assertIn("major_request_changes", str(ctx.exception))
+        # blocking issue rested on diffing the PR head against the master tip.
+        class _Fixed(llm_review_api.Reviewer):
+            role = None
+
+            def run(self, ctx):
+                return llm_review_api.validate_review({
+                    "classification": "major_request_changes",
+                    "message": "LLM-GPT-5.4: this patch drops the current "
+                               "master fix for reference-only resource reuse.",
+                    "head_vs_branch_diff_evidence": True,
+                })
+
+        reviewer = _Fixed()
+        reviewer.name = name
+        return reviewer.review(ctx=None)
+
+    def test_self_reported_diff_evidence_rejects_affected_models(self) -> None:
+        for name in ("openai:gpt-5.4", "zai:glm-5.2@high"):
+            with self.assertRaises(llm_review_api.SelfReportedViolation) as ctx:
+                self._review_flagged(name)
+            self.assertIn("major_request_changes", str(ctx.exception))
+
+    def test_self_reported_diff_evidence_ignored_for_unaffected_model(self) -> None:
+        # gpt-5.5 has set the flag spuriously; its verdict must survive.
+        review = self._review_flagged("openai:gpt-5.5")
+        self.assertEqual("major_request_changes", review.classification)
 
 
 if __name__ == "__main__":

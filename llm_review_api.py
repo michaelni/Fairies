@@ -77,6 +77,7 @@ __all__ = [
     "build_review_schema",
     "build_triage_schema",
     "check_schema",
+    "model_needs_diff_tripwire",
     "run_parallel",
     "sanitize_label_changes",
     "validate_review",
@@ -172,9 +173,9 @@ class SelfReportedViolation(Exception):
     """The model itself flagged that a material issue rests on invalid
     evidence (``head_vs_branch_diff_evidence``).
 
-    Raised by ``validate_review`` so a parallel draft is dropped by
-    ``run_parallel`` and a solo or combine pass fails and is retried by
-    the outer caller.
+    Raised by ``Reviewer.review`` (for models that need the tripwire) so a
+    parallel draft is dropped by ``run_parallel`` and a solo or combine
+    pass fails and is retried by the outer caller.
     """
 
 
@@ -251,20 +252,26 @@ def check_schema(value: object, schema: dict[str, object], path: str = "$") -> N
                 check_schema(item, item_schema, f"{path}[{index}]")
 
 
-def validate_review(obj: object) -> dict[str, str]:
+def model_needs_diff_tripwire(model: str) -> bool:
+    """gpt-5.4 and glm-5.2 produced PR #23553's head-vs-target-tip verdicts
+    (gpt-5.5 did not): only they get flag enforcement and, in ``llm_prompt``,
+    the extra merge-semantics text. ``model`` is a name/spec like
+    ``openai:gpt-5.4[@high]``."""
+    return model.rpartition(":")[2].partition("@")[0].lower().startswith(("gpt-5.4", "glm-5.2"))
+
+
+def validate_review(obj: object) -> dict[str, object]:
     """Check a review verdict against ``REVIEW_SCHEMA`` and return its fields.
 
-    Raises :class:`SelfReportedViolation` when the model set
-    ``head_vs_branch_diff_evidence``."""
+    ``head_vs_branch_diff_evidence`` is passed through; ``Reviewer.review``
+    enforces it per model."""
     check_schema(obj, REVIEW_SCHEMA["schema"])
     assert isinstance(obj, dict)  # narrowed by check_schema
-    if obj["head_vs_branch_diff_evidence"]:
-        raise SelfReportedViolation(
-            f"model flagged head_vs_branch_diff_evidence=true "
-            f"(classification={obj['classification']}); "
-            f"message starts: {obj['message'][:200]!r}"
-        )
-    return {"classification": obj["classification"], "message": obj["message"]}
+    return {
+        "classification": obj["classification"],
+        "message": obj["message"],
+        "head_vs_branch_diff_evidence": obj["head_vs_branch_diff_evidence"],
+    }
 
 
 def validate_review_result(
@@ -642,6 +649,15 @@ class Reviewer(ABC):
     def review(self, ctx: ReviewContext) -> Review:
         """``run`` for the verdict roles, packed into a ``Review``."""
         result = self.run(ctx)
+        if result.get("head_vs_branch_diff_evidence"):
+            if model_needs_diff_tripwire(self.name):
+                raise SelfReportedViolation(
+                    f"{self.name} flagged head_vs_branch_diff_evidence=true "
+                    f"(classification={result['classification']}); "
+                    f"message starts: {str(result['message'])[:200]!r}"
+                )
+            # e.g. gpt-5.5 has set the flag spuriously; don't lose its draft.
+            logger.warning("ignoring diff tripwire flag from %s", self.name)
         return Review(
             classification=result["classification"],
             message=result["message"],

@@ -65,14 +65,6 @@ from podman_host import CONTAINER_CPUS, CONTAINER_MEMORY
 CONTAINER_FATE_SUITE = "/opt/fate-suite"
 
 
-T_PROMPT_OPENING = """You are an expert software engineer triaging a pull request.
-
-"""
-
-R_PROMPT_OPENING = """You are an expert software engineer reviewing a pull request.
-
-"""
-
 #- Do not do things that hinder or slow down advancing this pull request. #It was suggested many time this can be misundetstood and lead to unintended behavior
 
 def model_label(model: str) -> str:
@@ -505,7 +497,7 @@ def make_developer_prompt(
     allowed_labels: list[str] | None = None,
 ) -> str:
     return (
-        R_PROMPT_OPENING
+        "You are an expert software engineer reviewing a pull request.\n\n"
         + tr_prompt_general_rules(model)
         + _prompt_reviewer_identity(reviewer_username)
         + R_PROMPT_REVIEWER_ROLE
@@ -630,7 +622,7 @@ def make_triage_developer_prompt(
     allowed_labels: list[str] | None = None,
 ) -> str:
     return (
-        T_PROMPT_OPENING
+        "You are an expert software engineer triaging a pull request.\n\n"
         + tr_prompt_general_rules(model)
         + _prompt_reviewer_identity(reviewer_username)
         + _prompt_attached_context_and_tools(

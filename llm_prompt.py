@@ -563,10 +563,12 @@ each produced by a different model; produce one combined review.
 - If a draft reports work its model performed (e.g. "build is clean",
   "ran FATE", "fuzzed the decoder"), keep the relevant
   ones and attribute them to that model.
-- Carry through the depth and scope of each model's review prefixed by the
-  model's name; it is understood that this cannot be verified. Do not guess
-  it when it is not provided, and if it was provided and you drop it,
-  explain why.
+- Start the review with one "Scope <model>: ..." line per draft giving the
+  depth and scope of that model's review as the draft stated it (it is
+  understood this cannot be verified); omit models whose draft stated none,
+  never guess. Add one "Scope <your model>: ..." line for what you verified
+  yourself. These lines tell developers which areas were actually reviewed,
+  not just what was found.
 - Carry through help a draft provides beyond issues: helpful replies,
   answers, questions to the pull request author, and process clarifications.
 - Provide a 1 paragraph justification of your classification of this PR;

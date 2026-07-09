@@ -26,7 +26,7 @@
 #   PAR         concurrent samples per arm     (default SAMPLES: one wave)
 #   TIER        OpenAI service tier            (default flex)
 #   MODEL       main reviewer model            (default openai:gpt-5.4)
-#   PODMAN_SSH  ssh dest for the podman host   (e.g. fairy@192.168.2.4)
+#   PODMAN_SSH  ssh dest for the podman host   (e.g. fairy@podman-host)
 #   TREE        checkout to run fairy from     (default this repo)
 #   WRAPPER_EXTRA  extra wrapper args, e.g. "--extra-model zai:glm-5.2 --combine-model openai:gpt-5.4"
 #

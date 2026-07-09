@@ -25,9 +25,9 @@ class PodmanHostCmdArgsTests(unittest.TestCase):
         self.assertEqual([], fairy.podman_host_cmd_args(args))
 
     def test_injects_container_flags(self) -> None:
-        args = SimpleNamespace(podman_host="fairy@192.168.2.4")
+        args = SimpleNamespace(podman_host="fairy@podman-host")
         self.assertEqual(
-            ["--podman", "--podman-ssh-dest=fairy@192.168.2.4"],
+            ["--podman", "--podman-ssh-dest=fairy@podman-host"],
             fairy.podman_host_cmd_args(args),
         )
 

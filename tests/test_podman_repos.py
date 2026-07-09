@@ -125,7 +125,7 @@ class RemoteProvisionTests(unittest.TestCase):
     # rather than fail the review.
     _LOST_RACE_ERROR = RuntimeError(
         "git push 08f56d4898eafcaddc19b3aac9263e066e82f0c0->refs/fairy/heads/ffmpeg "
-        "to fairy@192.168.2.4:fairy-mirrors/ffmpeg.git from "
+        "to fairy@h:fairy-mirrors/ffmpeg.git from "
         "/home/ai/cursor/forgejo_fairy/simpast-mirror/ffmpeg failed: "
         "remote: error: cannot lock ref 'refs/fairy/heads/ffmpeg': "
         "is at 08f56d4898eafcaddc19b3aac9263e066e82f0c0 but expected "

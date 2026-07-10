@@ -1888,6 +1888,115 @@ def podman_host_cmd_args(args: argparse.Namespace) -> list[str]:
     ]
 
 
+def invoke_llm_wrapper(
+    args: argparse.Namespace,
+    payload: JsonObject,
+    *,
+    number: int | None,
+    allowed_classifications: frozenset[str],
+    label_allowlist: list[str],
+    extra_cmd_args: list[str] | None = None,
+    stderr_tag: str = "pr",
+) -> LLMReview:
+    """Run --llm-review-cmd on ``payload`` and parse its verdict.
+
+    ``allowed_classifications`` is the caller's verdict vocabulary
+    (PR review vs issue analysis); anything else raises. ``stderr_tag``
+    labels the live-streamed wrapper stderr lines.
+    """
+    cmd = shlex.split(args.llm_review_cmd)
+    cmd += podman_host_cmd_args(args)
+    if extra_cmd_args:
+        cmd += list(extra_cmd_args)
+    stderr_prefix = f"[wrapper {stderr_tag}=#{number}] " if number is not None else "[wrapper] "
+    cp = run_cmd(
+        cmd,
+        verbose=args.verbose,
+        verbose_threshold=2,
+        input_text=json.dumps(payload),
+        timeout=args.llm_timeout,
+        stderr_line_prefix=stderr_prefix,
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"LLM review command failed with exit code {cp.returncode}; see stderr above"
+        )
+
+    data = load_json(cp.stdout, context="LLM review command")
+    if not isinstance(data, dict):
+        raise RuntimeError(f"LLM review command returned {type(data).__name__}, expected object")
+
+    classification = data.get("classification")
+    message = data.get("message", "")
+    if not isinstance(classification, str):
+        raise RuntimeError("LLM review JSON lacks string field 'classification'")
+    if not isinstance(message, str):
+        raise RuntimeError("LLM review JSON lacks string field 'message'")
+
+    classification = classification.strip()
+    if classification not in allowed_classifications:
+        raise RuntimeError(f"unsupported LLM classification: {classification!r}")
+    label_changes = parse_label_changes(data.get("label_changes"), label_allowlist)
+    return LLMReview(
+        classification=classification,
+        message=message.strip(),
+        label_changes=label_changes,
+    )
+
+
+def call_llm_with_retries(
+    args: argparse.Namespace,
+    number: int,
+    invoke: Callable[[list[str] | None], LLMReview],
+) -> LLMReview:
+    """Apply the --llm-max-attempts retry policy around ``invoke``.
+
+    ``invoke`` receives the attempt's extra wrapper args (the
+    flex->default service-tier fallback on the final attempt, else
+    None; see ``flex_fallback_extra_args``). Re-raises the last error
+    when every attempt failed.
+    """
+    max_attempts = max(1, int(getattr(args, "llm_max_attempts", 1) or 1))
+    retry_delay = max(0.0, float(getattr(args, "llm_retry_delay", 0.0) or 0.0))
+    flex_fallback = flex_fallback_extra_args(args.llm_review_cmd or "")
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        extra_cmd_args: list[str] | None = None
+        if attempt == max_attempts and max_attempts > 1 and flex_fallback:
+            extra_cmd_args = flex_fallback
+            logger.warning(
+                "LLM review #%s final attempt %d/%d: overriding flex tier with default (extra args: %s)",
+                number, attempt, max_attempts, " ".join(flex_fallback),
+            )
+        try:
+            review = invoke(extra_cmd_args)
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_attempts:
+                logger.warning(
+                    "LLM review #%s attempt %d/%d failed: %s; retrying in %.1fs",
+                    number, attempt, max_attempts, exc, retry_delay,
+                )
+                if retry_delay > 0:
+                    time.sleep(retry_delay)
+            else:
+                logger.warning(
+                    "LLM review #%s attempt %d/%d failed: %s; giving up",
+                    number, attempt, max_attempts, exc,
+                )
+            continue
+        if attempt > 1:
+            logger.info(
+                "LLM review #%s succeeded on attempt %d/%d",
+                number, attempt, max_attempts,
+            )
+        return review
+    assert last_exc is not None
+    raise last_exc
+
+
 def run_llm_review(
     args: argparse.Namespace,
     pr: ApiObject,
@@ -1938,52 +2047,21 @@ def run_llm_review(
     if force_engage:
         payload["force_engage"] = True
 
-    cmd = shlex.split(args.llm_review_cmd)
-    cmd += podman_host_cmd_args(args)
-    if extra_cmd_args:
-        cmd += list(extra_cmd_args)
-    pr_number = pr.get("number")
-    stderr_prefix = f"[wrapper pr=#{pr_number}] " if pr_number is not None else "[wrapper] "
-    cp = run_cmd(
-        cmd,
-        verbose=args.verbose,
-        verbose_threshold=2,
-        input_text=json.dumps(payload),
-        timeout=args.llm_timeout,
-        stderr_line_prefix=stderr_prefix,
-    )
-    if cp.returncode != 0:
-        raise RuntimeError(
-            f"LLM review command failed with exit code {cp.returncode}; see stderr above"
-        )
-
-    data = load_json(cp.stdout, context="LLM review command")
-    if not isinstance(data, dict):
-        raise RuntimeError(f"LLM review command returned {type(data).__name__}, expected object")
-
-    classification = data.get("classification")
-    message = data.get("message", "")
-    if not isinstance(classification, str):
-        raise RuntimeError("LLM review JSON lacks string field 'classification'")
-    if not isinstance(message, str):
-        raise RuntimeError("LLM review JSON lacks string field 'message'")
-
-    classification = classification.strip()
-    allowed = {
-        "approve",
-        "minor_issues_approve",
-        "moderate_issues",
-        "major_issues",
-        "reply_no_verdict",
-        "skip",
-    }
-    if classification not in allowed:
-        raise RuntimeError(f"unsupported LLM classification: {classification!r}")
-    label_changes = parse_label_changes(data.get("label_changes"), label_allowlist)
-    return LLMReview(
-        classification=classification,
-        message=message.strip(),
-        label_changes=label_changes,
+    number = pr.get("number")
+    return invoke_llm_wrapper(
+        args,
+        payload,
+        number=number if isinstance(number, int) else None,
+        allowed_classifications=frozenset({
+            "approve",
+            "minor_issues_approve",
+            "moderate_issues",
+            "major_issues",
+            "reply_no_verdict",
+            "skip",
+        }),
+        label_allowlist=label_allowlist,
+        extra_cmd_args=extra_cmd_args,
     )
 
 
@@ -2003,60 +2081,26 @@ def apply_llm_review(
     ignore_triage_skip: bool = False,
     force_engage: bool = False,
 ) -> Decision:
-    max_attempts = max(1, int(getattr(args, "llm_max_attempts", 1) or 1))
-    retry_delay = max(0.0, float(getattr(args, "llm_retry_delay", 0.0) or 0.0))
-    flex_fallback = flex_fallback_extra_args(args.llm_review_cmd or "")
-    review: LLMReview | None = None
-    last_exc: Exception | None = None
-    for attempt in range(1, max_attempts + 1):
-        # On the final attempt of a multi-attempt run, drop ``flex`` tiers
-        # to ``default`` so a saturated flex queue doesn't burn the last
-        # try on the same dead-end. See ``flex_fallback_extra_args``.
-        extra_cmd_args: list[str] | None = None
-        if attempt == max_attempts and max_attempts > 1 and flex_fallback:
-            extra_cmd_args = flex_fallback
-            logger.warning(
-                "LLM review PR #%s final attempt %d/%d: overriding flex tier with default (extra args: %s)",
-                number, attempt, max_attempts, " ".join(flex_fallback),
-            )
-        try:
-            review = run_llm_review(
+    try:
+        review = call_llm_with_retries(
+            args,
+            number,
+            lambda extra_cmd_args: run_llm_review(
                 args, pr, auto_merge, discussion, reviewer_username, ci_triage,
                 extra_cmd_args=extra_cmd_args,
                 ignore_triage_skip=ignore_triage_skip,
                 force_engage=force_engage,
-            )
-            if attempt > 1:
-                logger.info(
-                    "LLM review PR #%s succeeded on attempt %d/%d",
-                    number, attempt, max_attempts,
-                )
-            break
-        except KeyboardInterrupt:
-            raise
-        except Exception as exc:
-            last_exc = exc
-            if attempt < max_attempts:
-                logger.warning(
-                    "LLM review PR #%s attempt %d/%d failed: %s; retrying in %.1fs",
-                    number, attempt, max_attempts, exc, retry_delay,
-                )
-                if retry_delay > 0:
-                    time.sleep(retry_delay)
-            else:
-                logger.warning(
-                    "LLM review PR #%s attempt %d/%d failed: %s; giving up",
-                    number, attempt, max_attempts, exc,
-                )
-    if review is None:
-        assert last_exc is not None
+            ),
+        )
+    except Exception as exc:
+        max_attempts = max(1, int(getattr(args, "llm_max_attempts", 1) or 1))
         return Decision(
             number,
             title,
             author,
             auto_merge,
             "skip",
-            f"LLM review failed after {max_attempts} attempt(s): {last_exc}",
+            f"LLM review failed after {max_attempts} attempt(s): {exc}",
             last_activity,
             "error",
             "",

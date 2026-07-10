@@ -60,8 +60,8 @@ What lives here:
   an empty list) because the result is consumed by dedupe logic.
 - ``post_issue_comment``: post a comment on a PR/issue using
   ``gcli comment``, routed through ``run_gcli_editor_submission``.
-- ``apply_issue_label_changes``: add/remove PR labels via
-  ``gcli pulls ... labels add/remove``.
+- ``apply_issue_label_changes``: add/remove PR/issue labels via
+  ``gcli pulls/issues ... labels add/remove``.
 
 Plus the ``JsonValue`` / ``JsonPrimitive`` TypeAliases re-exported
 from ``common`` so callers can pick whichever entry point is closer
@@ -618,10 +618,15 @@ def apply_issue_label_changes(
     labels_add: list[str],
     labels_remove: list[str],
     current_label_names: set[str],
+    kind: str = KIND_PR,
 ) -> None:
-    """Add/remove PR labels by name via ``gcli pulls ... labels``.
+    """Add/remove labels by name via ``gcli pulls/issues ... labels``.
 
-    Skips ``remove`` when the label is not currently on the PR so gcli
+    ``kind`` selects the gcli subcommand: ``KIND_PR`` -> ``pulls``,
+    ``KIND_ISSUE`` -> ``issues`` (both expose the same
+    ``labels add/remove`` action).
+
+    Skips ``remove`` when the label is not currently attached so gcli
     is not asked to delete something that is already absent.
 
     Stock gcli (<= 2.12.0) cannot attach labels reliably on
@@ -647,16 +652,17 @@ def apply_issue_label_changes(
     for name in labels_remove:
         if name not in current_label_names:
             logger.warning(
-                "pull label remove skipped: label=%r not on PR #%d",
-                name, number,
+                "label remove skipped: label=%r not on %s #%d",
+                name, kind, number,
             )
             continue
         label_args.extend(["remove", name])
     if not label_args:
         return
 
+    subcommand = "pulls" if kind == KIND_PR else "issues"
     cmd = gcli_prefix(args) + [
-        "pulls",
+        subcommand,
         "-o", owner,
         "-r", repo,
         "-i", str(number),
@@ -667,6 +673,6 @@ def apply_issue_label_changes(
     cp = run_cmd(cmd, verbose=args.verbose)
     if cp.returncode != 0:
         raise RuntimeError(
-            f"gcli pulls labels failed for {owner}/{repo}#{number} "
+            f"gcli {subcommand} labels failed for {owner}/{repo}#{number} "
             f"(rc={cp.returncode}): {cp.stderr.strip()}"
         )

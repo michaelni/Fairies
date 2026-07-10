@@ -85,7 +85,7 @@ def tr_prompt_general_rules(model: str, combiner: bool = False, subject: str = "
 - You can reply to questions asked to the current reviewer identity when they are on topic or help the FFmpeg Project.
 - Do not reply to off topic questions or requests
 - Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM-{model_label(model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
-- workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.
+{"- workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.\n" * (subject == "PR")}\
 {"- try hard to find all issues\n" * (not combiner)}
 """
 
@@ -474,7 +474,7 @@ Make sure you add all needed details in your message so a subsequent session doe
 - Root cause: identify the root cause of the bug
 - Affected branches: for bugs (not enhancements), check whether master and the active release branches are affected.
 - Fixes: if a fix or a pull request for this issue already exists, link it.
-- Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis of a bug (enhancements get no repro/*) you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Set "needs info"/"needs sample" when only humans can unblock you and clear them once the information arrived. resolution/duplicate, resolution/invalid and resolution/fixed (only with a verified fixing commit) are definite verdicts; other resolution/* decisions belong to humans.
+- Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis of a bug (enhancements get no repro/*) you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Issues concluded resolution/invalid or resolution/duplicate need no repro/*. Set "needs info"/"needs sample" when only humans can unblock you and clear them once the information arrived. resolution/duplicate, resolution/invalid and resolution/fixed (only with a verified fixing commit) are definite verdicts; other resolution/* decisions belong to humans.
 Do not present unverified suspicions as findings; state clearly what you verified and what you could not.
 
 """
@@ -497,7 +497,11 @@ I_PROMPT_ISSUE_TRIAGE_TASK = """##Triage task
 You are NOT analyzing the issue yet. Your job is to triage this issue
 and decide which route the issue helper should take next.
 
-Workarounds are not a desired final outcome.
+The goal of every pass is to move the issue toward a verified, labeled
+state: reproduced or not (repro/*), duplicate, regression bisected,
+fixed, invalid. Discussion alone does not resolve an issue, no matter
+how settled it looks; only labels do. An issue carrying no repro/*
+label has never been analyzed: prefer engage for it.
 
 Weigh what has happened AFTER the current reviewer identity's most
 recent comment in the prior discussion. If the reviewer has never
@@ -573,6 +577,16 @@ TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
     "needs docs": "should be set when the PR changes the Implementation in a way thats intended and introduces a mismatch between Implementation and documentation.",
     "needs testing": "should be set when the PR needs additional testing (FATE coverage, fuzzing, on-device runs) before it can be merged, this is unrelated to CI failures and unrelated to PRs that themselfs add testing",
     "duplicate": "when the current PR or issue is a duplicate of another and the other is better to be kept than the current, then the current should be marked duplicate. List in your message which the better/kept one is",
+    "bug": "the issue reports a malfunction of supported behavior (as opposed to requesting a feature)",
+    "regression": "the reported behavior worked in an earlier revision and a change broke it",
+    "repro/yes": "the issue was analyzed and reproduced",
+    "repro/flaky": "the issue was analyzed and reproduces only intermittently",
+    "repro/no": "the issue was analyzed with everything needed provided, but it does not reproduce",
+    "repro/no(env)": "the issue was analyzed but reproduction needs hardware or an environment the analyzing bot lacks",
+    "needs info": "waiting on information that only the reporter can provide; cleared once it arrives",
+    "resolution/duplicate": "this issue duplicates another that is better kept; name the kept issue in the message",
+    "resolution/invalid": "the issue is not a valid report (user error, misunderstanding, joke, spam)",
+    "resolution/fixed": "the issue is fixed by a verified commit; name the commit in the message",
 }
 
 

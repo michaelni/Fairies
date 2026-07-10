@@ -33,8 +33,9 @@ review pipeline all speak.
 What belongs here: the provider-neutral review vocabulary (``Review``,
 ``ReviewContext``, the ``Reviewer`` base class), the classification
 constants, the role output JSON schemas with their validators
-(``REVIEW_SCHEMA``, ``build_review_schema``, ``build_triage_schema``,
-``check_schema``, ``validate_review``, ``validate_review_result``,
+(``REVIEW_SCHEMA``, ``schema_with_labels``, ``build_review_schema``,
+``build_triage_schema``, ``check_schema``, ``validate_review``,
+``validate_result_with_labels``, ``validate_review_result``,
 ``validate_triage_result``), the shared ``BadModelOutput`` and
 ``SelfReportedViolation`` errors, and ``run_parallel`` (the single
 fan-out helper).
@@ -80,6 +81,8 @@ __all__ = [
     "model_needs_diff_tripwire",
     "run_parallel",
     "sanitize_label_changes",
+    "schema_with_labels",
+    "validate_result_with_labels",
     "validate_review",
     "validate_review_result",
     "validate_triage_result",
@@ -274,11 +277,12 @@ def validate_review(obj: object) -> dict[str, object]:
     }
 
 
-def validate_review_result(
+def validate_result_with_labels(
     obj: object,
     allowed_labels: list[str],
+    validate: Callable[[object], dict[str, object]],
 ) -> dict[str, object]:
-    """``validate_review`` plus ``label_changes``.
+    """``validate`` (a verdict-role validator) plus ``label_changes``.
 
     The verdict fields stay strict (bad shape raises ``SchemaError`` and
     the pass is retried); ``label_changes`` is best-effort side metadata,
@@ -289,10 +293,18 @@ def validate_review_result(
     if not isinstance(obj, dict):  # boundary: raw model JSON
         raise SchemaError(f"$: expected type 'object', got {type(obj).__name__}")
     result: dict[str, object] = dict(
-        validate_review({k: v for k, v in obj.items() if k != "label_changes"})
+        validate({k: v for k, v in obj.items() if k != "label_changes"})
     )
     result["label_changes"] = sanitize_label_changes(obj.get("label_changes"), allowed_labels)
     return result
+
+
+def validate_review_result(
+    obj: object,
+    allowed_labels: list[str],
+) -> dict[str, object]:
+    """``validate_review`` plus ``label_changes``."""
+    return validate_result_with_labels(obj, allowed_labels, validate_review)
 
 
 def sanitize_label_changes(
@@ -368,14 +380,17 @@ def _label_changes_property(label_allowlist: list[str]) -> dict[str, object]:
     }
 
 
-def build_review_schema(allowed_labels: list[str]) -> dict[str, object]:
-    """``REVIEW_SCHEMA`` plus ``label_changes`` when a label allowlist exists."""
+def schema_with_labels(
+    base: dict[str, object], allowed_labels: list[str],
+) -> dict[str, object]:
+    """``base`` (a verdict-role schema) plus ``label_changes`` when a
+    label allowlist exists."""
     if not allowed_labels:
-        return REVIEW_SCHEMA
-    schema = REVIEW_SCHEMA["schema"]
+        return base
+    schema = base["schema"]
     return {
-        "name": REVIEW_SCHEMA["name"],
-        "strict": REVIEW_SCHEMA["strict"],
+        "name": base["name"],
+        "strict": base["strict"],
         "schema": {
             **schema,
             "properties": {
@@ -385,6 +400,11 @@ def build_review_schema(allowed_labels: list[str]) -> dict[str, object]:
             "required": [*schema["required"], "label_changes"],
         },
     }
+
+
+def build_review_schema(allowed_labels: list[str]) -> dict[str, object]:
+    """``REVIEW_SCHEMA`` plus ``label_changes`` when a label allowlist exists."""
+    return schema_with_labels(REVIEW_SCHEMA, allowed_labels)
 
 
 def build_triage_schema(
@@ -605,7 +625,7 @@ class ReviewContext:
     def review_drafts(self) -> list[Review]:
         """Prior drafts that are real review verdicts (excluding triage
         ``ENGAGE``), in the order produced -- what the combine stage merges."""
-        return [d for d in self.drafts if d.classification in CLASSIFICATIONS]
+        return [d for d in self.drafts if d.classification != ENGAGE]
 
 
 @dataclass(frozen=True)

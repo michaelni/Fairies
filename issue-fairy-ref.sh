@@ -12,5 +12,7 @@ cd ..
 
 # Issue helper: repro / bisect happens inside the podman container (add
 # --podman-host USER@HOST), duplicate search uses the exported-issue
-# vector store. Dry-run by default; add --approve or --manual.
-./issue_fairy.py --owner FFmpeg --repo FFmpeg --gcli-account ff --issue-label 'duplicate,invalid,needs sample,fix/bug,fix/regression,important' --llm-review-cmd './pr_review_wrapper.py --repo-root ffmpeg --model openai:gpt-5.4 --extra-repo-root all_ffmpeg --use-vector-store-search --reasoning-effort high --verbose --debug-response-dir openaidebug --use-web-search --max-tool-calls 100 ' --verbose 2 --min-age-days 1 $*
+# vector store. Triage runs on the cheap mini model, the full pass on
+# GPT-5.5@high; both on the flex tier. Dry-run by default; add
+# --approve or --manual to submit.
+./issue_fairy.py --owner FFmpeg --repo FFmpeg --gcli-account ff --issue-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid' --llm-review-cmd './pr_review_wrapper.py --repo-root ffmpeg --extra-repo-root all_ffmpeg --triage-model openai:gpt-5.4-mini --triage-service-tier flex --model openai:gpt-5.5 --reasoning-effort high --service-tier flex --use-vector-store-search --verbose --debug-response-dir openaidebug --use-web-search --max-tool-calls 100 ' --verbose 2 $*

@@ -224,6 +224,14 @@ def parse_args() -> argparse.Namespace:
              "(no open-issue listing). Requires at least one --force-review-issue.",
     )
     p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Stop after N LLM evaluations (0 = no limit). Caps cost on "
+             "test runs; gate-skipped issues do not count.",
+    )
+    p.add_argument(
         "--verbose",
         type=int,
         choices=(0, 1, 2),
@@ -614,6 +622,7 @@ def main() -> int:
     llm_counts: dict[str, int] = {}
     submitted_counts = {"comment": 0}
     stopped_by_user = False
+    llm_evaluations = 0
 
     queue = deque(issues)
     try:
@@ -639,6 +648,13 @@ def main() -> int:
                 continue
 
             if isinstance(prepared, PreparedIssue):
+                if args.limit and llm_evaluations >= args.limit:
+                    logger.info(
+                        "issue #%s: candidate not evaluated; --limit %d reached",
+                        prepared.number, args.limit,
+                    )
+                    continue
+                llm_evaluations += 1
                 d = evaluate_issue(args, prepared)
                 writeback_llm_skip_backoff(
                     state, args.owner, args.repo, d.pr_number,

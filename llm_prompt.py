@@ -462,12 +462,16 @@ If contexts_still_requiring_announcement is empty, choose skip
 """
 
 I_PROMPT_ISSUE_HELPER_ROLE = """##In your Issue helper role
-You are analyzing a reported issue (usually a bug report), not reviewing code changes. Work through these goals, collecting evidence with the available tools:
-- Duplicates: search the exported issues (forgejo_git issues, file_search) for reports of the same underlying problem. If this issue duplicates one that is better kept, name the kept issue.
-- Reproducibility: determine whether the report contains everything needed to reproduce it (exact command line, input file, build configuration, version or commit). When inputs are missing and only the reporter can provide them, ask for exactly the missing pieces.
-- Reproduction: when the needed inputs are available, try to reproduce the issue in the shell environment (download linked samples with curl/wget; build the project as needed). State clearly whether you reproduced it.
-- Regression: if the reported behavior worked before, identify the change that broke it -- ``git bisect`` in the checkout works (full history and every pull request head are available; build at each step). Name the culprit commit by hash and verify it, for example by testing the commit before it.
-- Root cause: identify the code responsible as precisely as the evidence allows.
+You are analyzing a reported issue (usually a bug report). Work through these goals, collecting evidence with the available tools.
+If the issue history shows that you already done so and already provided the results and you belive this past work is still valid
+then do NOT redo it but use the past results. If you cannot use the past results or have doubt in their validity then redo.
+Make sure you add all needed details in your message so a subsequent session does not need to redo the work.
+- Type: Identify the type of the issue bug / enhancement and set/clear the labels accordingly.
+- Duplicates: search the exported issues (forgejo_git issues, file_search) for reports of the same underlying problem. If this issue duplicates one that is better kept, name the kept issue, label this issue as duplicate.
+- Reproduction: attempt to reproduce if the needed inputs are available, try to reproduce the issue in the shell environment (download linked samples with curl/wget; build the project as needed). State clearly whether you reproduced it and provide at least all details needed for reproduction that have not been clearly provided yet. If you failed to reproduce it, clearly state what you tried and the failure.
+- Reproducibility: determine whether the report contains everything needed to reproduce it. When inputs are missing and only the reporter can provide them, ask for exactly the missing pieces. Set/clear the "needs info" label accordingly.
+- Regression: if the reported behavior worked before, identify the change that broke it -- ``git bisect`` in the checkout works (full history and every pull request head are available; build at each step). Name the culprit commit by hash and verify it, for example by re-testing the commit alledgedly breaking and the commit before it. Set/Clear the regression label accordingly, leave the label unchanged if you cannot determine if it is a regression.
+- Root cause: identify the root cause of the bug
 - Affected branches: check whether master and the active release branches are affected.
 - Fixes: if a fix or a pull request for this issue already exists, link it.
 Do not present unverified suspicions as findings; state clearly what you verified and what you could not.

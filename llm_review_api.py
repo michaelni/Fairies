@@ -62,6 +62,8 @@ __all__ = [
     "CLASSIFICATIONS",
     "EXIT_BAD_MODEL_OUTPUT",
     "ISSUE_CLASSIFICATIONS",
+    "ISSUE_REPORT_CLASSIFICATIONS",
+    "ISSUE_REPORT_SCHEMA",
     "TERMINAL_ROUTES",
     "TRIAGE_REQUESTABLE_EFFORTS",
     "TRIAGE_ROUTES",
@@ -82,6 +84,7 @@ __all__ = [
     "run_parallel",
     "sanitize_label_changes",
     "schema_with_labels",
+    "validate_issue_report",
     "validate_result_with_labels",
     "validate_review",
     "validate_review_result",
@@ -104,6 +107,20 @@ CLASSIFICATIONS = (
 
 # Classifications that mean "this reviewer found something worth raising".
 ISSUE_CLASSIFICATIONS = ("moderate_issues", "major_issues")
+
+# Verdict vocabulary for the issue-helper task (the wrapper's
+# ``--task issue``): the subject is a bug report, not a PR, so there is
+# no approval -- verdicts describe the report itself.
+ISSUE_REPORT_CLASSIFICATIONS = (
+    "valid",
+    "regression_identified",
+    "duplicate",
+    "needs_info",
+    "not_reproducible",
+    "invalid",
+    "reply_no_verdict",
+    "skip",
+)
 
 # Verdicts that are already final: when a stage returns one of these the
 # pipeline stops and posts it as-is (no further models, no combine).
@@ -158,6 +175,32 @@ REVIEW_SCHEMA = {
             },
         },
         "required": ["classification", "message", "head_vs_branch_diff_evidence"],
+    },
+}
+
+
+ISSUE_REPORT_SCHEMA = {
+    "name": "issue_report_result",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "classification": {
+                "type": "string",
+                "description": "Overall disposition of the issue report.",
+                "enum": list(ISSUE_REPORT_CLASSIFICATIONS),
+            },
+            "message": {
+                "type": "string",
+                "description": (
+                    "detailed Markdown comment body to post to Forgejo. "
+                    "May be empty for skip. "
+                    "Do not include HTML or markdown fences."
+                ),
+            },
+        },
+        "required": ["classification", "message"],
     },
 }
 
@@ -305,6 +348,16 @@ def validate_review_result(
 ) -> dict[str, object]:
     """``validate_review`` plus ``label_changes``."""
     return validate_result_with_labels(obj, allowed_labels, validate_review)
+
+
+def validate_issue_report(obj: object) -> dict[str, object]:
+    """Check an issue-helper verdict against ``ISSUE_REPORT_SCHEMA``."""
+    check_schema(obj, ISSUE_REPORT_SCHEMA["schema"])
+    assert isinstance(obj, dict)  # narrowed by check_schema
+    return {
+        "classification": obj["classification"],
+        "message": obj["message"],
+    }
 
 
 def sanitize_label_changes(

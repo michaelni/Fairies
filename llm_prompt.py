@@ -46,16 +46,18 @@ from pathlib import Path
 
 from common import JsonObject
 from llm_review_api import (
+    ISSUE_REPORT_SCHEMA,
     REVIEW_SCHEMA,
     TRIAGE_REQUESTABLE_EFFORTS,
     Review,
     RoleSpec,
-    build_review_schema,
     build_triage_schema,
     check_schema,
     model_needs_diff_tripwire,
+    schema_with_labels,
+    validate_issue_report,
+    validate_result_with_labels,
     validate_review,
-    validate_review_result,
     validate_triage_result,
 )
 from patch_util import extract_submodule_changes_from_patch
@@ -282,6 +284,7 @@ Before finalizing:
 - Check uncertainty: if any important point is not well verified, did you mark it as uncertain?
 - Check requests: Have you identified all open requests and open problems related to this {subject} and attempted to help?
 {"- Check coverage: did you consider every changed hunk for issues, or note that you did not inspect it?\n" * (not combiner and subject == "pull request")}\
+{"- Check coverage: did you address duplicates, reproducibility, regression, root cause, and affected branches, or note which you could not?\n" * (not combiner and subject == "issue")}\
 {"- Check coverage: did you verify, refute, or explicitly mark as unverified every material point a draft raised? No point may be silently dropped.\n" * combiner}\
 </verification_loop>
 
@@ -457,6 +460,80 @@ noticed a long-standing red job.
 If contexts_still_requiring_announcement is empty, choose skip
 (this state should be rare— the caller normally filters it out).
 """
+
+I_PROMPT_ISSUE_HELPER_ROLE = """##In your Issue helper role
+You are analyzing a reported issue (usually a bug report), not reviewing code changes. Work through these goals, collecting evidence with the available tools:
+- Duplicates: search the exported issues (forgejo_git issues, file_search) for reports of the same underlying problem. If this issue duplicates one that is better kept, name the kept issue.
+- Reproducibility: determine whether the report contains everything needed to reproduce it (exact command line, input file, build configuration, version or commit). When inputs are missing and only the reporter can provide them, ask for exactly the missing pieces.
+- Reproduction: when the needed inputs are available, try to reproduce the issue in the shell environment (download linked samples with curl/wget; build the project as needed). State clearly whether you reproduced it.
+- Regression: if the reported behavior worked before, identify the change that broke it -- ``git bisect`` in the checkout works (full history and every pull request head are available; build at each step). Name the culprit commit by hash and verify it, for example by testing the commit before it.
+- Root cause: identify the code responsible as precisely as the evidence allows.
+- Affected branches: check whether master and the active release branches are affected.
+- Fixes: if a fix or a pull request for this issue already exists, link it.
+Do not present unverified suspicions as findings; state clearly what you verified and what you could not.
+
+"""
+
+I_PROMPT_ISSUE_CLASSIFICATIONS = """Classify the issue into exactly one of these JSON classes after you have finished your analysis and read all comments:
+- valid: a real, actionable issue backed by reproduction or strong evidence, and not better described by regression_identified or duplicate.
+- regression_identified: a real issue that is a regression and you identified the causing change; name the commit in the message.
+- duplicate: this issue duplicates another that is better kept; name the kept issue in the message.
+- needs_info: analysis is blocked on information only the reporter can provide; ask for it in the message.
+- not_reproducible: you had everything needed but could not reproduce the problem; describe exactly what you tried.
+- invalid: not a valid issue (spam, trolling, a usage question answered by documentation, or not this project's bug).
+- reply_no_verdict: you have a helpful comment without a verdict on the issue's validity.
+- skip: you have no comment or want to make no comment, and give no verdict.
+
+"""
+
+I_PROMPT_ISSUE_MESSAGE_RULES = """Message Rules:
+- message may be empty only for skip.
+- the message is in Markdown and will be posted to Forgejo
+"""
+
+I_PROMPT_ISSUE_TRIAGE_TASK = """##Triage task
+You are NOT analyzing the issue yet. Your job is to triage this issue
+and decide which route the issue helper should take next.
+
+Weigh what has happened AFTER the current reviewer identity's most
+recent comment in the prior discussion. If the reviewer has never
+posted on this issue, treat the whole history as new.
+
+Pick exactly one value for ``route``:
+
+- skip: the issue helper should NOT post anything now. Typical cases:
+  * Nothing has materially changed since our last comment (we asked
+    the reporter for information and no answer has arrived; the
+    newest activity is a label change or a side conversation).
+  * Humans are actively working on the issue and a bot post would
+    add noise.
+  * A fix is already linked and in review or merged.
+
+- reply_no_verdict: a short direct reply is the most useful action
+  (someone asked the current reviewer identity a concrete on-topic
+  question, or a brief factual clarification unblocks the
+  discussion). Put the FULL reply in ``message``, following the
+  normal output guideline.
+
+- engage: a full issue-helper pass (duplicate search, reproduction,
+  bisect, root cause) should run now. Typical cases:
+  * We have never analyzed this issue.
+  * The reporter has provided the information we previously asked for.
+  * New material information arrived that changes the analysis.
+
+""" + t_prompt_injection(subject="issue") + """
+Critical rules:
+- Do NOT duplicate a point the current reviewer identity already made.
+- Do NOT write the full analysis in ``message``. ``message`` is ONLY
+  used when ``route`` is ``reply_no_verdict``; it MUST be the empty
+  string for ``skip`` and ``engage``.
+
+Output schema: return exactly a JSON object with fields ``route``,
+``message``, and ``reason``. ``reason`` is a short one-or-two-sentence
+internal explanation of why you chose that route; it is logged but not
+posted to Forgejo.
+"""
+
 
 def t_prompt_user_request(allowed_models: list[str]) -> str:
     if not allowed_models:
@@ -691,6 +768,120 @@ def make_triage_developer_prompt(
     )
 
 
+def make_issue_developer_prompt(
+    reviewer_username: str,
+    repo_roots: list[Path],
+    vector_store_search_enabled: bool,
+    web_search_enabled: bool,
+    code_interpreter_enabled: bool,
+    podman_shell_enabled: bool,
+    container_repo_mounts: list[str],
+    *,
+    model: str,
+    project_facts: str = "",
+    allowed_labels: list[str] | None = None,
+) -> str:
+    return (
+        "You are an expert software engineer analyzing a reported issue.\n\n"
+        + tr_prompt_general_rules(model, subject="issue")
+        + _prompt_reviewer_identity(reviewer_username)
+        + I_PROMPT_ISSUE_HELPER_ROLE
+        + _prompt_attached_context_and_tools(
+            model=model,
+            source_bundle_attached=False,
+            repo_roots=repo_roots,
+            vector_store_search_enabled=vector_store_search_enabled,
+            web_search_enabled=web_search_enabled,
+            code_interpreter_enabled=code_interpreter_enabled,
+            podman_shell_enabled=podman_shell_enabled,
+            container_repo_mounts=container_repo_mounts,
+            subject="issue",
+        )
+        + project_facts
+        + tr_prompt_output_guideline("issue reporter")
+        + I_PROMPT_ISSUE_CLASSIFICATIONS
+        + t_prompt_triage_labels(allowed_labels or [])
+        + tr_prompt_persistence_and_verification(subject="issue")
+        + I_PROMPT_ISSUE_MESSAGE_RULES
+    )
+
+
+def make_issue_combiner_developer_prompt(
+    reviewer_username: str,
+    repo_roots: list[Path],
+    vector_store_search_enabled: bool,
+    web_search_enabled: bool,
+    code_interpreter_enabled: bool,
+    podman_shell_enabled: bool,
+    container_repo_mounts: list[str],
+    *,
+    model: str,
+    project_facts: str = "",
+    allowed_labels: list[str] | None = None,
+) -> str:
+    return (
+        "You are an expert software engineer combining independent draft analyses of a reported issue into one final analysis.\n\n"
+        + tr_prompt_general_rules(model, combiner=True, subject="issue")
+        + _prompt_reviewer_identity(reviewer_username)
+        + c_prompt_combiner_task(model, subject="issue")
+        + _prompt_attached_context_and_tools(
+            model=model,
+            source_bundle_attached=False,
+            repo_roots=repo_roots,
+            vector_store_search_enabled=vector_store_search_enabled,
+            web_search_enabled=web_search_enabled,
+            code_interpreter_enabled=code_interpreter_enabled,
+            podman_shell_enabled=podman_shell_enabled,
+            container_repo_mounts=container_repo_mounts,
+            subject="issue",
+        )
+        + project_facts
+        + tr_prompt_output_guideline("issue reporter")
+        + I_PROMPT_ISSUE_CLASSIFICATIONS
+        + t_prompt_triage_labels(allowed_labels or [])
+        + tr_prompt_persistence_and_verification(combiner=True, subject="issue")
+        + I_PROMPT_ISSUE_MESSAGE_RULES
+    )
+
+
+def make_issue_triage_developer_prompt(
+    reviewer_username: str,
+    repo_roots: list[Path],
+    vector_store_search_enabled: bool,
+    web_search_enabled: bool,
+    code_interpreter_enabled: bool,
+    podman_shell_enabled: bool,
+    container_repo_mounts: list[str],
+    *,
+    model: str,
+    project_facts: str = "",
+    allowed_models: list[str] | None = None,
+    allowed_labels: list[str] | None = None,
+) -> str:
+    return (
+        "You are an expert software engineer triaging a reported issue.\n\n"
+        + tr_prompt_general_rules(model, subject="issue")
+        + _prompt_reviewer_identity(reviewer_username)
+        + _prompt_attached_context_and_tools(
+            model=model,
+            source_bundle_attached=False,
+            repo_roots=repo_roots,
+            vector_store_search_enabled=vector_store_search_enabled,
+            web_search_enabled=web_search_enabled,
+            code_interpreter_enabled=code_interpreter_enabled,
+            podman_shell_enabled=podman_shell_enabled,
+            container_repo_mounts=container_repo_mounts,
+            subject="issue",
+        )
+        + project_facts
+        + tr_prompt_output_guideline("issue reporter")
+        + I_PROMPT_ISSUE_TRIAGE_TASK
+        + t_prompt_user_request(allowed_models or [])
+        + t_prompt_triage_labels(allowed_labels or [])
+        + tr_prompt_persistence_and_verification(subject="issue")
+    )
+
+
 def _augment_info_with_submodule_changes(
     info: dict[str, object], request: JsonObject
 ) -> None:
@@ -827,6 +1018,38 @@ def make_triage_user_text(request: JsonObject, patch_was_truncated: bool) -> str
     return "".join(parts)
 
 
+def make_issue_user_text(request: JsonObject, *, lead: str = "Analyze this issue.") -> str:
+    issue = request.get("issue")
+    if not isinstance(issue, dict):
+        issue = {}
+
+    body = issue.get("body") if isinstance(issue.get("body"), str) else ""
+    discussion = request.get("discussion")
+    if not isinstance(discussion, list):
+        discussion = []
+    reviewer_username = request.get("reviewer_username")
+    if not isinstance(reviewer_username, str):
+        reviewer_username = ""
+    info = {
+        "number": issue.get("number"),
+        "title": issue.get("title"),
+        "author": issue.get("author"),
+        "html_url": issue.get("html_url"),
+        "created_at": issue.get("created_at"),
+        "reviewer_username": reviewer_username,
+        "labels": [name for name in (issue.get("labels") or []) if isinstance(name, str) and name],
+        "discussion_items": len(discussion),
+        "vector_store_repo_heads": request.get("vector_store_repo_heads"),
+    }
+
+    return (
+        f"{lead}\n\n"
+        f"Issue metadata:\n{json.dumps(info, ensure_ascii=False, indent=2)}\n\n"
+        f"Issue body:\n{body}\n\n"
+        f"Prior issue discussion:\n{json.dumps(discussion, ensure_ascii=False, indent=2)}\n"
+    )
+
+
 def make_combiner_user_text(drafts: list[Review]) -> str:
     """Present the draft reviews the combiner must verify and merge.
 
@@ -940,6 +1163,37 @@ def generate_llm_prompt(
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,
         )
+    if role in ("issue_helper", "issue_combiner"):
+        maker = (
+            make_issue_developer_prompt if role == "issue_helper"
+            else make_issue_combiner_developer_prompt
+        )
+        return maker(
+            reviewer_username,
+            repo_roots,
+            "vector_store_search"  in features,
+            "web_search"           in features,
+            "code_interpreter"     in features,
+            "podman_shell"         in features,
+            container_repo_mounts,
+            model=model,
+            project_facts=project_facts,
+            allowed_labels=allowed_labels,
+        )
+    if role == "issue_triager":
+        return make_issue_triage_developer_prompt(
+            reviewer_username,
+            repo_roots,
+            "vector_store_search"  in features,
+            "web_search"           in features,
+            "code_interpreter"     in features,
+            "podman_shell"         in features,
+            container_repo_mounts,
+            model=model,
+            project_facts=project_facts,
+            allowed_models=allowed_models,
+            allowed_labels=allowed_labels,
+        )
     raise ValueError(f"unknown role: {role!r}")
 
 
@@ -966,18 +1220,40 @@ COMBINER_ROLE = RoleSpec(
     validate=validate_review,
 )
 
+ISSUE_HELPER_ROLE = RoleSpec(
+    name="issue_helper",
+    schema=ISSUE_REPORT_SCHEMA,
+    user_texts=lambda ctx: [make_issue_user_text(ctx.request)],
+    validate=validate_issue_report,
+)
+
+ISSUE_COMBINER_ROLE = RoleSpec(
+    name="issue_combiner",
+    schema=ISSUE_REPORT_SCHEMA,
+    user_texts=lambda ctx: [
+        make_issue_user_text(ctx.request),
+        make_combiner_user_text(ctx.review_drafts()),
+    ],
+    validate=validate_issue_report,
+)
+
 
 def role_with_labels(role: RoleSpec, allowed_labels: list[str]) -> RoleSpec:
-    """A verdict role (reviewer/combiner) that additionally owns the PR's
-    labels: its schema and prompt gain ``label_changes`` constrained to
-    ``allowed_labels``. With an empty allowlist the role is returned
-    unchanged."""
+    """A verdict role (reviewer/combiner/issue_helper/issue_combiner) that
+    additionally owns the labels: its schema and prompt gain
+    ``label_changes`` constrained to ``allowed_labels``. With an empty
+    allowlist the role is returned unchanged."""
     if not allowed_labels:
         return role
+    # The issue roles bind the issue verdict schema; everything else
+    # (reviewer/combiner) binds the PR one.
+    base_validate = (
+        validate_issue_report if role.schema is ISSUE_REPORT_SCHEMA else validate_review
+    )
     return replace(
         role,
-        schema=build_review_schema(allowed_labels),
-        validate=lambda obj: validate_review_result(obj, allowed_labels),
+        schema=schema_with_labels(role.schema, allowed_labels),
+        validate=lambda obj: validate_result_with_labels(obj, allowed_labels, base_validate),
         prompt_kwargs={**role.prompt_kwargs, "allowed_labels": allowed_labels},
     )
 
@@ -986,20 +1262,35 @@ def make_triager_role(
     *,
     allowed_models: list[str],
     allowed_labels: list[str],
+    task: str = "pr",
 ) -> RoleSpec:
-    """Build a triager ``RoleSpec`` for this run's model/label allowlists."""
+    """Build a triager ``RoleSpec`` for this run's model/label allowlists.
+
+    ``task`` selects the subject: ``"pr"`` or ``"issue"`` (the wrapper's
+    ``--task``); routes and schema are identical, only the prompt and
+    user text differ.
+    """
     schema = build_triage_schema(allowed_models, allowed_labels)
 
     def validate(obj: object) -> dict[str, object]:
         check_schema(obj, schema["schema"])
         return validate_triage_result(obj, allowed_labels=allowed_labels)
 
-    return RoleSpec(
-        name="triager",
-        schema=schema,
-        user_texts=lambda ctx: [
+    if task == "issue":
+        name = "issue_triager"
+        user_texts = lambda ctx: [
+            make_issue_user_text(ctx.request, lead="Triage this issue."),
+        ]
+    else:
+        name = "triager"
+        user_texts = lambda ctx: [
             make_triage_user_text(ctx.request, ctx.patch_truncated),
-        ],
+        ]
+
+    return RoleSpec(
+        name=name,
+        schema=schema,
+        user_texts=user_texts,
         validate=validate,
         prompt_kwargs={
             "allowed_models": allowed_models,

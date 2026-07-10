@@ -109,6 +109,8 @@ run_one() {
             --reasoning-effort high \
             --service-tier $TIER --reasoning-summary detailed \
             --allowed-model openai:gpt-5.5 --allowed-model openai:gpt-5.4 \
+            --allowed-model openai:gpt-5.6 --allowed-model openai:gpt-5.6-sol \
+            --allowed-model openai:gpt-5.6-terra \
             --debug-response-dir $outdir/openaidebug --verbose" \
         --verbose 2 2>&1 | tee "$outdir/run.log" | sed -u "$pfx"
     then

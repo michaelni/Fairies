@@ -161,7 +161,7 @@ class PrepareIssueGateTests(unittest.TestCase):
             now=self.LAST_COMMENT + timedelta(days=30), comments=comments,
         )
         self.assertIsInstance(d, Decision)
-        self.assertEqual(d.reason, "no activity since fairy's last reply")
+        self.assertEqual(d.reason, "no non-bot activity since fairy's last reply")
 
     def test_mention_after_own_reply_forces(self) -> None:
         # A fresh @fairy mention overrides both min-age and the
@@ -193,6 +193,71 @@ class PrepareIssueGateTests(unittest.TestCase):
         )
         self.assertIsInstance(d, Decision)
         self.assertEqual(d.reason, "forced skip by --force-skip-issue")
+
+
+def with_labels(issue: dict[str, object], *names: str) -> dict[str, object]:
+    return {**issue, "labels": [{"name": n} for n in names]}
+
+
+class LabelGateTests(unittest.TestCase):
+    """The forge labels are the analysis state machine: resolution/*
+    means done, repro/* marks a completed pass, "needs info" means
+    waiting on a human response."""
+
+    STALE = PrepareIssueGateTests.LAST_COMMENT + timedelta(days=30)
+
+    def test_resolution_label_skips(self) -> None:
+        d = prepare(make_args(), with_labels(real_issue(), "resolution/wontfix", "bug"),
+                    now=self.STALE)
+        self.assertIsInstance(d, Decision)
+        self.assertEqual(d.reason, "resolved: resolution/wontfix")
+
+    def test_repro_label_skips_as_analyzed(self) -> None:
+        d = prepare(make_args(), with_labels(real_issue(), "repro/yes", "bug"),
+                    now=self.STALE)
+        self.assertIsInstance(d, Decision)
+        self.assertEqual(d.reason, "already analyzed: repro/* set")
+
+    def test_needs_info_waiting_skips(self) -> None:
+        # Fairy asked for info (last comment is fairy's); nothing new
+        # from humans -> keep waiting, even though repro/no(env) alone
+        # would already skip.
+        comments = load_fixture("ffmpeg_issue_23738_comments.json")
+        comments[-1]["user"]["login"] = "fairy"
+        d = prepare(
+            make_args(),
+            with_labels(real_issue(), "needs info", "repro/no(env)"),
+            now=self.STALE, comments=comments,
+        )
+        self.assertIsInstance(d, Decision)
+        self.assertEqual(d.reason, "no non-bot activity since fairy's last reply")
+
+    def test_needs_info_response_reanalyzes(self) -> None:
+        # Fairy asked (second-to-last comment), the reporter answered
+        # (last comment): the issue is re-analyzed despite repro/no(env)
+        # being set, and despite being far younger than --min-age-days
+        # (once engaged the threshold drops to hours).
+        comments = load_fixture("ffmpeg_issue_23738_comments.json")
+        comments[-2]["user"]["login"] = "fairy"
+        p = prepare(
+            make_args(min_age_days=14.0),
+            with_labels(real_issue(), "needs info", "repro/no(env)"),
+            now=PrepareIssueGateTests.LAST_COMMENT + timedelta(hours=8),
+            comments=comments,
+        )
+        self.assertIsInstance(p, issue_fairy.PreparedIssue)
+
+    def test_mention_overrides_labels(self) -> None:
+        comments = load_fixture("ffmpeg_issue_23738_comments.json")
+        comments[-1]["body"] += "\n@fairy is this really not reproducible?"
+        p = prepare(
+            make_args(),
+            with_labels(real_issue(), "repro/no", "resolution/invalid"),
+            now=PrepareIssueGateTests.LAST_COMMENT + timedelta(hours=1),
+            comments=comments,
+        )
+        self.assertIsInstance(p, issue_fairy.PreparedIssue)
+        self.assertEqual(p.base_reason, "later discussion mentions fairy")
 
 
 class LLMPayloadTests(unittest.TestCase):

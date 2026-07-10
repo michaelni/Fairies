@@ -31,11 +31,13 @@
 Issue-helper orchestrator: run the LLM wrapper (``--task issue``) on open
 issues and apply its verdict (comment + label changes) via gcli.
 
-What belongs here: issue discovery, gating (force lists, skip-backoff,
-mention forcing, min-age, already-replied), the issue LLM payload, and
-decision application. What does NOT belong: PR review orchestration
-(fairy.py) and prompt/schema definitions (llm_prompt.py /
-llm_review_api.py).
+What belongs here: issue discovery, gating, the issue LLM payload, and
+decision application. The gates are label-driven -- the issue's forge
+labels are the analysis state machine: resolution/* means done,
+repro/* marks a completed analysis pass, "needs info" means waiting on
+a human response; a bot @-mention or force flag bypasses them. What
+does NOT belong: PR review orchestration (fairy.py) and prompt/schema
+definitions (llm_prompt.py / llm_review_api.py).
 
 Like fairy.py this runs dry by default; pass --approve to submit or
 --manual to confirm each action. Uses its own gcli cache and bot-state
@@ -124,11 +126,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--min-age-days",
         type=float,
-        default=1.0,
+        default=14.0,
         help=(
             "Minimum age of last discussion activity (in days) before the "
             "issue is proactively analyzed. Does not apply when a human "
-            "@-mentions the bot or the issue is forced. Default: 1."
+            "@-mentions the bot or the issue is forced; once fairy has "
+            "engaged on an issue the effective threshold drops to 6h. "
+            "Default: 14."
         ),
     )
     p.add_argument(
@@ -352,23 +356,10 @@ def prepare_issue(
     last_activity = get_last_activity(
         issue, [], comments, [], include_pr_updated=False,
     )
-
-    entry = state.entries.setdefault(bot_state.Key(args.owner, args.repo, number), {})
-    # Issues have no head SHA; the backoff key degenerates to
-    # last_activity alone, which is exactly the "anything new was said"
-    # bypass we want.
-    backoff_info = (
-        None if is_forced
-        else compute_llm_skip_backoff(entry, None, last_activity, now)
-    )
-    if backoff_info is not None:
-        consec, eligible_at = backoff_info
-        return skip(
-            f"in LLM skip-backoff window after {consec} consecutive skip(s); "
-            f"window={backoff_for_consecutive_skips(consec)}; "
-            f"next eligible at {eligible_at.isoformat()}",
-            last_activity,
-        )
+    self_last = get_last_activity(
+        issue, [], comments, [],
+        predicate=lambda item: get_item_author_login(item) == self_login,
+    ) if self_login else None
 
     forced_reason: str | None = None
     if is_forced:
@@ -386,26 +377,55 @@ def prepare_issue(
             latest_mention = max_dt(
                 [latest_mention, first_dt(issue, "created_at")]
             )
-        if latest_mention is not None:
-            self_last = get_last_activity(
-                issue, [], comments, [],
-                predicate=lambda item: get_item_author_login(item) == self_login,
-            )
-            if self_last is None or latest_mention > self_last:
-                forced_reason = f"later discussion mentions {self_login}"
+        if latest_mention is not None and (self_last is None or latest_mention > self_last):
+            forced_reason = f"later discussion mentions {self_login}"
 
     if forced_reason is None:
+        # The issue's labels are the analysis state machine (set by the
+        # LLM's own label_changes or by humans); a mention or force
+        # bypasses it, everything else is gated on them.
+        issue_labels = set(labels(issue))
+        resolutions = sorted(l for l in issue_labels if l.startswith("resolution/"))
+        if resolutions:
+            return skip(f"resolved: {resolutions[0]}", last_activity)
+        if "needs info" not in issue_labels and any(
+            l.startswith("repro/") for l in issue_labels
+        ):
+            # A repro/* label marks a completed full pass (duplicate,
+            # regression and root-cause checks included). Removing it or
+            # mentioning the bot re-triggers analysis. When "needs info"
+            # is also set the analysis is explicitly unfinished, so the
+            # waiting gate below decides instead.
+            return skip("already analyzed: repro/* set", last_activity)
+        last_nonself = get_last_activity(
+            issue, [], comments, [],
+            predicate=lambda item: get_item_author_login(item) != self_login,
+        )
+        if self_last is not None and (last_nonself is None or last_nonself <= self_last):
+            return skip("no non-bot activity since fairy's last reply", last_activity)
         if last_activity is None:
             return skip("cannot determine activity timestamp", None)
-        if last_activity > now - timedelta(days=float(args.min_age_days)):
+        # Once fairy has engaged on the issue, a human response only
+        # needs to settle briefly (same constant as re-reviewed PRs);
+        # fresh issues wait the full --min-age-days.
+        min_age_days = float(args.min_age_days)
+        if self_last is not None:
+            min_age_days = min(min_age_days, fairy.REVIEWED_PR_MIN_AGE_DAYS)
+        if last_activity > now - timedelta(days=min_age_days):
             return skip("activity is newer than threshold", last_activity)
-        if self_login:
-            self_last = get_last_activity(
-                issue, [], comments, [],
-                predicate=lambda item: get_item_author_login(item) == self_login,
+        # Issues have no head SHA; the backoff key degenerates to
+        # last_activity alone, which is exactly the "anything new was
+        # said" bypass we want.
+        entry = state.entries.get(bot_state.Key(args.owner, args.repo, number), {})
+        backoff_info = compute_llm_skip_backoff(entry, None, last_activity, now)
+        if backoff_info is not None:
+            consec, eligible_at = backoff_info
+            return skip(
+                f"in LLM skip-backoff window after {consec} consecutive skip(s); "
+                f"window={backoff_for_consecutive_skips(consec)}; "
+                f"next eligible at {eligible_at.isoformat()}",
+                last_activity,
             )
-            if self_last is not None and last_activity <= self_last:
-                return skip("no activity since fairy's last reply", last_activity)
 
     if not args.llm_review_cmd:
         return skip(

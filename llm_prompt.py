@@ -496,7 +496,7 @@ def t_prompt_triage_labels(allowed_labels: list[str]) -> str:
         "Use ``label_changes`` to add or remove labels when the correct set of labels differs from the current. "
         "Each entry is an object with ``label`` (an allowed name), ``op`` (``add`` or ``remove``), ``reason`` "
         "(one concrete sentence justifying the change; if you cannot justify it, omit the change), and ``post``. "
-        "When in doubt about a label, omit it. The list may be empty.\n"
+        "When in doubt about a label, neither add nor remove it. The list may be empty.\n"
         "Set ``post`` to true only when the reason is needed for a reader to understand why the label is there and "
         "should be posted to the PR as a comment; set it to false when the reason only serves logs.\n"
         + definitions

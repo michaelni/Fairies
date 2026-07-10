@@ -302,6 +302,51 @@ class LLMPayloadTests(unittest.TestCase):
         self.assertEqual(d.action, "skip")
 
 
+class PipelineTests(unittest.TestCase):
+    """start_issue_pipeline yields exactly one (prepared, decision) per
+    issue; candidates beyond --limit are skipped without an LLM call."""
+
+    def _run(self, args: argparse.Namespace, numbers: list[int]) -> list:
+        issues = [{"number": n} for n in numbers]
+
+        def fake_prepare(a, issue, **kw):
+            return issue_fairy.PreparedIssue(
+                issue=issue, number=issue["number"], title="t", author="a",
+                last_activity=None, base_reason="stale", discussion=[],
+                reviewer_username="fairy",
+            )
+
+        def fake_evaluate(a, p):
+            return Decision(p.number, p.title, p.author, "-", "comment",
+                            "llm", None, "reply", "m")
+
+        with mock.patch.object(issue_fairy, "prepare_issue", side_effect=fake_prepare), \
+             mock.patch.object(issue_fairy, "evaluate_issue", side_effect=fake_evaluate), \
+             mock.patch.object(issue_fairy, "writeback_llm_skip_backoff"):
+            reviewed_queue, llm_queue = issue_fairy.start_issue_pipeline(
+                args, issues,
+                now=datetime.now(timezone.utc), self_login="fairy",
+                cache=mock.Mock(), state=bot_state.State(),
+                discussion_cache_max_age=timedelta(hours=1),
+            )
+            results = [reviewed_queue.get(timeout=10) for _ in issues]
+            for _ in range(max(1, args.llm_parallelism)):
+                llm_queue.put(issue_fairy._LLM_DONE)
+        return results
+
+    def test_parallel_workers_evaluate_every_issue(self) -> None:
+        results = self._run(make_args(llm_parallelism=3, limit=0), [1, 2, 3, 4, 5])
+        self.assertEqual(sorted(d.pr_number for _, d in results), [1, 2, 3, 4, 5])
+        self.assertTrue(all(d.llm_classification == "reply" for _, d in results))
+
+    def test_limit_caps_llm_evaluations(self) -> None:
+        results = self._run(make_args(llm_parallelism=2, limit=2), [1, 2, 3, 4, 5])
+        evaluated = [d for _, d in results if d.llm_classification == "reply"]
+        skipped = [d for _, d in results if "--limit" in d.reason]
+        self.assertEqual(len(evaluated), 2)
+        self.assertEqual(len(skipped), 3)
+
+
 class IssueLabelCommandTests(unittest.TestCase):
     def test_uses_gcli_issues_labels(self) -> None:
         args = make_args()

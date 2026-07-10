@@ -51,6 +51,8 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from queue import Empty, SimpleQueue
+from threading import Thread
 from urllib.parse import urlencode
 
 import bot_state
@@ -168,6 +170,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=3600 * 5,
         help="Timeout in seconds for the external LLM command (default: 18000)",
+    )
+    p.add_argument(
+        "--llm-parallelism",
+        type=int,
+        default=1,
+        help="Number of LLM subprocesses to run in parallel (default: 1).",
     )
     p.add_argument(
         "--llm-max-attempts",
@@ -587,6 +595,83 @@ def apply_issue_decision(
         )
 
 
+_LLM_DONE = object()
+
+
+def start_issue_pipeline(
+    args: argparse.Namespace,
+    issues: list[ApiObject],
+    *,
+    now: datetime,
+    self_login: str | None,
+    cache: gcli_cache.Cache,
+    state: bot_state.State,
+    discussion_cache_max_age: timedelta,
+) -> tuple[
+    SimpleQueue[tuple[PreparedIssue | Decision, Decision]],
+    SimpleQueue[PreparedIssue | object],
+]:
+    """One prepare thread feeds ``--llm-parallelism`` LLM workers; every
+    issue yields exactly one ``(prepared, decision)`` on the reviewed
+    queue. ``--limit`` caps how many candidates reach the LLM."""
+    llm_queue: SimpleQueue[PreparedIssue | object] = SimpleQueue()
+    reviewed_queue: SimpleQueue[tuple[PreparedIssue | Decision, Decision]] = SimpleQueue()
+
+    def prepare_worker() -> None:
+        queued = 0
+        for issue in issues:
+            try:
+                prepared = prepare_issue(
+                    args, issue,
+                    now=now,
+                    self_login=self_login,
+                    cache=cache,
+                    state=state,
+                    discussion_cache_max_age=discussion_cache_max_age,
+                )
+            except Exception as exc:
+                number = issue.get("number")
+                logger.error("issue #%s: prepare failed: %s", number, exc)
+                prepared = Decision(
+                    int(number) if str(number).isdigit() else -1,
+                    str(issue.get("title") or ""), get_pr_author(issue),
+                    "-", "skip", f"prepare failed: {exc}", None, "error", "",
+                )
+            if isinstance(prepared, Decision):
+                reviewed_queue.put((prepared, prepared))
+            elif args.limit and queued >= args.limit:
+                reviewed_queue.put((prepared, Decision(
+                    prepared.number, prepared.title, prepared.author, "-",
+                    "skip", f"candidate not evaluated; --limit {args.limit} reached",
+                    prepared.last_activity, "-", "",
+                )))
+            else:
+                queued += 1
+                llm_queue.put(prepared)
+
+    def llm_worker() -> None:
+        while True:
+            prepared = llm_queue.get()
+            if prepared is _LLM_DONE:
+                return
+            if not isinstance(prepared, PreparedIssue):
+                raise RuntimeError(f"unexpected LLM queue item type: {type(prepared)!r}")
+            d = evaluate_issue(args, prepared)
+            writeback_llm_skip_backoff(
+                state, args.owner, args.repo, d.pr_number,
+                None, prepared.last_activity, d.llm_classification,
+            )
+            reviewed_queue.put((prepared, d))
+
+    llm_parallelism = max(1, args.llm_parallelism)
+    logger.debug("starting issue pipeline llm_parallelism=%d", llm_parallelism)
+    Thread(target=prepare_worker, name="issue-prepare", daemon=True).start()
+    for i in range(llm_parallelism):
+        name = "issue-llm" if llm_parallelism == 1 else f"issue-llm-{i + 1}"
+        Thread(target=llm_worker, name=name, daemon=True).start()
+    return reviewed_queue, llm_queue
+
+
 def main() -> int:
     args = parse_args()
     setup_logging(
@@ -622,46 +707,31 @@ def main() -> int:
     llm_counts: dict[str, int] = {}
     submitted_counts = {"comment": 0}
     stopped_by_user = False
-    llm_evaluations = 0
 
-    queue = deque(issues)
+    reviewed_queue, llm_queue = start_issue_pipeline(
+        args, issues,
+        now=now,
+        self_login=self_login,
+        cache=cache,
+        state=state,
+        discussion_cache_max_age=discussion_cache_max_age,
+    )
+    ready: deque[tuple[PreparedIssue | Decision, Decision]] = deque()
+    pending = len(issues)
     try:
-        while queue and not stopped_by_user:
-            issue = queue.popleft()
-            try:
-                prepared = prepare_issue(
-                    args, issue,
-                    now=now,
-                    self_login=self_login,
-                    cache=cache,
-                    state=state,
-                    discussion_cache_max_age=discussion_cache_max_age,
-                )
-            except Exception as exc:
-                number = issue.get("number")
-                logger.error("issue #%s: prepare failed: %s", number, exc)
-                decisions.append(Decision(
-                    int(number) if str(number).isdigit() else -1,
-                    str(issue.get("title") or ""), get_pr_author(issue),
-                    "-", "skip", f"prepare failed: {exc}", None, "error", "",
-                ))
-                continue
+        while not stopped_by_user:
+            if not ready:
+                if pending == 0:
+                    break
+                ready.append(reviewed_queue.get())
+            while True:
+                try:
+                    ready.append(reviewed_queue.get_nowait())
+                except Empty:
+                    break
 
-            if isinstance(prepared, PreparedIssue):
-                if args.limit and llm_evaluations >= args.limit:
-                    logger.info(
-                        "issue #%s: candidate not evaluated; --limit %d reached",
-                        prepared.number, args.limit,
-                    )
-                    continue
-                llm_evaluations += 1
-                d = evaluate_issue(args, prepared)
-                writeback_llm_skip_backoff(
-                    state, args.owner, args.repo, d.pr_number,
-                    None, prepared.last_activity, d.llm_classification,
-                )
-            else:
-                d = prepared
+            prepared, d = ready.popleft()
+            pending -= 1
 
             age = describe_age(now, d.last_activity)
             logger.info(
@@ -678,16 +748,33 @@ def main() -> int:
 
             if d.action in ACTIONABLE_DECISIONS or decision_has_label_changes(d):
                 if args.manual:
-                    url = issue.get("html_url")
+                    url = ""
+                    # ``prepared`` is a ``PreparedIssue | Decision`` union
+                    # (same shape as fairy's reviewed pipeline): only the
+                    # PreparedIssue side carries the issue and can be
+                    # re-queued for an LLM retry.
+                    if not isinstance(prepared, Decision):
+                        raw_url = prepared.issue.get("html_url")
+                        if isinstance(raw_url, str):
+                            url = raw_url
                     choice = prompt_manual(
-                        d.pr_number, manual_action_description(d),
-                        pr_url=url if isinstance(url, str) else "",
+                        d.pr_number, manual_action_description(d), pr_url=url,
                     )
                     if choice == "retry":
-                        queue.appendleft(issue)
+                        if isinstance(prepared, Decision):
+                            logger.info(
+                                "issue #%s has no queued LLM evaluation to retry",
+                                d.pr_number,
+                            )
+                        else:
+                            pending += 1
+                            llm_queue.put(prepared)
                         continue
                     if choice == "defer":
-                        queue.append(issue)
+                        # Compensate the ``pending -= 1`` above: the item
+                        # goes back in flight.
+                        pending += 1
+                        ready.append((prepared, d))
                         continue
                     if choice == "quit":
                         stopped_by_user = True
@@ -720,6 +807,8 @@ def main() -> int:
         stopped_by_user = True
         logger.warning("Stopped by user.")
     finally:
+        for _ in range(max(1, args.llm_parallelism)):
+            llm_queue.put(_LLM_DONE)
         try:
             gcli_cache.save_cache(args.cache, cache)
             bot_state.save(args.fairy_state_cache, state)

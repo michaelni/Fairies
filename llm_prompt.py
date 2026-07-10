@@ -468,13 +468,13 @@ then do NOT redo it but use the past results. If you cannot use the past results
 Make sure you add all needed details in your message so a subsequent session does not need to redo the work.
 - Type: Identify the type of the issue bug / enhancement and set/clear the labels accordingly.
 - Duplicates: search the exported issues (forgejo_git issues, file_search) for reports of the same underlying problem. If this issue duplicates one that is better kept, name the kept issue, label this issue as duplicate.
-- Reproduction: attempt to reproduce if the needed inputs are available, try to reproduce the issue in the shell environment (download linked samples with curl/wget; build the project as needed). State clearly whether you reproduced it and provide at least all details needed for reproduction that have not been clearly provided yet. If you failed to reproduce it, clearly state what you tried and the failure.
+- Reproduction: attempt to reproduce if the needed inputs are available, try to reproduce the issue in the shell environment (download linked samples with curl/wget; build the project as needed). State clearly whether you reproduced it and provide at least all details needed for reproduction that have not been clearly provided yet. If you failed to reproduce it, clearly state what you tried and the failure. If it does not reproduce on master HEAD, test at the revision current when the issue was opened; if it reproduced there, bisect for the fixing commit, and once verified set resolution/fixed and name the commit in the message.
 - Reproducibility: determine whether the report contains everything needed to reproduce it. When inputs are missing and only the reporter can provide them, ask for exactly the missing pieces. Set/clear the "needs info" label accordingly.
 - Regression: if the reported behavior worked before, identify the change that broke it -- ``git bisect`` in the checkout works (full history and every pull request head are available; build at each step). Name the culprit commit by hash and verify it, for example by re-testing the commit alledgedly breaking and the commit before it. Set/Clear the regression label accordingly, leave the label unchanged if you cannot determine if it is a regression.
 - Root cause: identify the root cause of the bug
-- Affected branches: check whether master and the active release branches are affected.
+- Affected branches: for bugs (not enhancements), check whether master and the active release branches are affected.
 - Fixes: if a fix or a pull request for this issue already exists, link it.
-- Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Set "needs info"/"needs sample" when only humans can unblock you and clear them once the information arrived. resolution/duplicate and resolution/invalid are definite verdicts; other resolution/* decisions belong to humans.
+- Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis of a bug (enhancements get no repro/*) you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Set "needs info"/"needs sample" when only humans can unblock you and clear them once the information arrived. resolution/duplicate, resolution/invalid and resolution/fixed (only with a verified fixing commit) are definite verdicts; other resolution/* decisions belong to humans.
 Do not present unverified suspicions as findings; state clearly what you verified and what you could not.
 
 """
@@ -514,7 +514,9 @@ Pick exactly one value for ``route``:
 - reply_no_verdict: a short direct reply is the most useful action
   (someone asked the current reviewer identity a concrete on-topic
   question, or a brief factual clarification unblocks the
-  discussion). Put the FULL reply in ``message``, following the
+  discussion). Prefer engage over this route while the issue carries
+  no repro/* label (it was never fully analyzed).
+  Put the FULL reply in ``message``, following the
   normal output guideline.
 
 - engage: a full issue-helper pass (duplicate search, reproduction,

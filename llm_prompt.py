@@ -245,6 +245,7 @@ Your message can serve both as a request to the pull request author to make a ch
 def tr_prompt_output_guideline(author: str = "pull request author", subject: str = "PR") -> str:
     return f"""##Output guideline
 - Refer to patches by their git hash, you can shorten them to 12 chars
+- Refer to issues and pull requests by their number (#N); never mention the internal export file names they were read from (like 012345.md).
 - Refer to specifications by their official title. NEVER link to a place that sells anything. Especially not to places that sell specifications.
 - If you need information, that is unavailable to you but that is likely available to the {author} then ask him/her in the message.
 - If you find an issue and the solution is clear, simple, complete, and aligned with the actual goal of the {subject}, provide it as a copy-pasteable code/comment snippet.
@@ -476,7 +477,7 @@ Make sure you add all needed details in your message so a subsequent session doe
 - Root cause: identify the root cause of the bug
 - Affected branches: for bugs (not enhancements), check whether master and the active release branches are affected.
 - Fixes: if a fix or a pull request for this issue already exists, link it.
-- Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis of a bug (enhancements get no repro/*) you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Issues concluded resolution/invalid or resolution/duplicate need no repro/*. Set "needs info"/"needs sample" when only humans can unblock you and clear them once the information arrived. resolution/duplicate, resolution/invalid and resolution/fixed (only with a verified fixing commit) are definite verdicts; other resolution/* decisions belong to humans.
+- Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis of a bug (enhancements get no repro/*) you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Issues concluded resolution/invalid or resolution/duplicate need no repro/*. Set "needs info"/"needs sample" whenever your message asks the reporter for something (information, a sample, a retest) -- their answer re-triggers analysis only if one of these labels is set -- and clear them once the information arrived. resolution/duplicate, resolution/invalid and resolution/fixed (only with a verified fixing commit) are definite verdicts; other resolution/* decisions belong to humans.
 Do not present unverified suspicions as findings; state clearly what you verified and what you could not.
 
 """
@@ -493,6 +494,7 @@ The issue's dispositions (duplicate, reproducibility, missing info, regression, 
 I_PROMPT_ISSUE_MESSAGE_RULES = """Message Rules:
 - message may be empty only for skip.
 - the message is in Markdown and will be posted to Forgejo
+- introduce the message as an investigation (after the LLM-... prefix), not as a triage or review.
 """
 
 I_PROMPT_ISSUE_TRIAGE_TASK = """##Triage task

@@ -474,19 +474,17 @@ Make sure you add all needed details in your message so a subsequent session doe
 - Root cause: identify the root cause of the bug
 - Affected branches: check whether master and the active release branches are affected.
 - Fixes: if a fix or a pull request for this issue already exists, link it.
+- Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Set "needs info"/"needs sample" when only humans can unblock you and clear them once the information arrived. resolution/duplicate and resolution/invalid are definite verdicts; other resolution/* decisions belong to humans.
 Do not present unverified suspicions as findings; state clearly what you verified and what you could not.
 
 """
 
-I_PROMPT_ISSUE_CLASSIFICATIONS = """Classify the issue into exactly one of these JSON classes after you have finished your analysis and read all comments:
-- valid: a real, actionable issue backed by reproduction or strong evidence, and not better described by regression_identified or duplicate.
-- regression_identified: a real issue that is a regression and you identified the causing change; name the commit in the message.
-- duplicate: this issue duplicates another that is better kept; name the kept issue in the message.
-- needs_info: analysis is blocked on information only the reporter can provide; ask for it in the message.
-- not_reproducible: you had everything needed but could not reproduce the problem; describe exactly what you tried.
-- invalid: not a valid issue (spam, trolling, a usage question answered by documentation, or not this project's bug).
-- reply_no_verdict: you have a helpful comment without a verdict on the issue's validity.
-- skip: you have no comment or want to make no comment, and give no verdict.
+
+I_PROMPT_ISSUE_CLASSIFICATIONS = """Classify your result into exactly one of these JSON classes after you have finished your work and read all comments:
+- reply: your message is worth posting on the issue.
+- skip: you have nothing worth posting (label changes are still applied).
+
+The issue's dispositions (duplicate, reproducibility, missing info, regression, ...) are NOT classifications: record them through the labels and explain them in the message.
 
 """
 

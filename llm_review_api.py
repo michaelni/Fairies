@@ -109,16 +109,13 @@ CLASSIFICATIONS = (
 ISSUE_CLASSIFICATIONS = ("moderate_issues", "major_issues")
 
 # Verdict vocabulary for the issue-helper task (the wrapper's
-# ``--task issue``): the subject is a bug report, not a PR, so there is
-# no approval -- verdicts describe the report itself.
+# ``--task issue``). Deliberately just the two process decisions the
+# orchestrator can act on: post the message, or post nothing. The
+# issue's actual dispositions (duplicate, needs info, repro outcome,
+# regression, ...) are forge labels carried in ``label_changes`` --
+# they are non-exclusive facts, not a single state.
 ISSUE_REPORT_CLASSIFICATIONS = (
-    "valid",
-    "regression_identified",
-    "duplicate",
-    "needs_info",
-    "not_reproducible",
-    "invalid",
-    "reply_no_verdict",
+    "reply",
     "skip",
 )
 
@@ -188,7 +185,7 @@ ISSUE_REPORT_SCHEMA = {
         "properties": {
             "classification": {
                 "type": "string",
-                "description": "Overall disposition of the issue report.",
+                "description": "reply posts the message; skip posts nothing.",
                 "enum": list(ISSUE_REPORT_CLASSIFICATIONS),
             },
             "message": {

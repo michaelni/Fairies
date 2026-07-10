@@ -61,27 +61,30 @@ class IssueReportSchemaTests(unittest.TestCase):
             )
             self.assertEqual(result["classification"], classification)
 
-    def test_rejects_pr_classification(self) -> None:
-        with self.assertRaises(llm_review_api.SchemaError):
-            llm_review_api.validate_issue_report(
-                {"classification": "approve", "message": "m"},
-            )
+    def test_rejects_pr_and_disposition_classifications(self) -> None:
+        # Dispositions are labels, not classifications; only the two
+        # process decisions (reply/skip) are valid verdicts.
+        for classification in ("approve", "duplicate", "needs_info"):
+            with self.assertRaises(llm_review_api.SchemaError):
+                llm_review_api.validate_issue_report(
+                    {"classification": classification, "message": "m"},
+                )
 
     def test_sanitizes_labels_against_allowlist(self) -> None:
         result = llm_review_api.validate_result_with_labels(
             {
-                "classification": "duplicate",
+                "classification": "reply",
                 "message": "m",
                 "label_changes": [
-                    {"label": "duplicate", "op": "add", "reason": "dup of #1", "post": True},
+                    {"label": "resolution/duplicate", "op": "add", "reason": "dup of #1", "post": True},
                     {"label": "secret", "op": "add", "reason": "", "post": False},
                 ],
             },
-            ["duplicate"],
+            ["resolution/duplicate"],
             llm_review_api.validate_issue_report,
         )
         self.assertEqual(
-            [c["label"] for c in result["label_changes"]], ["duplicate"],
+            [c["label"] for c in result["label_changes"]], ["resolution/duplicate"],
         )
 
 
@@ -200,7 +203,7 @@ class LLMPayloadTests(unittest.TestCase):
         self.assertIsInstance(p, issue_fairy.PreparedIssue)
         with mock.patch.object(
             issue_fairy, "invoke_llm_wrapper",
-            return_value=LLMReview("needs_info", "m"),
+            return_value=LLMReview("reply", "m"),
         ) as invoke:
             issue_fairy.run_llm_issue(args, p, None)
         payload = invoke.call_args.args[1]
@@ -216,17 +219,17 @@ class LLMPayloadTests(unittest.TestCase):
             frozenset(llm_review_api.ISSUE_REPORT_CLASSIFICATIONS),
         )
 
-    def test_non_skip_classification_becomes_comment(self) -> None:
+    def test_reply_classification_becomes_comment(self) -> None:
         args = make_args()
         p = prepare(args, real_issue(),
                     now=PrepareIssueGateTests.LAST_COMMENT + timedelta(days=2))
         with mock.patch.object(
             issue_fairy, "run_llm_issue",
-            return_value=LLMReview("duplicate", "dup of #1"),
+            return_value=LLMReview("reply", "dup of #1"),
         ):
             d = issue_fairy.evaluate_issue(args, p)
         self.assertEqual(d.action, "comment")
-        self.assertEqual(d.llm_classification, "duplicate")
+        self.assertEqual(d.llm_classification, "reply")
         with mock.patch.object(
             issue_fairy, "run_llm_issue", return_value=LLMReview("skip", ""),
         ):

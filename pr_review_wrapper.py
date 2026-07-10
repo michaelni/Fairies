@@ -1372,7 +1372,9 @@ def main() -> int:
                         triage_result.get("reason", ""),
                     )
                     emit_review_stdout(
-                        "reply_no_verdict",
+                        # The issue verdict vocabulary has no verdict
+                        # dimension, so its reply class is plain "reply".
+                        "reply" if args.task == "issue" else "reply_no_verdict",
                         str(triage_result.get("message") or ""),
                         label_changes=triage_label_changes,
                     )

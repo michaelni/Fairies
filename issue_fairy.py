@@ -459,9 +459,8 @@ def run_llm_issue(
 
 
 def evaluate_issue(args: argparse.Namespace, prepared: PreparedIssue) -> Decision:
-    """LLM verdict -> Decision. Every non-skip classification posts the
-    message as an issue comment; there is no approve/request-changes
-    dimension for issues."""
+    """LLM verdict -> Decision: ``reply`` posts the message as an issue
+    comment, ``skip`` posts nothing; label changes apply either way."""
     try:
         review = call_llm_with_retries(
             args,
@@ -475,7 +474,7 @@ def evaluate_issue(args: argparse.Namespace, prepared: PreparedIssue) -> Decisio
             f"LLM analysis failed after {max_attempts} attempt(s): {exc}",
             prepared.last_activity, "error", "",
         )
-    action = "skip" if review.classification == "skip" else "comment"
+    action = "comment" if review.classification == "reply" else "skip"
     reason = (
         "LLM chose skip" if review.classification == "skip"
         else f"{prepared.base_reason}; LLM: {review.classification}"

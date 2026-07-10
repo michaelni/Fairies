@@ -212,8 +212,9 @@ class AnthropicReviewer(Reviewer):
         user_texts = self.role.user_texts(ctx)
         user_blocks: list[JsonObject] = [
             {"type": "text", "text": user_texts[0]},
-            {"type": "text", "text": ctx.patch_text},
         ]
+        if ctx.patch_text:  # empty for the issue-helper task (no patch)
+            user_blocks.append({"type": "text", "text": ctx.patch_text})
         if ctx.source_bundle is not None:
             user_blocks.append({"type": "text", "text": ctx.source_bundle})
         user_blocks.extend({"type": "text", "text": text} for text in user_texts[1:])

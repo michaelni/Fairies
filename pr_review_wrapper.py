@@ -44,14 +44,14 @@ Input JSON keys expected:
   - discussion: prior pull-request comments and reviews
   - reviewer_username: username the tool will post as
 
+With ``--task issue`` the request carries an ``issue`` object (number,
+title, body, author, html_url, labels, created_at) instead of
+``pull_request``, no patch, and ``discussion`` holds the issue comments.
+
 Output JSON keys:
-  - classification: one of
-      approve
-      minor_issues_approve
-      moderate_issues
-      major_issues
-      skip
-  - message: short review message, may be empty for approve
+  - classification: a CLASSIFICATIONS member (--task pr) or an
+    ISSUE_REPORT_CLASSIFICATIONS member (--task issue); see llm_review_api
+  - message: review/analysis message, may be empty for approve and skip
 
 The wrapper enriches the review with source code context from a local git
 checkout. It always includes touched files from pull_request.head_sha when a
@@ -99,6 +99,8 @@ import podman_host
 import podman_repos
 from llm_prompt import (
     COMBINER_ROLE,
+    ISSUE_COMBINER_ROLE,
+    ISSUE_HELPER_ROLE,
     REVIEWER_ROLE,
     load_project_facts,
     make_triager_role,
@@ -182,6 +184,17 @@ INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.MULTILINE)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Review a PR with one or more LLM reviewers.")
+    p.add_argument(
+        "--task",
+        choices=("pr", "issue"),
+        default="pr",
+        help=(
+            "What the stdin request describes: 'pr' (default) reviews a "
+            "pull request; 'issue' analyzes an issue (no patch, no source "
+            "bundle; the request carries an 'issue' object instead of "
+            "'pull_request')."
+        ),
+    )
     p.add_argument(
         "--model",
         required=True,
@@ -1082,6 +1095,7 @@ def main() -> int:
     if not isinstance(reviewer_username, str):
         reviewer_username = ""
 
+    logger.debug("task=%s", args.task)
     project_facts = load_project_facts(args.project_facts)
     logger.debug(
         "project facts loaded from %s (%d bytes)",
@@ -1181,7 +1195,7 @@ def main() -> int:
     source_bundle: str | None
     source_files: list[str]
     source_notes: list[str]
-    if args.no_source_bundle:
+    if args.no_source_bundle or args.task == "issue":
         source_bundle = None
         source_files = []
         source_notes = []
@@ -1197,18 +1211,23 @@ def main() -> int:
             verbose=args.verbose,
         )
 
-    patch_bundle, patch_was_truncated = build_patch_bundle(patch, args.max_patch_bytes)
+    if args.task == "issue":
+        patch_bundle, patch_was_truncated = "", False
+    else:
+        patch_bundle, patch_was_truncated = build_patch_bundle(patch, args.max_patch_bytes)
 
     uploaded_file_ids: list[str] = []
 
     try:
-        patch_file_id = upload_text_file(
-            client,
-            filename="pull_request.patch.txt",
-            text=patch_bundle,
-            verbose=args.verbose,
-        )
-        uploaded_file_ids.append(patch_file_id)
+        patch_file_id: str | None = None
+        if args.task == "pr":
+            patch_file_id = upload_text_file(
+                client,
+                filename="pull_request.patch.txt",
+                text=patch_bundle,
+                verbose=args.verbose,
+            )
+            uploaded_file_ids.append(patch_file_id)
 
         # Tools and include-spec are shared between the optional triage
         # pre-check and the main reviewer pass; the only per-stage
@@ -1271,6 +1290,7 @@ def main() -> int:
             triager_role = make_triager_role(
                 allowed_models=args.allowed_model,
                 allowed_labels=triage_label_allowlist,
+                task=args.task,
             )
             triage_ctx = ReviewContext(
                 request=request,
@@ -1396,8 +1416,12 @@ def main() -> int:
         # single reviewer.
         n_reviewers = len(requested_models) if requested_models else 1 + len(args.extra_model)
         reviewer_labels = [] if n_reviewers > 1 or args.combine_model else triage_label_allowlist
-        reviewer_role = role_with_labels(REVIEWER_ROLE, reviewer_labels)
-        combiner_role = role_with_labels(COMBINER_ROLE, triage_label_allowlist)
+        base_reviewer_role, base_combiner_role = (
+            (ISSUE_HELPER_ROLE, ISSUE_COMBINER_ROLE) if args.task == "issue"
+            else (REVIEWER_ROLE, COMBINER_ROLE)
+        )
+        reviewer_role = role_with_labels(base_reviewer_role, reviewer_labels)
+        combiner_role = role_with_labels(base_combiner_role, triage_label_allowlist)
 
         if requested_models:
             model_reviewers = [

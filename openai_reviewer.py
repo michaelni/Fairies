@@ -715,7 +715,8 @@ class OpenAIResources:
     client: OpenAI
     tools: list[JsonObject]
     include: list[str]
-    patch_file_id: str
+    # None when the run has no patch (the issue-helper task).
+    patch_file_id: str | None
     vector_store_ids: list[str]
     shared_container_id: str | None
     podman_shell_session: podman_host.ContainerShellSession | None
@@ -766,8 +767,9 @@ class OpenAIReviewer(Reviewer):
         user_texts = self.role.user_texts(ctx)
         content: list[InputContentItem] = [
             {"type": "input_text", "text": user_texts[0]},
-            {"type": "input_file", "file_id": res.patch_file_id},
         ]
+        if res.patch_file_id is not None:
+            content.append({"type": "input_file", "file_id": res.patch_file_id})
         content.extend({"type": "input_text", "text": text} for text in user_texts[1:])
         if ctx.source_bundle is not None:
             source_file_id = upload_text_file(

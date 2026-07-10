@@ -300,7 +300,9 @@ class PostLabelExplanationsTests(unittest.TestCase):
     def _run(self, decision: paa.Decision, current: set[str]) -> list[str]:
         args = argparse.Namespace(owner="o", repo="r")
         with mock.patch.object(paa, "post_issue_comment") as post:
-            paa.post_label_explanations(args, decision, current)
+            paa.post_label_explanations(
+                args, decision.pr_number, decision.label_changes, current,
+            )
         return [call.args[4] for call in post.call_args_list]
 
     def test_posts_on_real_add_transition(self) -> None:

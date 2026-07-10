@@ -1562,13 +1562,16 @@ def apply_triage_labels(
         list(label_names(decision.label_changes, "remove")),
         current,
     )
-    post_label_explanations(args, decision, current)
+    post_label_explanations(args, decision.pr_number, decision.label_changes, current)
 
 
 def post_label_explanations(
     args: argparse.Namespace,
-    decision: Decision,
+    number: int,
+    label_changes: tuple[LabelChange, ...],
     current_labels: set[str],
+    *,
+    kind: str = forge_gcli.KIND_PR,
 ) -> None:
     """Post the rationale for label changes the triager flagged ``post``.
 
@@ -1579,7 +1582,7 @@ def post_label_explanations(
     ``current_labels`` is the set captured before the apply above.
     """
     posted = [
-        c for c in decision.label_changes
+        c for c in label_changes
         if c.post and c.reason
         and ((c.op == "add" and c.label not in current_labels)
              or (c.op == "remove" and c.label in current_labels))
@@ -1590,12 +1593,12 @@ def post_label_explanations(
     lines = [f"- **{verb[c.op]} `{c.label}`**: {c.reason}" for c in posted]
     body = "Label changes:\n\n" + "\n".join(lines)
     logger.info(
-        "PR #%s: posting label rationale for %d change(s): %s",
-        decision.pr_number,
+        "%s #%s: posting label rationale for %d change(s): %s",
+        kind, number,
         len(posted),
         ", ".join(f"{c.op} {c.label}" for c in posted),
     )
-    post_issue_comment(args, args.owner, args.repo, decision.pr_number, body)
+    post_issue_comment(args, args.owner, args.repo, number, body, kind=kind)
 
 
 def apply_decision(

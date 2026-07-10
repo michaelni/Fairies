@@ -180,9 +180,13 @@ def main() -> int:
             uploaded_file_ids=uploaded_file_ids,
             debug_dir_specified=debug_dir_specified,
         )
+        combiner_role = llm_prompt.role_with_labels(
+            llm_prompt.COMBINER_ROLE,
+            list(request.get("triage_label_allowlist") or []),
+        )
         combiner = review_pipeline.make_reviewer(
             args.combine_model, args=args, resources=resources,
-            role=llm_prompt.COMBINER_ROLE, verbose=args.verbose,
+            role=combiner_role, verbose=args.verbose,
         )
         logger.info("replay combine stage: %s variant=%s merging %d drafts",
                     combiner.name, tool_args.variant, len(drafts))
@@ -190,6 +194,7 @@ def main() -> int:
         json.dump(
             {"variant": tool_args.variant,
              "classification": review.classification,
+             "label_changes": list(review.label_changes),
              "message": review.message},
             sys.stdout, ensure_ascii=False, indent=1,
         )

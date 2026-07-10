@@ -100,6 +100,34 @@ class RemoteProvisionTests(unittest.TestCase):
             [c.args for c in r.call_args_list],
         )
 
+    # Real failure observed 2026-07-10 with 3 parallel issue reviews:
+    # ``git init --bare`` on an existing mirror still takes the config
+    # lock, so the loser of the race fails rc=128.
+    _INIT_LOCK_STDERR = (
+        b"error: could not lock config file "
+        b"/home/fairy/fairy-mirrors/ffmpeg.git/config: File exists"
+    )
+
+    def test_ensure_remote_mirror_retries_config_lock_race(self) -> None:
+        host = lc.RemoteHost("fairy@h")
+        with mock.patch.object(lr, "run_on_remote_host", side_effect=[
+            _completed(0),  # mkdir
+            _completed(128, stderr=self._INIT_LOCK_STDERR),
+            _completed(0),
+        ]) as r, mock.patch.object(lr.time, "sleep") as slept:
+            lr.ensure_remote_mirror(host, "fairy-mirrors/ffmpeg.git")
+        self.assertEqual(3, r.call_count)
+        self.assertTrue(0.0 < slept.call_args.args[0] <= 3.0)
+
+    def test_ensure_remote_mirror_raises_after_max_attempts(self) -> None:
+        host = lc.RemoteHost("fairy@h")
+        with mock.patch.object(lr, "run_on_remote_host", side_effect=[
+            _completed(0),
+            *[_completed(128, stderr=self._INIT_LOCK_STDERR)] * 3,
+        ]), mock.patch.object(lr.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "could not lock config file"):
+                lr.ensure_remote_mirror(host, "fairy-mirrors/ffmpeg.git")
+
     def test_sync_pushes_head_ref_and_all_refs_with_ssh_command(self) -> None:
         host = lc.RemoteHost("fairy@h", identity="/k/id")
         with mock.patch.object(lr, "git_push_refspecs") as push:

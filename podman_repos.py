@@ -156,20 +156,33 @@ def provision_repos_into_container(
 
 
 def ensure_remote_mirror(
-    host: RemoteHost, mirror_path: str, *, timeout_s: float = 120.0,
+    host: RemoteHost, mirror_path: str, *, timeout_s: float = 120.0, attempts: int = 3,
 ) -> None:
     """Idempotently create the bare mirror ``mirror_path`` on ``host``.
 
     ``git init --bare`` is a no-op on an existing repo, so this is safe
     to call before every push. Provisioning seeds mirrors up front; this
     keeps per-review provisioning self-sufficient if it was not.
+    Even a reinit takes the config lock, so concurrent reviews racing on
+    the same mirror can fail with "could not lock config file"; retry
+    with a short random delay like ``sync_repo_to_mirror`` does.
     """
     parent = mirror_path.rsplit("/", 1)[0] if "/" in mirror_path else "."
     _check_remote(run_on_remote_host(host, "mkdir", "-p", parent, timeout_s=timeout_s),
                   f"mkdir -p {parent}", host)
-    _check_remote(run_on_remote_host(host, "git", "init", "--bare", "--quiet", mirror_path,
-                                     timeout_s=timeout_s),
-                  f"git init --bare {mirror_path}", host)
+    for attempt in range(1, attempts + 1):
+        result = run_on_remote_host(host, "git", "init", "--bare", "--quiet", mirror_path,
+                                    timeout_s=timeout_s)
+        if result.returncode == 0 or attempt == attempts:
+            _check_remote(result, f"git init --bare {mirror_path}", host)
+            return
+        delay = random.uniform(0.5, 3.0)
+        logger.info(
+            "mirror init failed (attempt %d/%d) path=%s: %s; retrying in %.1fs",
+            attempt, attempts, mirror_path,
+            result.stderr.decode(errors="replace").strip().replace("\n", " "), delay,
+        )
+        time.sleep(delay)
 
 
 def sync_repo_to_mirror(

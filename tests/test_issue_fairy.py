@@ -1,4 +1,4 @@
-"""Tests for the issue-helper path: verdict schema, issue-vs-PR discovery
+"""Tests for the issue-investigator path: verdict schema, issue-vs-PR discovery
 filtering, prepare_issue gates, the LLM payload, and issue-label gcli
 command construction. Fixtures under fixtures/issue_fairy/ are real
 captures from code.ffmpeg.org (FFmpeg/FFmpeg, July 2026)."""

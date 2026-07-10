@@ -100,7 +100,7 @@ import podman_repos
 from llm_prompt import (
     COMBINER_ROLE,
     ISSUE_COMBINER_ROLE,
-    ISSUE_HELPER_ROLE,
+    ISSUE_INVESTIGATOR_ROLE,
     REVIEWER_ROLE,
     load_project_facts,
     make_triager_role,
@@ -1419,7 +1419,7 @@ def main() -> int:
         n_reviewers = len(requested_models) if requested_models else 1 + len(args.extra_model)
         reviewer_labels = [] if n_reviewers > 1 or args.combine_model else triage_label_allowlist
         base_reviewer_role, base_combiner_role = (
-            (ISSUE_HELPER_ROLE, ISSUE_COMBINER_ROLE) if args.task == "issue"
+            (ISSUE_INVESTIGATOR_ROLE, ISSUE_COMBINER_ROLE) if args.task == "issue"
             else (REVIEWER_ROLE, COMBINER_ROLE)
         )
         reviewer_role = role_with_labels(base_reviewer_role, reviewer_labels)

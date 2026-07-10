@@ -28,7 +28,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Issue-helper orchestrator: run the LLM wrapper (``--task issue``) on open
+Issue-investigator orchestrator: run the LLM wrapper (``--task issue``) on open
 issues and apply its verdict (comment + label changes) via gcli.
 
 What belongs here: issue discovery, gating, the issue LLM payload, and

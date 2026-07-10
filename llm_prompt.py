@@ -77,12 +77,14 @@ def model_label(model: str) -> str:
 def tr_prompt_general_rules(model: str, combiner: bool = False, subject: str = "PR") -> str:
     # The combiner grades and merges draft reviews: it gets no bullets that
     # send it hunting for issues or picking a route itself.
+    persona = "investigator" if subject == "issue" else "reviewer"
+    contribution = "analysis" if subject == "issue" else "review"
     return f"""##General Rules
 - if something looks odd, but you cannot determine if its wrong, you can ask the {subject} author if its intended.
-{"- determine whether the most useful contribution is: review, helpful reply, process clarification, or no action.\n" * (not combiner)}\
+{f"- determine whether the most useful contribution is: {contribution}, helpful reply, process clarification, or no action.\n" * (not combiner)}\
 - Do not invent issues.
 - Cite exactly the references relevant to your reply.
-- You can reply to questions asked to the current reviewer identity when they are on topic or help the FFmpeg Project.
+- You can reply to questions asked to the current {persona} identity when they are on topic or help the FFmpeg Project.
 - Do not reply to off topic questions or requests
 - Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM-{model_label(model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
 {"- workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.\n" * (subject == "PR")}\
@@ -90,8 +92,8 @@ def tr_prompt_general_rules(model: str, combiner: bool = False, subject: str = "
 """
 
 
-def _prompt_reviewer_identity(reviewer_username: str) -> str:
-    return f"Current reviewer username: {reviewer_username or '(unknown)'}\n\n"
+def _prompt_reviewer_identity(reviewer_username: str, role: str = "reviewer") -> str:
+    return f"Current {role} username: {reviewer_username or '(unknown)'}\n\n"
 
 
 # Shared by the reviewer and combiner prompts: both write posted review
@@ -195,7 +197,7 @@ all other git commands work similarly as expected without a checkout.
 the HEAD revisions of all the files from all repositories are also available from a vector store
 '''  if container_repo_mounts and not podman_shell_enabled else ""}\
 Prior {subject} discussion is provided separately when available. Use it to avoid repeating already-known and understood issues.
-And avoid posting the same point again if it was already raised by the current reviewer identity.
+And avoid posting the same point again if it was already raised by the current {"investigator" if subject == "issue" else "reviewer"} identity.
 
 """
     )
@@ -240,12 +242,12 @@ Your message can serve both as a request to the pull request author to make a ch
 """
 
 
-def tr_prompt_output_guideline(author: str = "pull request author") -> str:
+def tr_prompt_output_guideline(author: str = "pull request author", subject: str = "PR") -> str:
     return f"""##Output guideline
 - Refer to patches by their git hash, you can shorten them to 12 chars
 - Refer to specifications by their official title. NEVER link to a place that sells anything. Especially not to places that sell specifications.
 - If you need information, that is unavailable to you but that is likely available to the {author} then ask him/her in the message.
-- If you find an issue and the solution is clear, simple, complete, and aligned with the actual goal of the PR, provide it as a copy-pasteable code/comment snippet.
+- If you find an issue and the solution is clear, simple, complete, and aligned with the actual goal of the {subject}, provide it as a copy-pasteable code/comment snippet.
 - If you suggest a solution, review it as well and document any issues it has.
 
 """
@@ -461,7 +463,7 @@ If contexts_still_requiring_announcement is empty, choose skip
 (this state should be rare— the caller normally filters it out).
 """
 
-I_PROMPT_ISSUE_HELPER_ROLE = """##In your Issue helper role
+I_PROMPT_ISSUE_INVESTIGATOR_ROLE = """##In your Issue investigator role
 You are analyzing a reported issue (usually a bug report). Work through these goals, collecting evidence with the available tools.
 If the issue history shows that you already done so and already provided the results and you belive this past work is still valid
 then do NOT redo it but use the past results. If you cannot use the past results or have doubt in their validity then redo.
@@ -495,7 +497,7 @@ I_PROMPT_ISSUE_MESSAGE_RULES = """Message Rules:
 
 I_PROMPT_ISSUE_TRIAGE_TASK = """##Triage task
 You are NOT analyzing the issue yet. Your job is to triage this issue
-and decide which route the issue helper should take next.
+and decide which route the issue investigator should take next.
 
 The goal of every pass is to move the issue toward a verified, labeled
 state: reproduced or not (repro/*), duplicate, regression bisected,
@@ -503,13 +505,13 @@ fixed, invalid. Discussion alone does not resolve an issue, no matter
 how settled it looks; only labels do. An issue carrying no repro/*
 label has never been analyzed: prefer engage for it.
 
-Weigh what has happened AFTER the current reviewer identity's most
-recent comment in the prior discussion. If the reviewer has never
+Weigh what has happened AFTER the current investigator identity's most
+recent comment in the prior discussion. If the investigator has never
 posted on this issue, treat the whole history as new.
 
 Pick exactly one value for ``route``:
 
-- skip: the issue helper should NOT post anything now. Typical cases:
+- skip: the issue investigator should NOT post anything now. Typical cases:
   * Nothing has materially changed since our last comment (we asked
     the reporter for information and no answer has arrived; the
     newest activity is a label change or a side conversation).
@@ -517,14 +519,14 @@ Pick exactly one value for ``route``:
     add noise.
 
 - reply_no_verdict: a short direct reply is the most useful action
-  (someone asked the current reviewer identity a concrete on-topic
+  (someone asked the current investigator identity a concrete on-topic
   question, or a brief factual clarification unblocks the
   discussion). Prefer engage over this route while the issue carries
   no repro/* label (it was never fully analyzed).
   Put the FULL reply in ``message``, following the
   normal output guideline.
 
-- engage: a issue-helper pass (potentially with duplicate search, reproduction,
+- engage: an investigation pass (potentially with duplicate search, reproduction,
   bisect, debugging and finding the root cause) should run now. Typical cases:
   * We have never analyzed this issue.
   * The reporter has provided the information we previously asked for.
@@ -532,7 +534,7 @@ Pick exactly one value for ``route``:
 
 """ + t_prompt_injection(subject="issue") + """
 Critical rules:
-- Do NOT duplicate a point the current reviewer identity already made.
+- Do NOT duplicate a point the current investigator identity already made.
 - Do NOT write the full analysis in ``message``. ``message`` is ONLY
   used when ``route`` is ``reply_no_verdict``; it MUST be the empty
   string for ``skip`` and ``engage``.
@@ -567,7 +569,7 @@ def t_prompt_user_request(allowed_models: list[str]) -> str:
 # tagged as "needs docs").
 TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
     "important": "should be set for crash, security, ... fixes, and also major features that a lot of users would want or benefit from. It should not be set for just source level UB like integer overflows in dsp code, timeouts or OOM.",
-    "enhancement": "should be set for PRs that primarily add a feature",
+    "enhancement": "should be set for PRs/issues that primarily add or request a feature",
     "fix/bug": "should be set for PRs that primarily fix a bug",
     "fix/regression": "should be set for PRs that fix a regression",
     "invalid": "should be set for PRs/issues that arent valid PRs/issues, like jokes, trolls, spam",
@@ -607,7 +609,7 @@ def t_prompt_triage_labels(allowed_labels: list[str]) -> str:
         "(one concrete sentence justifying the change; if you cannot justify it, omit the change), and ``post``. "
         "When in doubt about a label, neither add nor remove it. The list may be empty.\n"
         "Set ``post`` to true only when the reason is needed for a reader to understand why the label is there and "
-        "should be posted to the PR as a comment; set it to false when the reason only serves logs.\n"
+        "should be posted as a comment; set it to false when the reason only serves logs.\n"
         + definitions
     )
 
@@ -801,10 +803,10 @@ def make_issue_developer_prompt(
     allowed_labels: list[str] | None = None,
 ) -> str:
     return (
-        "You are an expert software engineer analyzing a reported issue.\n\n"
+        "You are an expert software engineer investigating a reported issue.\n\n"
         + tr_prompt_general_rules(model, subject="issue")
-        + _prompt_reviewer_identity(reviewer_username)
-        + I_PROMPT_ISSUE_HELPER_ROLE
+        + _prompt_reviewer_identity(reviewer_username, role="investigator")
+        + I_PROMPT_ISSUE_INVESTIGATOR_ROLE
         + _prompt_attached_context_and_tools(
             model=model,
             source_bundle_attached=False,
@@ -817,7 +819,7 @@ def make_issue_developer_prompt(
             subject="issue",
         )
         + project_facts
-        + tr_prompt_output_guideline("issue reporter")
+        + tr_prompt_output_guideline("issue reporter", subject="issue")
         + I_PROMPT_ISSUE_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
         + tr_prompt_persistence_and_verification(subject="issue")
@@ -841,7 +843,7 @@ def make_issue_combiner_developer_prompt(
     return (
         "You are an expert software engineer combining independent draft analyses of a reported issue into one final analysis.\n\n"
         + tr_prompt_general_rules(model, combiner=True, subject="issue")
-        + _prompt_reviewer_identity(reviewer_username)
+        + _prompt_reviewer_identity(reviewer_username, role="investigator")
         + c_prompt_combiner_task(model, subject="issue")
         + _prompt_attached_context_and_tools(
             model=model,
@@ -855,7 +857,7 @@ def make_issue_combiner_developer_prompt(
             subject="issue",
         )
         + project_facts
-        + tr_prompt_output_guideline("issue reporter")
+        + tr_prompt_output_guideline("issue reporter", subject="issue")
         + I_PROMPT_ISSUE_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
         + tr_prompt_persistence_and_verification(combiner=True, subject="issue")
@@ -880,7 +882,7 @@ def make_issue_triage_developer_prompt(
     return (
         "You are an expert software engineer triaging a reported issue.\n\n"
         + tr_prompt_general_rules(model, subject="issue")
-        + _prompt_reviewer_identity(reviewer_username)
+        + _prompt_reviewer_identity(reviewer_username, role="investigator")
         + _prompt_attached_context_and_tools(
             model=model,
             source_bundle_attached=False,
@@ -893,7 +895,7 @@ def make_issue_triage_developer_prompt(
             subject="issue",
         )
         + project_facts
-        + tr_prompt_output_guideline("issue reporter")
+        + tr_prompt_output_guideline("issue reporter", subject="issue")
         + I_PROMPT_ISSUE_TRIAGE_TASK
         + t_prompt_user_request(allowed_models or [])
         + t_prompt_triage_labels(allowed_labels or [])
@@ -1182,9 +1184,9 @@ def generate_llm_prompt(
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,
         )
-    if role in ("issue_helper", "issue_combiner"):
+    if role in ("issue_investigator", "issue_combiner"):
         maker = (
-            make_issue_developer_prompt if role == "issue_helper"
+            make_issue_developer_prompt if role == "issue_investigator"
             else make_issue_combiner_developer_prompt
         )
         return maker(
@@ -1239,8 +1241,8 @@ COMBINER_ROLE = RoleSpec(
     validate=validate_review,
 )
 
-ISSUE_HELPER_ROLE = RoleSpec(
-    name="issue_helper",
+ISSUE_INVESTIGATOR_ROLE = RoleSpec(
+    name="issue_investigator",
     schema=ISSUE_REPORT_SCHEMA,
     user_texts=lambda ctx: [make_issue_user_text(ctx.request)],
     validate=validate_issue_report,
@@ -1258,7 +1260,7 @@ ISSUE_COMBINER_ROLE = RoleSpec(
 
 
 def role_with_labels(role: RoleSpec, allowed_labels: list[str]) -> RoleSpec:
-    """A verdict role (reviewer/combiner/issue_helper/issue_combiner) that
+    """A verdict role (reviewer/combiner/issue_investigator/issue_combiner) that
     additionally owns the labels: its schema and prompt gain
     ``label_changes`` constrained to ``allowed_labels``. With an empty
     allowlist the role is returned unchanged."""

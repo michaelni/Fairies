@@ -108,7 +108,7 @@ CLASSIFICATIONS = (
 # Classifications that mean "this reviewer found something worth raising".
 ISSUE_CLASSIFICATIONS = ("moderate_issues", "major_issues")
 
-# Verdict vocabulary for the issue-helper task (the wrapper's
+# Verdict vocabulary for the issue-investigator task (the wrapper's
 # ``--task issue``). Deliberately just the two process decisions the
 # orchestrator can act on: post the message, or post nothing. The
 # issue's actual dispositions (duplicate, needs info, repro outcome,
@@ -348,7 +348,7 @@ def validate_review_result(
 
 
 def validate_issue_report(obj: object) -> dict[str, object]:
-    """Check an issue-helper verdict against ``ISSUE_REPORT_SCHEMA``."""
+    """Check an issue-investigator verdict against ``ISSUE_REPORT_SCHEMA``."""
     check_schema(obj, ISSUE_REPORT_SCHEMA["schema"])
     assert isinstance(obj, dict)  # narrowed by check_schema
     return {

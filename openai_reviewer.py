@@ -715,7 +715,7 @@ class OpenAIResources:
     client: OpenAI
     tools: list[JsonObject]
     include: list[str]
-    # None when the run has no patch (the issue-helper task).
+    # None when the run has no patch (the issue-investigator task).
     patch_file_id: str | None
     vector_store_ids: list[str]
     shared_container_id: str | None

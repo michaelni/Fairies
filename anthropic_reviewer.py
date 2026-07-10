@@ -213,7 +213,7 @@ class AnthropicReviewer(Reviewer):
         user_blocks: list[JsonObject] = [
             {"type": "text", "text": user_texts[0]},
         ]
-        if ctx.patch_text:  # empty for the issue-helper task (no patch)
+        if ctx.patch_text:  # empty for the issue-investigator task (no patch)
             user_blocks.append({"type": "text", "text": ctx.patch_text})
         if ctx.source_bundle is not None:
             user_blocks.append({"type": "text", "text": ctx.source_bundle})

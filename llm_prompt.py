@@ -497,6 +497,8 @@ I_PROMPT_ISSUE_TRIAGE_TASK = """##Triage task
 You are NOT analyzing the issue yet. Your job is to triage this issue
 and decide which route the issue helper should take next.
 
+Workarounds are not a desired final outcome.
+
 Weigh what has happened AFTER the current reviewer identity's most
 recent comment in the prior discussion. If the reviewer has never
 posted on this issue, treat the whole history as new.
@@ -507,9 +509,8 @@ Pick exactly one value for ``route``:
   * Nothing has materially changed since our last comment (we asked
     the reporter for information and no answer has arrived; the
     newest activity is a label change or a side conversation).
-  * Humans are actively working on the issue and a bot post would
+  * Human developers are actively debugging the issue and a bot post would
     add noise.
-  * A fix is already linked and in review or merged.
 
 - reply_no_verdict: a short direct reply is the most useful action
   (someone asked the current reviewer identity a concrete on-topic
@@ -519,8 +520,8 @@ Pick exactly one value for ``route``:
   Put the FULL reply in ``message``, following the
   normal output guideline.
 
-- engage: a full issue-helper pass (duplicate search, reproduction,
-  bisect, root cause) should run now. Typical cases:
+- engage: a issue-helper pass (potentially with duplicate search, reproduction,
+  bisect, debugging and finding the root cause) should run now. Typical cases:
   * We have never analyzed this issue.
   * The reporter has provided the information we previously asked for.
   * New material information arrived that changes the analysis.

@@ -374,6 +374,10 @@ Pick exactly one value for ``route``:
   * After our last reply, the author has addressed the prior points
     and is explicitly or implicitly asking for a new review.
   * We have never reviewed this PR
+  * Someone disputes the correctness of our prior review. Either side
+    may be the wrong one; a fresh review that addresses the complaint
+    settles it, and the complaint deserves an answer even when our
+    review was right.
   * If a review seems expected from someone since over a week but
     no one else did a review.
   Leave ``message`` empty for engage; the full reviewer pass will
@@ -391,7 +395,8 @@ state what you saw in ``reason``. Otherwise set it to false.
 Critical rules:
 - Do NOT duplicate a point the current reviewer identity already made.
   If the only new content after our last reply is more of the same
-  discussion, prefer ``skip``.
+  discussion, prefer ``skip``. A dispute of our prior review is not
+  "more of the same": it routes to ``engage``.
 - Do NOT write a full review in ``message``. ``message`` is ONLY used
   when ``route`` is ``reply_no_verdict``.
 - If ``route`` is ``skip`` or ``engage``, ``message`` MUST be the empty

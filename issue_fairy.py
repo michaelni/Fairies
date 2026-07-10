@@ -670,11 +670,10 @@ def main() -> int:
             )
             if d.llm_message:
                 logger.info(f"    LLM: {d.llm_message}")
-            if decision_has_label_changes(d):
+            for c in d.label_changes:
                 logger.info(
-                    "    labels: add=%r remove=%r",
-                    list(label_names(d.label_changes, "add")),
-                    list(label_names(d.label_changes, "remove")),
+                    "    label %s %s%s: %s",
+                    c.op, c.label, " (post)" if c.post else "", c.reason or "-",
                 )
 
             if d.action in ACTIONABLE_DECISIONS or decision_has_label_changes(d):

@@ -250,9 +250,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cache",
         type=Path,
-        default=default_cache_path("issue_data_cache.pkl"),
-        help="Pickle cache path holding per-issue gcli data "
-             "(default: ~/.fairy/issue_data_cache.pkl).",
+        default=default_cache_path("pr_data_cache.pkl"),
+        help="Pickle cache path holding per-issue gcli data, shared with "
+             "fairy.py and forgejo_export.py so issues fetched by one are "
+             "reused by the others (default: ~/.fairy/pr_data_cache.pkl). "
+             "Saves are whole-file last-writer-wins: a concurrent run can "
+             "discard the other's fresh entries (refetched later), never "
+             "corrupt them.",
     )
     p.add_argument(
         "--fairy-state-cache",

@@ -151,13 +151,38 @@ class PrepareIssueGateTests(unittest.TestCase):
             sum(1 for item in p.discussion if item["kind"] == "comment"), 8,
         )
 
-    def test_no_activity_since_own_reply_skips(self) -> None:
-        # When the newest comment is fairy's own, there is nothing to
-        # react to no matter how stale the issue is.
+    def test_unanalyzed_bug_reruns_despite_own_last_reply(self) -> None:
+        # Fairy's own comment is the newest, but the issue carries no
+        # repro/* (the investigator never finished): after the full
+        # min-age it is re-analyzed rather than parked forever.
+        comments = load_fixture("ffmpeg_issue_23738_comments.json")
+        comments[-1]["user"]["login"] = "fairy"
+        p = prepare(
+            make_args(), real_issue(),
+            now=self.LAST_COMMENT + timedelta(days=30), comments=comments,
+        )
+        self.assertIsInstance(p, issue_fairy.PreparedIssue)
+
+    def test_own_last_reply_waits_full_min_age(self) -> None:
+        # Without a human response after fairy's reply, the 6h engaged
+        # threshold does not apply; the unanalyzed bug waits the full
+        # --min-age-days before a retry.
         comments = load_fixture("ffmpeg_issue_23738_comments.json")
         comments[-1]["user"]["login"] = "fairy"
         d = prepare(
-            make_args(), real_issue(),
+            make_args(min_age_days=14.0), real_issue(),
+            now=self.LAST_COMMENT + timedelta(days=2), comments=comments,
+        )
+        self.assertIsInstance(d, Decision)
+        self.assertEqual(d.reason, "activity is newer than threshold")
+
+    def test_enhancement_parks_on_own_last_reply(self) -> None:
+        # Enhancements never get repro/*, so fairy's reply is their
+        # analyzed marker: no non-bot activity -> keep waiting.
+        comments = load_fixture("ffmpeg_issue_23738_comments.json")
+        comments[-1]["user"]["login"] = "fairy"
+        d = prepare(
+            make_args(), with_labels(real_issue(), "enhancement"),
             now=self.LAST_COMMENT + timedelta(days=30), comments=comments,
         )
         self.assertIsInstance(d, Decision)

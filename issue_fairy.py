@@ -404,9 +404,8 @@ def prepare_issue(
         resolutions = sorted(l for l in issue_labels if l.startswith("resolution/"))
         if resolutions:
             return skip(f"resolved: {resolutions[0]}", last_activity)
-        if "needs info" not in issue_labels and any(
-            l.startswith("repro/") for l in issue_labels
-        ):
+        has_repro = any(l.startswith("repro/") for l in issue_labels)
+        if "needs info" not in issue_labels and has_repro:
             # A repro/* label marks a completed full pass (duplicate,
             # regression and root-cause checks included). Removing it or
             # mentioning the bot re-triggers analysis. When "needs info"
@@ -417,15 +416,26 @@ def prepare_issue(
             issue, [], comments, [],
             predicate=lambda item: get_item_author_login(item) != self_login,
         )
-        if self_last is not None and (last_nonself is None or last_nonself <= self_last):
+        # A bug without repro/* still owes the investigator a full pass,
+        # so fairy's own last word does not park it (min-age and the
+        # skip-backoff below pace the retries). It does park enhancements
+        # (which never get repro/*) and analyzed issues waiting on
+        # "needs info".
+        awaiting_analysis = not has_repro and "enhancement" not in issue_labels
+        if (
+            not awaiting_analysis
+            and self_last is not None
+            and (last_nonself is None or last_nonself <= self_last)
+        ):
             return skip("no non-bot activity since fairy's last reply", last_activity)
         if last_activity is None:
             return skip("cannot determine activity timestamp", None)
         # Once fairy has engaged on the issue, a human response only
         # needs to settle briefly (same constant as re-reviewed PRs);
-        # fresh issues wait the full --min-age-days.
+        # fresh issues, and retries where no human responded, wait the
+        # full --min-age-days.
         min_age_days = float(args.min_age_days)
-        if self_last is not None:
+        if self_last is not None and last_nonself is not None and last_nonself > self_last:
             min_age_days = min(min_age_days, fairy.REVIEWED_PR_MIN_AGE_DAYS)
         if last_activity > now - timedelta(days=min_age_days):
             return skip("activity is newer than threshold", last_activity)

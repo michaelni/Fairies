@@ -135,7 +135,7 @@ class AnthropicReviewer(Reviewer):
     ``base_url`` + ``api_key_env`` select the backend: defaults reach
     Anthropic; pass z.ai's Anthropic endpoint + ``ZAI_API_KEY`` for GLM.
     ``name`` is the stable label recorded on the ``Review`` (e.g.
-    ``"anthropic:claude-opus-4"`` or ``"zai:glm-4.6"``).
+    ``"anthropic:claude-opus-4"`` or ``"zai:glm-5.2"``).
 
     ``effort`` is an ``ANTHROPIC_EFFORTS`` name controlling extended
     thinking; ``None`` (default) sends no ``thinking`` parameter so the

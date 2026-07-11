@@ -208,7 +208,7 @@ def parse_args() -> argparse.Namespace:
         metavar="PROVIDER:MODEL[@EFFORT]",
         help=(
             "Add another reviewer to the ensemble, e.g. 'anthropic:claude-opus-4' "
-            "or 'zai:glm-4.6'. Repeat for more. All reviewers (--model plus each "
+            "or 'zai:glm-5.2'. Repeat for more. All reviewers (--model plus each "
             "--extra-model) run on the same PR; with more than one "
             "you must pass --combine-model to merge their drafts. '@EFFORT' sets "
             "that reviewer's effort: an OpenAI reasoning effort, or off/low/"

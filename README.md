@@ -104,7 +104,7 @@ reviewers run concurrently. A local-GPU backend is TODO -- PRs very welcome.
         --triage-model openai:gpt-5.4-mini \
         --model openai:gpt-5.4 \
         --extra-model anthropic:claude-opus-4 \
-        --extra-model zai:glm-4.6 \
+        --extra-model zai:glm-5.2 \
         --combine-model openai:gpt-5.4
 
 ### Static data and vector stores

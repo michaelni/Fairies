@@ -11,7 +11,7 @@ git pull --rebase
 cd ..
 
 #--include-direct-includes --use-vector-store-search
-./fairy.py --owner FFmpeg --repo FFmpeg  --gcli-account ff --patch-repo ffmpeg --triage-label 'important,enhancement,fix/bug,fix/regression,invalid,API,API major,needs sample,needs docs,needs testing,duplicate' --llm-review-cmd './pr_review_wrapper.py --repo-root ffmpeg --model openai:gpt-5.4 --extra-repo-root all_ffmpeg --use-vector-store-search --reasoning-effort high --verbose --debug-response-dir openaidebug --use-web-search --max-tool-calls 100 ' --verbose 2 --min-age-days 56 $*
+./fairy.py --owner FFmpeg --repo FFmpeg  --gcli-account ff --patch-repo ffmpeg --triage-label 'important,enhancement,fix/bug,fix/regression,resolution/invalid,API,API major,needs sample,needs docs,needs testing,resolution/duplicate' --llm-review-cmd './pr_review_wrapper.py --repo-root ffmpeg --model openai:gpt-5.4 --extra-repo-root all_ffmpeg --use-vector-store-search --reasoning-effort high --verbose --debug-response-dir openaidebug --use-web-search --max-tool-calls 100 ' --verbose 2 --min-age-days 56 $*
 
 #./fairy.py --owner FFmpeg --repo FFmpeg  --gcli-account ff --llm-review-cmd './pr_review_wrapper.py --repo-root ffmpeg --model openai:gpt-5.4 --extra-repo-root for_ffmpeg --extra-repo-root forgejo_git --extra-repo-root ffmpeg-web --extra-repo-root fateserver --use-vector-store-search --reasoning-effort high --verbose --debug-response-dir openaidebug --use-web-search' --verbose --min-age-days 56 $*
 

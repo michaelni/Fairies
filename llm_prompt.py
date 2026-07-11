@@ -470,7 +470,7 @@ If the issue history shows that you already done so and already provided the res
 then do NOT redo it but use the past results. If you cannot use the past results or have doubt in their validity then redo.
 Make sure you add all needed details in your message so a subsequent session does not need to redo the work.
 - Type: Identify the type of the issue bug / enhancement and set/clear the labels accordingly.
-- Duplicates: search the exported issues (forgejo_git issues, file_search) for reports of the same underlying problem. If this issue duplicates one that is better kept, name the kept issue, label this issue as duplicate.
+- Duplicates: search the exported issues (forgejo_git issues, file_search) for reports of the same underlying problem. If this issue duplicates one that is better kept, name the kept issue, set resolution/duplicate.
 - Reproduction: attempt to reproduce if the needed inputs are available, try to reproduce the issue in the shell environment (download linked samples with curl/wget; build the project as needed). State clearly whether you reproduced it and provide at least all details needed for reproduction that have not been clearly provided yet. If you failed to reproduce it, clearly state what you tried and the failure. If it does not reproduce on master HEAD, test at the revision current when the issue was opened; if it reproduced there, bisect for the fixing commit, and once verified set resolution/fixed and name the commit in the message.
 - Reproducibility: determine whether the report contains everything needed to reproduce it. When inputs are missing and only the reporter can provide them, ask for exactly the missing pieces. Set/clear the "needs info" label accordingly.
 - Regression: if the reported behavior worked before, identify the change that broke it -- ``git bisect`` in the checkout works (full history and every pull request head are available; build at each step). Name the culprit commit by hash and verify it, for example by re-testing the commit alledgedly breaking and the commit before it. A verified culprit commit means the regression label MUST be set; clear it if you verified it is not a regression; leave it unchanged if you cannot determine either.
@@ -574,13 +574,11 @@ TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
     "enhancement": "should be set for PRs/issues that primarily add or request a feature",
     "fix/bug": "should be set for PRs that primarily fix a bug",
     "fix/regression": "should be set for PRs that fix a regression",
-    "invalid": "should be set for PRs/issues that arent valid PRs/issues, like jokes, trolls, spam",
     "API": "Introduces new API that warrants a minor bump",
     "API major": "Changes the API in a major way, needing a major bump",
     "needs sample": "if a bug is about a specific file that has not been provided. Or if a feature is about a new codec/format for which we do not have a media sample file, and none was provided. Do not ask for security related samples, these cannot be publically shared",
     "needs docs": "should be set when the PR changes the Implementation in a way thats intended and introduces a mismatch between Implementation and documentation.",
     "needs testing": "should be set when the PR needs additional testing (FATE coverage, fuzzing, on-device runs) before it can be merged, this is unrelated to CI failures and unrelated to PRs that themselfs add testing",
-    "duplicate": "when the current PR or issue is a duplicate of another and the other is better to be kept than the current, then the current should be marked duplicate. List in your message which the better/kept one is",
     "bug": "the issue reports a malfunction of supported behavior (as opposed to requesting a feature)",
     "regression": "the reported behavior worked in an earlier revision and a change broke it",
     "repro/yes": "the issue was analyzed and reproduced",
@@ -588,8 +586,8 @@ TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
     "repro/no": "the issue was analyzed with everything needed provided, but it does not reproduce",
     "repro/no(env)": "the issue was analyzed but reproduction needs hardware or an environment the analyzing bot lacks",
     "needs info": "waiting on information that only the reporter can provide; cleared once it arrives",
-    "resolution/duplicate": "this issue duplicates another that is better kept; name the kept issue in the message",
-    "resolution/invalid": "the issue is not a valid report (user error, misunderstanding, joke, spam)",
+    "resolution/duplicate": "the PR or issue duplicates another that is better kept; name the kept one in the message",
+    "resolution/invalid": "the PR or issue is not valid (user error, misunderstanding, joke, spam)",
     "resolution/external": "the issue is fixed by a verified commit in an external project; name the commit in the message. Check which current major (still supported) OS distributions carry this fix and list this in the message. If significant distributions do not carry it, investigate whether a workaround in FFmpeg is possible and what workarounds are available to users who cannot upgrade the external component, and list these workarounds in the message",
     "resolution/fixed": "the issue is fixed by a verified commit in this project; name the commit in the message. A fix in an external dependency does not qualify: use resolution/external instead",
 }

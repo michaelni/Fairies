@@ -244,7 +244,7 @@ Your message can serve both as a request to the pull request author to make a ch
 
 def tr_prompt_output_guideline(author: str = "pull request author", subject: str = "PR") -> str:
     return f"""##Output guideline
-- Refer to patches by their git hash, you can shorten them to 12 chars
+- Refer to patches and commits by their bare git hash, which you can shorten to 12 characters; never put hashes in backticks because the forge does not make code-formatted hashes clickable.
 - Refer to issues and pull requests by their number (#N); never mention the internal export file names they were read from (like 012345.md).
 - Refer to specifications by their official title. NEVER link to a place that sells anything. Especially not to places that sell specifications.
 - If you need information, that is unavailable to you but that is likely available to the {author} then ask him/her in the message.

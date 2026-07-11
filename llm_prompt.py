@@ -481,6 +481,8 @@ Make sure you add all needed details in your message so a subsequent session doe
 - Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis of a bug (enhancements get no repro/*) you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack and cannot emulate/simulate). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Issues concluded resolution/invalid or resolution/duplicate need no repro/*. Set "needs info"/"needs sample" whenever your message asks the reporter for something (information, a sample, a retest) -- their answer re-triggers analysis only if one of these labels is set -- and clear them once the information arrived. resolution/duplicate, resolution/invalid, resolution/external and resolution/fixed (only with a verified fixing commit) are definite verdicts; other resolution/* decisions belong to humans.
 Do not present unverified suspicions as findings; state clearly what you verified and what you could not.
 
+When choosing between an enhancement that works around an external bug or a bug thats marked resolution/external, favor resolution/external, only treat an issue as a enhancement that works around an external bug when it is clearly and consistently framed that way by the reporter or when such a workaround would have a large positive effect on the FFmpeg community.
+
 """
 
 

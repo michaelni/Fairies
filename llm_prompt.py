@@ -473,7 +473,7 @@ Make sure you add all needed details in your message so a subsequent session doe
 - Duplicates: search the exported issues (forgejo_git issues, file_search) for reports of the same underlying problem. If this issue duplicates one that is better kept, name the kept issue, label this issue as duplicate.
 - Reproduction: attempt to reproduce if the needed inputs are available, try to reproduce the issue in the shell environment (download linked samples with curl/wget; build the project as needed). State clearly whether you reproduced it and provide at least all details needed for reproduction that have not been clearly provided yet. If you failed to reproduce it, clearly state what you tried and the failure. If it does not reproduce on master HEAD, test at the revision current when the issue was opened; if it reproduced there, bisect for the fixing commit, and once verified set resolution/fixed and name the commit in the message.
 - Reproducibility: determine whether the report contains everything needed to reproduce it. When inputs are missing and only the reporter can provide them, ask for exactly the missing pieces. Set/clear the "needs info" label accordingly.
-- Regression: if the reported behavior worked before, identify the change that broke it -- ``git bisect`` in the checkout works (full history and every pull request head are available; build at each step). Name the culprit commit by hash and verify it, for example by re-testing the commit alledgedly breaking and the commit before it. Set/Clear the regression label accordingly, leave the label unchanged if you cannot determine if it is a regression.
+- Regression: if the reported behavior worked before, identify the change that broke it -- ``git bisect`` in the checkout works (full history and every pull request head are available; build at each step). Name the culprit commit by hash and verify it, for example by re-testing the commit alledgedly breaking and the commit before it. A verified culprit commit means the regression label MUST be set; clear it if you verified it is not a regression; leave it unchanged if you cannot determine either.
 - Root cause: identify the root cause of the bug
 - Affected branches: for bugs (not enhancements), check whether master and the active release branches are affected.
 - Fixes: if a fix or a pull request for this issue already exists, link it.
@@ -590,7 +590,7 @@ TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
     "needs info": "waiting on information that only the reporter can provide; cleared once it arrives",
     "resolution/duplicate": "this issue duplicates another that is better kept; name the kept issue in the message",
     "resolution/invalid": "the issue is not a valid report (user error, misunderstanding, joke, spam)",
-    "resolution/fixed": "the issue is fixed by a verified commit; name the commit in the message",
+    "resolution/fixed": "the issue is fixed by a verified commit in this project; name the commit in the message. A fix in an external dependency does not qualify: say so in the message instead",
 }
 
 

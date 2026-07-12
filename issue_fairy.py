@@ -408,6 +408,11 @@ def prepare_issue(
         resolutions = sorted(l for l in issue_labels if l.startswith("resolution/"))
         if resolutions:
             return skip(f"resolved: {resolutions[0]}", last_activity)
+        if "enhancement" in issue_labels and "bug" not in issue_labels:
+            # Pure feature requests have nothing to reproduce or bisect;
+            # they only waste the investigator. A "bug" label alongside
+            # (mislabeled or hybrid report) keeps the issue eligible.
+            return skip("enhancement, not a bug", last_activity)
         has_repro = any(l.startswith("repro/") for l in issue_labels)
         if "needs info" not in issue_labels and has_repro:
             # A repro/* label marks a completed full pass (duplicate,
@@ -422,9 +427,9 @@ def prepare_issue(
         )
         # A bug without repro/* still owes the investigator a full pass,
         # so fairy's own last word does not park it (min-age and the
-        # skip-backoff below pace the retries). It does park enhancements
-        # (which never get repro/*) and analyzed issues waiting on
-        # "needs info".
+        # skip-backoff below pace the retries). It does park hybrid
+        # enhancement+bug issues (which never get repro/*) and analyzed
+        # issues waiting on "needs info".
         awaiting_analysis = not has_repro and "enhancement" not in issue_labels
         if (
             not awaiting_analysis

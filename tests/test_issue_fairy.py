@@ -176,13 +176,14 @@ class PrepareIssueGateTests(unittest.TestCase):
         self.assertIsInstance(d, Decision)
         self.assertEqual(d.reason, "activity is newer than threshold")
 
-    def test_enhancement_parks_on_own_last_reply(self) -> None:
-        # Enhancements never get repro/*, so fairy's reply is their
-        # analyzed marker: no non-bot activity -> keep waiting.
+    def test_enhancement_bug_hybrid_parks_on_own_last_reply(self) -> None:
+        # Hybrid enhancement+bug issues never get repro/*, so fairy's
+        # reply is their analyzed marker: no non-bot activity -> keep
+        # waiting.
         comments = load_fixture("ffmpeg_issue_23738_comments.json")
         comments[-1]["user"]["login"] = "fairy"
         d = prepare(
-            make_args(), with_labels(real_issue(), "enhancement"),
+            make_args(), with_labels(real_issue(), "enhancement", "bug"),
             now=self.LAST_COMMENT + timedelta(days=30), comments=comments,
         )
         self.assertIsInstance(d, Decision)
@@ -242,6 +243,28 @@ class LabelGateTests(unittest.TestCase):
                     now=self.STALE)
         self.assertIsInstance(d, Decision)
         self.assertEqual(d.reason, "already analyzed: repro/* set")
+
+    def test_enhancement_without_bug_skips(self) -> None:
+        d = prepare(make_args(), with_labels(real_issue(), "enhancement"),
+                    now=self.STALE)
+        self.assertIsInstance(d, Decision)
+        self.assertEqual(d.reason, "enhancement, not a bug")
+
+    def test_enhancement_with_bug_is_prepared(self) -> None:
+        p = prepare(make_args(), with_labels(real_issue(), "enhancement", "bug"),
+                    now=self.STALE)
+        self.assertIsInstance(p, issue_fairy.PreparedIssue)
+
+    def test_mention_overrides_enhancement_skip(self) -> None:
+        comments = load_fixture("ffmpeg_issue_23738_comments.json")
+        comments[-1]["body"] += "\n@fairy what do you think?"
+        p = prepare(
+            make_args(), with_labels(real_issue(), "enhancement"),
+            now=PrepareIssueGateTests.LAST_COMMENT + timedelta(hours=1),
+            comments=comments,
+        )
+        self.assertIsInstance(p, issue_fairy.PreparedIssue)
+        self.assertEqual(p.base_reason, "later discussion mentions fairy")
 
     def test_needs_info_waiting_skips(self) -> None:
         # Fairy asked for info (last comment is fairy's); nothing new

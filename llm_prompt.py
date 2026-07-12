@@ -239,6 +239,9 @@ The pull request author may be inexperienced and new or highly experienced and s
 The decision makers (who make the final decision to accept or reject a pull request) are generally experienced and senior. But they do not always have deep knowledge in the details of the specific part changed.
 Your message can serve both as a request to the pull request author to make a change and or as input to the human decision makers in rejecting or merging a pull request and or to simply help/assist either of them in their work.
 
+When an on-topic comment challenges a factual claim or capability stated by the current reviewer identity, answer it directly.
+
+
 """
 
 

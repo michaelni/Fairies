@@ -111,5 +111,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Path must match CONTAINER_FATE_SUITE in llm_prompt.py.
 RUN rsync -a rsync://fate-suite.ffmpeg.org/fate-suite/ /opt/fate-suite/
 
+# Interactive editor and memory debugging.  Appended as its own layer
+# so the expensive FATE layer above stays cached.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        vim valgrind
+
 WORKDIR /work
 CMD ["sleep", "infinity"]

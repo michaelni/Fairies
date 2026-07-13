@@ -455,6 +455,14 @@ def parse_args() -> argparse.Namespace:
              "podman_host.CONTAINER_CPUS over this flag.",
     )
     p.add_argument(
+        "--podman-gpu",
+        metavar="CDI_DEVICE",
+        default="",
+        help="CDI GPU device passed to podman run as --device "
+             "(e.g. nvidia.com/gpu=0). Empty (the default) exposes no GPU. "
+             "Needs nvidia-container-toolkit CDI configured on the podman host.",
+    )
+    p.add_argument(
         "--podman-max-tool-rounds",
         type=int,
         default=0,
@@ -979,6 +987,7 @@ def open_review_container_shell(
         network=args.podman_network,
         memory=args.podman_memory,
         cpus=args.podman_cpus,
+        extra_args=(f"--device={args.podman_gpu}",) if args.podman_gpu else (),
     )
     try:
         podman_repos.provision_repos_into_container(handle, repo_specs, remote_host)
@@ -1269,6 +1278,7 @@ def main() -> int:
             repo_roots=repo_roots,
             repo_mount_paths=repo_mount_paths,
             project_facts=project_facts,
+            gpu=bool(args.podman and args.podman_gpu),
             new_shell=new_shell if args.podman else None,
         )
         openai_resources = OpenAIResources(
@@ -1304,6 +1314,7 @@ def main() -> int:
                 repo_roots=repo_roots,
                 repo_mount_paths=repo_mount_paths,
                 project_facts=project_facts,
+                gpu=bool(args.podman and args.podman_gpu),
                 new_shell=new_shell if args.podman else None,
             )
             triager = make_reviewer(

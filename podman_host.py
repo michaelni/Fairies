@@ -497,8 +497,8 @@ def start_ephemeral_container(
         image, "sleep", "infinity",
     ]
     logger.info(
-        "starting ephemeral container image=%s network=%s memory=%s cpus=%s",
-        image, network or "(default)", memory, cpus,
+        "starting ephemeral container image=%s network=%s memory=%s cpus=%s extra_args=%s",
+        image, network or "(default)", memory, cpus, list(extra_args),
     )
     cp = _podman(host, *args, timeout_s=120.0)
     if cp.returncode != 0:

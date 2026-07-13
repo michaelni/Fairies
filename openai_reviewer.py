@@ -790,6 +790,8 @@ class OpenAIReviewer(Reviewer):
             reviewer_features.add("web_search")
         if args.podman:
             reviewer_features.add("podman_shell")
+            if ctx.gpu:
+                reviewer_features.add("gpu")
         else:
             reviewer_features.add("code_interpreter")
 

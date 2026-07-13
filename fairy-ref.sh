@@ -19,4 +19,4 @@ cd ..
 #./fairy.py --owner FFmpeg --repo FFmpeg  --gcli-account ff --verbose --min-age-days 56 $*
 
 # Ensemble: GPT + Opus + GLM review the same PR, GPT-5.4 verifies and combines (needs --podman-host for the per-reviewer shells, ANTHROPIC_API_KEY + ZAI_API_KEY in .env):
-#./fairy.py --owner FFmpeg --repo FFmpeg --gcli-account ff --patch-repo ffmpeg --podman-host fairy@HOST --llm-review-cmd './pr_review_wrapper.py --podman --repo-root ffmpeg --extra-repo-root all_ffmpeg --triage-model openai:gpt-5.4-mini --model openai:gpt-5.4 --extra-model anthropic:claude-opus-4 --extra-model zai:glm-5.2 --combine-model openai:gpt-5.4 --verbose' --verbose --min-age-days 56 $*
+#./fairy.py --owner FFmpeg --repo FFmpeg --gcli-account ff --patch-repo ffmpeg --podman-host fairy@HOST --llm-review-cmd './pr_review_wrapper.py --podman --podman-gpu nvidia.com/gpu=0 --repo-root ffmpeg --extra-repo-root all_ffmpeg --triage-model openai:gpt-5.4-mini --model openai:gpt-5.4 --extra-model anthropic:claude-opus-4 --extra-model zai:glm-5.2 --combine-model openai:gpt-5.4 --verbose' --verbose --min-age-days 56 $*

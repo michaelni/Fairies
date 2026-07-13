@@ -669,6 +669,9 @@ class ReviewContext:
     repo_roots: list[Path]
     repo_mount_paths: list[str]
     project_facts: str = ""
+    # True when the container shells expose a GPU (--podman-gpu), so the
+    # prompt can advertise it next to the CPU/memory limits.
+    gpu: bool = False
     new_shell: Callable[[], ContainerShellSession] | None = None
     drafts: list[Review] = field(default_factory=list)
 

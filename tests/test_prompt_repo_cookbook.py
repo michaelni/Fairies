@@ -15,10 +15,10 @@ if str(REPO_ROOT) not in sys.path:
 import llm_prompt  # noqa: E402
 
 
-def _prompt(repo_names: list[str]) -> str:
+def _prompt(repo_names: list[str], features: set[str] = {"podman_shell"}) -> str:
     return llm_prompt.generate_llm_prompt(
         role="reviewer", vendor="openai", model="m",
-        features={"podman_shell"},
+        features=features,
         repo_roots=[Path("/x") / name for name in repo_names],
         container_repo_mounts=[f"/work/{name}" for name in repo_names],
         reviewer_username="fairy",
@@ -37,6 +37,10 @@ class RepoCookbookTests(unittest.TestCase):
         self.assertIn("In the ffmpeg-web checkout every pull request's head", text)
         self.assertNotIn("FATE sample-suite snapshot", text)
         self.assertIn("aggregates project data as subtrees", text)
+
+    def test_gpu_feature_toggles_gpu_line(self) -> None:
+        self.assertNotIn("NVIDIA GPU", _prompt(["ffmpeg"]))
+        self.assertIn("NVIDIA GPU", _prompt(["ffmpeg"], {"podman_shell", "gpu"}))
 
     def test_foreign_deployment_makes_no_ffmpeg_claims(self) -> None:
         text = _prompt(["somerepo"])

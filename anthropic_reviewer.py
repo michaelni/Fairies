@@ -193,6 +193,8 @@ class AnthropicReviewer(Reviewer):
         use_shell = ctx.new_shell is not None
         if use_shell:
             features.add("podman_shell")
+            if ctx.gpu:
+                features.add("gpu")
 
         system = generate_llm_prompt(
             role=self.role.name,

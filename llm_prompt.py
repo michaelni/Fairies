@@ -153,6 +153,7 @@ def _prompt_attached_context_and_tools(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     subject: str = "pull request",
+    gpu_enabled: bool = False,
 ) -> str:
     attached_line = (
         "The commit(s) and metadata are attached"
@@ -182,7 +183,7 @@ Each repository is available under its path below as a normal checkout; ``rg``, 
 In the {mount_names[0]} checkout every pull request's head is a git revision fforge/pr/<number>. With TARGET being the branch the pull request targets (base_ref in the metadata, usually master), ``git log -p TARGET..fforge/pr/21000`` shows pull request 21000's commits and ``git diff $(git merge-base TARGET fforge/pr/21000) fforge/pr/21000`` its combined diff.
 {"The changes a pull request makes are its own commits: the diff from its merge base with the target branch to its head.\n" * model_needs_diff_tripwire(model)}\
 {f"A FATE sample-suite snapshot is at {CONTAINER_FATE_SUITE}; run fate tests with ``make fate-<name> SAMPLES={CONTAINER_FATE_SUITE}`` and refresh a stale sample with ``make fate-rsync SAMPLES={CONTAINER_FATE_SUITE}`` when needed." + chr(10) if "ffmpeg" in mount_names else ""}\
-You have {CONTAINER_CPUS} x86-64 CPU cores, {CONTAINER_MEMORY} memory and tens of GB of SSD-backed disk space at your disposal.
+You have {CONTAINER_CPUS} x86-64 CPU cores, {CONTAINER_MEMORY} memory{", an NVIDIA GPU (see nvidia-smi; the CUDA driver libraries are injected, NVENC/NVDEC headers are installed)" if gpu_enabled else ""} and tens of GB of SSD-backed disk space at your disposal.
 
 """ if podman_shell_enabled and container_repo_mounts else ("The **shell** function tool runs shell commands in an ephemeral Linux environment with internet access.\n\n" if podman_shell_enabled else "")}\
 {'''The container contains two bare git repos without checked out working trees rg will not work.
@@ -634,6 +635,7 @@ def make_developer_prompt(
     project_facts: str = "",
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
+    gpu_enabled: bool = False,
 ) -> str:
     return (
         "You are an expert software engineer reviewing a pull request.\n\n"
@@ -649,6 +651,7 @@ def make_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
+            gpu_enabled=gpu_enabled,
         )
         + (T_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
@@ -721,6 +724,7 @@ def make_combiner_developer_prompt(
     project_facts: str = "",
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
+    gpu_enabled: bool = False,
 ) -> str:
     # Assembled from the same sections as the reviewer prompt, but owned
     # here so combiner-only sections can be swapped or dropped without
@@ -740,6 +744,7 @@ def make_combiner_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
+            gpu_enabled=gpu_enabled,
         )
         + (T_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
@@ -767,6 +772,7 @@ def make_triage_developer_prompt(
     ci_triage_mode: bool = False,
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
+    gpu_enabled: bool = False,
 ) -> str:
     return (
         "You are an expert software engineer triaging a pull request.\n\n"
@@ -784,6 +790,7 @@ def make_triage_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
+            gpu_enabled=gpu_enabled,
         )
         + project_facts
         + TR_PROMPT_MINOR_ISSUE_POLICY
@@ -808,6 +815,7 @@ def make_issue_developer_prompt(
     model: str,
     project_facts: str = "",
     allowed_labels: list[str] | None = None,
+    gpu_enabled: bool = False,
 ) -> str:
     return (
         "You are an expert software engineer investigating a reported issue.\n\n"
@@ -824,6 +832,7 @@ def make_issue_developer_prompt(
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
             subject="issue",
+            gpu_enabled=gpu_enabled,
         )
         + project_facts
         + tr_prompt_output_guideline("issue reporter", subject="issue")
@@ -846,6 +855,7 @@ def make_issue_combiner_developer_prompt(
     model: str,
     project_facts: str = "",
     allowed_labels: list[str] | None = None,
+    gpu_enabled: bool = False,
 ) -> str:
     return (
         "You are an expert software engineer combining independent draft analyses of a reported issue into one final analysis.\n\n"
@@ -862,6 +872,7 @@ def make_issue_combiner_developer_prompt(
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
             subject="issue",
+            gpu_enabled=gpu_enabled,
         )
         + project_facts
         + tr_prompt_output_guideline("issue reporter", subject="issue")
@@ -885,6 +896,7 @@ def make_issue_triage_developer_prompt(
     project_facts: str = "",
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
+    gpu_enabled: bool = False,
 ) -> str:
     return (
         "You are an expert software engineer triaging a reported issue.\n\n"
@@ -900,6 +912,7 @@ def make_issue_triage_developer_prompt(
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
             subject="issue",
+            gpu_enabled=gpu_enabled,
         )
         + project_facts
         + tr_prompt_output_guideline("issue reporter", subject="issue")
@@ -1108,6 +1121,7 @@ PROMPT_FEATURES = frozenset({
     "web_search",
     "code_interpreter",
     "podman_shell",
+    "gpu",
 })
 
 
@@ -1160,6 +1174,7 @@ def generate_llm_prompt(
             project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
+            gpu_enabled="gpu" in features,
         )
     if role == "combiner":
         return make_combiner_developer_prompt(
@@ -1175,6 +1190,7 @@ def generate_llm_prompt(
             project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
+            gpu_enabled="gpu" in features,
         )
     if role == "triager":
         return make_triage_developer_prompt(
@@ -1190,6 +1206,7 @@ def generate_llm_prompt(
             ci_triage_mode=ci_triage_mode,
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,
+            gpu_enabled="gpu" in features,
         )
     if role in ("issue_investigator", "issue_combiner"):
         maker = (
@@ -1207,6 +1224,7 @@ def generate_llm_prompt(
             model=model,
             project_facts=project_facts,
             allowed_labels=allowed_labels,
+            gpu_enabled="gpu" in features,
         )
     if role == "issue_triager":
         return make_issue_triage_developer_prompt(
@@ -1221,6 +1239,7 @@ def generate_llm_prompt(
             project_facts=project_facts,
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,
+            gpu_enabled="gpu" in features,
         )
     raise ValueError(f"unknown role: {role!r}")
 

@@ -61,6 +61,72 @@ class RunSessionCommandsTests(unittest.TestCase):
         self.assertEqual(600.0, session.exec.call_args.kwargs["timeout_s"])
 
 
+class ExecMachineCallTests(unittest.TestCase):
+    def _sessions(self):
+        sessions = {}
+        for label in ("x86_64", "arm64"):
+            s = mock.Mock(spec=podman_host.ContainerShellSession)
+            s.exec.return_value = _result(out=f"on {label}\n")
+            sessions[label] = s
+        return sessions
+
+    def _call(self, shells, opened, args, labels=("x86_64", "arm64"),
+              transcripts=None):
+        sessions = self._sessions()
+
+        def open_shell(label):
+            opened.append(label)
+            return sessions[label], (transcripts or {}).get(label, "")
+
+        return shell_tool.exec_machine_call(
+            shells, labels, open_shell, args, max_timeout_s=60.0,
+        )
+
+    def test_lazy_open_only_on_use(self) -> None:
+        shells, opened = {}, []
+        self._call(shells, opened, {"command": "true"})
+        self.assertEqual(["x86_64"], opened)
+        self.assertEqual(["x86_64"], list(shells))
+        self._call(shells, opened, {"command": "true"})
+        self.assertEqual(["x86_64"], opened)  # reused, not reopened
+
+    def test_machine_arg_routes_to_named_session(self) -> None:
+        shells, opened = {}, []
+        payload = self._call(shells, opened, {"command": "true", "machine": "arm64"})
+        self.assertEqual(["arm64"], opened)
+        self.assertEqual("on arm64\n", payload["stdout"])
+
+    def test_unknown_machine_errors_without_open(self) -> None:
+        shells, opened = {}, []
+        payload = self._call(shells, opened, {"command": "true", "machine": "riscv"})
+        self.assertEqual(
+            "unknown machine 'riscv'; available: x86_64, arm64", payload["error"])
+        self.assertEqual([], opened)
+
+    def test_setup_transcript_only_on_first_non_default_result(self) -> None:
+        shells, opened = {}, []
+        transcripts = {"x86_64": "$ true\n", "arm64": "$ git status\nclean\n"}
+        first = self._call(shells, opened, {"command": "a", "machine": "arm64"},
+                           transcripts=transcripts)
+        self.assertEqual("$ git status\nclean\n", first["setup_transcript"])
+        second = self._call(shells, opened, {"command": "b", "machine": "arm64"},
+                            transcripts=transcripts)
+        self.assertNotIn("setup_transcript", second)
+
+    def test_default_machine_never_gets_setup_transcript(self) -> None:
+        shells, opened = {}, []
+        payload = self._call(shells, opened, {"command": "a"},
+                             transcripts={"x86_64": "$ true\n"})
+        self.assertNotIn("setup_transcript", payload)
+
+    def test_explicit_machine_with_single_configured_machine(self) -> None:
+        shells, opened = {}, []
+        payload = self._call(shells, opened,
+                             {"command": "true", "machine": "x86_64"},
+                             labels=("x86_64",))
+        self.assertEqual("on x86_64\n", payload["stdout"])
+
+
 class SubstitutionTests(unittest.TestCase):
     def test_number_and_base_ref_placeholders(self) -> None:
         req = {"pull_request": {"number": 23638, "base_ref": "release/7.1"}}

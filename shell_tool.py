@@ -42,11 +42,17 @@ the command->result step are common, and that is what lives here.
 from __future__ import annotations
 
 import logging
+from typing import Callable, Sequence
 
 from common import JsonObject
 from podman_host import ContainerShellSession
 
-__all__ = ["DEFAULT_SHELL_TIMEOUT_S", "exec_shell_call", "run_session_commands"]
+__all__ = [
+    "DEFAULT_SHELL_TIMEOUT_S",
+    "exec_machine_call",
+    "exec_shell_call",
+    "run_session_commands",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +104,49 @@ def exec_shell_call(
         "stdout_truncated": result.stdout_truncated,
         "stderr_truncated": result.stderr_truncated,
     }
+
+
+def exec_machine_call(
+    shells: dict[str, ContainerShellSession],
+    machine_labels: Sequence[str],
+    open_shell: Callable[[str], tuple[ContainerShellSession, str]],
+    args: object,
+    *,
+    max_timeout_s: float,
+    default_timeout_s: float = DEFAULT_SHELL_TIMEOUT_S,
+) -> JsonObject:
+    """Route one shell-tool call to the machine named by its ``machine`` arg.
+
+    ``shells`` maps machine label -> live session; a missing label is
+    instantiated via ``open_shell`` on first use (lifecycle/cleanup stays
+    with the caller who supplied the callback). ``machine_labels[0]`` is
+    the default machine. A non-default machine's ``--session-command``
+    transcript rides its first result as ``setup_transcript`` (the default
+    machine's transcript reaches the model via the prompt instead).
+    ``machine`` is model-supplied: an unknown label yields an in-band
+    ``{"error": ...}`` payload like exec_shell_call's own validation.
+    """
+    machine = None
+    if isinstance(args, dict):
+        machine = args.pop("machine", None)
+    if machine is None:
+        machine = machine_labels[0]
+    if machine not in machine_labels:
+        return {
+            "error": f"unknown machine {machine!r}; "
+                     f"available: {', '.join(machine_labels)}"
+        }
+    first = machine not in shells
+    transcript = ""
+    if first:
+        shells[machine], transcript = open_shell(machine)
+    payload = exec_shell_call(
+        shells[machine], args,
+        max_timeout_s=max_timeout_s, default_timeout_s=default_timeout_s,
+    )
+    if first and machine != machine_labels[0] and transcript:
+        payload["setup_transcript"] = transcript
+    return payload
 
 
 def run_session_commands(

@@ -125,6 +125,8 @@ class RunPodmanShellLoopTests(unittest.TestCase):
         self.assertEqual("resp_1", follow["previous_response_id"])
         self.assertEqual(1, len(follow["input"]))
         self.assertEqual("function_call_output", follow["input"][0]["type"])
+        # Serial-only tool calls would multiply rounds (each re-bills context).
+        self.assertNotIn("parallel_tool_calls", follow)
 
     def test_every_round_is_dumped_with_its_own_kwargs(self) -> None:
         # Regression: only the final response used to be dumped, losing the

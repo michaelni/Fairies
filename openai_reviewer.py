@@ -424,7 +424,6 @@ def run_responses_resolving_podman_shell(
             "model": model,
             "previous_response_id": rid,
             "input": output_items,
-            "parallel_tool_calls": False,
         }
         tools = initial_kwargs.get("tools")
         if tools is not None:

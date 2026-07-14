@@ -459,6 +459,46 @@ CONTAINER_MEMORY = "8g"
 CONTAINER_CPUS = "8"
 
 
+@dataclass(frozen=True)
+class ShellHostSpec:
+    """One machine that runs review containers, as configured on the CLI.
+
+    ``label`` is the deployment-chosen machine name the LLM passes as the
+    shell tool's ``machine`` parameter; the core never interprets it.
+    """
+    label: str
+    host: RemoteHost
+    cpus: str = CONTAINER_CPUS
+    memory: str = CONTAINER_MEMORY
+    gpu: str | None = None  # podman --device value, e.g. nvidia.com/gpu=0
+
+
+def parse_shell_host(spec: str, *, identity: str | None = None) -> ShellHostSpec:
+    """Parse ``[LABEL=]SSH_DEST[,cpus=N][,memory=SIZE][,gpu=DEVICE]``.
+
+    A bare ``user@host`` (or ssh alias) gets the label ``x86_64``.
+    Raises ValueError on unknown keys; callers turn that into a CLI error.
+    """
+    first, *rest = spec.split(",")
+    label = "x86_64"
+    ssh_dest = first
+    if "=" in first.split("@", 1)[0]:
+        label, ssh_dest = first.split("=", 1)
+    options: dict[str, str] = {}
+    for segment in rest:
+        key, sep, value = segment.partition("=")
+        if not sep or key not in ("cpus", "memory", "gpu"):
+            raise ValueError(f"unknown key {key!r} in shell host spec {spec!r}")
+        options[key] = value
+    return ShellHostSpec(
+        label=label,
+        host=RemoteHost(ssh_dest, identity=identity),
+        cpus=options.get("cpus", CONTAINER_CPUS),
+        memory=options.get("memory", CONTAINER_MEMORY),
+        gpu=options.get("gpu"),
+    )
+
+
 def start_ephemeral_container(
     *,
     image: str,

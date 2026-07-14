@@ -442,6 +442,11 @@ def run_responses_resolving_podman_shell(
         txt = initial_kwargs.get("text")
         if txt is not None:
             follow["text"] = txt
+        # gpt-5.6 keys its prompt cache on ``reasoning``: omitting it made
+        # every round 2 a full-prefix miss.
+        rsn = initial_kwargs.get("reasoning")
+        if rsn is not None:
+            follow["reasoning"] = rsn
         response = create_and_dump(follow, f"{what} (podman shell follow-up)")
 
 

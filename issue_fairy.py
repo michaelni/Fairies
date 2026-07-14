@@ -157,12 +157,14 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--podman-host",
-        metavar="USER@HOST",
-        default=None,
+        action="append",
+        default=[],
+        metavar="[LABEL=]USER@HOST[,cpus=N][,memory=SIZE][,gpu=DEV]",
         help=(
-            "Run LLM shell work (repro, bisect, ...) in an ephemeral container "
-            "on this podman host (passwordless ssh destination). Appends "
-            "--podman --podman-ssh-dest to --llm-review-cmd."
+            "Run LLM shell work (repro, bisect, ...) in ephemeral containers "
+            "on this podman host (passwordless ssh destination); repeat for "
+            "more machines, the first being the default. Each value is "
+            "forwarded as --shell-host to --llm-review-cmd."
         ),
     )
     p.add_argument(

@@ -50,13 +50,13 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from common import JsonObject
-from podman_host import ContainerShellSession
+from podman_host import ContainerShellSession, ShellHostSpec
 
 __all__ = [
     "CLASSIFICATIONS",
@@ -651,10 +651,11 @@ class Review:
 class ReviewContext:
     """The PR under review plus the drafts the pipeline accumulates.
 
-    ``new_shell`` returns a fresh, isolated container shell (its own
-    working trees) on each call; a reviewer that uses a shell owns it and
-    closes it. ``None`` means no podman shell is configured (the OpenAI
-    solo path uses its native tools instead). The pipeline -- not the
+    ``open_shell`` opens a fresh container shell on the named machine and
+    returns it with its --session-command transcript; every open is
+    registered for wrapper-owned cleanup. ``None`` means no podman shell
+    is configured (the OpenAI solo path uses its native tools instead).
+    The pipeline -- not the
     reviewers -- appends to ``drafts``.
     """
 
@@ -669,13 +670,13 @@ class ReviewContext:
     repo_roots: list[Path]
     repo_mount_paths: list[str]
     project_facts: str = ""
-    # True when the container shells expose a GPU (--podman-gpu), so the
-    # prompt can advertise it next to the CPU/memory limits.
-    gpu: bool = False
-    # Transcript of --session-command runs in the review container,
-    # spliced into shell-capable roles' user text.
+    # The CLI-configured machines running review containers; machines[0]
+    # is the default. Empty when --podman is off.
+    machines: Sequence[ShellHostSpec] = ()
+    # Transcript of --session-command runs in the default machine's review
+    # container, spliced into shell-capable roles' user text.
     session_transcript: str = ""
-    new_shell: Callable[[], ContainerShellSession] | None = None
+    open_shell: Callable[[str], tuple[ContainerShellSession, str]] | None = None
     drafts: list[Review] = field(default_factory=list)
 
     def review_drafts(self) -> list[Review]:
@@ -749,7 +750,7 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     dropped with a logged traceback so the surviving drafts still produce
     a review; only when every reviewer fails is the run aborted.
 
-    Each reviewer obtains its own shell via ``ctx.new_shell`` so concurrent
+    Each reviewer opens its own shells via ``ctx.open_shell`` so concurrent
     runs never share a container working tree. Results are gathered only
     after every thread finishes, so the shared ``ctx`` is never mutated
     concurrently; the caller extends ``ctx.drafts`` with the returned list.

@@ -32,9 +32,9 @@ AnthropicReviewer: one Anthropic Messages-API review pass behind the shared
 Anthropic-compatible endpoint (``base_url`` + ``ZAI_API_KEY``).
 
 Structured output uses Anthropic's tool-use idiom: the model investigates
-via the ``shell`` tool (a ``ctx.new_shell()`` session) and returns its
-verdict by calling a ``submit_review`` tool whose ``input_schema`` is the
-role's output schema.
+via the ``shell`` tool (per-machine ``ctx.open_shell`` sessions) and
+returns its verdict by calling a ``submit_review`` tool whose
+``input_schema`` is the role's output schema.
 
 Importing this module pulls in the ``anthropic`` package, so only the
 Anthropic / GLM code path imports it (lazily, via the reviewer factory).
@@ -44,11 +44,13 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 
 from anthropic import Anthropic
 
 from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
+import podman_host
 from llm_review_api import (
     BadModelOutput,
     ReviewContext,
@@ -56,7 +58,7 @@ from llm_review_api import (
     RoleSpec,
 )
 from anthropic_common import call_with_anthropic_retry, load_api_key
-from shell_tool import exec_shell_call
+from shell_tool import exec_machine_call
 
 __all__ = [
     "ANTHROPIC_EFFORTS",
@@ -101,7 +103,22 @@ def _build_submit_review_tool(role: RoleSpec) -> JsonObject:
     }
 
 
-def _build_shell_tool() -> JsonObject:
+def _build_shell_tool(machines: Sequence[podman_host.ShellHostSpec]) -> JsonObject:
+    properties: JsonObject = {
+        "command": {"type": "string", "description": "Shell command (``sh -c``)."},
+        "cwd": {"type": "string", "description": "Working directory (e.g. /work/ffmpeg)."},
+        "timeout_seconds": {"type": "number", "description": "Max wall seconds (capped by the wrapper)."},
+    }
+    if len(machines) >= 2:
+        properties["machine"] = {
+            "type": "string",
+            "enum": [m.label for m in machines],
+            "description": (
+                f"Machine to run on (default {machines[0].label}). "
+                "Each machine is a separate container with its own "
+                "filesystem and checkouts; state does not carry over."
+            ),
+        }
     return {
         "name": _SHELL,
         "description": (
@@ -111,11 +128,7 @@ def _build_shell_tool() -> JsonObject:
         ),
         "input_schema": {
             "type": "object",
-            "properties": {
-                "command": {"type": "string", "description": "Shell command (``sh -c``)."},
-                "cwd": {"type": "string", "description": "Working directory (e.g. /work/ffmpeg)."},
-                "timeout_seconds": {"type": "number", "description": "Max wall seconds (capped by the wrapper)."},
-            },
+            "properties": properties,
             "required": ["command"],
         },
     }
@@ -126,8 +139,8 @@ class AnthropicReviewer(Reviewer):
     interface.
 
     ``run(ctx)`` builds the system/user prompt from the role, runs the
-    Messages tool loop (driving a ``ctx.new_shell()`` session when one is
-    available), and returns the result the model submits via the
+    Messages tool loop (driving per-machine ``ctx.open_shell`` sessions
+    when available), and returns the result the model submits via the
     ``submit_review`` tool, validated by the role. Raises
     ``BadModelOutput`` when the model never produces a schema-valid
     verdict.
@@ -190,11 +203,9 @@ class AnthropicReviewer(Reviewer):
         features: set[str] = set()
         if ctx.source_bundle is not None:
             features.add("source_bundle")
-        use_shell = ctx.new_shell is not None
+        use_shell = ctx.open_shell is not None
         if use_shell:
             features.add("podman_shell")
-            if ctx.gpu:
-                features.add("gpu")
 
         system = generate_llm_prompt(
             role=self.role.name,
@@ -203,6 +214,7 @@ class AnthropicReviewer(Reviewer):
             features=features,
             repo_roots=ctx.repo_roots,
             container_repo_mounts=ctx.repo_mount_paths,
+            machines=ctx.machines,
             reviewer_username=ctx.reviewer_username,
             project_facts=ctx.project_facts,
             ci_triage_mode=ctx.ci_triage_mode,
@@ -234,92 +246,92 @@ class AnthropicReviewer(Reviewer):
         ]
         tools: list[JsonObject] = [_build_submit_review_tool(self.role)]
         if use_shell:
-            tools.append(_build_shell_tool())
+            tools.append(_build_shell_tool(ctx.machines))
 
-        shell = ctx.new_shell() if use_shell else None
+        shells: dict[str, podman_host.ContainerShellSession] = {}
         nudged = False
         rounds = 0
         conv_path: str | None = None
-        try:
-            while True:
-                logger.info(
-                    "anthropic messages.create role=%s model=%s round=%d shell=%s",
-                    self.role.name, self.model, rounds, use_shell,
-                )
-                _mark_cache_breakpoint(messages)
-                # Snapshot: ``messages`` grows across rounds and the dump
-                # must record what this round actually sent.
-                request_kwargs: JsonObject = {
-                    "model": self.model,
-                    "system": system_blocks,
-                    "messages": list(messages),
-                    "tools": tools,
-                    "max_tokens": self.max_tokens,
-                }
-                if self.effort == "off":
-                    request_kwargs["thinking"] = {"type": "disabled"}
-                elif self.effort is not None:
-                    request_kwargs["thinking"] = {"type": "adaptive"}
-                    request_kwargs["output_config"] = {"effort": self.effort}
-                response = call_with_anthropic_retry(
-                    lambda: client.messages.create(**request_kwargs),
-                    what="messages.create",
-                    verbose=self.verbose,
-                )
-                if self.debug_dir:
-                    conv_path = dump_response_debug_artifacts(
-                        response, request_kwargs, wrapper_request=ctx.request,
-                        debug_dir=self.debug_dir, verbose=self.verbose,
-                        conversation=conv_path,
-                    ) or conv_path
+        while True:
+            logger.info(
+                "anthropic messages.create role=%s model=%s round=%d shell=%s",
+                self.role.name, self.model, rounds, use_shell,
+            )
+            _mark_cache_breakpoint(messages)
+            # Snapshot: ``messages`` grows across rounds and the dump
+            # must record what this round actually sent.
+            request_kwargs: JsonObject = {
+                "model": self.model,
+                "system": system_blocks,
+                "messages": list(messages),
+                "tools": tools,
+                "max_tokens": self.max_tokens,
+            }
+            if self.effort == "off":
+                request_kwargs["thinking"] = {"type": "disabled"}
+            elif self.effort is not None:
+                request_kwargs["thinking"] = {"type": "adaptive"}
+                request_kwargs["output_config"] = {"effort": self.effort}
+            response = call_with_anthropic_retry(
+                lambda: client.messages.create(**request_kwargs),
+                what="messages.create",
+                verbose=self.verbose,
+            )
+            if self.debug_dir:
+                conv_path = dump_response_debug_artifacts(
+                    response, request_kwargs, wrapper_request=ctx.request,
+                    debug_dir=self.debug_dir, verbose=self.verbose,
+                    conversation=conv_path,
+                ) or conv_path
 
-                tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
-                submit = next((b for b in tool_uses if b.name == _SUBMIT_REVIEW), None)
-                if submit is not None:
-                    result = self.role.validate(submit.input)
-                    if self.verbose:
-                        verdict = result.get("classification") or result.get("route") or "-"
-                        logger.debug("anthropic %s verdict=%s", self.role.name, verdict)
-                    return result
+            tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
+            submit = next((b for b in tool_uses if b.name == _SUBMIT_REVIEW), None)
+            if submit is not None:
+                result = self.role.validate(submit.input)
+                if self.verbose:
+                    verdict = result.get("classification") or result.get("route") or "-"
+                    logger.debug("anthropic %s verdict=%s", self.role.name, verdict)
+                return result
 
-                if not tool_uses:
-                    if nudged:
-                        raise BadModelOutput()
-                    nudged = True
-                    messages.append({"role": "assistant", "content": _echo_content(response.content)})
-                    messages.append({
-                        "role": "user",
-                        "content": "You did not call submit_review. Return the verdict now via submit_review.",
-                    })
-                    continue
-
-                rounds += 1
-                if self.max_tool_rounds > 0 and rounds > self.max_tool_rounds:
-                    raise RuntimeError(
-                        f"messages.create: exceeded shell tool-call limit ({self.max_tool_rounds})"
-                    )
-
+            if not tool_uses:
+                if nudged:
+                    raise BadModelOutput()
+                nudged = True
                 messages.append({"role": "assistant", "content": _echo_content(response.content)})
-                results: list[JsonObject] = []
-                for use in tool_uses:
-                    if use.name == _SHELL and shell is not None:
-                        payload = exec_shell_call(shell, use.input, max_timeout_s=self.exec_timeout_s)
-                        results.append({
-                            "type": "tool_result",
-                            "tool_use_id": use.id,
-                            "content": json.dumps(payload, ensure_ascii=False),
-                        })
-                    else:
-                        results.append({
-                            "type": "tool_result",
-                            "tool_use_id": use.id,
-                            "content": json.dumps({"error": f"unsupported tool {use.name!r}"}),
-                            "is_error": True,
-                        })
-                messages.append({"role": "user", "content": results})
-        finally:
-            if shell is not None:
-                shell.close()
+                messages.append({
+                    "role": "user",
+                    "content": "You did not call submit_review. Return the verdict now via submit_review.",
+                })
+                continue
+
+            rounds += 1
+            if self.max_tool_rounds > 0 and rounds > self.max_tool_rounds:
+                raise RuntimeError(
+                    f"messages.create: exceeded shell tool-call limit ({self.max_tool_rounds})"
+                )
+
+            messages.append({"role": "assistant", "content": _echo_content(response.content)})
+            results: list[JsonObject] = []
+            for use in tool_uses:
+                if use.name == _SHELL and use_shell:
+                    payload = exec_machine_call(
+                        shells, tuple(m.label for m in ctx.machines),
+                        ctx.open_shell, use.input,
+                        max_timeout_s=self.exec_timeout_s,
+                    )
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": use.id,
+                        "content": json.dumps(payload, ensure_ascii=False),
+                    })
+                else:
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": use.id,
+                        "content": json.dumps({"error": f"unsupported tool {use.name!r}"}),
+                        "is_error": True,
+                    })
+            messages.append({"role": "user", "content": results})
 
 
 def _echo_content(content: list[object]) -> list[JsonObject]:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 import unittest
@@ -14,20 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import podman_host as lc  # noqa: E402
-import pr_review_wrapper as wrapper  # noqa: E402
 import openai_reviewer  # noqa: E402
-
-
-class BuildRemoteHostTests(unittest.TestCase):
-    def test_builds_host_from_ssh_dest(self) -> None:
-        args = argparse.Namespace(podman_ssh_dest="fairy@h", podman_ssh_identity=None)
-        host = wrapper._build_remote_host(args)
-        self.assertEqual("fairy@h", host.ssh_dest)
-        self.assertIsNone(host.identity)
-
-    def test_passes_identity_when_set(self) -> None:
-        args = argparse.Namespace(podman_ssh_dest="fairy@h", podman_ssh_identity="/k/id")
-        self.assertEqual("/k/id", wrapper._build_remote_host(args).identity)
 
 
 class ExtractFunctionCallsTests(unittest.TestCase):
@@ -112,7 +98,9 @@ class RunPodmanShellLoopTests(unittest.TestCase):
                         "model": "gpt-x",
                         "tools": [{"type": "function", "name": "shell"}],
                     },
-                    podman_shell_session=session,
+                    shells={"x86_64": session},
+                    machine_labels=("x86_64",),
+                    open_shell=lambda l: (session, ""),
                     max_tool_rounds=10,
                     max_shell_timeout_s=60.0,
                     what="test",
@@ -197,7 +185,9 @@ class RunPodmanShellLoopTests(unittest.TestCase):
             openai_reviewer.run_responses_resolving_podman_shell(
                 client,
                 initial_kwargs={"model": "gpt-x", "tools": [{"type": "function", "name": "shell"}]},
-                podman_shell_session=session,
+                shells={"x86_64": session},
+                machine_labels=("x86_64",),
+                open_shell=lambda l: (session, ""),
                 max_tool_rounds=10,
                 max_shell_timeout_s=60.0,
                 what="test",
@@ -257,7 +247,9 @@ class RunPodmanShellLoopTests(unittest.TestCase):
                     "tools": [{"type": "function", "name": "shell"}],
                     "text": text_format,
                 },
-                podman_shell_session=session,
+                shells={"x86_64": session},
+                machine_labels=("x86_64",),
+                open_shell=lambda l: (session, ""),
                 max_tool_rounds=10,
                 max_shell_timeout_s=60.0,
                 what="test",
@@ -302,7 +294,9 @@ class RunPodmanShellLoopTests(unittest.TestCase):
                     "tools": [{"type": "function", "name": "shell"}],
                     "reasoning": reasoning,
                 },
-                podman_shell_session=session,
+                shells={"x86_64": session},
+                machine_labels=("x86_64",),
+                open_shell=lambda l: (session, ""),
                 max_tool_rounds=10,
                 max_shell_timeout_s=60.0,
                 what="test",
@@ -381,11 +375,85 @@ class RunPodmanShellLoopTests(unittest.TestCase):
                 openai_reviewer.run_responses_resolving_podman_shell(
                     client,
                     initial_kwargs={"model": "gpt-x", "tools": [{"type": "function", "name": "shell"}]},
-                    podman_shell_session=session,
+                    shells={"x86_64": session},
+                    machine_labels=("x86_64",),
+                    open_shell=lambda l: (session, ""),
                     max_tool_rounds=0,
                     max_shell_timeout_s=60.0,
                     what="test",
                     verbose=False,
                 )
         self.assertGreaterEqual(session.exec.call_count, 24)
+
+    def test_machine_arg_routes_to_lazy_second_session(self) -> None:
+        # only the default machine is opened eagerly
+        default = mock.Mock(spec=lc.ContainerShellSession)
+        arm = mock.Mock(spec=lc.ContainerShellSession)
+        arm.exec.return_value = lc.ExecResult(
+            exit_code=0, stdout="aarch64\n", stderr="", duration_s=0.01,
+            stdout_truncated=False, stderr_truncated=False,
+        )
+        opened: list[str] = []
+
+        def open_shell(label: str) -> tuple[object, str]:
+            opened.append(label)
+            return arm, "$ git status --short\nclean\n"
+
+        n = {"i": 0}
+
+        def dump(_rsp: object) -> dict:
+            n["i"] += 1
+            if n["i"] == 1:
+                return {"output": [{
+                    "type": "function_call", "call_id": "c1", "name": "shell",
+                    "arguments": json.dumps(
+                        {"command": "uname -m", "machine": "arm64"}),
+                }]}
+            return {"output": [{"type": "message", "content": []}]}
+
+        creates: list[dict] = []
+
+        def fake_create(**kwargs: object) -> object:
+            creates.append(kwargs)
+            return mock.Mock(id=f"r{len(creates)}")
+
+        client = mock.Mock()
+        client.responses.create.side_effect = fake_create
+        with mock.patch.object(openai_reviewer, "response_to_debug_json", side_effect=dump):
+            with mock.patch.object(openai_reviewer, "call_with_rate_limit_retry", side_effect=lambda fn, **kw: fn()):
+                openai_reviewer.run_responses_resolving_podman_shell(
+                    client,
+                    initial_kwargs={"model": "gpt-x", "tools": []},
+                    shells={"x86_64": default},
+                    machine_labels=("x86_64", "arm64"),
+                    open_shell=open_shell,
+                    max_tool_rounds=10,
+                    max_shell_timeout_s=60.0,
+                    what="test",
+                    verbose=False,
+                )
+        self.assertEqual(["arm64"], opened)
+        default.exec.assert_not_called()
+        arm.exec.assert_called_once_with("uname -m", cwd=None, timeout_s=60.0)
+        payload = json.loads(creates[1]["input"][0]["output"])
+        self.assertEqual("aarch64\n", payload["stdout"])
+        self.assertEqual("$ git status --short\nclean\n", payload["setup_transcript"])
+
+
+class ShellToolSchemaTests(unittest.TestCase):
+    def _spec(self, label: str) -> lc.ShellHostSpec:
+        return lc.ShellHostSpec(label, lc.RemoteHost("fairy@h"))
+
+    def test_single_machine_schema_has_no_machine_parameter(self) -> None:
+        tool = openai_reviewer.build_podman_shell_function_tool([self._spec("x86_64")])
+        self.assertNotIn("machine", tool["parameters"]["properties"])
+        self.assertEqual(["command"], tool["parameters"]["required"])
+
+    def test_two_machines_expose_enum(self) -> None:
+        tool = openai_reviewer.build_podman_shell_function_tool(
+            [self._spec("x86_64"), self._spec("arm64")])
+        machine = tool["parameters"]["properties"]["machine"]
+        self.assertEqual(["x86_64", "arm64"], machine["enum"])
+        self.assertIn("default x86_64", machine["description"])
+        self.assertNotIn("machine", tool["parameters"]["required"])
 

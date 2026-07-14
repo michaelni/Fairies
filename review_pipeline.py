@@ -180,8 +180,8 @@ def review_pr(
 ) -> Review:
     """Run the model reviewers, then optionally the combiner, over ``ctx``.
 
-    One model reviewer runs inline; several run concurrently (each gets its
-    own shell via ``ctx.new_shell``) and reviewers that fail are dropped by
+    One model reviewer runs inline; several run concurrently (each opens its
+    own shells via ``ctx.open_shell``) and reviewers that fail are dropped by
     ``run_parallel``. Their drafts accumulate on ``ctx`` so the combiner can
     verify and merge them. A configured combiner runs even on a single
     (configured or surviving) draft: since its prompt diverged from the

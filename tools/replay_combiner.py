@@ -124,7 +124,7 @@ def main() -> int:
                     http_client=openai_reviewer.make_openai_http_client())
     repo_root = wrapper.find_repo_root(args.repo_root)
     repo_roots = wrapper.get_all_repo_roots(repo_root, args.extra_repo_root)
-    remote_host = wrapper._build_remote_host(args)
+    machines = args.machines
     repo_specs = podman_repos.build_repo_specs(repo_roots, mirror_root=args.podman_mirror_root)
 
     patch = request.get("patch") if isinstance(request.get("patch"), str) else ""
@@ -139,7 +139,17 @@ def main() -> int:
     )
     patch_bundle, patch_was_truncated = wrapper.build_patch_bundle(patch, args.max_patch_bytes)
 
-    handle, session = wrapper.open_review_container_shell(remote_host, repo_specs, args)
+    shells: dict[str, podman_host.ContainerShellSession] = {}
+    opened: list[tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]] = []
+
+    def open_shell(label: str) -> tuple[podman_host.ContainerShellSession, str]:
+        handle, session, transcript = wrapper.open_review_container_shell(
+            {m.label: m for m in machines}[label], repo_specs, args,
+        )
+        opened.append((handle, session))
+        return session, transcript
+
+    shells[machines[0].label], _ = open_shell(machines[0].label)
     uploaded_file_ids: list[str] = []
     try:
         patch_file_id = upload_text_file(
@@ -159,6 +169,7 @@ def main() -> int:
             repo_roots=repo_roots,
             repo_mount_paths=[s.container_path for s in repo_specs],
             project_facts=llm_prompt.load_project_facts(args.project_facts),
+            machines=machines,
             drafts=drafts,
         )
         resources = openai_reviewer.OpenAIResources(
@@ -169,6 +180,7 @@ def main() -> int:
                 web_search_cache_only=False, web_search_domains=[],
                 use_shell=False, shell_container_id=None,
                 code_interpreter_container_id=None, use_podman_shell=True,
+                machines=machines,
             ),
             include=openai_reviewer.build_response_include(
                 vector_store_ids=[], use_web_search=False, use_podman_shell=True,
@@ -176,7 +188,8 @@ def main() -> int:
             patch_file_id=patch_file_id,
             vector_store_ids=[],
             shared_container_id=None,
-            podman_shell_session=session,
+            shells=shells,
+            open_shell=open_shell,
             uploaded_file_ids=uploaded_file_ids,
             debug_dir_specified=debug_dir_specified,
         )
@@ -203,8 +216,9 @@ def main() -> int:
     finally:
         for file_id in uploaded_file_ids:
             delete_uploaded_file(client, file_id, verbose=args.verbose)
-        session.close()
-        podman_host.stop_container(handle)
+        for handle, session in opened:
+            session.close()
+            podman_host.stop_container(handle)
 
 
 if __name__ == "__main__":

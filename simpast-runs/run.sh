@@ -78,7 +78,7 @@ if [[ "$MODE" = container ]]; then
     CONTAINER_ARGS="--use-openai-container-repos --max-tool-calls 100"
 else
     [[ -n "$PODMAN_SSH" ]] || { echo "PODMAN_SSH=user@host required for MODE=podman" >&2; exit 2; }
-    CONTAINER_ARGS="--podman --podman-ssh-dest $PODMAN_SSH --podman-max-tool-rounds 100"
+    CONTAINER_ARGS="--podman --shell-host $PODMAN_SSH --podman-max-tool-rounds 100"
 fi
 (($# >= 1)) || { echo "usage: $0 <arm-ref> [arm-ref ...]" >&2; exit 2; }
 

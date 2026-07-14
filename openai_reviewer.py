@@ -49,6 +49,7 @@ import logging
 import re
 import socket
 import time
+from typing import Callable, Sequence
 
 import httpx
 from openai import DefaultHttpxClient, OpenAI
@@ -74,7 +75,7 @@ from openai_common import (
     upload_text_file,
 )
 import podman_host
-from shell_tool import exec_shell_call
+from shell_tool import exec_machine_call
 
 __all__ = [
     "EXIT_CONTAINER_UNHEALTHY",
@@ -270,7 +271,33 @@ def format_response_stats(response: object, *, elapsed_seconds: float | None = N
     return " ".join(parts)
 
 
-def build_podman_shell_function_tool() -> JsonObject:
+def build_podman_shell_function_tool(
+    machines: Sequence[podman_host.ShellHostSpec],
+) -> JsonObject:
+    properties: JsonObject = {
+        "command": {
+            "type": "string",
+            "description": "Shell command (``sh -c``).",
+        },
+        "cwd": {
+            "type": "string",
+            "description": "Working directory inside the container (e.g. /work/ffmpeg).",
+        },
+        "timeout_seconds": {
+            "type": "number",
+            "description": "Max wall seconds for this command (capped by the wrapper).",
+        },
+    }
+    if len(machines) >= 2:
+        properties["machine"] = {
+            "type": "string",
+            "enum": [m.label for m in machines],
+            "description": (
+                f"Machine to run on (default {machines[0].label}). "
+                "Each machine is a separate container with its own "
+                "filesystem and checkouts; state does not carry over."
+            ),
+        }
     return {
         "type": "function",
         "name": "shell",
@@ -281,20 +308,7 @@ def build_podman_shell_function_tool() -> JsonObject:
         ),
         "parameters": {
             "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "Shell command (``sh -c``).",
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Working directory inside the container (e.g. /work/ffmpeg).",
-                },
-                "timeout_seconds": {
-                    "type": "number",
-                    "description": "Max wall seconds for this command (capped by the wrapper).",
-                },
-            },
+            "properties": properties,
             "required": ["command"],
             "additionalProperties": False,
         },
@@ -328,7 +342,9 @@ def run_responses_resolving_podman_shell(
     client: OpenAI,
     *,
     initial_kwargs: ResponseKwargs,
-    podman_shell_session: podman_host.ContainerShellSession,
+    shells: dict[str, podman_host.ContainerShellSession],
+    machine_labels: Sequence[str],
+    open_shell: Callable[[str], tuple[podman_host.ContainerShellSession, str]],
     max_tool_rounds: int,
     max_shell_timeout_s: float,
     what: str,
@@ -339,11 +355,14 @@ def run_responses_resolving_podman_shell(
 ) -> object:
     """Drive ``responses.create`` in a loop until no pending function calls.
 
-    Dispatches ``name=shell`` via the persistent
-    :class:`podman_host.ContainerShellSession`; other function names receive
-    an error ``function_call_output`` so the model can recover.
+    Dispatches ``name=shell`` via :func:`shell_tool.exec_machine_call` over
+    the persistent per-machine sessions in ``shells`` (lazily opened through
+    ``open_shell``); other function names receive an error
+    ``function_call_output`` so the model can recover.
 
     ``max_tool_rounds <= 0`` means no cap on the number of rounds.
+    ``parallel_tool_calls=False`` forces one shell call per follow-up round
+    (round 1 is never forced).
 
     With ``debug_dir`` set, EVERY round's response is dumped (paired with
     the exact kwargs that produced it), not just the final one -- the
@@ -404,8 +423,9 @@ def run_responses_resolving_podman_shell(
                     ),
                 })
                 continue
-            payload_obj = exec_shell_call(
-                podman_shell_session, args_obj, max_timeout_s=max_shell_timeout_s,
+            payload_obj = exec_machine_call(
+                shells, machine_labels, open_shell, args_obj,
+                max_timeout_s=max_shell_timeout_s,
             )
             output_items.append({
                 "type": "function_call_output",
@@ -482,6 +502,7 @@ def build_response_tools(
     shell_container_id: str | None,
     code_interpreter_container_id: str | None,
     use_podman_shell: bool = False,
+    machines: Sequence[podman_host.ShellHostSpec] = (),
 ) -> list[JsonObject]:
     tools: list[JsonObject] = []
     if vector_store_ids:
@@ -502,7 +523,7 @@ def build_response_tools(
             web_search_tool["filters"] = {"allowed_domains": web_search_domains}
         tools.append(web_search_tool)
     if use_podman_shell:
-        tools.append(build_podman_shell_function_tool())
+        tools.append(build_podman_shell_function_tool(machines))
         return tools
     if use_shell:
         shell_tool: JsonObject = {"type": "shell"}
@@ -744,7 +765,8 @@ class OpenAIResources:
     patch_file_id: str | None
     vector_store_ids: list[str]
     shared_container_id: str | None
-    podman_shell_session: podman_host.ContainerShellSession | None
+    shells: dict[str, podman_host.ContainerShellSession] | None
+    open_shell: Callable[[str], tuple[podman_host.ContainerShellSession, str]] | None
     uploaded_file_ids: list[str]
     debug_dir_specified: bool
 
@@ -815,8 +837,6 @@ class OpenAIReviewer(Reviewer):
             reviewer_features.add("web_search")
         if args.podman:
             reviewer_features.add("podman_shell")
-            if ctx.gpu:
-                reviewer_features.add("gpu")
         else:
             reviewer_features.add("code_interpreter")
 
@@ -832,6 +852,7 @@ class OpenAIReviewer(Reviewer):
                         features=reviewer_features,
                         repo_roots=ctx.repo_roots,
                         container_repo_mounts=ctx.repo_mount_paths,
+                        machines=ctx.machines,
                         reviewer_username=ctx.reviewer_username,
                         project_facts=ctx.project_facts,
                         ci_triage_mode=ctx.ci_triage_mode,
@@ -882,12 +903,14 @@ class OpenAIReviewer(Reviewer):
         create_started = time.monotonic()
         try:
             if args.podman:
-                if res.podman_shell_session is None:
+                if res.shells is None or res.open_shell is None:
                     raise RuntimeError("container shell session missing for main review pass")
                 response = run_responses_resolving_podman_shell(
                     client,
                     initial_kwargs=response_kwargs,
-                    podman_shell_session=res.podman_shell_session,
+                    shells=res.shells,
+                    machine_labels=tuple(m.label for m in ctx.machines),
+                    open_shell=res.open_shell,
                     max_tool_rounds=args.podman_max_tool_rounds,
                     max_shell_timeout_s=args.podman_exec_timeout,
                     what="responses.create",

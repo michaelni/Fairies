@@ -21,6 +21,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import llm_review_api  # noqa: E402
 import llm_prompt  # noqa: E402
+import podman_host  # noqa: E402
 
 
 def _engage(**extra: object) -> dict[str, object]:
@@ -192,6 +193,8 @@ class PodmanContainerLocationsPromptTests(unittest.TestCase):
             code_interpreter_enabled=False, podman_shell_enabled=True,
             container_repo_mounts=["/work/ffmpeg", "/work/all_ffmpeg"],
             ctx=llm_prompt.PromptFor("reviewer", "gpt-5.4"),
+            machines=[podman_host.ShellHostSpec(
+                "x86_64", podman_host.RemoteHost("fairy@h"))],
         )
         self.assertIn("/work/all_ffmpeg", prompt)
         self.assertIn("forgejo_git/pulls/", prompt)

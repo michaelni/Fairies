@@ -105,7 +105,9 @@ def _ctx(shell: _FakeShell | None) -> ReviewContext:
         ci_triage_mode=False,
         repo_roots=[Path.cwd()],
         repo_mount_paths=["/work/ffmpeg"],
-        new_shell=(lambda: shell) if shell is not None else None,
+        machines=[podman_host.ShellHostSpec(
+            "x86_64", podman_host.RemoteHost("fairy@h"))] if shell is not None else [],
+        open_shell=(lambda label: (shell, "")) if shell is not None else None,
     )
 
 
@@ -132,7 +134,7 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         self.assertEqual("LLM review: one nit.", review.message)
         self.assertEqual("zai:glm-4.6", review.model)
         self.assertEqual(["git log -1"], shell.commands)
-        self.assertTrue(shell.closed)
+        self.assertFalse(shell.closed)
         self.assertEqual(2, len(client.calls))
         # The second request must replay the assistant tool_use turn plus the
         # tool_result, so the model can act on the shell output.

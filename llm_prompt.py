@@ -41,6 +41,7 @@ and validator. Naming convention preserved from the original location:
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -62,7 +63,7 @@ from llm_review_api import (
     validate_triage_result,
 )
 from patch_util import extract_submodule_changes_from_patch
-from podman_host import CONTAINER_CPUS, CONTAINER_MEMORY
+from podman_host import ShellHostSpec
 
 # Where the review container's Containerfile puts the FATE sample suite.
 CONTAINER_FATE_SUITE = "/opt/fate-suite"
@@ -162,6 +163,29 @@ When the PR refers to a issue or other PR that is materially relevant, inspect t
 """
 
 
+def _machine_line(m: ShellHostSpec) -> str:
+    return (
+        f"{m.cpus} {m.label} CPU cores, {m.memory} memory"
+        + (", an NVIDIA GPU (see nvidia-smi; the CUDA driver libraries are "
+           "injected, NVENC/NVDEC headers are installed)" if m.gpu else "")
+    )
+
+
+def _machines_text(machines: Sequence[ShellHostSpec]) -> str:
+    """The prompt's hardware description, from the CLI --shell-host specs."""
+    if len(machines) == 1:
+        return (f"You have {_machine_line(machines[0])} and tens of GB of "
+                "SSD-backed disk space at your disposal.")
+    return (
+        f"The shell tool runs on the machine named by its ``machine`` "
+        f"parameter (default {machines[0].label}). Each machine is a "
+        "separate container with its own filesystem and checkouts; state "
+        "does not carry over. Machines, each with tens of GB of "
+        "SSD-backed disk:\n"
+        + "\n".join(f"- {m.label}: {_machine_line(m)}" for m in machines)
+    )
+
+
 def _prompt_attached_context_and_tools(
     ctx: PromptFor,
     *,
@@ -172,7 +196,7 @@ def _prompt_attached_context_and_tools(
     code_interpreter_enabled: bool,
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
-    gpu_enabled: bool = False,
+    machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     model, subject = ctx.model, ctx.subject_long
     attached_line = (
@@ -203,7 +227,7 @@ Each repository is available under its path below as a normal checkout; ``rg``, 
 In the {mount_names[0]} checkout every pull request's head is a git revision fforge/pr/<number>. With TARGET being the branch the pull request targets (base_ref in the metadata, usually master), ``git log -p TARGET..fforge/pr/21000`` shows pull request 21000's commits and ``git diff $(git merge-base TARGET fforge/pr/21000) fforge/pr/21000`` its combined diff.
 {"The changes a pull request makes are its own commits: the diff from its merge base with the target branch to its head.\n" * model_needs_diff_tripwire(model)}\
 {f"A FATE sample-suite snapshot is at {CONTAINER_FATE_SUITE}; run fate tests with ``make fate-<name> SAMPLES={CONTAINER_FATE_SUITE}`` and refresh a stale sample with ``make fate-rsync SAMPLES={CONTAINER_FATE_SUITE}`` when needed." + chr(10) if "ffmpeg" in mount_names else ""}\
-You have {CONTAINER_CPUS} x86-64 CPU cores, {CONTAINER_MEMORY} memory{", an NVIDIA GPU (see nvidia-smi; the CUDA driver libraries are injected, NVENC/NVDEC headers are installed)" if gpu_enabled else ""} and tens of GB of SSD-backed disk space at your disposal.
+{_machines_text(machines)}
 
 """ if podman_shell_enabled and container_repo_mounts else ("The **shell** function tool runs shell commands in an ephemeral Linux environment with internet access.\n\n" if podman_shell_enabled else "")}\
 {'''The container contains two bare git repos without checked out working trees rg will not work.
@@ -656,7 +680,7 @@ def make_developer_prompt(
     project_facts: str = "",
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
-    gpu_enabled: bool = False,
+    machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     return (
         "You are an expert software engineer reviewing a pull request.\n\n"
@@ -672,7 +696,7 @@ def make_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
-            gpu_enabled=gpu_enabled,
+            machines=machines,
         )
         + (CRT_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
@@ -746,7 +770,7 @@ def make_combiner_developer_prompt(
     project_facts: str = "",
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
-    gpu_enabled: bool = False,
+    machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     # Assembled from the same sections as the reviewer prompt, but owned
     # here so combiner-only sections can be swapped or dropped without
@@ -766,7 +790,7 @@ def make_combiner_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
-            gpu_enabled=gpu_enabled,
+            machines=machines,
         )
         + (CRT_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
@@ -794,7 +818,7 @@ def make_triage_developer_prompt(
     ci_triage_mode: bool = False,
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
-    gpu_enabled: bool = False,
+    machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     return (
         "You are an expert software engineer triaging a pull request.\n\n"
@@ -812,7 +836,7 @@ def make_triage_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
-            gpu_enabled=gpu_enabled,
+            machines=machines,
         )
         + project_facts
         + CRT_PROMPT_MINOR_ISSUE_POLICY
@@ -837,7 +861,7 @@ def make_issue_developer_prompt(
     ctx: PromptFor,
     project_facts: str = "",
     allowed_labels: list[str] | None = None,
-    gpu_enabled: bool = False,
+    machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     return (
         "You are an expert software engineer investigating a reported issue.\n\n"
@@ -853,7 +877,7 @@ def make_issue_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
-            gpu_enabled=gpu_enabled,
+            machines=machines,
         )
         + project_facts
         + prompt_output_guideline(ctx)
@@ -876,7 +900,7 @@ def make_issue_combiner_developer_prompt(
     ctx: PromptFor,
     project_facts: str = "",
     allowed_labels: list[str] | None = None,
-    gpu_enabled: bool = False,
+    machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     return (
         "You are an expert software engineer combining independent draft analyses of a reported issue into one final analysis.\n\n"
@@ -892,7 +916,7 @@ def make_issue_combiner_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
-            gpu_enabled=gpu_enabled,
+            machines=machines,
         )
         + project_facts
         + prompt_output_guideline(ctx)
@@ -916,7 +940,7 @@ def make_issue_triage_developer_prompt(
     project_facts: str = "",
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
-    gpu_enabled: bool = False,
+    machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     return (
         "You are an expert software engineer triaging a reported issue.\n\n"
@@ -931,7 +955,7 @@ def make_issue_triage_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
-            gpu_enabled=gpu_enabled,
+            machines=machines,
         )
         + project_facts
         + prompt_output_guideline(ctx)
@@ -1140,7 +1164,6 @@ PROMPT_FEATURES = frozenset({
     "web_search",
     "code_interpreter",
     "podman_shell",
-    "gpu",
 })
 
 
@@ -1165,6 +1188,7 @@ def generate_llm_prompt(
     ci_triage_mode: bool = False,
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
+    machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     """Vendor-neutral developer-prompt entry point.
 
@@ -1195,7 +1219,7 @@ def generate_llm_prompt(
             project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
-            gpu_enabled="gpu" in features,
+            machines=machines,
         )
     if role == "combiner":
         return make_combiner_developer_prompt(
@@ -1211,7 +1235,7 @@ def generate_llm_prompt(
             project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
-            gpu_enabled="gpu" in features,
+            machines=machines,
         )
     if role == "triager":
         return make_triage_developer_prompt(
@@ -1227,7 +1251,7 @@ def generate_llm_prompt(
             ci_triage_mode=ci_triage_mode,
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,
-            gpu_enabled="gpu" in features,
+            machines=machines,
         )
     if role in ("issue_investigator", "issue_combiner"):
         maker = (
@@ -1245,7 +1269,7 @@ def generate_llm_prompt(
             ctx=ctx,
             project_facts=project_facts,
             allowed_labels=allowed_labels,
-            gpu_enabled="gpu" in features,
+            machines=machines,
         )
     if role == "issue_triager":
         return make_issue_triage_developer_prompt(
@@ -1260,7 +1284,7 @@ def generate_llm_prompt(
             project_facts=project_facts,
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,
-            gpu_enabled="gpu" in features,
+            machines=machines,
         )
     raise ValueError(f"unknown role: {role!r}")
 

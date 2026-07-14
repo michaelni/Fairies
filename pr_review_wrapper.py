@@ -151,12 +151,6 @@ AGENT_CONTAINER_DIR = "/work/.fairy"
 AGENT_CONTAINER_PATH = f"{AGENT_CONTAINER_DIR}/fairy_agent.py"
 
 
-def _build_remote_host(args: argparse.Namespace) -> podman_host.RemoteHost:
-    """The ssh account where podman runs and the containers live; every
-    podman call and the persistent shell channel go through it."""
-    return podman_host.RemoteHost(args.podman_ssh_dest, identity=args.podman_ssh_identity)
-
-
 # Default budget for the mini-model triage pre-check when ``--triage-model``
 # is set. Triage output itself is a small JSON object, but the budget must
 # also cover reasoning tokens, so keep it well above the raw schema size.
@@ -445,26 +439,19 @@ def parse_args() -> argparse.Namespace:
              "once the out-of-band egress LAN-block is in place.",
     )
     p.add_argument(
-        "--podman-memory",
-        default=podman_host.CONTAINER_MEMORY,
-        help="Memory limit passed to podman run (default: %(default)s). "
-             "The prompt advertises the default, so prefer changing "
-             "podman_host.CONTAINER_MEMORY over this flag.",
-    )
-    p.add_argument(
-        "--podman-cpus",
-        default=podman_host.CONTAINER_CPUS,
-        help="CPU limit passed to podman run (default: %(default)s). "
-             "The prompt advertises the default, so prefer changing "
-             "podman_host.CONTAINER_CPUS over this flag.",
-    )
-    p.add_argument(
-        "--podman-gpu",
-        metavar="CDI_DEVICE",
-        default="",
-        help="CDI GPU device passed to podman run as --device "
-             "(e.g. nvidia.com/gpu=0). Empty (the default) exposes no GPU. "
-             "Needs nvidia-container-toolkit CDI configured on the podman host.",
+        "--shell-host",
+        action="append",
+        default=[],
+        metavar="[LABEL=]USER@HOST[,cpus=N][,memory=SIZE][,gpu=DEV]",
+        help=(
+            "Machine running review containers; repeat for more machines. "
+            "The first is the default; LABEL (default x86_64) is what the "
+            "model passes as the shell tool's machine parameter. All podman "
+            "calls run as 'ssh DEST podman ...', repos are kept as bare "
+            "mirrors on the host and filled into the container host-locally, "
+            "so no full .git crosses the wire per review. Provision each "
+            "host first with containers/provision_remote.py."
+        ),
     )
     p.add_argument(
         "--podman-max-tool-rounds",
@@ -488,24 +475,11 @@ def parse_args() -> argparse.Namespace:
              "``{base_ref}`` are replaced from the PR metadata. Repeatable.",
     )
     p.add_argument(
-        "--podman-ssh-dest",
-        metavar="USER@HOST",
-        default=None,
-        help=(
-            "ssh destination of the podman host (anything ssh accepts, "
-            "including a ~/.ssh/config alias). Required with --podman: all "
-            "podman calls run as 'ssh DEST podman ...', repos are kept as "
-            "bare mirrors on the host and filled into the container "
-            "host-locally, so no full .git crosses the wire per review. "
-            "Provision the host with containers/provision_remote.py."
-        ),
-    )
-    p.add_argument(
         "--podman-ssh-identity",
         metavar="KEYFILE",
         default=None,
         help=(
-            "ssh identity (private key) for --podman-ssh-dest. Optional: "
+            "ssh identity (private key) for every --shell-host. Optional: "
             "omit to let OpenSSH pick it from the agent or ~/.ssh/config / "
             "default keys, exactly as plain 'ssh DEST' would."
         ),
@@ -616,7 +590,20 @@ def parse_args() -> argparse.Namespace:
     )
     add_color_arg(p)
     apply_config_file_defaults(p)
-    return p.parse_args()
+    args = p.parse_args()
+    try:
+        args.machines = [
+            podman_host.parse_shell_host(s, identity=args.podman_ssh_identity)
+            for s in args.shell_host
+        ]
+    except ValueError as exc:
+        p.error(str(exc))
+    labels = [m.label for m in args.machines]
+    if len(set(labels)) != len(labels):
+        p.error(f"duplicate machine labels in --shell-host: {', '.join(labels)}")
+    if args.podman and not args.machines:
+        p.error("--podman requires at least one --shell-host")
+    return args
 
 
 def read_request() -> JsonObject:
@@ -1010,12 +997,13 @@ def substitute_session_command(command: str, request: JsonObject) -> str:
 
 
 def open_review_container_shell(
-    remote_host: podman_host.RemoteHost,
+    spec: podman_host.ShellHostSpec,
     repo_specs: list[podman_repos.RepoSpec],
     args: argparse.Namespace,
     session_commands: Sequence[str] = (),
 ) -> tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession, str]:
-    """Start a fresh ephemeral container, fill its repos, and open a shell.
+    """Start a fresh ephemeral container on ``spec``'s host, fill its repos,
+    and open a shell.
 
     One isolated container per call, so concurrent ensemble reviewers never
     share a working tree. ``session_commands`` run in every container so
@@ -1025,15 +1013,15 @@ def open_review_container_shell(
     """
     handle = podman_host.start_ephemeral_container(
         image=args.podman_image,
-        host=remote_host,
+        host=spec.host,
         network=args.podman_network,
-        memory=args.podman_memory,
-        cpus=args.podman_cpus,
-        extra_args=(f"--device={args.podman_gpu}",) if args.podman_gpu else (),
+        memory=spec.memory,
+        cpus=spec.cpus,
+        extra_args=(f"--device={spec.gpu}",) if spec.gpu else (),
     )
     try:
         podman_repos.provision_repos_into_container(
-            handle, repo_specs, remote_host,
+            handle, repo_specs, spec.host,
             prune_refs_after=(
                 int(datetime.fromisoformat(args.simulate_past_cutoff).timestamp())
                 if args.simulate_past_cutoff else None
@@ -1193,53 +1181,63 @@ def main() -> int:
         shared_container_id = container_lease.container_id
         container_repo_specs = container_lease.specs
 
-    podman_container_handle: podman_host.ContainerHandle | None = None
-    podman_shell_session: podman_host.ContainerShellSession | None = None
     session_commands: list[str] = []
     session_transcript = ""
     podman_repo_specs: list[podman_repos.RepoSpec] = []
-    remote_host: podman_host.RemoteHost | None = None
-    # Extra containers spun up on demand by the ensemble's new_shell factory
-    # (one isolated container per non-OpenAI reviewer); released in finally.
+    machines: list[podman_host.ShellHostSpec] = args.machines if args.podman else []
+    spec_by_label = {m.label: m for m in machines}
+    # Every opened container+session, default and lazily instantiated alike
+    # (one isolated container per machine per non-OpenAI reviewer);
+    # released in finally.
     ensemble_shells: list[tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]] = []
+    # Live sessions shared by all OpenAI role passes, keyed by machine label.
+    primary_shells: dict[str, podman_host.ContainerShellSession] = {}
+
+    def open_machine_shell(
+        label: str,
+    ) -> tuple[podman_host.ContainerShellSession, str]:
+        handle, session, transcript = open_review_container_shell(
+            spec_by_label[label], podman_repo_specs, args, session_commands,
+        )
+        ensemble_shells.append((handle, session))
+        return session, transcript
+
     if args.podman:
         if not repo_roots:
             raise RuntimeError(
                 "--podman requires at least one local git checkout "
                 "via --repo-root / --extra-repo-root"
             )
-        if not args.podman_ssh_dest:
-            raise RuntimeError(
-                "--podman requires --podman-ssh-dest; provision the host with "
-                "containers/provision_remote.py first"
+        for m in machines:
+            if not podman_host.image_tag_exists(args.podman_image, host=m.host):
+                raise RuntimeError(
+                    f"podman image {args.podman_image!r} not found on "
+                    f"{m.host.ssh_dest} (machine {m.label}); build with: "
+                    f"python3 {(Path(__file__).resolve().parent / 'containers' / 'provision_remote.py')} "
+                    f"--ssh {m.host.ssh_dest}"
+                )
+            logger.info(
+                "container: ensure network=%s image=%s machine=%s host=%s",
+                args.podman_network or "(default)",
+                args.podman_image,
+                m.label,
+                m.host.ssh_dest,
             )
-        remote_host = _build_remote_host(args)
-        if not podman_host.image_tag_exists(args.podman_image, host=remote_host):
-            raise RuntimeError(
-                f"podman image {args.podman_image!r} not found; build with: "
-                f"python3 {(Path(__file__).resolve().parent / 'containers' / 'build_image.py')} "
-                f"--tag {args.podman_image!r}"
-            )
-        logger.info(
-            "container: ensure network=%s image=%s host=%s",
-            args.podman_network or "(default)",
-            args.podman_image,
-            remote_host.ssh_dest,
-        )
-        if args.podman_network:
-            podman_host.ensure_isolated_network(
-                args.podman_network, host=remote_host,
-            )
+            if args.podman_network:
+                podman_host.ensure_isolated_network(
+                    args.podman_network, host=m.host,
+                )
         podman_repo_specs = podman_repos.build_repo_specs(
             repo_roots, mirror_root=args.podman_mirror_root,
         )
         session_commands = [
             substitute_session_command(c, request) for c in args.session_command
         ]
-        podman_container_handle, podman_shell_session, session_transcript = (
-            open_review_container_shell(
-                remote_host, podman_repo_specs, args, session_commands,
-            )
+        # The default machine opens eagerly, before prompt building, so its
+        # --session-command transcript reaches the model via the prompt;
+        # other machines open lazily on the model's first use.
+        primary_shells[machines[0].label], session_transcript = (
+            open_machine_shell(machines[0].label)
         )
 
     repo_mount_paths = (
@@ -1312,20 +1310,13 @@ def main() -> int:
             shell_container_id=shared_container_id if shared_container_id else args.shell_container_id,
             code_interpreter_container_id=None if args.podman else shared_container_id,
             use_podman_shell=args.podman,
+            machines=machines,
         )
         include = build_response_include(
             vector_store_ids=vector_store_ids,
             use_web_search=args.use_web_search,
             use_podman_shell=args.podman,
         )
-
-        def new_shell() -> podman_host.ContainerShellSession:
-            assert remote_host is not None  # only wired in when --podman
-            handle, session, _ = open_review_container_shell(
-                remote_host, podman_repo_specs, args, session_commands,
-            )
-            ensemble_shells.append((handle, session))
-            return session
 
         review_ctx = ReviewContext(
             request=request,
@@ -1339,9 +1330,9 @@ def main() -> int:
             repo_roots=repo_roots,
             repo_mount_paths=repo_mount_paths,
             project_facts=project_facts,
-            gpu=bool(args.podman and args.podman_gpu),
+            machines=machines,
             session_transcript=session_transcript,
-            new_shell=new_shell if args.podman else None,
+            open_shell=open_machine_shell if args.podman else None,
         )
         openai_resources = OpenAIResources(
             client=client,
@@ -1350,7 +1341,8 @@ def main() -> int:
             patch_file_id=patch_file_id,
             vector_store_ids=vector_store_ids,
             shared_container_id=shared_container_id,
-            podman_shell_session=podman_shell_session,
+            shells=primary_shells if args.podman else None,
+            open_shell=open_machine_shell if args.podman else None,
             uploaded_file_ids=uploaded_file_ids,
             debug_dir_specified=debug_dir_specified,
         )
@@ -1376,8 +1368,8 @@ def main() -> int:
                 repo_roots=repo_roots,
                 repo_mount_paths=repo_mount_paths,
                 project_facts=project_facts,
-                gpu=bool(args.podman and args.podman_gpu),
-                new_shell=new_shell if args.podman else None,
+                machines=machines,
+                open_shell=open_machine_shell if args.podman else None,
             )
             triager = make_reviewer(
                 args.triage_model,
@@ -1545,10 +1537,6 @@ def main() -> int:
             delete_uploaded_file(client, file_id, verbose=args.verbose)
         if container_lease is not None:
             container_lease.release(healthy=container_lease_healthy)
-        if podman_shell_session is not None:
-            podman_shell_session.close()
-        if podman_container_handle is not None:
-            podman_host.stop_container(podman_container_handle)
         for handle, session in ensemble_shells:
             session.close()
             podman_host.stop_container(handle)

@@ -75,11 +75,11 @@ syncs the checkout's current HEAD into the mirror automatically.
 
 Then point the reviewer at the host, either directly:
 
-    ./pr_review_wrapper.py --podman --podman-ssh-dest fairy@HOST \
+    ./pr_review_wrapper.py --podman --shell-host fairy@HOST \
         --repo-root ~/forgejo_fairy/ffmpeg \
         --extra-repo-root ~/forgejo_fairy/all_ffmpeg ...
 
-or via the main tool, which injects `--podman --podman-ssh-dest` for you:
+or via the main tool, which injects `--podman --shell-host` for you:
 
     ./fairy.py ... --podman-host fairy@HOST
 
@@ -99,7 +99,7 @@ reviewer). Provider prefixes: `openai:`, `anthropic:`,
 reviewers run concurrently. A local-GPU backend is TODO -- PRs very welcome.
 
     ./pr_review_wrapper.py \
-        --podman --podman-ssh-dest fairy@HOST \
+        --podman --shell-host fairy@HOST \
         --repo-root ~/forgejo_fairy/ffmpeg \
         --triage-model openai:gpt-5.4-mini \
         --model openai:gpt-5.4 \

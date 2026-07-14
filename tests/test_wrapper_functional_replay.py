@@ -308,5 +308,45 @@ class EngageLabelOwnershipTests(unittest.TestCase):
         self.assertIsNone(seen["combiner"])
 
 
+class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
+    """Regression: a wrapper failure after the eager container open but
+    before the review (here: build_source_bundle rejecting a request
+    without pull_request.head_sha, observed 2026-07-14 on a smoke run)
+    used to skip the finally and leak the container on the podman host."""
+
+    def test_container_released_when_bundle_build_fails(self) -> None:
+        request_obj = _fixture_request()
+        request_obj["pull_request"] = dict(request_obj["pull_request"])
+        request_obj["pull_request"].pop("head_sha", None)
+
+        handle = mock.Mock(name="handle")
+        session = mock.Mock(name="session")
+        stopped: list[object] = []
+
+        with (
+            mock.patch.object(wrapper, "OpenAI", return_value=mock.Mock()),
+            mock.patch.object(wrapper, "load_api_key", return_value="test-key"),
+            mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
+            mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
+            mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
+            mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
+            mock.patch.object(wrapper, "open_review_container_shell",
+                              return_value=(handle, session, "")),
+            mock.patch.object(wrapper.podman_host, "stop_container", stopped.append),
+            mock.patch.object(
+                wrapper.sys, "argv",
+                ["pr_review_wrapper.py", "--model", "openai:gpt-5.4",
+                 "--podman", "--shell-host", "fairy@h"],
+            ),
+            mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(request_obj))),
+            mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "head_sha"):
+                wrapper.main()
+
+        session.close.assert_called_once_with()
+        self.assertEqual([handle], stopped)
+
+
 if __name__ == "__main__":
     unittest.main()

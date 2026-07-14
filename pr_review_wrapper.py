@@ -1202,89 +1202,88 @@ def main() -> int:
         ensemble_shells.append((handle, session))
         return session, transcript
 
-    if args.podman:
-        if not repo_roots:
-            raise RuntimeError(
-                "--podman requires at least one local git checkout "
-                "via --repo-root / --extra-repo-root"
-            )
-        for m in machines:
-            if not podman_host.image_tag_exists(args.podman_image, host=m.host):
-                raise RuntimeError(
-                    f"podman image {args.podman_image!r} not found on "
-                    f"{m.host.ssh_dest} (machine {m.label}); build with: "
-                    f"python3 {(Path(__file__).resolve().parent / 'containers' / 'provision_remote.py')} "
-                    f"--ssh {m.host.ssh_dest}"
-                )
-            logger.info(
-                "container: ensure network=%s image=%s machine=%s host=%s",
-                args.podman_network or "(default)",
-                args.podman_image,
-                m.label,
-                m.host.ssh_dest,
-            )
-            if args.podman_network:
-                podman_host.ensure_isolated_network(
-                    args.podman_network, host=m.host,
-                )
-        podman_repo_specs = podman_repos.build_repo_specs(
-            repo_roots, mirror_root=args.podman_mirror_root,
-        )
-        session_commands = [
-            substitute_session_command(c, request) for c in args.session_command
-        ]
-        # The default machine opens eagerly, before prompt building, so its
-        # --session-command transcript reaches the model via the prompt;
-        # other machines open lazily on the model's first use.
-        primary_shells[machines[0].label], session_transcript = (
-            open_machine_shell(machines[0].label)
-        )
-
-    repo_mount_paths = (
-        [s.container_path for s in podman_repo_specs]
-        if podman_repo_specs
-        else [spec.mounted_path for spec in container_repo_specs]
-    )
-
-    if vector_store_ids:
-        head_map_kwargs: dict[str, object] = {}
-        if container_repo_specs:
-            head_map_kwargs["container_repo_specs"] = container_repo_specs
-        if podman_repo_specs:
-            head_map_kwargs["podman_repo_specs"] = podman_repo_specs
-        request["vector_store_repo_heads"] = build_model_visible_repo_head_map(
-            repo_roots,
-            indexed_head_map,
-            **head_map_kwargs,
-        )
-
-    source_bundle: str | None
-    source_files: list[str]
-    source_notes: list[str]
-    if args.no_source_bundle or args.task == "issue":
-        source_bundle = None
-        source_files = []
-        source_notes = []
-    else:
-        source_bundle, source_files, source_notes = build_source_bundle(
-            request,
-            repo_root,
-            max_source_files=args.max_source_files,
-            max_file_bytes=args.max_file_bytes,
-            max_header_file_bytes=args.max_header_file_bytes,
-            max_bundle_bytes=args.max_bundle_bytes,
-            include_direct_includes=args.include_direct_includes,
-            verbose=args.verbose,
-        )
-
-    if args.task == "issue":
-        patch_bundle, patch_was_truncated = "", False
-    else:
-        patch_bundle, patch_was_truncated = build_patch_bundle(patch, args.max_patch_bytes)
-
     uploaded_file_ids: list[str] = []
-
+    # The eager container open below and everything after runs under
+    # this try so the finally releases ensemble_shells (and uploads)
+    # even when e.g. bundle building fails between open and review.
     try:
+        if args.podman:
+            if not repo_roots:
+                raise RuntimeError(
+                    "--podman requires at least one local git checkout "
+                    "via --repo-root / --extra-repo-root"
+                )
+            for m in machines:
+                if not podman_host.image_tag_exists(args.podman_image, host=m.host):
+                    raise RuntimeError(
+                        f"podman image {args.podman_image!r} not found on "
+                        f"{m.host.ssh_dest} (machine {m.label}); build with: "
+                        f"python3 {(Path(__file__).resolve().parent / 'containers' / 'provision_remote.py')} "
+                        f"--ssh {m.host.ssh_dest}"
+                    )
+                logger.info(
+                    "container: ensure network=%s image=%s machine=%s host=%s",
+                    args.podman_network or "(default)",
+                    args.podman_image,
+                    m.label,
+                    m.host.ssh_dest,
+                )
+                if args.podman_network:
+                    podman_host.ensure_isolated_network(
+                        args.podman_network, host=m.host,
+                    )
+            podman_repo_specs = podman_repos.build_repo_specs(
+                repo_roots, mirror_root=args.podman_mirror_root,
+            )
+            session_commands = [
+                substitute_session_command(c, request) for c in args.session_command
+            ]
+            primary_shells[machines[0].label], session_transcript = (
+                open_machine_shell(machines[0].label)
+            )
+
+        repo_mount_paths = (
+            [s.container_path for s in podman_repo_specs]
+            if podman_repo_specs
+            else [spec.mounted_path for spec in container_repo_specs]
+        )
+
+        if vector_store_ids:
+            head_map_kwargs: dict[str, object] = {}
+            if container_repo_specs:
+                head_map_kwargs["container_repo_specs"] = container_repo_specs
+            if podman_repo_specs:
+                head_map_kwargs["podman_repo_specs"] = podman_repo_specs
+            request["vector_store_repo_heads"] = build_model_visible_repo_head_map(
+                repo_roots,
+                indexed_head_map,
+                **head_map_kwargs,
+            )
+
+        source_bundle: str | None
+        source_files: list[str]
+        source_notes: list[str]
+        if args.no_source_bundle or args.task == "issue":
+            source_bundle = None
+            source_files = []
+            source_notes = []
+        else:
+            source_bundle, source_files, source_notes = build_source_bundle(
+                request,
+                repo_root,
+                max_source_files=args.max_source_files,
+                max_file_bytes=args.max_file_bytes,
+                max_header_file_bytes=args.max_header_file_bytes,
+                max_bundle_bytes=args.max_bundle_bytes,
+                include_direct_includes=args.include_direct_includes,
+                verbose=args.verbose,
+            )
+
+        if args.task == "issue":
+            patch_bundle, patch_was_truncated = "", False
+        else:
+            patch_bundle, patch_was_truncated = build_patch_bundle(patch, args.max_patch_bytes)
+
         patch_file_id: str | None = None
         if args.task == "pr":
             patch_file_id = upload_text_file(

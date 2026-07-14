@@ -36,6 +36,7 @@ import os
 import pickle
 import re
 import time
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -166,6 +167,45 @@ class _ColorFormatter(logging.Formatter):
         if color is None:
             return text
         return f"{color}{text}{_COLOR_RESET}"
+
+
+def apply_config_file_defaults(
+    parser: argparse.ArgumentParser, argv: list[str] | None = None,
+) -> None:
+    """Register ``--config FILE`` and load its TOML values as defaults.
+
+    Keys are long option names (dashes or underscores interchangeably);
+    each value becomes that option's default, so explicit command-line
+    options win -- ``@argsfile`` semantics with comments and nicer
+    syntax, nothing more. Unknown keys error; string values go through
+    the option's ``type`` (command-line defaults bypass it otherwise).
+    Call after every ``add_argument``, before ``parse_args``.
+    """
+    parser.add_argument(
+        "--config", type=Path, metavar="FILE",
+        help="TOML file of option-name = value defaults; explicit options win.",
+    )
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", type=Path)
+    known, _ = pre.parse_known_args(argv)
+    if known.config is None:
+        return
+    with open(known.config, "rb") as fh:
+        cfg = tomllib.load(fh)
+    actions = {a.dest: a for a in parser._actions}
+    defaults: dict[str, object] = {}
+    for key, value in cfg.items():
+        dest = key.replace("-", "_")
+        action = actions.get(dest)
+        if action is None or dest == "help":
+            parser.error(f"--config {known.config}: unknown option {key!r}")
+        if action.type is not None:
+            if isinstance(value, str):
+                value = action.type(value)
+            elif isinstance(value, list):
+                value = [action.type(v) if isinstance(v, str) else v for v in value]
+        defaults[dest] = value
+    parser.set_defaults(**defaults)
 
 
 def add_color_arg(parser: argparse.ArgumentParser) -> None:

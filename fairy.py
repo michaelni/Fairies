@@ -93,6 +93,7 @@ from common import (
     JsonPrimitive,
     JsonValue,
     add_color_arg,
+    apply_config_file_defaults,
     default_cache_path,
     iso_to_dt,
     parse_iso_datetime_arg,
@@ -548,6 +549,7 @@ def parse_args() -> argparse.Namespace:
              "gated only on pr.updated_at and ignore this TTL. "
              "(default: 24)",
     )
+    apply_config_file_defaults(p)
     args = p.parse_args()
     args.force_review_prs = flatten_pr_number_args(args.force_review_pr)
     args.force_skip_prs = flatten_pr_number_args(args.force_skip_pr)

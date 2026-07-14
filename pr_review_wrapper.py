@@ -79,6 +79,7 @@ from openai import OpenAI
 
 from common import (
     add_color_arg,
+    apply_config_file_defaults,
     setup_logging,
 )
 from patch_util import (
@@ -602,6 +603,7 @@ def parse_args() -> argparse.Namespace:
         help="Print debug information to stderr.",
     )
     add_color_arg(p)
+    apply_config_file_defaults(p)
     return p.parse_args()
 
 

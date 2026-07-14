@@ -227,6 +227,11 @@ class AnthropicReviewer(Reviewer):
         })
 
         messages: list[JsonObject] = [{"role": "user", "content": user_blocks}]
+        # Anthropic caches only up to explicit cache_control breakpoints;
+        # z.ai caches implicitly and ignores them.
+        system_blocks: list[JsonObject] = [
+            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}},
+        ]
         tools: list[JsonObject] = [_build_submit_review_tool(self.role)]
         if use_shell:
             tools.append(_build_shell_tool())
@@ -241,11 +246,12 @@ class AnthropicReviewer(Reviewer):
                     "anthropic messages.create role=%s model=%s round=%d shell=%s",
                     self.role.name, self.model, rounds, use_shell,
                 )
+                _mark_cache_breakpoint(messages)
                 # Snapshot: ``messages`` grows across rounds and the dump
                 # must record what this round actually sent.
                 request_kwargs: JsonObject = {
                     "model": self.model,
-                    "system": system,
+                    "system": system_blocks,
                     "messages": list(messages),
                     "tools": tools,
                     "max_tokens": self.max_tokens,
@@ -350,3 +356,18 @@ def _echo_content(content: list[object]) -> list[JsonObject]:
         elif kind == "redacted_thinking":
             blocks.append({"type": "redacted_thinking", "data": block.data})
     return blocks
+
+
+def _mark_cache_breakpoint(messages: list[JsonObject]) -> None:
+    """Move the conversation's cache_control marker to the newest block."""
+    last: JsonObject | None = None
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict):
+                block.pop("cache_control", None)
+                last = block
+    if last is not None:
+        last["cache_control"] = {"type": "ephemeral"}

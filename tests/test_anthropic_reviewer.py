@@ -141,6 +141,52 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         self.assertEqual("tool_use", second_msgs[1]["content"][0]["type"])
         self.assertEqual("tool_result", second_msgs[2]["content"][0]["type"])
 
+    def test_cache_breakpoints_move_to_newest_block(self) -> None:
+        # Regression: without cache_control the Anthropic API caches
+        # nothing and re-bills the full context every round (probed
+        # 2026-07-14 on claude-haiku: t2 in=7745 read=0 bare vs in=3
+        # read=7730 marked; z.ai accepts the markers and is unaffected).
+        shell = _FakeShell()
+        client = _ScriptedClient([
+            _Message([_Block(type="tool_use", id="t1", name="shell",
+                             input={"command": "git log -1"})]),
+            _Message([_Block(type="tool_use", id="t2", name="submit_review",
+                             input={"classification": "approve", "message": "",
+                                    "head_vs_branch_diff_evidence": False})]),
+        ])
+        reviewer = anthropic_reviewer.AnthropicReviewer("claude-opus-4", name="anthropic:claude-opus-4")
+        reviewer._client = lambda: client  # type: ignore[method-assign]
+        reviewer.review(_ctx(shell))
+
+        marker = {"type": "ephemeral"}
+        for call in client.calls:
+            self.assertEqual(marker, call["system"][0]["cache_control"])
+        # The recorded calls share block dicts, so only the final marker
+        # position is observable: exactly one, on the newest block (the
+        # round-2 tool_result), earlier markers stripped.
+        final = client.calls[1]["messages"]
+        marked = [b for m in final if isinstance(m["content"], list)
+                  for b in m["content"] if "cache_control" in b]
+        self.assertEqual(1, len(marked))
+        self.assertEqual(marker, marked[0]["cache_control"])
+        self.assertIs(final[-1]["content"][-1], marked[0])
+        self.assertEqual("tool_result", marked[0]["type"])
+
+    def test_mark_cache_breakpoint_moves_marker(self) -> None:
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": "a"},
+                                         {"type": "text", "text": "b"}]},
+            {"role": "user", "content": "plain string nudge"},
+        ]
+        anthropic_reviewer._mark_cache_breakpoint(messages)
+        self.assertEqual({"type": "ephemeral"},
+                         messages[0]["content"][-1]["cache_control"])
+        messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t"}]})
+        anthropic_reviewer._mark_cache_breakpoint(messages)
+        self.assertNotIn("cache_control", messages[0]["content"][-1])
+        self.assertEqual({"type": "ephemeral"},
+                         messages[2]["content"][0]["cache_control"])
+
     def test_module_logger_names_match_wrapper_registration(self) -> None:
         # pr_review_wrapper.main() attaches log handlers to these
         # loggers BY NAME because the modules are imported lazily. A module

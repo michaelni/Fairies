@@ -9,7 +9,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import podman_host
 import pr_review_wrapper
 import shell_tool
-from llm_prompt import REVIEWER_ROLE, make_session_transcript_texts
+from llm_prompt import (
+    COMBINER_ROLE,
+    ISSUE_COMBINER_ROLE,
+    ISSUE_INVESTIGATOR_ROLE,
+    REVIEWER_ROLE,
+    make_session_transcript_texts,
+)
 from llm_review_api import ReviewContext
 
 
@@ -73,11 +79,13 @@ class SubstitutionTests(unittest.TestCase):
 
 
 class PromptSpliceTests(unittest.TestCase):
-    def test_reviewer_user_texts_include_transcript(self) -> None:
-        texts = REVIEWER_ROLE.user_texts(_ctx("$ git status --short\nclean\n"))
-        joined = "\n".join(texts)
-        self.assertIn("already run in your shell container", joined)
-        self.assertIn("$ git status --short", joined)
+    def test_shell_roles_user_texts_include_transcript(self) -> None:
+        for role in (REVIEWER_ROLE, COMBINER_ROLE,
+                     ISSUE_INVESTIGATOR_ROLE, ISSUE_COMBINER_ROLE):
+            texts = role.user_texts(_ctx("$ git status --short\nclean\n"))
+            joined = "\n".join(texts)
+            self.assertIn("already run in your shell container", joined, role.name)
+            self.assertIn("$ git status --short", joined, role.name)
 
     def test_no_transcript_adds_no_block(self) -> None:
         self.assertEqual([], make_session_transcript_texts(_ctx()))

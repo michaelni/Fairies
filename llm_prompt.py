@@ -1283,7 +1283,10 @@ COMBINER_ROLE = RoleSpec(
 ISSUE_INVESTIGATOR_ROLE = RoleSpec(
     name="issue_investigator",
     schema=ISSUE_REPORT_SCHEMA,
-    user_texts=lambda ctx: [make_issue_user_text(ctx.request)],
+    user_texts=lambda ctx: [
+        make_issue_user_text(ctx.request),
+        *make_session_transcript_texts(ctx),
+    ],
     validate=validate_issue_report,
 )
 
@@ -1292,6 +1295,7 @@ ISSUE_COMBINER_ROLE = RoleSpec(
     schema=ISSUE_REPORT_SCHEMA,
     user_texts=lambda ctx: [
         make_issue_user_text(ctx.request),
+        *make_session_transcript_texts(ctx),
         make_combiner_user_text(ctx.review_drafts()),
     ],
     validate=validate_issue_report,

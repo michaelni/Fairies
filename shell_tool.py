@@ -46,7 +46,7 @@ import logging
 from common import JsonObject
 from podman_host import ContainerShellSession
 
-__all__ = ["DEFAULT_SHELL_TIMEOUT_S", "exec_shell_call"]
+__all__ = ["DEFAULT_SHELL_TIMEOUT_S", "exec_shell_call", "run_session_commands"]
 
 logger = logging.getLogger(__name__)
 
@@ -98,3 +98,37 @@ def exec_shell_call(
         "stdout_truncated": result.stdout_truncated,
         "stderr_truncated": result.stderr_truncated,
     }
+
+
+def run_session_commands(
+    session: ContainerShellSession,
+    commands: list[str],
+    *,
+    max_timeout_s: float,
+) -> str:
+    """Run operator-configured commands on ``session``; return a transcript.
+
+    The transcript shows each command and its output the way a terminal
+    would, for splicing into the model's prompt. Failures are recorded
+    (``(exit N)``), not raised: the session stays usable either way.
+    """
+    parts: list[str] = []
+    for command in commands:
+        payload = exec_shell_call(
+            session, {"command": command}, max_timeout_s=max_timeout_s,
+            default_timeout_s=max_timeout_s,
+        )
+        block = f"$ {command}\n"
+        block += str(payload.get("stdout") or "")
+        stderr = str(payload.get("stderr") or "")
+        if stderr:
+            block += ("" if block.endswith("\n") else "\n") + stderr
+        if not block.endswith("\n"):
+            block += "\n"
+        if payload.get("stdout_truncated") or payload.get("stderr_truncated"):
+            block += "(output truncated)\n"
+        exit_code = payload.get("exit_code")
+        if exit_code not in (0, None):
+            block += f"(exit {exit_code})\n"
+        parts.append(block)
+    return "\n".join(parts)

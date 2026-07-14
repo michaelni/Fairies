@@ -672,6 +672,9 @@ class ReviewContext:
     # True when the container shells expose a GPU (--podman-gpu), so the
     # prompt can advertise it next to the CPU/memory limits.
     gpu: bool = False
+    # Transcript of --session-command runs in the review container,
+    # spliced into shell-capable roles' user text.
+    session_transcript: str = ""
     new_shell: Callable[[], ContainerShellSession] | None = None
     drafts: list[Review] = field(default_factory=list)
 

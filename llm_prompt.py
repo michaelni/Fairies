@@ -50,6 +50,7 @@ from llm_review_api import (
     REVIEW_SCHEMA,
     TRIAGE_REQUESTABLE_EFFORTS,
     Review,
+    ReviewContext,
     RoleSpec,
     build_triage_schema,
     check_schema,
@@ -1244,6 +1245,16 @@ def generate_llm_prompt(
     raise ValueError(f"unknown role: {role!r}")
 
 
+def make_session_transcript_texts(ctx: ReviewContext) -> list[str]:
+    """The --session-command transcript as a user-text block, if any."""
+    if not ctx.session_transcript:
+        return []
+    return [
+        "The following commands were already run in your shell container:\n\n"
+        + ctx.session_transcript
+    ]
+
+
 # The standard pipeline roles, as data. Defined here -- not in
 # llm_review_api, which must stay a leaf -- because a role is mostly its
 # prompt: the role id ``generate_llm_prompt`` resolves plus the user-text
@@ -1253,6 +1264,7 @@ REVIEWER_ROLE = RoleSpec(
     schema=REVIEW_SCHEMA,
     user_texts=lambda ctx: [
         make_user_text(ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated),
+        *make_session_transcript_texts(ctx),
     ],
     validate=validate_review,
 )
@@ -1262,6 +1274,7 @@ COMBINER_ROLE = RoleSpec(
     schema=REVIEW_SCHEMA,
     user_texts=lambda ctx: [
         make_user_text(ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated),
+        *make_session_transcript_texts(ctx),
         make_combiner_user_text(ctx.review_drafts()),
     ],
     validate=validate_review,

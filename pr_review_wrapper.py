@@ -73,6 +73,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from typing import Sequence
 
 from openai import OpenAI
 
@@ -97,6 +98,7 @@ import review_pipeline
 from review_pipeline import make_reviewer, review_pr, run_triage
 import podman_host
 import podman_repos
+import shell_tool
 from llm_prompt import (
     COMBINER_ROLE,
     ISSUE_COMBINER_ROLE,
@@ -473,6 +475,15 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=600.0,
         help="Maximum seconds for a single shell function call (default: 600).",
+    )
+    p.add_argument(
+        "--session-command",
+        action="append",
+        default=[],
+        metavar="CMD",
+        help="Run CMD in each review container before the LLM session and "
+             "splice command + output into the prompt. ``{number}`` and "
+             "``{base_ref}`` are replaced from the PR metadata. Repeatable.",
     )
     p.add_argument(
         "--podman-ssh-dest",
@@ -970,16 +981,33 @@ def emit_review_stdout(
     sys.stdout.write("\n")
 
 
+def substitute_session_command(command: str, request: JsonObject) -> str:
+    """Fill ``{number}`` / ``{base_ref}`` in a --session-command from the PR."""
+    pr = request.get("pull_request")
+    if not isinstance(pr, dict):
+        return command
+    number = pr.get("number")
+    if number is not None:
+        command = command.replace("{number}", str(number))
+    base_ref = pr.get("base_ref")
+    if isinstance(base_ref, str) and base_ref:
+        command = command.replace("{base_ref}", base_ref)
+    return command
+
+
 def open_review_container_shell(
     remote_host: podman_host.RemoteHost,
     repo_specs: list[podman_repos.RepoSpec],
     args: argparse.Namespace,
-) -> tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]:
+    session_commands: Sequence[str] = (),
+) -> tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession, str]:
     """Start a fresh ephemeral container, fill its repos, and open a shell.
 
     One isolated container per call, so concurrent ensemble reviewers never
-    share a working tree. On any provisioning failure the half-started
-    container is stopped before the error propagates.
+    share a working tree. ``session_commands`` run in every container so
+    state they create exists for each reviewer; the returned transcript is
+    what the prompt splices in. On any provisioning failure the
+    half-started container is stopped before the error propagates.
     """
     handle = podman_host.start_ephemeral_container(
         image=args.podman_image,
@@ -993,10 +1021,14 @@ def open_review_container_shell(
         podman_repos.provision_repos_into_container(handle, repo_specs, remote_host)
         podman_host.copy_into_container(handle, AGENT_LOCAL_PATH, AGENT_CONTAINER_DIR)
         session = podman_host.open_container_shell(handle, AGENT_CONTAINER_PATH)
+        transcript = shell_tool.run_session_commands(
+            session, list(session_commands),
+            max_timeout_s=args.podman_exec_timeout,
+        ) if session_commands else ""
     except Exception:
         podman_host.stop_container(handle)
         raise
-    return handle, session
+    return handle, session, transcript
 
 
 def main() -> int:
@@ -1143,6 +1175,8 @@ def main() -> int:
 
     podman_container_handle: podman_host.ContainerHandle | None = None
     podman_shell_session: podman_host.ContainerShellSession | None = None
+    session_commands: list[str] = []
+    session_transcript = ""
     podman_repo_specs: list[podman_repos.RepoSpec] = []
     remote_host: podman_host.RemoteHost | None = None
     # Extra containers spun up on demand by the ensemble's new_shell factory
@@ -1179,8 +1213,13 @@ def main() -> int:
         podman_repo_specs = podman_repos.build_repo_specs(
             repo_roots, mirror_root=args.podman_mirror_root,
         )
-        podman_container_handle, podman_shell_session = open_review_container_shell(
-            remote_host, podman_repo_specs, args,
+        session_commands = [
+            substitute_session_command(c, request) for c in args.session_command
+        ]
+        podman_container_handle, podman_shell_session, session_transcript = (
+            open_review_container_shell(
+                remote_host, podman_repo_specs, args, session_commands,
+            )
         )
 
     repo_mount_paths = (
@@ -1262,7 +1301,9 @@ def main() -> int:
 
         def new_shell() -> podman_host.ContainerShellSession:
             assert remote_host is not None  # only wired in when --podman
-            handle, session = open_review_container_shell(remote_host, podman_repo_specs, args)
+            handle, session, _ = open_review_container_shell(
+                remote_host, podman_repo_specs, args, session_commands,
+            )
             ensemble_shells.append((handle, session))
             return session
 
@@ -1279,6 +1320,7 @@ def main() -> int:
             repo_mount_paths=repo_mount_paths,
             project_facts=project_facts,
             gpu=bool(args.podman and args.podman_gpu),
+            session_transcript=session_transcript,
             new_shell=new_shell if args.podman else None,
         )
         openai_resources = OpenAIResources(

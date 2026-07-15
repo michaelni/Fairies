@@ -56,7 +56,7 @@ class TriageInjectionTests(unittest.TestCase):
     def test_prompt_documents_the_field(self) -> None:
         prompt = llm_prompt.make_triage_developer_prompt(
             "fairy", [Path("ffmpeg")], False, False, False, False, [],
-            model="gpt-5.4-mini",
+            ctx=llm_prompt.PromptFor("triager", "gpt-5.4-mini"),
         )
         self.assertIn("prompt_injection", prompt)
 

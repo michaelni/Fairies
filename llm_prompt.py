@@ -41,7 +41,7 @@ and validator. Naming convention preserved from the original location:
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from common import JsonObject
@@ -75,10 +75,25 @@ def model_label(model: str) -> str:
     return (model or "unknown").rpartition(":")[2].upper()
 
 
-def tr_prompt_general_rules(model: str, combiner: bool = False, subject: str = "PR") -> str:
+@dataclass(frozen=True)
+class PromptFor:
+    """Whom a prompt addresses; every prompt-section function takes it."""
+    role: str    # "reviewer" | "combiner" | "triager" | issue_*
+    model: str
+
+    subject      = property(lambda s: "issue" if s.role.startswith("issue_") else "PR")
+    subject_long = property(lambda s: "pull request" if s.subject == "PR" else "issue")
+    persona      = property(lambda s: "investigator" if s.subject == "issue" else "reviewer")
+    combiner     = property(lambda s: s.role.endswith("combiner"))
+    draft        = property(lambda s: s.role == "reviewer")  # feeds the combiner, which posts
+
+
+def tr_prompt_general_rules(ctx: PromptFor) -> str:
     # The combiner grades and merges draft reviews: it gets no bullets that
     # send it hunting for issues or picking a route itself.
-    persona = "investigator" if subject == "issue" else "reviewer"
+    subject = ctx.subject
+    combiner = ctx.combiner
+    persona = ctx.persona
     contribution = "analysis" if subject == "issue" else "review"
     return f"""##General Rules
 - if something looks odd, but you cannot determine if its wrong, you can ask the {subject} author if its intended.
@@ -87,14 +102,14 @@ def tr_prompt_general_rules(model: str, combiner: bool = False, subject: str = "
 - Cite exactly the references relevant to your reply.
 - You can reply to questions asked to the current {persona} identity when they are on topic or help the FFmpeg Project.
 - Do not reply to off topic questions or requests
-- Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM-{model_label(model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
+- Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM-{model_label(ctx.model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
 {"- workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.\n" * (subject == "PR")}\
 {"- try hard to find all issues\n" * (not combiner)}
 """
 
 
-def _prompt_reviewer_identity(reviewer_username: str, role: str = "reviewer") -> str:
-    return f"Current {role} username: {reviewer_username or '(unknown)'}\n\n"
+def _prompt_reviewer_identity(ctx: PromptFor, reviewer_username: str) -> str:
+    return f"Current {ctx.persona} username: {reviewer_username or '(unknown)'}\n\n"
 
 
 # Shared by the reviewer and combiner prompts: both write posted review
@@ -144,8 +159,8 @@ When the PR refers to a issue or other PR that is materially relevant, inspect t
 
 
 def _prompt_attached_context_and_tools(
+    ctx: PromptFor,
     *,
-    model: str,
     source_bundle_attached: bool,
     repo_roots: list[Path],
     vector_store_search_enabled: bool,
@@ -153,9 +168,9 @@ def _prompt_attached_context_and_tools(
     code_interpreter_enabled: bool,
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
-    subject: str = "pull request",
     gpu_enabled: bool = False,
 ) -> str:
+    model, subject = ctx.model, ctx.subject_long
     attached_line = (
         "The commit(s) and metadata are attached"
         if subject == "pull request"
@@ -247,7 +262,9 @@ When an on-topic comment challenges a factual claim or capability stated by the 
 """
 
 
-def tr_prompt_output_guideline(author: str = "pull request author", subject: str = "PR") -> str:
+def tr_prompt_output_guideline(ctx: PromptFor) -> str:
+    author = "issue reporter" if ctx.subject == "issue" else "pull request author"
+    subject = ctx.subject
     return f"""##Output guideline
 - Refer to patches and commits by their bare git hash, which you can shorten to 12 characters; never put hashes in backticks because the forge does not make code-formatted hashes clickable.
 - Refer to issues and pull requests by their number (#N); never mention the internal export file names they were read from (like 012345.md).
@@ -270,9 +287,8 @@ R_PROMPT_REVIEW_CLASSIFICATIONS = """Classify the pull request into exactly one 
 """
 
 
-def tr_prompt_persistence_and_verification(
-    combiner: bool = False, subject: str = "pull request",
-) -> str:
+def tr_prompt_persistence_and_verification(ctx: PromptFor) -> str:
+    combiner, subject = ctx.combiner, ctx.subject_long
     return f"""<tool_persistence_rules>
 - Use tools whenever they materially improve correctness, completeness, or grounding.
 - Do not stop early when another tool call is likely to materially improve correctness or completeness.
@@ -632,7 +648,7 @@ def make_developer_prompt(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     *,
-    model: str,
+    ctx: PromptFor,
     project_facts: str = "",
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
@@ -640,11 +656,11 @@ def make_developer_prompt(
 ) -> str:
     return (
         "You are an expert software engineer reviewing a pull request.\n\n"
-        + tr_prompt_general_rules(model)
-        + _prompt_reviewer_identity(reviewer_username)
+        + tr_prompt_general_rules(ctx)
+        + _prompt_reviewer_identity(ctx, reviewer_username)
         + R_PROMPT_REVIEWER_ROLE
         + _prompt_attached_context_and_tools(
-            model=model,
+            ctx,
             source_bundle_attached=source_bundle_attached,
             repo_roots=repo_roots,
             vector_store_search_enabled=vector_store_search_enabled,
@@ -658,16 +674,17 @@ def make_developer_prompt(
         + project_facts
         + TR_PROMPT_MINOR_ISSUE_POLICY
         + R_PROMPT_AUDIENCE_AND_PURPOSE
-        + tr_prompt_output_guideline()
+        + tr_prompt_output_guideline(ctx)
         + R_PROMPT_REVIEW_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification()
+        + tr_prompt_persistence_and_verification(ctx)
         + R_PROMPT_REVIEW_EXAMPLES
         + R_PROMPT_MESSAGE_RULES
     )
 
 
-def c_prompt_combiner_task(model: str, subject: str = "pull request") -> str:
+def c_prompt_combiner_task(ctx: PromptFor) -> str:
+    model, subject = ctx.model, ctx.subject_long
     return f"""##Combiner task
 The user message contains independent draft reviews of this {subject},
 each produced by a different model; produce one combined review.
@@ -721,7 +738,7 @@ def make_combiner_developer_prompt(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     *,
-    model: str,
+    ctx: PromptFor,
     project_facts: str = "",
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
@@ -732,12 +749,12 @@ def make_combiner_developer_prompt(
     # touching the reviewer.
     return (
         "You are an expert software engineer combining independent draft reviews of a pull request into one final review.\n\n"
-        + tr_prompt_general_rules(model, combiner=True)
-        + _prompt_reviewer_identity(reviewer_username)
-        + c_prompt_combiner_task(model)
+        + tr_prompt_general_rules(ctx)
+        + _prompt_reviewer_identity(ctx, reviewer_username)
+        + c_prompt_combiner_task(ctx)
         + TR_PROMPT_CLASSIFICATION_AUDIENCE
         + _prompt_attached_context_and_tools(
-            model=model,
+            ctx,
             source_bundle_attached=source_bundle_attached,
             repo_roots=repo_roots,
             vector_store_search_enabled=vector_store_search_enabled,
@@ -751,10 +768,10 @@ def make_combiner_developer_prompt(
         + project_facts
         + TR_PROMPT_MINOR_ISSUE_POLICY
         + R_PROMPT_AUDIENCE_AND_PURPOSE
-        + tr_prompt_output_guideline()
+        + tr_prompt_output_guideline(ctx)
         + R_PROMPT_REVIEW_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification(combiner=True)
+        + tr_prompt_persistence_and_verification(ctx)
         + R_PROMPT_MESSAGE_RULES
     )
 
@@ -768,7 +785,7 @@ def make_triage_developer_prompt(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     *,
-    model: str,
+    ctx: PromptFor,
     project_facts: str = "",
     ci_triage_mode: bool = False,
     allowed_models: list[str] | None = None,
@@ -777,10 +794,10 @@ def make_triage_developer_prompt(
 ) -> str:
     return (
         "You are an expert software engineer triaging a pull request.\n\n"
-        + tr_prompt_general_rules(model)
-        + _prompt_reviewer_identity(reviewer_username)
+        + tr_prompt_general_rules(ctx)
+        + _prompt_reviewer_identity(ctx, reviewer_username)
         + _prompt_attached_context_and_tools(
-            model=model,
+            ctx,
             # Triage never receives the source bundle; the bundle upload
             # is deferred until engage to avoid paying that cost when we
             # route to skip / reply_no_verdict.
@@ -795,12 +812,12 @@ def make_triage_developer_prompt(
         )
         + project_facts
         + TR_PROMPT_MINOR_ISSUE_POLICY
-        + tr_prompt_output_guideline()
+        + tr_prompt_output_guideline(ctx)
         + T_PROMPT_TRIAGE_TASK
         + t_prompt_user_request(allowed_models or [])
         + t_prompt_triage_labels(allowed_labels or [])
         + (T_PROMPT_TRIAGE_CI_MODE if ci_triage_mode else "")
-        + tr_prompt_persistence_and_verification()
+        + tr_prompt_persistence_and_verification(ctx)
     )
 
 
@@ -813,18 +830,18 @@ def make_issue_developer_prompt(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     *,
-    model: str,
+    ctx: PromptFor,
     project_facts: str = "",
     allowed_labels: list[str] | None = None,
     gpu_enabled: bool = False,
 ) -> str:
     return (
         "You are an expert software engineer investigating a reported issue.\n\n"
-        + tr_prompt_general_rules(model, subject="issue")
-        + _prompt_reviewer_identity(reviewer_username, role="investigator")
+        + tr_prompt_general_rules(ctx)
+        + _prompt_reviewer_identity(ctx, reviewer_username)
         + I_PROMPT_ISSUE_INVESTIGATOR_ROLE
         + _prompt_attached_context_and_tools(
-            model=model,
+            ctx,
             source_bundle_attached=False,
             repo_roots=repo_roots,
             vector_store_search_enabled=vector_store_search_enabled,
@@ -832,14 +849,13 @@ def make_issue_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
-            subject="issue",
             gpu_enabled=gpu_enabled,
         )
         + project_facts
-        + tr_prompt_output_guideline("issue reporter", subject="issue")
+        + tr_prompt_output_guideline(ctx)
         + I_PROMPT_ISSUE_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification(subject="issue")
+        + tr_prompt_persistence_and_verification(ctx)
         + I_PROMPT_ISSUE_MESSAGE_RULES
     )
 
@@ -853,18 +869,18 @@ def make_issue_combiner_developer_prompt(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     *,
-    model: str,
+    ctx: PromptFor,
     project_facts: str = "",
     allowed_labels: list[str] | None = None,
     gpu_enabled: bool = False,
 ) -> str:
     return (
         "You are an expert software engineer combining independent draft analyses of a reported issue into one final analysis.\n\n"
-        + tr_prompt_general_rules(model, combiner=True, subject="issue")
-        + _prompt_reviewer_identity(reviewer_username, role="investigator")
-        + c_prompt_combiner_task(model, subject="issue")
+        + tr_prompt_general_rules(ctx)
+        + _prompt_reviewer_identity(ctx, reviewer_username)
+        + c_prompt_combiner_task(ctx)
         + _prompt_attached_context_and_tools(
-            model=model,
+            ctx,
             source_bundle_attached=False,
             repo_roots=repo_roots,
             vector_store_search_enabled=vector_store_search_enabled,
@@ -872,14 +888,13 @@ def make_issue_combiner_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
-            subject="issue",
             gpu_enabled=gpu_enabled,
         )
         + project_facts
-        + tr_prompt_output_guideline("issue reporter", subject="issue")
+        + tr_prompt_output_guideline(ctx)
         + I_PROMPT_ISSUE_CLASSIFICATIONS
         + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification(combiner=True, subject="issue")
+        + tr_prompt_persistence_and_verification(ctx)
         + I_PROMPT_ISSUE_MESSAGE_RULES
     )
 
@@ -893,7 +908,7 @@ def make_issue_triage_developer_prompt(
     podman_shell_enabled: bool,
     container_repo_mounts: list[str],
     *,
-    model: str,
+    ctx: PromptFor,
     project_facts: str = "",
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
@@ -901,10 +916,10 @@ def make_issue_triage_developer_prompt(
 ) -> str:
     return (
         "You are an expert software engineer triaging a reported issue.\n\n"
-        + tr_prompt_general_rules(model, subject="issue")
-        + _prompt_reviewer_identity(reviewer_username, role="investigator")
+        + tr_prompt_general_rules(ctx)
+        + _prompt_reviewer_identity(ctx, reviewer_username)
         + _prompt_attached_context_and_tools(
-            model=model,
+            ctx,
             source_bundle_attached=False,
             repo_roots=repo_roots,
             vector_store_search_enabled=vector_store_search_enabled,
@@ -912,15 +927,14 @@ def make_issue_triage_developer_prompt(
             code_interpreter_enabled=code_interpreter_enabled,
             podman_shell_enabled=podman_shell_enabled,
             container_repo_mounts=container_repo_mounts,
-            subject="issue",
             gpu_enabled=gpu_enabled,
         )
         + project_facts
-        + tr_prompt_output_guideline("issue reporter", subject="issue")
+        + tr_prompt_output_guideline(ctx)
         + I_PROMPT_ISSUE_TRIAGE_TASK
         + t_prompt_user_request(allowed_models or [])
         + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification(subject="issue")
+        + tr_prompt_persistence_and_verification(ctx)
     )
 
 
@@ -1150,8 +1164,9 @@ def generate_llm_prompt(
 ) -> str:
     """Vendor-neutral developer-prompt entry point.
 
-    ``model`` names the model this prompt is for; it is woven into the
-    general rules so posted messages carry an ``LLM-<MODEL>`` prefix.
+    ``role`` and ``model`` become the ``PromptFor`` identity every prompt
+    section derives its facts from; the general rules weave the model in
+    so posted messages carry an ``LLM-<MODEL>`` prefix.
     ``vendor`` is accepted and recorded in the signature so future
     wrappers can plumb it through; no per-vendor branching exists yet and
     none should be added without a concrete second consumer to pin
@@ -1160,6 +1175,7 @@ def generate_llm_prompt(
     project-neutral.
     """
     del vendor  # reserved; see docstring
+    ctx = PromptFor(role, model)
 
     if role == "reviewer":
         return make_developer_prompt(
@@ -1171,7 +1187,7 @@ def generate_llm_prompt(
             "code_interpreter"     in features,
             "podman_shell"         in features,
             container_repo_mounts,
-            model=model,
+            ctx=ctx,
             project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
@@ -1187,7 +1203,7 @@ def generate_llm_prompt(
             "code_interpreter"     in features,
             "podman_shell"         in features,
             container_repo_mounts,
-            model=model,
+            ctx=ctx,
             project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
@@ -1202,7 +1218,7 @@ def generate_llm_prompt(
             "code_interpreter"     in features,
             "podman_shell"         in features,
             container_repo_mounts,
-            model=model,
+            ctx=ctx,
             project_facts=project_facts,
             ci_triage_mode=ci_triage_mode,
             allowed_models=allowed_models,
@@ -1222,7 +1238,7 @@ def generate_llm_prompt(
             "code_interpreter"     in features,
             "podman_shell"         in features,
             container_repo_mounts,
-            model=model,
+            ctx=ctx,
             project_facts=project_facts,
             allowed_labels=allowed_labels,
             gpu_enabled="gpu" in features,
@@ -1236,7 +1252,7 @@ def generate_llm_prompt(
             "code_interpreter"     in features,
             "podman_shell"         in features,
             container_repo_mounts,
-            model=model,
+            ctx=ctx,
             project_facts=project_facts,
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,

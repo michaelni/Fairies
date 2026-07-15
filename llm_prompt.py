@@ -95,6 +95,10 @@ def tr_prompt_general_rules(ctx: PromptFor) -> str:
     combiner = ctx.combiner
     persona = ctx.persona
     contribution = "analysis" if subject == "issue" else "review"
+    # A draft self-identifies with the bare "Draft review from <label>"
+    # header name the combiner sees, or combined reviews mix the two names
+    # for one model (e.g. PR #23016). Posted roles keep "LLM-".
+    prefix = "" if ctx.draft else "LLM-"
     return f"""##General Rules
 - if something looks odd, but you cannot determine if its wrong, you can ask the {subject} author if its intended.
 {f"- determine whether the most useful contribution is: {contribution}, helpful reply, process clarification, or no action.\n" * (not combiner)}\
@@ -102,7 +106,7 @@ def tr_prompt_general_rules(ctx: PromptFor) -> str:
 - Cite exactly the references relevant to your reply.
 - You can reply to questions asked to the current {persona} identity when they are on topic or help the FFmpeg Project.
 - Do not reply to off topic questions or requests
-- Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "LLM-{model_label(ctx.model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
+- Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "{prefix}{model_label(ctx.model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
 {"- workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.\n" * (subject == "PR")}\
 {"- try hard to find all issues\n" * (not combiner)}
 """

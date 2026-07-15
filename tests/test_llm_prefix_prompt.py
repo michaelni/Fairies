@@ -1,9 +1,11 @@
-"""The posted-message prefix names the producing model.
+"""The self-identification each role's prompt asks for names one model once.
 
-Pins the ``LLM-<MODEL>`` instruction: every role's developer prompt tells
-the model to include ``LLM-<its own label>`` (vendor prefix stripped,
-uppercased) so posted reviews and replies are attributable, and the
-combiner user text labels drafts with the same helper.
+Posted roles (combiner, triagers, issue investigator) open with
+``LLM-<label>`` (vendor prefix stripped, uppercased). The PR reviewer is a
+combiner-bound draft: it identifies with the bare label the combiner's
+"Draft review from <label>" headers already use — asking drafts for the
+``LLM-`` form made combined reviews mix "LLM-GLM-5.2" with "GLM-5.2" for
+the same model (e.g. PR #23016).
 """
 
 from __future__ import annotations
@@ -27,6 +29,24 @@ class ModelLabelTests(unittest.TestCase):
         self.assertEqual("UNKNOWN", llm_prompt.model_label(""))
 
 
+class PromptForTests(unittest.TestCase):
+    def test_derived_identity_facts(self) -> None:
+        for role, subject, persona, combiner, draft in (
+            ("reviewer",           "PR",    "reviewer",     False, True),
+            ("combiner",           "PR",    "reviewer",     True,  False),
+            ("triager",            "PR",    "reviewer",     False, False),
+            ("issue_investigator", "issue", "investigator", False, False),
+            ("issue_combiner",     "issue", "investigator", True,  False),
+            ("issue_triager",      "issue", "investigator", False, False),
+        ):
+            ctx = llm_prompt.PromptFor(role, "gpt-5.4")
+            self.assertEqual(
+                (subject, persona, combiner, draft),
+                (ctx.subject, ctx.persona, ctx.combiner, ctx.draft),
+                role,
+            )
+
+
 class LlmPrefixPromptTests(unittest.TestCase):
     def _prompt(self, role: str, model: str) -> str:
         return llm_prompt.generate_llm_prompt(
@@ -34,15 +54,21 @@ class LlmPrefixPromptTests(unittest.TestCase):
             repo_roots=[], container_repo_mounts=[], reviewer_username="bot",
         )
 
-    def test_each_role_prompt_carries_its_model_prefix(self) -> None:
+    def test_posted_roles_identify_with_the_llm_prefix(self) -> None:
         for role, model, label in (
-            ("reviewer", "zai:glm-5.2", "LLM-GLM-5.2"),
             ("combiner", "gpt-5.4", "LLM-GPT-5.4"),
             ("triager", "gpt-5.4-mini", "LLM-GPT-5.4-MINI"),
+            ("issue_investigator", "zai:glm-5.2", "LLM-GLM-5.2"),
+            ("issue_combiner", "gpt-5.4", "LLM-GPT-5.4"),
+            ("issue_triager", "gpt-5.4-mini", "LLM-GPT-5.4-MINI"),
         ):
             prompt = self._prompt(role, model)
-            self.assertIn(f'Include "{label}"', prompt)
-            self.assertNotIn('Include "LLM"', prompt)
+            self.assertIn(f'Include "{label}"', prompt, role)
+
+    def test_draft_reviewer_identifies_with_the_bare_label(self) -> None:
+        prompt = self._prompt("reviewer", "zai:glm-5.2")
+        self.assertIn('Include "GLM-5.2"', prompt)
+        self.assertNotIn('Include "LLM-', prompt)
 
     def test_combiner_user_text_uses_the_same_labels(self) -> None:
         text = llm_prompt.make_combiner_user_text([

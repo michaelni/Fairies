@@ -20,7 +20,7 @@ import forge_gcli  # noqa: E402
 import llm_review_api  # noqa: E402
 import pr_review_wrapper as wrapper  # noqa: E402
 import llm_prompt  # noqa: E402
-from llm_prompt import t_prompt_triage_labels  # noqa: E402
+from llm_prompt import prompt_triage_labels  # noqa: E402
 import fairy as paa  # noqa: E402
 
 
@@ -221,10 +221,10 @@ class EmitReviewStdoutTests(unittest.TestCase):
 
 class TriageLabelPromptTests(unittest.TestCase):
     def test_no_allowlist_emits_empty_section(self) -> None:
-        self.assertEqual(t_prompt_triage_labels([]), "")
+        self.assertEqual(prompt_triage_labels([]), "")
 
     def test_allowlist_lists_labels(self) -> None:
-        text = t_prompt_triage_labels(["needs-review", "stale"])
+        text = prompt_triage_labels(["needs-review", "stale"])
         self.assertIn("needs-review", text)
         self.assertIn("stale", text)
         self.assertIn("label_changes", text)
@@ -233,7 +233,7 @@ class TriageLabelPromptTests(unittest.TestCase):
     def test_definitions_filtered_to_allowlist(self) -> None:
         # Regression (#23293): the model was shown the "needs testing"
         # definition even though only "needs docs" was allowed.
-        text = t_prompt_triage_labels(["fix/bug", "needs docs"])
+        text = prompt_triage_labels(["fix/bug", "needs docs"])
         self.assertIn("Label: needs docs,", text)
         self.assertNotIn("Label: needs testing,", text)
         self.assertNotIn("Label: needs sample,", text)

@@ -88,7 +88,7 @@ class PromptFor:
     draft        = property(lambda s: s.role == "reviewer")  # feeds the combiner, which posts
 
 
-def tr_prompt_general_rules(ctx: PromptFor) -> str:
+def prompt_general_rules(ctx: PromptFor) -> str:
     # The combiner grades and merges draft reviews: it gets no bullets that
     # send it hunting for issues or picking a route itself.
     subject = ctx.subject
@@ -112,16 +112,16 @@ def tr_prompt_general_rules(ctx: PromptFor) -> str:
 """
 
 
-def _prompt_reviewer_identity(ctx: PromptFor, reviewer_username: str) -> str:
+def _prompt_identity(ctx: PromptFor, reviewer_username: str) -> str:
     return f"Current {ctx.persona} username: {reviewer_username or '(unknown)'}\n\n"
 
 
 # Shared by the reviewer and combiner prompts: both write posted review
 # text and both own a classification.
-TR_PROMPT_WORKAROUND_LANGUAGE = """- clear language should be used to separate workarounds from bugfixes. With workarounds, it should be justified why they are needed.
+CR_PROMPT_WORKAROUND_LANGUAGE = """- clear language should be used to separate workarounds from bugfixes. With workarounds, it should be justified why they are needed.
 """
 
-TR_PROMPT_CLASSIFICATION_AUDIENCE = """Your Classification of the PR will be used by both the pull request author to improve the PR,
+CR_PROMPT_CLASSIFICATION_AUDIENCE = """Your Classification of the PR will be used by both the pull request author to improve the PR,
 as well as senior developers to make the final decision to merge, wait or reject a pull request.
 
 """
@@ -147,7 +147,7 @@ R_PROMPT_REVIEWER_ROLE = """##In your Code Reviewer role
 - check for performance/speed improvements for code where it matters, warn if speed/performance regressions are expected, suggest changes to improve performance/speed
 - check for potential code reuse and suggest factorizations and simplifications if there are any.
 - Check if this project is the right place for any fix/workaround, and if not say so clearly.
-""" + TR_PROMPT_WORKAROUND_LANGUAGE + "\n" + TR_PROMPT_CLASSIFICATION_AUDIENCE + """##In your project assistant role.
+""" + CR_PROMPT_WORKAROUND_LANGUAGE + "\n" + CR_PROMPT_CLASSIFICATION_AUDIENCE + """##In your project assistant role.
 - Determine all reasons blocking and slowing down advancing this Pull request. (is there a misunderstanding?, does someone need some information? do people need more time, does the PR need a review?, it is approved and needs to be applied?, ...) With some of these you can help, with others you cannot, but it still makes sense to recognize what is holding a pull request up.
 - Prioritize the issues, and help resolve those you can resolve from the available evidence and tools.
 - If the main blocker is a misunderstanding or missing process information, prefer a reply_no_verdict over a review-style comment.
@@ -227,7 +227,7 @@ And avoid posting the same point again if it was already raised by the current {
 
 # Generic patch/commit hygiene, unlike the per-deployment project facts
 # it follows in the prompt.
-TR_PROMPT_MINOR_ISSUE_POLICY = """
+CRT_PROMPT_MINOR_ISSUE_POLICY = """
 For classifying the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
 
 Additional Minor issues:
@@ -254,7 +254,7 @@ Additional Major issues:
 """
 
 
-R_PROMPT_AUDIENCE_AND_PURPOSE = """##Audience and purpose:
+CR_PROMPT_AUDIENCE_AND_PURPOSE = """##Audience and purpose:
 
 The pull request author may be inexperienced and new or highly experienced and senior.
 The decision makers (who make the final decision to accept or reject a pull request) are generally experienced and senior. But they do not always have deep knowledge in the details of the specific part changed.
@@ -266,7 +266,7 @@ When an on-topic comment challenges a factual claim or capability stated by the 
 """
 
 
-def tr_prompt_output_guideline(ctx: PromptFor) -> str:
+def prompt_output_guideline(ctx: PromptFor) -> str:
     author = "issue reporter" if ctx.subject == "issue" else "pull request author"
     subject = ctx.subject
     return f"""##Output guideline
@@ -280,7 +280,7 @@ def tr_prompt_output_guideline(ctx: PromptFor) -> str:
 """
 
 
-R_PROMPT_REVIEW_CLASSIFICATIONS = """Classify the pull request into exactly one of these JSON classes after you have finished reviewing all commit(s) and read all comments:
+CR_PROMPT_REVIEW_CLASSIFICATIONS = """Classify the pull request into exactly one of these JSON classes after you have finished reviewing all commit(s) and read all comments:
 - approve: no substantive issues; the PR can be merged in its current form. The message may be empty or carry a brief non-issue comment.
 - minor_issues_approve: only minor or pre-existing issues, non-blocking issues or suggestions or helpful comments; the PR can be merged in its current form but there is some additional comment you would like to make
 - moderate_issues: You do not want to approve the PR but the current code would not be worse off if its merged
@@ -291,7 +291,7 @@ R_PROMPT_REVIEW_CLASSIFICATIONS = """Classify the pull request into exactly one 
 """
 
 
-def tr_prompt_persistence_and_verification(ctx: PromptFor) -> str:
+def prompt_persistence_and_verification(ctx: PromptFor) -> str:
     combiner, subject = ctx.combiner, ctx.subject_long
     return f"""<tool_persistence_rules>
 - Use tools whenever they materially improve correctness, completeness, or grounding.
@@ -324,7 +324,7 @@ If you review a commit touching profiles and pixel formats in APV, inspect the R
 
 """
 
-R_PROMPT_MESSAGE_RULES = """Message Rules:
+CR_PROMPT_MESSAGE_RULES = """Message Rules:
 - message may be empty only for approve and skip.
 - the message is in Markdown and will be posted to Forgejo
 """
@@ -461,7 +461,7 @@ posted to Forgejo.
 # red CI: describes the ci_triage object (incl. the log_tail excerpt) and
 # how to talk about the failures. Kept route-agnostic so both the triager
 # and the reviewer can be handed the same text.
-T_PROMPT_CI_FAILURE_DATA = """## CI failure mode (this request)
+CRT_PROMPT_CI_FAILURE_DATA = """## CI failure mode (this request)
 The pull request head commit has at least one CI job in ERROR or FAILURE
 (see the JSON object ci_triage in the user message). That object lists
 per-context status text, links, first/last failing timestamps, a log_tail
@@ -473,7 +473,7 @@ and honest if you have a strong guess. Quote the CI description field when
 useful and include the target_url when present.
 """
 
-T_PROMPT_TRIAGE_CI_MODE = T_PROMPT_CI_FAILURE_DATA + """
+T_PROMPT_TRIAGE_CI_MODE = CRT_PROMPT_CI_FAILURE_DATA + """
 You SHOULD NOT choose engage. A full code review is inappropriate when
 the tree may not build; if a code review would otherwise be warranted,
 choose skip and explain briefly in reason.
@@ -511,7 +511,7 @@ When choosing between an enhancement that works around an external bug or a bug 
 """
 
 
-I_PROMPT_ISSUE_CLASSIFICATIONS = """Classify your result into exactly one of these JSON classes after you have finished your work and read all comments:
+CI_PROMPT_ISSUE_CLASSIFICATIONS = """Classify your result into exactly one of these JSON classes after you have finished your work and read all comments:
 - reply: your message is worth posting on the issue.
 - skip: you have nothing worth posting (label changes are still applied).
 
@@ -519,13 +519,13 @@ The issue's dispositions (duplicate, reproducibility, missing info, regression, 
 
 """
 
-I_PROMPT_ISSUE_MESSAGE_RULES = """Message Rules:
+CI_PROMPT_ISSUE_MESSAGE_RULES = """Message Rules:
 - message may be empty only for skip.
 - the message is in Markdown and will be posted to Forgejo
 - introduce the message as an investigation (after the LLM-... prefix), not as a triage or review.
 """
 
-I_PROMPT_ISSUE_TRIAGE_TASK = """##Triage task
+T_PROMPT_ISSUE_TRIAGE_TASK = """##Triage task
 You are NOT analyzing the issue yet. Your job is to triage this issue
 and decide which route the issue investigator should take next.
 
@@ -593,7 +593,7 @@ def t_prompt_user_request(allowed_models: list[str]) -> str:
 
 # Single source of truth: label name -> the one-line meaning shown to
 # the triager. Only definitions for labels in the active allowlist are
-# emitted (see ``t_prompt_triage_labels``); advertising a label the
+# emitted (see ``prompt_triage_labels``); advertising a label the
 # allowlist forbids made the model reason itself into it and then spill
 # that reasoning onto an allowed neighbour (e.g. a "needs testing" gap
 # tagged as "needs docs").
@@ -621,7 +621,7 @@ TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
 }
 
 
-def t_prompt_triage_labels(allowed_labels: list[str]) -> str:
+def prompt_triage_labels(allowed_labels: list[str]) -> str:
     if not allowed_labels:
         return ""
     allowed = set(allowed_labels)
@@ -660,8 +660,8 @@ def make_developer_prompt(
 ) -> str:
     return (
         "You are an expert software engineer reviewing a pull request.\n\n"
-        + tr_prompt_general_rules(ctx)
-        + _prompt_reviewer_identity(ctx, reviewer_username)
+        + prompt_general_rules(ctx)
+        + _prompt_identity(ctx, reviewer_username)
         + R_PROMPT_REVIEWER_ROLE
         + _prompt_attached_context_and_tools(
             ctx,
@@ -674,16 +674,16 @@ def make_developer_prompt(
             container_repo_mounts=container_repo_mounts,
             gpu_enabled=gpu_enabled,
         )
-        + (T_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
+        + (CRT_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
-        + TR_PROMPT_MINOR_ISSUE_POLICY
-        + R_PROMPT_AUDIENCE_AND_PURPOSE
-        + tr_prompt_output_guideline(ctx)
-        + R_PROMPT_REVIEW_CLASSIFICATIONS
-        + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification(ctx)
+        + CRT_PROMPT_MINOR_ISSUE_POLICY
+        + CR_PROMPT_AUDIENCE_AND_PURPOSE
+        + prompt_output_guideline(ctx)
+        + CR_PROMPT_REVIEW_CLASSIFICATIONS
+        + prompt_triage_labels(allowed_labels or [])
+        + prompt_persistence_and_verification(ctx)
         + R_PROMPT_REVIEW_EXAMPLES
-        + R_PROMPT_MESSAGE_RULES
+        + CR_PROMPT_MESSAGE_RULES
     )
 
 
@@ -727,7 +727,7 @@ each produced by a different model; produce one combined review.
   anchor it not only in the issues but in the rules on which you base the
   classification. Cite these rules and link to them if possible.
 {"- Drop any claim whose supporting evidence is a direct comparison between the pull request head and the head of the branch it targets, whether via git diff or by comparing file contents.\n" * model_needs_diff_tripwire(model)}\
-{TR_PROMPT_WORKAROUND_LANGUAGE}
+{CR_PROMPT_WORKAROUND_LANGUAGE}
 """
 #- The drafts are internal scaffolding: do NOT mention drafts, other models, or the combination process in the posted message. Write it as one normal review.
 
@@ -753,10 +753,10 @@ def make_combiner_developer_prompt(
     # touching the reviewer.
     return (
         "You are an expert software engineer combining independent draft reviews of a pull request into one final review.\n\n"
-        + tr_prompt_general_rules(ctx)
-        + _prompt_reviewer_identity(ctx, reviewer_username)
+        + prompt_general_rules(ctx)
+        + _prompt_identity(ctx, reviewer_username)
         + c_prompt_combiner_task(ctx)
-        + TR_PROMPT_CLASSIFICATION_AUDIENCE
+        + CR_PROMPT_CLASSIFICATION_AUDIENCE
         + _prompt_attached_context_and_tools(
             ctx,
             source_bundle_attached=source_bundle_attached,
@@ -768,15 +768,15 @@ def make_combiner_developer_prompt(
             container_repo_mounts=container_repo_mounts,
             gpu_enabled=gpu_enabled,
         )
-        + (T_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
+        + (CRT_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
-        + TR_PROMPT_MINOR_ISSUE_POLICY
-        + R_PROMPT_AUDIENCE_AND_PURPOSE
-        + tr_prompt_output_guideline(ctx)
-        + R_PROMPT_REVIEW_CLASSIFICATIONS
-        + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification(ctx)
-        + R_PROMPT_MESSAGE_RULES
+        + CRT_PROMPT_MINOR_ISSUE_POLICY
+        + CR_PROMPT_AUDIENCE_AND_PURPOSE
+        + prompt_output_guideline(ctx)
+        + CR_PROMPT_REVIEW_CLASSIFICATIONS
+        + prompt_triage_labels(allowed_labels or [])
+        + prompt_persistence_and_verification(ctx)
+        + CR_PROMPT_MESSAGE_RULES
     )
 
 
@@ -798,8 +798,8 @@ def make_triage_developer_prompt(
 ) -> str:
     return (
         "You are an expert software engineer triaging a pull request.\n\n"
-        + tr_prompt_general_rules(ctx)
-        + _prompt_reviewer_identity(ctx, reviewer_username)
+        + prompt_general_rules(ctx)
+        + _prompt_identity(ctx, reviewer_username)
         + _prompt_attached_context_and_tools(
             ctx,
             # Triage never receives the source bundle; the bundle upload
@@ -815,13 +815,13 @@ def make_triage_developer_prompt(
             gpu_enabled=gpu_enabled,
         )
         + project_facts
-        + TR_PROMPT_MINOR_ISSUE_POLICY
-        + tr_prompt_output_guideline(ctx)
+        + CRT_PROMPT_MINOR_ISSUE_POLICY
+        + prompt_output_guideline(ctx)
         + T_PROMPT_TRIAGE_TASK
         + t_prompt_user_request(allowed_models or [])
-        + t_prompt_triage_labels(allowed_labels or [])
+        + prompt_triage_labels(allowed_labels or [])
         + (T_PROMPT_TRIAGE_CI_MODE if ci_triage_mode else "")
-        + tr_prompt_persistence_and_verification(ctx)
+        + prompt_persistence_and_verification(ctx)
     )
 
 
@@ -841,8 +841,8 @@ def make_issue_developer_prompt(
 ) -> str:
     return (
         "You are an expert software engineer investigating a reported issue.\n\n"
-        + tr_prompt_general_rules(ctx)
-        + _prompt_reviewer_identity(ctx, reviewer_username)
+        + prompt_general_rules(ctx)
+        + _prompt_identity(ctx, reviewer_username)
         + I_PROMPT_ISSUE_INVESTIGATOR_ROLE
         + _prompt_attached_context_and_tools(
             ctx,
@@ -856,11 +856,11 @@ def make_issue_developer_prompt(
             gpu_enabled=gpu_enabled,
         )
         + project_facts
-        + tr_prompt_output_guideline(ctx)
-        + I_PROMPT_ISSUE_CLASSIFICATIONS
-        + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification(ctx)
-        + I_PROMPT_ISSUE_MESSAGE_RULES
+        + prompt_output_guideline(ctx)
+        + CI_PROMPT_ISSUE_CLASSIFICATIONS
+        + prompt_triage_labels(allowed_labels or [])
+        + prompt_persistence_and_verification(ctx)
+        + CI_PROMPT_ISSUE_MESSAGE_RULES
     )
 
 
@@ -880,8 +880,8 @@ def make_issue_combiner_developer_prompt(
 ) -> str:
     return (
         "You are an expert software engineer combining independent draft analyses of a reported issue into one final analysis.\n\n"
-        + tr_prompt_general_rules(ctx)
-        + _prompt_reviewer_identity(ctx, reviewer_username)
+        + prompt_general_rules(ctx)
+        + _prompt_identity(ctx, reviewer_username)
         + c_prompt_combiner_task(ctx)
         + _prompt_attached_context_and_tools(
             ctx,
@@ -895,11 +895,11 @@ def make_issue_combiner_developer_prompt(
             gpu_enabled=gpu_enabled,
         )
         + project_facts
-        + tr_prompt_output_guideline(ctx)
-        + I_PROMPT_ISSUE_CLASSIFICATIONS
-        + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification(ctx)
-        + I_PROMPT_ISSUE_MESSAGE_RULES
+        + prompt_output_guideline(ctx)
+        + CI_PROMPT_ISSUE_CLASSIFICATIONS
+        + prompt_triage_labels(allowed_labels or [])
+        + prompt_persistence_and_verification(ctx)
+        + CI_PROMPT_ISSUE_MESSAGE_RULES
     )
 
 
@@ -920,8 +920,8 @@ def make_issue_triage_developer_prompt(
 ) -> str:
     return (
         "You are an expert software engineer triaging a reported issue.\n\n"
-        + tr_prompt_general_rules(ctx)
-        + _prompt_reviewer_identity(ctx, reviewer_username)
+        + prompt_general_rules(ctx)
+        + _prompt_identity(ctx, reviewer_username)
         + _prompt_attached_context_and_tools(
             ctx,
             source_bundle_attached=False,
@@ -934,11 +934,11 @@ def make_issue_triage_developer_prompt(
             gpu_enabled=gpu_enabled,
         )
         + project_facts
-        + tr_prompt_output_guideline(ctx)
-        + I_PROMPT_ISSUE_TRIAGE_TASK
+        + prompt_output_guideline(ctx)
+        + T_PROMPT_ISSUE_TRIAGE_TASK
         + t_prompt_user_request(allowed_models or [])
-        + t_prompt_triage_labels(allowed_labels or [])
-        + tr_prompt_persistence_and_verification(ctx)
+        + prompt_triage_labels(allowed_labels or [])
+        + prompt_persistence_and_verification(ctx)
     )
 
 

@@ -37,7 +37,7 @@ class CiFailureDataFactoringTests(unittest.TestCase):
     def test_triage_ci_mode_is_built_on_shared_snippet(self) -> None:
         self.assertTrue(
             llm_prompt.T_PROMPT_TRIAGE_CI_MODE.startswith(
-                llm_prompt.T_PROMPT_CI_FAILURE_DATA
+                llm_prompt.CRT_PROMPT_CI_FAILURE_DATA
             )
         )
         # The triage-only routing guidance still rides along.

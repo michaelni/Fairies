@@ -1,4 +1,6 @@
 """--session-command: pre-run shell commands spliced into the prompt."""
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -124,6 +126,32 @@ class ExecMachineCallTests(unittest.TestCase):
         args = {"command": "true", "machine": "arm64"}
         self._call(shells, opened, args)
         self.assertEqual({"command": "true", "machine": "arm64"}, args)
+
+    def test_open_lock_serializes_racing_lazy_opens(self) -> None:
+        # parallel role passes share one shells dict
+        sessions = self._sessions()
+        shells, opened, lock = {}, [], threading.Lock()
+        barrier = threading.Barrier(2)
+
+        def open_shell(label):
+            opened.append(label)
+            time.sleep(0.05)  # widen the check-to-insert window
+            return sessions[label], ""
+
+        def call():
+            barrier.wait()
+            shell_tool.exec_machine_call(
+                shells, ("x86_64", "arm64"), open_shell,
+                {"command": "true", "machine": "arm64"},
+                max_timeout_s=60.0, open_lock=lock,
+            )
+
+        threads = [threading.Thread(target=call) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(["arm64"], opened)
 
     def test_explicit_machine_with_single_configured_machine(self) -> None:
         shells, opened = {}, []

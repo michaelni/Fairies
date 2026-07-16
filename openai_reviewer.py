@@ -43,11 +43,12 @@ provider's code (``anthropic_reviewer``).
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 import re
 import socket
+import threading
 import time
 from typing import Callable, Sequence
 
@@ -345,6 +346,7 @@ def run_responses_resolving_podman_shell(
     shells: dict[str, podman_host.ContainerShellSession],
     machine_labels: Sequence[str],
     open_shell: Callable[[str], tuple[podman_host.ContainerShellSession, str]],
+    open_lock: threading.Lock | None = None,
     max_tool_rounds: int,
     max_shell_timeout_s: float,
     what: str,
@@ -425,7 +427,7 @@ def run_responses_resolving_podman_shell(
                 continue
             payload_obj = exec_machine_call(
                 shells, machine_labels, open_shell, args_obj,
-                max_timeout_s=max_shell_timeout_s,
+                max_timeout_s=max_shell_timeout_s, open_lock=open_lock,
             )
             output_items.append({
                 "type": "function_call_output",
@@ -769,6 +771,9 @@ class OpenAIResources:
     open_shell: Callable[[str], tuple[podman_host.ContainerShellSession, str]] | None
     uploaded_file_ids: list[str]
     debug_dir_specified: bool
+    # Serializes lazy opens into ``shells``: role passes run in parallel
+    # threads (llm_review_api.run_parallel) but share the one dict.
+    shells_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class OpenAIReviewer(Reviewer):
@@ -911,6 +916,7 @@ class OpenAIReviewer(Reviewer):
                     shells=res.shells,
                     machine_labels=tuple(m.label for m in ctx.machines),
                     open_shell=res.open_shell,
+                    open_lock=res.shells_lock,
                     max_tool_rounds=args.podman_max_tool_rounds,
                     max_shell_timeout_s=args.podman_exec_timeout,
                     what="responses.create",

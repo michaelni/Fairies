@@ -41,7 +41,9 @@ the command->result step are common, and that is what lives here.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import threading
 from typing import Callable, Sequence
 
 from common import JsonObject
@@ -114,6 +116,7 @@ def exec_machine_call(
     *,
     max_timeout_s: float,
     default_timeout_s: float = DEFAULT_SHELL_TIMEOUT_S,
+    open_lock: threading.Lock | None = None,
 ) -> JsonObject:
     """Route one shell-tool call to the machine named by its ``machine`` arg.
 
@@ -125,6 +128,10 @@ def exec_machine_call(
     machine's transcript reaches the model via the prompt instead).
     ``machine`` is model-supplied: an unknown label yields an in-band
     ``{"error": ...}`` payload like exec_shell_call's own validation.
+
+    Callers that share ``shells`` across threads (parallel OpenAI role
+    passes) must pass ``open_lock`` so a racing lazy open cannot start two
+    containers for one label and strand one of them.
     """
     machine = None
     if isinstance(args, dict):
@@ -139,10 +146,13 @@ def exec_machine_call(
             "error": f"unknown machine {machine!r}; "
                      f"available: {', '.join(machine_labels)}"
         }
-    first = machine not in shells
+    first = False
     transcript = ""
-    if first:
-        shells[machine], transcript = open_shell(machine)
+    if machine not in shells:
+        with open_lock if open_lock is not None else contextlib.nullcontext():
+            if machine not in shells:
+                shells[machine], transcript = open_shell(machine)
+                first = True
     payload = exec_shell_call(
         shells[machine], args,
         max_timeout_s=max_timeout_s, default_timeout_s=default_timeout_s,

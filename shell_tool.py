@@ -128,6 +128,9 @@ def exec_machine_call(
     """
     machine = None
     if isinstance(args, dict):
+        # Copy before popping: the Anthropic loop holds this dict by
+        # reference in the conversation history it replays.
+        args = dict(args)
         machine = args.pop("machine", None)
     if machine is None:
         machine = machine_labels[0]

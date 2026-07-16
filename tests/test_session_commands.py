@@ -119,6 +119,12 @@ class ExecMachineCallTests(unittest.TestCase):
                              transcripts={"x86_64": "$ true\n"})
         self.assertNotIn("setup_transcript", payload)
 
+    def test_caller_args_dict_is_not_mutated(self) -> None:
+        shells, opened = {}, []
+        args = {"command": "true", "machine": "arm64"}
+        self._call(shells, opened, args)
+        self.assertEqual({"command": "true", "machine": "arm64"}, args)
+
     def test_explicit_machine_with_single_configured_machine(self) -> None:
         shells, opened = {}, []
         payload = self._call(shells, opened,

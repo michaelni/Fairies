@@ -367,6 +367,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Stop after N LLM evaluations (0 = no limit). Caps cost and "
+             "provider rate-limit windows; gate-skipped PRs do not count.",
+    )
+    p.add_argument(
         "--llm-max-attempts",
         type=int,
         default=3,
@@ -3014,8 +3022,21 @@ def start_review_pipeline(
     reviewed_queue: SimpleQueue[ReviewedPR | object] = SimpleQueue()
 
     def prepare_worker() -> None:
+        queued = 0
         try:
             for pr in prs:
+                if args.limit and queued >= args.limit:
+                    decision = Decision(
+                        pr.get("number", 0),
+                        str(pr.get("title") or ""),
+                        get_pr_author(pr),
+                        "-",
+                        "skip",
+                        f"candidate not evaluated; --limit {args.limit} reached",
+                        first_dt(pr, "updated_at", "created_at"),
+                    )
+                    reviewed_queue.put(ReviewedPR(prepared=decision, decision=decision))
+                    continue
                 prepared = safe_prepare_pr(
                     args,
                     pr,
@@ -3029,6 +3050,7 @@ def start_review_pipeline(
                 if isinstance(prepared, Decision):
                     reviewed_queue.put(ReviewedPR(prepared=prepared, decision=prepared))
                 else:
+                    queued += 1
                     llm_queue.put(prepared)
         finally:
             try:

@@ -100,6 +100,7 @@ import review_pipeline
 from review_pipeline import make_reviewer, review_pr, run_triage
 import podman_host
 import podman_repos
+import shell_socket
 import shell_tool
 from llm_prompt import (
     COMBINER_ROLE,
@@ -473,6 +474,20 @@ def parse_args() -> argparse.Namespace:
         help="Run CMD in each review container before the LLM session and "
              "splice command + output into the prompt. ``{number}`` and "
              "``{base_ref}`` are replaced from the PR metadata. Repeatable.",
+    )
+    p.add_argument(
+        "--codex-bin",
+        default="codex",
+        help="codex CLI binary for codex: model specs (default: codex on "
+             "PATH). Pin the deployed version; the backend depends on its "
+             "flag set.",
+    )
+    p.add_argument(
+        "--codex-timeout-seconds",
+        type=float,
+        default=0.0,
+        help="Kill a codex exec pass after this many seconds; 0 = no "
+             "watchdog (default), a pass runs as long as the model works.",
     )
     p.add_argument(
         "--podman-ssh-identity",
@@ -1203,6 +1218,7 @@ def main() -> int:
         return session, transcript
 
     uploaded_file_ids: list[str] = []
+    codex_shell_server: shell_socket.ShellDispatchServer | None = None
     # The eager container open below and everything after runs under
     # this try so the finally releases ensemble_shells (and uploads)
     # even when e.g. bundle building fails between open and review.
@@ -1317,6 +1333,22 @@ def main() -> int:
             use_podman_shell=args.podman,
         )
 
+        # The codex backend's MCP bridge runs outside this process (codex
+        # spawns it), so its shell tool calls come back over a local unix
+        # socket. Started only when a codex: spec can actually run --
+        # including via a triage model request from the allowlist.
+        codex_specs = [
+            s for s in (args.model, *args.extra_model, args.triage_model,
+                        args.combine_model, *args.allowed_model)
+            if s and s.startswith("codex:")
+        ]
+        if codex_specs and args.podman:
+            codex_shell_server = shell_socket.ShellDispatchServer(
+                machine_labels=[m.label for m in machines],
+                open_shell=open_machine_shell,
+                max_timeout_s=args.podman_exec_timeout,
+            )
+
         review_ctx = ReviewContext(
             request=request,
             patch_text=patch_bundle,
@@ -1332,6 +1364,9 @@ def main() -> int:
             machines=machines,
             session_transcript=session_transcript,
             open_shell=open_machine_shell if args.podman else None,
+            shell_socket_path=(
+                codex_shell_server.socket_path if codex_shell_server else None
+            ),
         )
         openai_resources = OpenAIResources(
             client=client,
@@ -1369,6 +1404,9 @@ def main() -> int:
                 project_facts=project_facts,
                 machines=machines,
                 open_shell=open_machine_shell if args.podman else None,
+                shell_socket_path=(
+                    codex_shell_server.socket_path if codex_shell_server else None
+                ),
             )
             triager = make_reviewer(
                 args.triage_model,
@@ -1532,6 +1570,8 @@ def main() -> int:
         )
         return 0
     finally:
+        if codex_shell_server is not None:
+            codex_shell_server.close()
         for file_id in uploaded_file_ids:
             delete_uploaded_file(client, file_id, verbose=args.verbose)
         if container_lease is not None:

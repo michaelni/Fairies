@@ -95,8 +95,9 @@ per-command ssh handshake and no shell-quoting of model output.
 `--extra-model PROVIDER:MODEL` (repeatable) and merge with
 `--combine-model PROVIDER:MODEL` (required once there is more than one
 reviewer). Provider prefixes: `openai:`, `anthropic:`,
-`zai:`. Each reviewer gets its own isolated container shell; the model
-reviewers run concurrently. A local-GPU backend is TODO -- PRs very welcome.
+`zai:`, `codex:`. Each reviewer gets its own isolated container shell; the
+model reviewers run concurrently (codex passes queue on one lock, see
+below). A local-GPU backend is TODO -- PRs very welcome.
 
     ./pr_review_wrapper.py \
         --podman --shell-host fairy@HOST \
@@ -106,6 +107,19 @@ reviewers run concurrently. A local-GPU backend is TODO -- PRs very welcome.
         --extra-model anthropic:claude-opus-4 \
         --extra-model zai:glm-5.2 \
         --combine-model openai:gpt-5.4
+
+### Codex backend
+
+`codex:MODEL[@EFFORT]` (e.g. `codex:gpt-5.6-sol@xhigh`)
+runs the pass through the codex CLI. Install a
+codex version on the wrapper host (`--codex-bin` selects the binary)
+and log in once with `codex login`.
+
+The security model matches the API backends -- the model can execute only
+inside the review containers, never on the wrapper host: codex runs with
+as much disabled as possible in a seperate container. Codex's own egress
+is limited to the OpenAI API + token refresh. There is no direct connection
+between the codex and review containers.
 
 ### Static data and vector stores
 

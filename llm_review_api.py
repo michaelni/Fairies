@@ -677,6 +677,10 @@ class ReviewContext:
     # container, spliced into shell-capable roles' user text.
     session_transcript: str = ""
     open_shell: Callable[[str], tuple[ContainerShellSession, str]] | None = None
+    # Wrapper's shell-dispatch unix socket for the codex backend (whose
+    # MCP bridge runs outside this process); None when no codex reviewer
+    # is configured or --podman is off.
+    shell_socket_path: str | None = None
     drafts: list[Review] = field(default_factory=list)
 
     def review_drafts(self) -> list[Review]:

@@ -83,13 +83,16 @@ def make_reviewer(
     ``openai:<m>`` -> OpenAIReviewer reusing the shared
     OpenAI resources (``resources`` must not be None for this provider).
     ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` -> AnthropicReviewer
-    pointed at z.ai's Anthropic endpoint (GLM). The Anthropic module (and
-    its SDK) is imported only when actually requested.
+    pointed at z.ai's Anthropic endpoint (GLM). ``codex:<m>`` ->
+    CodexReviewer driving the pinned codex CLI. Provider modules (and
+    their SDKs) are imported only when actually requested.
 
     ``@effort`` sets that reviewer's effort: an OpenAI reasoning effort
-    (overriding --reasoning-effort for this pass), or an Anthropic/GLM
-    thinking effort (``ANTHROPIC_EFFORTS``; no suffix keeps the provider
-    default). When the spec has no ``@effort``, ``default_effort`` applies.
+    (overriding --reasoning-effort for this pass), an Anthropic/GLM
+    thinking effort (``ANTHROPIC_EFFORTS``), or a codex
+    ``model_reasoning_effort`` (``CODEX_EFFORTS``); no suffix keeps the
+    provider default. When the spec has no ``@effort``,
+    ``default_effort`` applies.
 
     ``service_tier`` (OpenAI only) is used verbatim; ``None`` sends no
     tier. Leaving it unset inherits ``--service-tier``.
@@ -99,7 +102,7 @@ def make_reviewer(
     provider, sep, model = spec_body.partition(":")
     if not sep:
         raise SystemExit(
-            f"--model {spec!r}: missing provider prefix (use openai:/anthropic:/zai:)"
+            f"--model {spec!r}: missing provider prefix (use openai:/anthropic:/zai:/codex:)"
         )
     if not model:
         raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
@@ -132,7 +135,26 @@ def make_reviewer(
             )
         except ValueError as exc:  # invalid @effort suffix
             raise SystemExit(f"--model {spec!r}: {exc}")
-    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai)")
+    if provider == "codex":
+        from codex_reviewer import CodexReviewer
+
+        try:
+            return CodexReviewer(
+                model,
+                name=f"codex:{model}",
+                role=role,
+                codex_bin=args.codex_bin,
+                effort=effort,
+                run_timeout_s=args.codex_timeout_seconds,
+                verbose=verbose,
+                debug_dir=(
+                    args.debug_response_dir
+                    if resources is not None and resources.debug_dir_specified else None
+                ),
+            )
+        except ValueError as exc:  # invalid @effort suffix
+            raise SystemExit(f"--model {spec!r}: {exc}")
+    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai/codex)")
 
 
 def run_triage(triager: Reviewer, ctx: ReviewContext) -> dict[str, object] | None:

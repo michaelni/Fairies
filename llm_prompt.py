@@ -1178,7 +1178,7 @@ def load_project_facts(path: Path) -> str:
 def generate_llm_prompt(
     *,
     role: str,                          # "reviewer" | "combiner" | "triager"
-    vendor: str,                        # "openai" | "anthropic" | "local"
+    vendor: str,                        # "openai" | "anthropic" | "codex" | "local"
     model: str,                         # e.g. "gpt-5.5"; informational
     features: set[str] | frozenset[str],
     repo_roots: list[Path],

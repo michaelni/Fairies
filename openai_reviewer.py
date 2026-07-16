@@ -76,7 +76,7 @@ from openai_common import (
     upload_text_file,
 )
 import podman_host
-from shell_tool import exec_machine_call
+from shell_tool import build_shell_tool_schema, exec_machine_call
 
 __all__ = [
     "EXIT_CONTAINER_UNHEALTHY",
@@ -275,44 +275,12 @@ def format_response_stats(response: object, *, elapsed_seconds: float | None = N
 def build_podman_shell_function_tool(
     machines: Sequence[podman_host.ShellHostSpec],
 ) -> JsonObject:
-    properties: JsonObject = {
-        "command": {
-            "type": "string",
-            "description": "Shell command (``sh -c``).",
-        },
-        "cwd": {
-            "type": "string",
-            "description": "Working directory inside the container (e.g. /work/ffmpeg).",
-        },
-        "timeout_seconds": {
-            "type": "number",
-            "description": "Max wall seconds for this command (capped by the wrapper).",
-        },
-    }
-    if len(machines) >= 2:
-        properties["machine"] = {
-            "type": "string",
-            "enum": [m.label for m in machines],
-            "description": (
-                f"Machine to run on (default {machines[0].label}). "
-                "Each machine is a separate container with its own "
-                "filesystem and checkouts; state does not carry over."
-            ),
-        }
+    schema = build_shell_tool_schema([m.label for m in machines])
     return {
         "type": "function",
-        "name": "shell",
-        "description": (
-            "Run one shell command inside the ephemeral review container "
-            "(full working-tree repos under /work/...). Command runs via "
-            "``sh -c`` with an in-container timeout."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": properties,
-            "required": ["command"],
-            "additionalProperties": False,
-        },
+        "name": schema["name"],
+        "description": schema["description"],
+        "parameters": {**schema["input_schema"], "additionalProperties": False},
         "strict": False,
     }
 

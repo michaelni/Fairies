@@ -58,7 +58,7 @@ from llm_review_api import (
     RoleSpec,
 )
 from anthropic_common import call_with_anthropic_retry, load_api_key
-from shell_tool import exec_machine_call
+from shell_tool import build_shell_tool_schema, exec_machine_call
 
 __all__ = [
     "ANTHROPIC_EFFORTS",
@@ -104,34 +104,7 @@ def _build_submit_review_tool(role: RoleSpec) -> JsonObject:
 
 
 def _build_shell_tool(machines: Sequence[podman_host.ShellHostSpec]) -> JsonObject:
-    properties: JsonObject = {
-        "command": {"type": "string", "description": "Shell command (``sh -c``)."},
-        "cwd": {"type": "string", "description": "Working directory (e.g. /work/ffmpeg)."},
-        "timeout_seconds": {"type": "number", "description": "Max wall seconds (capped by the wrapper)."},
-    }
-    if len(machines) >= 2:
-        properties["machine"] = {
-            "type": "string",
-            "enum": [m.label for m in machines],
-            "description": (
-                f"Machine to run on (default {machines[0].label}). "
-                "Each machine is a separate container with its own "
-                "filesystem and checkouts; state does not carry over."
-            ),
-        }
-    return {
-        "name": _SHELL,
-        "description": (
-            "Run one shell command inside the ephemeral review container "
-            "(full working-tree repos under /work/...). Command runs via "
-            "``sh -c`` with an in-container timeout."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": properties,
-            "required": ["command"],
-        },
-    }
+    return build_shell_tool_schema([m.label for m in machines])
 
 
 class AnthropicReviewer(Reviewer):

@@ -31,12 +31,12 @@ The model-facing shell tool's vendor-neutral core: run one parsed
 shell-tool call on a ``ContainerShellSession`` and return the JSON-able
 result payload.
 
-The OpenAI Responses loop and the Anthropic Messages loop share this; they
-differ only in the wire envelope (``function_call`` / ``tool_use``) they
-wrap around it, which stays in each per-vendor reviewer. The per-vendor
-tool *schema* also stays with its vendor, since each SDK spells the schema
-differently; only the ``{command, cwd?, timeout_seconds?}`` input shape and
-the command->result step are common, and that is what lives here.
+The OpenAI Responses loop, the Anthropic Messages loop and the codex MCP
+bridge share this; they differ only in the wire envelope
+(``function_call`` / ``tool_use`` / MCP ``tools/call``) they wrap around
+it, which stays in each per-vendor reviewer. The canonical tool schema
+(``build_shell_tool_schema``) also lives here; each vendor spells only
+its own envelope around it.
 """
 
 from __future__ import annotations
@@ -51,6 +51,7 @@ from podman_host import ContainerShellSession
 
 __all__ = [
     "DEFAULT_SHELL_TIMEOUT_S",
+    "build_shell_tool_schema",
     "exec_machine_call",
     "exec_shell_call",
     "run_session_commands",
@@ -59,6 +60,58 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 DEFAULT_SHELL_TIMEOUT_S = 120.0
+
+SHELL_TOOL_NAME = "shell"
+
+SHELL_TOOL_DESCRIPTION = (
+    "Run one shell command inside the ephemeral review container "
+    "(full working-tree repos under /work/...). Command runs via "
+    "``sh -c`` with an in-container timeout."
+)
+
+
+def build_shell_tool_schema(machine_labels: Sequence[str]) -> JsonObject:
+    """The one canonical shell-tool schema, in vendor-neutral form.
+
+    Returns ``{"name", "description", "input_schema"}``; each backend
+    wraps it in its own tool envelope (Anthropic ``input_schema``, OpenAI
+    function ``parameters``, MCP ``inputSchema``). The ``machine`` enum
+    exists only with two or more configured machines, mirroring
+    exec_machine_call's dispatch.
+    """
+    properties: JsonObject = {
+        "command": {
+            "type": "string",
+            "description": "Shell command (``sh -c``).",
+        },
+        "cwd": {
+            "type": "string",
+            "description": "Working directory inside the container (e.g. /work/ffmpeg).",
+        },
+        "timeout_seconds": {
+            "type": "number",
+            "description": "Max wall seconds for this command (capped by the wrapper).",
+        },
+    }
+    if len(machine_labels) >= 2:
+        properties["machine"] = {
+            "type": "string",
+            "enum": list(machine_labels),
+            "description": (
+                f"Machine to run on (default {machine_labels[0]}). "
+                "Each machine is a separate container with its own "
+                "filesystem and checkouts; state does not carry over."
+            ),
+        }
+    return {
+        "name": SHELL_TOOL_NAME,
+        "description": SHELL_TOOL_DESCRIPTION,
+        "input_schema": {
+            "type": "object",
+            "properties": properties,
+            "required": ["command"],
+        },
+    }
 
 
 def exec_shell_call(

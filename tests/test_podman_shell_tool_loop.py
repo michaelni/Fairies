@@ -272,6 +272,50 @@ class RunPodmanShellLoopTests(unittest.TestCase):
         self.assertEqual(2, len(creates))
         self.assertEqual(reasoning, creates[1]["reasoning"])
 
+    def test_follow_up_forwards_prompt_cache_key(self) -> None:
+        # The key exists to route all rounds to one cache machine, so the
+        # loop must forward it.
+        session = mock.Mock(spec=lc.ContainerShellSession)
+        session.exec.return_value = lc.ExecResult(
+            exit_code=0, stdout="", stderr="", duration_s=0.0,
+            stdout_truncated=False, stderr_truncated=False,
+        )
+        n = {"i": 0}
+
+        def dump(_rsp: object) -> dict:
+            n["i"] += 1
+            if n["i"] == 1:
+                return {"output": [{
+                    "type": "function_call", "call_id": "c1",
+                    "name": "shell", "arguments": json.dumps({"command": "true"}),
+                }]}
+            return {"output": [{"type": "message", "content": []}]}
+
+        pck = "fairy:reviewer:22290:32486a55dc96"
+        creates: list[dict] = []
+        client = mock.Mock()
+        client.responses.create.side_effect = (
+            lambda **kw: (creates.append(kw), mock.Mock(id=f"r{n['i']}"))[1]
+        )
+        with mock.patch.object(openai_reviewer, "response_to_debug_json", side_effect=dump), \
+                mock.patch.object(openai_reviewer, "call_with_rate_limit_retry",
+                                  side_effect=lambda fn, **kw: fn()):
+            openai_reviewer.run_responses_resolving_podman_shell(
+                client,
+                initial_kwargs={
+                    "model": "gpt-x",
+                    "tools": [{"type": "function", "name": "shell"}],
+                    "prompt_cache_key": pck,
+                },
+                podman_shell_session=session,
+                max_tool_rounds=10,
+                max_shell_timeout_s=60.0,
+                what="test",
+                verbose=False,
+            )
+        self.assertEqual(2, len(creates))
+        self.assertEqual(pck, creates[1]["prompt_cache_key"])
+
     def test_max_tool_rounds_zero_means_unlimited(self) -> None:
         session = mock.Mock(spec=lc.ContainerShellSession)
         session.exec.return_value = lc.ExecResult(

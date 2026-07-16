@@ -90,6 +90,7 @@ __all__ = [
     "extract_response_file_citation_metadata",
     "format_response_stats",
     "make_openai_http_client",
+    "prompt_cache_key_for",
     "render_file_citations_for_markdown",
     "run_responses_resolving_podman_shell",
 ]
@@ -446,7 +447,24 @@ def run_responses_resolving_podman_shell(
         rsn = initial_kwargs.get("reasoning")
         if rsn is not None:
             follow["reasoning"] = rsn
+        pck = initial_kwargs.get("prompt_cache_key")
+        if pck is not None:
+            follow["prompt_cache_key"] = pck
         response = create_and_dump(follow, f"{what} (podman shell follow-up)")
+
+
+def prompt_cache_key_for(role_name: str, request: JsonObject) -> str | None:
+    """Cache-routing key: one per role+subject+head, so a conversation's
+    rounds and retries share a cache machine without funneling unrelated
+    reviews into one key (OpenAI guidance: ~15 requests/minute per key).
+    Deliberately built from forge data only -- upload file_ids change on
+    every retry and must not enter the key."""
+    subject = request.get("pull_request") or request.get("issue")
+    if not isinstance(subject, dict) or subject.get("number") is None:
+        return None
+    key = f"fairy:{role_name}:{subject['number']}"
+    head = str(subject.get("head_sha") or "")[:12]
+    return f"{key}:{head}" if head else key
 
 
 def build_response_tools(
@@ -841,6 +859,9 @@ class OpenAIReviewer(Reviewer):
             response_kwargs["max_tool_calls"] = args.max_tool_calls
         if self.service_tier is not None:
             response_kwargs["service_tier"] = self.service_tier
+        pck = prompt_cache_key_for(self.role.name, ctx.request)
+        if pck is not None:
+            response_kwargs["prompt_cache_key"] = pck
         if res.tools:
             response_kwargs["tools"] = res.tools
         if res.include:

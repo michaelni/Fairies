@@ -25,7 +25,9 @@
 #   SAMPLES     samples per arm                (default 3)
 #   PAR         concurrent samples per arm     (default SAMPLES: one wave)
 #   TIER        OpenAI service tier            (default flex)
-#   MODEL       main reviewer model            (default openai:gpt-5.4)
+#   MODE        podman (default) | container   (OpenAI-hosted, A/B reference)
+#   MODEL       main reviewer model            (default openai:gpt-5.4);
+#               reasoning effort comes ONLY from the @suffix (bare = API default)
 #   PODMAN_SSH  ssh dest for the podman host   (e.g. fairy@podman-host)
 #   TREE        checkout to run fairy from     (default this repo)
 #   WRAPPER_EXTRA  extra wrapper args, e.g. "--extra-model zai:glm-5.2 --combine-model openai:gpt-5.4"
@@ -67,8 +69,15 @@ PAR=${PAR:-$SAMPLES}
 TIER=${TIER:-flex}
 MODEL=${MODEL:-openai:gpt-5.4}
 PODMAN_SSH=${PODMAN_SSH:-}
-[[ -n "$PODMAN_SSH" ]] || { echo "PODMAN_SSH=user@host required (podman only; OpenAI containers are deprecated for tests)" >&2; exit 2; }
-CONTAINER_ARGS="--podman --podman-ssh-dest $PODMAN_SSH --podman-max-tool-rounds 100"
+MODE=${MODE:-podman}
+if [[ "$MODE" = container ]]; then
+    # OpenAI-hosted containers: deprecated for production but still the
+    # reference arm for backend/billing A/Bs (they bill context once).
+    CONTAINER_ARGS="--use-openai-container-repos --max-tool-calls 100"
+else
+    [[ -n "$PODMAN_SSH" ]] || { echo "PODMAN_SSH=user@host required for MODE=podman" >&2; exit 2; }
+    CONTAINER_ARGS="--podman --podman-ssh-dest $PODMAN_SSH --podman-max-tool-rounds 100"
+fi
 (($# >= 1)) || { echo "usage: $0 <arm-ref> [arm-ref ...]" >&2; exit 2; }
 
 # Write the prompt to the working tree only (never the index), so a
@@ -106,7 +115,6 @@ run_one() {
             --repo-root $PATCH_REPO $extra \
             $CONTAINER_ARGS $WRAPPER_EXTRA \
             --model $MODEL --triage-model openai:gpt-5.4-mini \
-            --reasoning-effort high \
             --service-tier $TIER --reasoning-summary detailed \
             --allowed-model openai:gpt-5.5 --allowed-model openai:gpt-5.4 \
             --allowed-model openai:gpt-5.6 --allowed-model openai:gpt-5.6-sol \

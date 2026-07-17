@@ -348,5 +348,48 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
         self.assertEqual([handle], stopped)
 
 
+class CodexOnlyNoOpenAIKeyTests(unittest.TestCase):
+    """A codex:- (or anthropic:-) only run must not require OPENAI_API_KEY.
+
+    Regression: main() built the OpenAI client unconditionally and exited
+    if the key was missing, coupling a codex run to an unrelated OpenAI
+    API key. With no openai: model and no OpenAI-hosted subsystem, the key
+    is never loaded and the client is never built.
+    """
+
+    def test_codex_only_run_skips_openai_key_and_client(self) -> None:
+        openai_ctor = mock.Mock(name="OpenAI")
+        load_key = mock.Mock(name="load_api_key", return_value=None)
+        upload = mock.Mock(name="upload_text_file")
+
+        def stub_review(_ctx: object, _reviewers: list, _combiner: object) -> Review:
+            return Review("approve", "looks good", model="codex:gpt-5")
+
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(wrapper, "OpenAI", openai_ctor),
+            mock.patch.object(wrapper, "load_api_key", load_key),
+            mock.patch.object(wrapper, "upload_text_file", upload),
+            mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
+            mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
+            mock.patch.object(wrapper, "review_pr", side_effect=stub_review),
+            mock.patch.object(
+                wrapper.sys, "argv",
+                ["pr_review_wrapper.py", "--model", "codex:gpt-5",
+                 "--no-source-bundle"],
+            ),
+            mock.patch.object(wrapper.sys, "stdin",
+                              io.StringIO(json.dumps(_fixture_request()))),
+            mock.patch.object(wrapper.sys, "stdout", stdout),
+        ):
+            exit_code = wrapper.main()
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual(json.loads(stdout.getvalue())["classification"], "approve")
+        load_key.assert_not_called()
+        openai_ctor.assert_not_called()
+        upload.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

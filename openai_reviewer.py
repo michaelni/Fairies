@@ -728,7 +728,7 @@ class OpenAIResources:
     (e.g. the source bundle) so the outer ``finally`` deletes it.
     """
 
-    client: OpenAI
+    client: OpenAI | None
     tools: list[JsonObject]
     include: list[str]
     # None when the run has no patch (the issue-investigator task).

@@ -1092,32 +1092,53 @@ def main() -> int:
         color=args.color,
     )
 
-    api_key = load_api_key()
-    if not api_key:
-        raise SystemExit("OPENAI_API_KEY is not set and was not found in .env")
-
-    openai_timeout: float | None
-    if args.openai_timeout_seconds and args.openai_timeout_seconds > 0:
-        openai_timeout = float(args.openai_timeout_seconds)
-    else:
-        openai_timeout = None
-    if args.verbose:
-        logger.debug(
-            "openai client init timeout=%s max_retries=0 tcp_keepalive=idle60s/30sx8 (sdk auto-retry disabled)",
-            f"{openai_timeout:.1f}s" if openai_timeout is not None else "none",
-        )
-    # max_retries=0 disables the SDK's hidden auto-retry (default: 2).
-    # Combined with the outer subprocess timeout, those silent retries
-    # caused the wrapper to be killed mid-retry while the server-side
-    # call had already succeeded, producing duplicate billed requests
-    # with no visible response. Retries (when wanted) are now handled
-    # explicitly inside this wrapper, or by the caller.
-    client = OpenAI(
-        api_key=api_key,
-        timeout=openai_timeout,
-        max_retries=0,
-        http_client=make_openai_http_client(),
+    # The OpenAI client -- and therefore OPENAI_API_KEY -- is only needed
+    # when an OpenAI backend actually runs: an ``openai:`` model in any slot
+    # (including one the triager may pick from ``--allowed-model``), or one
+    # of the OpenAI-hosted subsystems (container repos, vector-store
+    # search/prepare). A codex:- or anthropic:-only run must not require the
+    # key. Same spec set the codex-socket gate below scans.
+    model_specs = [
+        s for s in (args.model, *args.extra_model, args.triage_model,
+                    args.combine_model, *args.allowed_model)
+        if s
+    ]
+    openai_provider_requested = any(s.startswith("openai:") for s in model_specs)
+    openai_needed = (
+        openai_provider_requested
+        or args.use_openai_container_repos
+        or args.use_vector_store_search
+        or args.prepare_vector_store_only
     )
+
+    client: OpenAI | None = None
+    if openai_needed:
+        api_key = load_api_key()
+        if not api_key:
+            raise SystemExit("OPENAI_API_KEY is not set and was not found in .env")
+
+        openai_timeout: float | None
+        if args.openai_timeout_seconds and args.openai_timeout_seconds > 0:
+            openai_timeout = float(args.openai_timeout_seconds)
+        else:
+            openai_timeout = None
+        if args.verbose:
+            logger.debug(
+                "openai client init timeout=%s max_retries=0 tcp_keepalive=idle60s/30sx8 (sdk auto-retry disabled)",
+                f"{openai_timeout:.1f}s" if openai_timeout is not None else "none",
+            )
+        # max_retries=0 disables the SDK's hidden auto-retry (default: 2).
+        # Combined with the outer subprocess timeout, those silent retries
+        # caused the wrapper to be killed mid-retry while the server-side
+        # call had already succeeded, producing duplicate billed requests
+        # with no visible response. Retries (when wanted) are now handled
+        # explicitly inside this wrapper, or by the caller.
+        client = OpenAI(
+            api_key=api_key,
+            timeout=openai_timeout,
+            max_retries=0,
+            http_client=make_openai_http_client(),
+        )
     repo_root = find_repo_root(args.repo_root)
     repo_roots = get_all_repo_roots(repo_root, args.extra_repo_root)
     if args.container_id and not args.use_openai_container_repos:
@@ -1308,7 +1329,7 @@ def main() -> int:
             patch_bundle, patch_was_truncated = build_patch_bundle(patch, args.max_patch_bytes)
 
         patch_file_id: str | None = None
-        if args.task == "pr":
+        if args.task == "pr" and openai_provider_requested:
             patch_file_id = upload_text_file(
                 client,
                 filename="pull_request.patch.txt",

@@ -157,8 +157,8 @@ def provision_repos_into_container(
             _ssh_podman(host, "exec", cid, "sh", "-c",
                         f"git -C {spec.container_path} for-each-ref"
                         " --format='%(refname) %(committerdate:unix)'"
-                        f" | awk -v c={int(prune_refs_after)} '$2 > c {{print $1}}'"
-                        f" | xargs -r -n 50 git -C {spec.container_path} update-ref -d")
+                        f" | awk -v c={int(prune_refs_after)} '$2 > c {{print \"delete \" $1}}'"
+                        f" | git -C {spec.container_path} update-ref --stdin")
         done = time.monotonic()
         logger.info(
             "provisioned repo name=%s sync=%.3fs fill=%.3fs total=%.3fs",

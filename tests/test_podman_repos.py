@@ -192,12 +192,13 @@ class RemoteProvisionTests(unittest.TestCase):
                 mock.patch.object(lr, "sync_repo_to_mirror"), \
                 mock.patch.object(lr, "run_on_remote_host", return_value=_completed(0)) as r:
             lr.provision_repos_into_container(handle, [spec], host,
-                                              prune_refs_after=1745438400)
+                                              prune_refs_after=1776974400)
         prune = [c.args for c in r.call_args_list if "sh" in c.args][-1]
         joined = " ".join(a for a in prune if isinstance(a, str))
         self.assertIn("for-each-ref", joined)
-        self.assertIn("1745438400", joined)
-        self.assertIn("update-ref -d", joined)
+        self.assertIn("1776974400", joined)
+        self.assertIn("update-ref --stdin", joined)
+        self.assertIn('"delete ', joined)
         # Without a cutoff no prune step runs.
         with mock.patch.object(lr, "ensure_remote_mirror"), \
                 mock.patch.object(lr, "sync_repo_to_mirror"), \

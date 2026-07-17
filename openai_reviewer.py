@@ -335,6 +335,7 @@ def run_responses_resolving_podman_shell(
     verbose: bool,
     debug_dir: str | None = None,
     wrapper_request: JsonObject | None = None,
+    parallel_tool_calls: bool = False,
 ) -> object:
     """Drive ``responses.create`` in a loop until no pending function calls.
 
@@ -426,6 +427,8 @@ def run_responses_resolving_podman_shell(
             "previous_response_id": rid,
             "input": output_items,
         }
+        if not parallel_tool_calls:
+            follow["parallel_tool_calls"] = False
         tools = initial_kwargs.get("tools")
         if tools is not None:
             follow["tools"] = tools
@@ -891,6 +894,7 @@ class OpenAIReviewer(Reviewer):
                     verbose=args.verbose,
                     debug_dir=args.debug_response_dir if res.debug_dir_specified else None,
                     wrapper_request=ctx.request,
+                    parallel_tool_calls=args.podman_parallel_tool_calls,
                 )
             else:
                 response = call_with_rate_limit_retry(

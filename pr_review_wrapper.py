@@ -577,6 +577,11 @@ def parse_args() -> argparse.Namespace:
         help="Build or refresh the cached vector store for the current repository HEAD, then exit without reading stdin or running a review.",
     )
     p.add_argument(
+        "--podman-parallel-tool-calls",
+        action="store_true",
+        help="Allow several shell calls per follow-up round.",
+    )
+    p.add_argument(
         "--simulate-past-cutoff",
         metavar="ISO8601",
         help="Prune container-repo refs whose commits postdate this time "

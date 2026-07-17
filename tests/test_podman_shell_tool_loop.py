@@ -125,8 +125,47 @@ class RunPodmanShellLoopTests(unittest.TestCase):
         self.assertEqual("resp_1", follow["previous_response_id"])
         self.assertEqual(1, len(follow["input"]))
         self.assertEqual("function_call_output", follow["input"][0]["type"])
-        # Serial-only tool calls would multiply rounds (each re-bills context).
-        self.assertNotIn("parallel_tool_calls", follow)
+        self.assertEqual(False, follow.get("parallel_tool_calls"))
+
+    def test_parallel_flag_lifts_serial_forcing(self) -> None:
+        session = mock.Mock(spec=lc.ContainerShellSession)
+        session.exec.return_value = lc.ExecResult(
+            exit_code=0, stdout="", stderr="", duration_s=0.0,
+            stdout_truncated=False, stderr_truncated=False,
+        )
+        n = {"i": 0}
+
+        def dump(_rsp: object) -> dict:
+            n["i"] += 1
+            if n["i"] == 1:
+                return {"output": [{
+                    "type": "function_call", "call_id": "c1",
+                    "name": "shell", "arguments": json.dumps({"command": "true"}),
+                }]}
+            return {"output": [{"type": "message", "content": []}]}
+
+        creates: list[dict] = []
+        client = mock.Mock()
+        client.responses.create.side_effect = (
+            lambda **kw: (creates.append(kw), mock.Mock(id=f"r{n['i']}"))[1]
+        )
+        with mock.patch.object(openai_reviewer, "response_to_debug_json", side_effect=dump), \
+                mock.patch.object(openai_reviewer, "call_with_rate_limit_retry",
+                                  side_effect=lambda fn, **kw: fn()):
+            openai_reviewer.run_responses_resolving_podman_shell(
+                client,
+                initial_kwargs={
+                    "model": "gpt-x",
+                    "tools": [{"type": "function", "name": "shell"}],
+                },
+                podman_shell_session=session,
+                max_tool_rounds=10,
+                max_shell_timeout_s=60.0,
+                what="test",
+                verbose=False,
+                parallel_tool_calls=True,
+            )
+        self.assertNotIn("parallel_tool_calls", creates[1])
 
     def test_every_round_is_dumped_with_its_own_kwargs(self) -> None:
         # Regression: only the final response used to be dumped, losing the

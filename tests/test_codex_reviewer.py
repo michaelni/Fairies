@@ -196,9 +196,15 @@ class CodexReviewerRunTests(unittest.TestCase):
         reviewer = CodexReviewer("m", name="codex:m", role=ROLE,
                                  codex_home=home)
         with mock.patch.object(codex_reviewer.subprocess, "run",
-                               side_effect=fake_run):
+                               side_effect=fake_run), \
+                mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-x",
+                                             "CODEX_API_KEY": "sk-y"}):
             reviewer.run(_ctx())
         self.assertEqual(home, captured["env"]["CODEX_HOME"])
+        # An exported API key must never reach codex, which would
+        # prefer it over CODEX_HOME.
+        self.assertNotIn("OPENAI_API_KEY", captured["env"])
+        self.assertNotIn("CODEX_API_KEY", captured["env"])
 
     def test_passes_are_serialized(self) -> None:
         # One auth.json must not serve concurrent jobs.

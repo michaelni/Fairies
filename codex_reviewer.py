@@ -280,9 +280,13 @@ class CodexReviewer(Reviewer):
                     self.role.name, self.model, self.effort or "-", use_shell,
                 )
                 started = time.monotonic()
-                env = None
+                # codex prefers API-key env auth over CODEX_HOME; an
+                # exported OPENAI_API_KEY would silently rebind this pass
+                # to another account, so strip the key vars.
+                env = {k: v for k, v in os.environ.items()
+                       if k not in ("OPENAI_API_KEY", "CODEX_API_KEY")}
                 if self.codex_home:
-                    env = dict(os.environ, CODEX_HOME=self.codex_home)
+                    env["CODEX_HOME"] = self.codex_home
                 try:
                     proc = subprocess.run(
                         cmd, input=prompt, capture_output=True, text=True,

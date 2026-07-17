@@ -70,6 +70,15 @@ SAMPLES=${SAMPLES:-3}
 PAR=${PAR:-$SAMPLES}
 TIER=${TIER:-flex}
 MODEL=${MODEL:-openai:gpt-5.4}
+# TRIAGE_MODEL= (empty) skips the triage pre-check AND the triage model
+# allowlist -- both would pull in an OpenAI backend, which a codex:-only
+# arm must not require (no OPENAI_API_KEY).
+TRIAGE_MODEL=${TRIAGE_MODEL-openai:gpt-5.4-mini}
+TRIAGE_ARGS=""
+[[ -n "$TRIAGE_MODEL" ]] && TRIAGE_ARGS="--triage-model $TRIAGE_MODEL \
+            --allowed-model openai:gpt-5.5 --allowed-model openai:gpt-5.4 \
+            --allowed-model openai:gpt-5.6 --allowed-model openai:gpt-5.6-sol \
+            --allowed-model openai:gpt-5.6-terra"
 PODMAN_SSH=${PODMAN_SSH:-}
 MODE=${MODE:-podman}
 if [[ "$MODE" = container ]]; then
@@ -116,11 +125,8 @@ run_one() {
         --llm-review-cmd "./pr_review_wrapper.py \
             --repo-root $PATCH_REPO $extra \
             $CONTAINER_ARGS $WRAPPER_EXTRA \
-            --model $MODEL --triage-model openai:gpt-5.4-mini \
+            --model $MODEL $TRIAGE_ARGS \
             --service-tier $TIER --reasoning-summary detailed \
-            --allowed-model openai:gpt-5.5 --allowed-model openai:gpt-5.4 \
-            --allowed-model openai:gpt-5.6 --allowed-model openai:gpt-5.6-sol \
-            --allowed-model openai:gpt-5.6-terra \
             --debug-response-dir $outdir/openaidebug --verbose" \
         --verbose 2 2>&1 | tee "$outdir/run.log" | sed -u "$pfx"
     then

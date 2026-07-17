@@ -25,3 +25,6 @@ __pycache__/
 
 # Operator-prepped cutoff mirrors the simpast harness reviews against.
 /simpast-mirror/
+
+# API keys (openai_common/anthropic_common read it; never versioned).
+/.env

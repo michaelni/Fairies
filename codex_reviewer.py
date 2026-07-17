@@ -66,8 +66,10 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# codex -c model_reasoning_effort values (codex config reference).
-CODEX_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
+# codex -c model_reasoning_effort values. The gpt-5.6 backend rejects
+# codex's documented "minimal" ("Supported values are: 'none', 'low',
+# 'medium', 'high', and 'xhigh'", server error observed 2026-07-17).
+CODEX_EFFORTS = ("none", "low", "medium", "high", "xhigh")
 
 # codex-side per-MCP-tool-call watchdog. The real per-command cap is
 # enforced wrapper-side (exec_shell_call clamps timeout_seconds to

@@ -201,6 +201,7 @@ class CodexReviewer(Reviewer):
         name: str,
         role: RoleSpec = REVIEWER_ROLE,
         codex_bin: str = "codex",
+        codex_home: str | None = None,
         effort: str | None = None,
         run_timeout_s: float = 0.0,
         verbose: bool = False,
@@ -212,6 +213,9 @@ class CodexReviewer(Reviewer):
         self.name = name
         self.role = role
         self.codex_bin = codex_bin
+        # Where codex keeps auth.json etc.; None inherits the process env
+        # (a set CODEX_HOME or codex's ~/.codex default).
+        self.codex_home = codex_home
         self.effort = effort
         # 0 disables the whole-subprocess watchdog (a pass legitimately
         # runs for however long the model reasons and builds).
@@ -276,10 +280,13 @@ class CodexReviewer(Reviewer):
                     self.role.name, self.model, self.effort or "-", use_shell,
                 )
                 started = time.monotonic()
+                env = None
+                if self.codex_home:
+                    env = dict(os.environ, CODEX_HOME=self.codex_home)
                 try:
                     proc = subprocess.run(
                         cmd, input=prompt, capture_output=True, text=True,
-                        timeout=self.run_timeout_s or None,
+                        timeout=self.run_timeout_s or None, env=env,
                     )
                 except subprocess.TimeoutExpired:
                     raise RuntimeError(

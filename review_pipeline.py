@@ -144,6 +144,7 @@ def make_reviewer(
                 name=f"codex:{model}",
                 role=role,
                 codex_bin=args.codex_bin,
+                codex_home=args.codex_home,
                 effort=effort,
                 run_timeout_s=args.codex_timeout_seconds,
                 verbose=verbose,

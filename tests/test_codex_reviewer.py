@@ -181,6 +181,23 @@ class CodexReviewerRunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CodexReviewer("m", name="codex:m", role=ROLE, effort="ultra")
 
+    def test_codex_home_reaches_subprocess_env(self) -> None:
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured["env"] = kwargs.get("env")
+            path = cmd[cmd.index("--output-last-message") + 1]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"classification": "approve", "message": "ok"}')
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        reviewer = CodexReviewer("m", name="codex:m", role=ROLE,
+                                 codex_home="/srv/fairy/codex")
+        with mock.patch.object(codex_reviewer.subprocess, "run",
+                               side_effect=fake_run):
+            reviewer.run(_ctx())
+        self.assertEqual("/srv/fairy/codex", captured["env"]["CODEX_HOME"])
+
     def test_passes_are_serialized(self) -> None:
         # One auth.json must not serve concurrent jobs.
         import threading
@@ -213,7 +230,7 @@ class CodexReviewerRunTests(unittest.TestCase):
 class FactoryTests(unittest.TestCase):
     def test_make_reviewer_builds_codex(self) -> None:
         args = argparse.Namespace(
-            codex_bin="codex-pinned", codex_timeout_seconds=0.0,
+            codex_bin="codex-pinned", codex_timeout_seconds=0.0, codex_home=None,
             debug_response_dir=None, podman_max_tool_rounds=0,
             podman_exec_timeout=600.0,
         )
@@ -228,7 +245,7 @@ class FactoryTests(unittest.TestCase):
 
     def test_bad_effort_suffix_is_cli_error(self) -> None:
         args = argparse.Namespace(
-            codex_bin="codex", codex_timeout_seconds=0.0,
+            codex_bin="codex", codex_timeout_seconds=0.0, codex_home=None,
             debug_response_dir=None, podman_max_tool_rounds=0,
             podman_exec_timeout=600.0,
         )

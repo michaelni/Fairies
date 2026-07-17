@@ -114,6 +114,8 @@ below). A local-GPU backend is TODO -- PRs very welcome.
 runs the pass through the codex CLI. Install a
 codex version on the wrapper host (`--codex-bin` selects the binary)
 and log in once with `codex login`.
+`--codex-home DIR` points the subprocesses at that login's auth.json
+without needing CODEX_HOME in the wrapper's environment.
 
 The security model matches the API backends -- the model can execute only
 inside the review containers, never on the wrapper host: codex runs with

@@ -490,6 +490,13 @@ def parse_args() -> argparse.Namespace:
              "watchdog (default), a pass runs as long as the model works.",
     )
     p.add_argument(
+        "--codex-home",
+        default=None,
+        metavar="DIR",
+        help="CODEX_HOME for codex subprocesses (auth.json location). "
+             "Default: inherit the environment / codex's ~/.codex.",
+    )
+    p.add_argument(
         "--podman-ssh-identity",
         metavar="KEYFILE",
         default=None,

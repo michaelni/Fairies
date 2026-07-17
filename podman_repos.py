@@ -118,6 +118,7 @@ def provision_repos_into_container(
     handle: ContainerHandle,
     specs: Sequence[RepoSpec],
     host: RemoteHost,
+    prune_refs_after: int | None = None,
 ) -> None:
     """Populate the container at ``container_path`` for each spec.
 
@@ -148,6 +149,16 @@ def provision_repos_into_container(
                     "config", "core.bare", "false")
         _ssh_podman(host, "exec", cid, "git", "-C", spec.container_path,
                     "reset", "--hard", spec.head_sha)
+        if prune_refs_after is not None:
+            # Simulate-past: the mirror carries today's refs; drop every ref
+            # whose commit postdates the cutoff so ``git log --all`` cannot
+            # see the future. Past refs stay -- force-pushed PR heads are
+            # part of a faithful replay.
+            _ssh_podman(host, "exec", cid, "sh", "-c",
+                        f"git -C {spec.container_path} for-each-ref"
+                        " --format='%(refname) %(committerdate:unix)'"
+                        f" | awk -v c={int(prune_refs_after)} '$2 > c {{print $1}}'"
+                        f" | xargs -r -n 50 git -C {spec.container_path} update-ref -d")
         done = time.monotonic()
         logger.info(
             "provisioned repo name=%s sync=%.3fs fill=%.3fs total=%.3fs",

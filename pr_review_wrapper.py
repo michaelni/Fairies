@@ -72,6 +72,7 @@ import re
 import subprocess
 import sys
 import tarfile
+from datetime import datetime
 from pathlib import Path
 from typing import Sequence
 
@@ -576,6 +577,12 @@ def parse_args() -> argparse.Namespace:
         help="Build or refresh the cached vector store for the current repository HEAD, then exit without reading stdin or running a review.",
     )
     p.add_argument(
+        "--simulate-past-cutoff",
+        metavar="ISO8601",
+        help="Prune container-repo refs whose commits postdate this time "
+             "(simulate-past replays; past refs incl. old force-pushes stay).",
+    )
+    p.add_argument(
         "--no-source-bundle",
         action="store_true",
         help="Do not attach directly included source files; review the metadata, patch, and optional vector store only.",
@@ -1020,7 +1027,13 @@ def open_review_container_shell(
         extra_args=(f"--device={args.podman_gpu}",) if args.podman_gpu else (),
     )
     try:
-        podman_repos.provision_repos_into_container(handle, repo_specs, remote_host)
+        podman_repos.provision_repos_into_container(
+            handle, repo_specs, remote_host,
+            prune_refs_after=(
+                int(datetime.fromisoformat(args.simulate_past_cutoff).timestamp())
+                if args.simulate_past_cutoff else None
+            ),
+        )
         podman_host.copy_into_container(handle, AGENT_LOCAL_PATH, AGENT_CONTAINER_DIR)
         session = podman_host.open_container_shell(handle, AGENT_CONTAINER_PATH)
         transcript = shell_tool.run_session_commands(

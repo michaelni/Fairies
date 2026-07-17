@@ -1919,6 +1919,8 @@ def invoke_llm_wrapper(
     """
     cmd = shlex.split(args.llm_review_cmd)
     cmd += podman_host_cmd_args(args)
+    if getattr(args, "simulate_past", None) is not None:
+        cmd += [f"--simulate-past-cutoff={args.simulate_past.isoformat()}"]
     if extra_cmd_args:
         cmd += list(extra_cmd_args)
     stderr_prefix = f"[wrapper {stderr_tag}=#{number}] " if number is not None else "[wrapper] "

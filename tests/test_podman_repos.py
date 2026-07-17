@@ -179,6 +179,33 @@ class RemoteProvisionTests(unittest.TestCase):
                 lr.sync_repo_to_mirror(self._remote_spec(), host)
         self.assertEqual(3, push.call_count)
 
+    def test_provision_prunes_future_refs_when_cutoff_given(self) -> None:
+        # Simulate-past: the mirror carries today's refs; refs whose commits
+        # postdate the cutoff must be deleted in the container so
+        # ``git log --all`` cannot see the future (past force-pushes stay).
+        host = lc.RemoteHost("fairy@h")
+        handle = lc.ContainerHandle(
+            container_id="cid", image="img", network=None, host=host,
+        )
+        spec = self._remote_spec()
+        with mock.patch.object(lr, "ensure_remote_mirror"), \
+                mock.patch.object(lr, "sync_repo_to_mirror"), \
+                mock.patch.object(lr, "run_on_remote_host", return_value=_completed(0)) as r:
+            lr.provision_repos_into_container(handle, [spec], host,
+                                              prune_refs_after=1745438400)
+        prune = [c.args for c in r.call_args_list if "sh" in c.args][-1]
+        joined = " ".join(a for a in prune if isinstance(a, str))
+        self.assertIn("for-each-ref", joined)
+        self.assertIn("1745438400", joined)
+        self.assertIn("update-ref -d", joined)
+        # Without a cutoff no prune step runs.
+        with mock.patch.object(lr, "ensure_remote_mirror"), \
+                mock.patch.object(lr, "sync_repo_to_mirror"), \
+                mock.patch.object(lr, "run_on_remote_host", return_value=_completed(0)) as r:
+            lr.provision_repos_into_container(handle, [spec], host)
+        self.assertFalse([c for c in r.call_args_list
+                          if "for-each-ref" in " ".join(a for a in c.args if isinstance(a, str))])
+
     def test_remote_provision_sequence(self) -> None:
         host = lc.RemoteHost("fairy@h")
         handle = lc.ContainerHandle(

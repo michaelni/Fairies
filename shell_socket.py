@@ -76,12 +76,60 @@ def _send_json(sock: socket.socket, obj: JsonObject) -> None:
     sock.sendall(json.dumps(obj, ensure_ascii=False).encode("utf-8") + b"\n")
 
 
+def _write_json(writer, obj: JsonObject) -> None:
+    writer.write(json.dumps(obj, ensure_ascii=False).encode("utf-8") + b"\n")
+    writer.flush()
+
+
 def _recv_json_line(reader) -> JsonObject | None:
     """Read one newline-delimited JSON object; ``None`` on EOF."""
     line = reader.readline()
     if not line:
         return None
     return json.loads(line)
+
+
+def serve_dispatch(
+    reader,
+    writer,
+    *,
+    machine_labels: Sequence[str],
+    open_shell: Callable[[str], tuple[ContainerShellSession, str]],
+    max_timeout_s: float,
+) -> None:
+    """Serve one codex run's shell dispatch over a byte-stream pair.
+
+    ``reader``/``writer`` are binary file-like objects carrying the same
+    newline-delimited ``{"id", "args"}`` / ``{"id", "payload"}`` protocol
+    as the unix socket -- but transport-agnostic, so the wrapper can drive
+    it over a ``podman exec -i`` channel into the codex container (the
+    ``relay.py`` side) exactly as it drives the review shells, no socket of
+    its own required.
+
+    One call == one codex run: a private ``shells`` dict, so a run never
+    shares a container working tree with a concurrent pass. Returns on EOF
+    (``reader`` exhausted).
+    """
+    shells: dict[str, ContainerShellSession] = {}
+    while True:
+        try:
+            request = _recv_json_line(reader)
+        except json.JSONDecodeError as exc:
+            logger.warning("shell dispatch: bad request line: %s", exc)
+            _write_json(writer, {"id": None, "payload": {
+                "error": f"malformed request: {exc}"}})
+            continue
+        if request is None:
+            return
+        try:
+            payload = exec_machine_call(
+                shells, tuple(machine_labels), open_shell,
+                request.get("args"), max_timeout_s=max_timeout_s,
+            )
+        except Exception as exc:
+            logger.exception("shell dispatch failed")
+            payload = {"error": f"shell dispatch failed: {exc}"}
+        _write_json(writer, {"id": request.get("id"), "payload": payload})
 
 
 class ShellDispatchServer:
@@ -130,38 +178,22 @@ class ShellDispatchServer:
             ).start()
 
     def _serve_connection(self, conn: socket.socket) -> None:
-        # Private per-connection sessions: one codex run never shares a
-        # container working tree with a concurrent pass. Single-threaded
-        # per connection, so no open_lock is needed on this dict.
-        shells: dict[str, ContainerShellSession] = {}
+        # Same dispatch loop as the codex-container relay, over this
+        # connection's byte streams (see serve_dispatch).
         reader = conn.makefile("rb")
+        writer = conn.makefile("wb")
         try:
-            while True:
-                try:
-                    request = _recv_json_line(reader)
-                except json.JSONDecodeError as exc:
-                    logger.warning("shell dispatch: bad request line: %s", exc)
-                    _send_json(conn, {"id": None, "payload": {
-                        "error": f"malformed request: {exc}"}})
-                    continue
-                if request is None:
-                    return
-                try:
-                    payload = exec_machine_call(
-                        shells, self.machine_labels, self.open_shell,
-                        request.get("args"), max_timeout_s=self.max_timeout_s,
-                    )
-                except Exception as exc:
-                    # e.g. a failed lazy container open. In-band like every
-                    # other shell error so the model can carry on without
-                    # the machine instead of the codex run dying opaquely.
-                    logger.exception("shell dispatch failed")
-                    payload = {"error": f"shell dispatch failed: {exc}"}
-                _send_json(conn, {"id": request.get("id"), "payload": payload})
+            serve_dispatch(
+                reader, writer,
+                machine_labels=self.machine_labels,
+                open_shell=self.open_shell,
+                max_timeout_s=self.max_timeout_s,
+            )
         except (BrokenPipeError, ConnectionResetError):
             logger.info("shell dispatch: connection dropped")
         finally:
             reader.close()
+            writer.close()
             conn.close()
 
     def close(self) -> None:

@@ -560,6 +560,52 @@ def start_ephemeral_container(
     )
 
 
+def reap_stale_containers(
+    host: RemoteHost, *, images: Sequence[str], older_than: str = "60m",
+) -> int:
+    """Force-remove leaked review/codex containers on ``host``.
+
+    Fairy's containers run ``sleep infinity``, so an interrupted or crashed
+    run (before the wrapper's cleanup) leaves them behind. This reaps only
+    the given ``images`` and only containers in ``created``/``exited``
+    state -- never ``running`` (a live review is ``Up``) and never
+    ``paused`` (the poison path keeps those for forensics) -- and only
+    those older than ``older_than`` (a podman duration), so a container a
+    concurrent run just created is never removed. Best-effort; returns the
+    number removed and logs on failure.
+    """
+    removed = 0
+    for image in images:
+        listed = _podman(
+            host, "ps", "-aq",
+            "--filter", f"ancestor={image}",
+            "--filter", f"until={older_than}",
+            "--filter", "status=created",
+            "--filter", "status=exited",
+            timeout_s=60.0,
+        )
+        if listed.returncode != 0:
+            logger.warning(
+                "reap: listing %s on %s failed: %s", image, host.ssh_dest,
+                listed.stderr.decode(errors="replace").strip())
+            continue
+        ids = listed.stdout.decode(errors="replace").split()
+        if not ids:
+            continue
+        rm = _podman(host, "rm", "-f", *ids, timeout_s=120.0)
+        if rm.returncode == 0:
+            removed += len(ids)
+            logger.info(
+                "reaped %d stale container(s) image=%s host=%s",
+                len(ids), image, host.ssh_dest)
+        else:
+            logger.warning(
+                "reap: rm of %d %s container(s) on %s failed: %s",
+                len(ids), image, host.ssh_dest,
+                rm.stderr.decode(errors="replace").strip())
+    return removed
+
+
 def pause_container(handle: ContainerHandle) -> None:
     """``podman pause`` the container, preserving it for forensics.
 

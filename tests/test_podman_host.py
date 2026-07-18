@@ -225,6 +225,51 @@ class BuildImageIfNeededTests(unittest.TestCase):
                 )
 
 
+class ReapStaleContainersTests(unittest.TestCase):
+    def _reap(self, run_side_effect, **kw):
+        with mock.patch.object(lc.subprocess, "run",
+                               side_effect=run_side_effect) as run:
+            n = lc.reap_stale_containers(
+                HOST, images=["localhost/fairy-review:latest"],
+                older_than="60m", **kw)
+        return n, run
+
+    def test_lists_stopped_old_containers_then_removes(self) -> None:
+        calls = []
+
+        def side_effect(argv, **kw):
+            calls.append(argv[-1])
+            if "podman ps" in argv[-1]:
+                return _completed(0, stdout=b"aaa\nbbb\n")
+            return _completed(0)
+
+        n, _ = self._reap(side_effect)
+        self.assertEqual(2, n)
+        ps = calls[0]
+        self.assertIn("ancestor=localhost/fairy-review:latest", ps)
+        self.assertIn("until=60m", ps)
+        self.assertIn("status=created", ps)
+        self.assertIn("status=exited", ps)
+        self.assertNotIn("status=running", ps)
+        self.assertNotIn("status=paused", ps)
+        self.assertIn("podman rm -f aaa bbb", calls[1])
+
+    def test_no_matches_skips_rm(self) -> None:
+        def side_effect(argv, **kw):
+            return _completed(0, stdout=b"")
+
+        n, run = self._reap(side_effect)
+        self.assertEqual(0, n)
+        self.assertEqual(1, run.call_count)  # ps only, no rm
+
+    def test_list_failure_is_swallowed(self) -> None:
+        def side_effect(argv, **kw):
+            return _completed(1, stderr=b"boom")
+
+        n, _ = self._reap(side_effect)
+        self.assertEqual(0, n)  # best-effort, no raise
+
+
 class ImageLabelTests(unittest.TestCase):
     def test_returns_label_value(self) -> None:
         with mock.patch.object(lc.subprocess, "run") as run:

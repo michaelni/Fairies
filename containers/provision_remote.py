@@ -72,6 +72,7 @@ from podman_host import (  # noqa: E402
     RemoteHost,
     build_image_if_needed,
     image_label,
+    reap_stale_containers,
 )
 
 logger = logging.getLogger("containers.provision_remote")
@@ -223,6 +224,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--rebuild", action="store_true", help="force image rebuild even if current")
     p.add_argument(
+        "--reap-older-than", default="60m", metavar="DURATION",
+        help="reap leaked stopped review/codex containers older than this "
+             "podman duration (default: %(default)s); running and paused "
+             "containers are never touched. Set 'off' to skip.",
+    )
+    p.add_argument(
         "repo_roots", nargs="*", type=Path,
         help="working-tree repos to seed as remote mirrors (optional)",
     )
@@ -239,6 +246,16 @@ def main(argv: list[str] | None = None) -> int:
     dockerfile = args.file if args.file.is_absolute() else (REPO_ROOT / args.file).resolve()
 
     check_reachable(host)
+    # Reap containers leaked by interrupted/crashed prior runs before we do
+    # anything else; safe because this runs at the top of a batch, before
+    # any review container of this run exists, and it skips running/paused
+    # ones and anything younger than --reap-older-than.
+    if args.reap_older_than != "off":
+        reaped = reap_stale_containers(
+            host, images=[args.tag, args.codex_tag],
+            older_than=args.reap_older_than)
+        if reaped:
+            logger.info("reaped %d stale container(s) on %s", reaped, args.ssh)
     ensure_image(
         host=host, tag=args.tag, dockerfile=dockerfile,
         context_dir=args.context.resolve(), rebuild=args.rebuild,

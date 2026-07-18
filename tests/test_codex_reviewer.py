@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -11,6 +12,7 @@ from unittest import mock
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import codex_container
 import codex_reviewer
 import podman_host
 import review_pipeline
@@ -26,6 +28,57 @@ MACHINES = (
     podman_host.parse_shell_host("fairy@h1"),
     podman_host.parse_shell_host("arm64=fairy@h2"),
 )
+
+CODEX_HOST = podman_host.parse_shell_host("fairy@codexbox")
+
+
+def _codex_home_with_auth(**files) -> str:
+    """A temp CODEX_HOME containing auth.json (+ optional extra files)."""
+    home = tempfile.mkdtemp(prefix="codex-home-")
+    Path(home, "auth.json").write_text('{"tokens": {}}', encoding="utf-8")
+    for name, content in files.items():
+        Path(home, name).write_text(content, encoding="utf-8")
+    return home
+
+
+class _FakeCodexContainer:
+    """Stand-in for CodexContainer: records podman-cp'd files and the codex
+    argv, returns canned run output / last message. ``on_run`` fires inside
+    run() (while the auth flock is held) for lock tests."""
+
+    def __init__(self, run_result, last_message, on_run=None):
+        self._run_result = run_result
+        self._last_message = last_message
+        self.on_run = on_run
+        self.copied = {}       # basename -> local text content
+        self.cmd = None
+        self.input_text = None
+        self.env = None
+        self.stopped = False
+
+    def start(self):
+        return self
+
+    def put_file(self, local, dest_dir, **kw):
+        p = Path(local)
+        try:
+            self.copied[p.name] = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            self.copied[p.name] = None
+
+    def run(self, cmd, *, input_text=None, env=None, timeout_s=None):
+        self.cmd = cmd
+        self.input_text = input_text
+        self.env = env
+        if self.on_run is not None:
+            self.on_run()
+        return self._run_result
+
+    def read_file(self, path, **kw):
+        return self._last_message
+
+    def stop(self):
+        self.stopped = True
 
 ROLE = RoleSpec(
     name="reviewer",
@@ -46,7 +99,9 @@ def _ctx(**kwargs) -> ReviewContext:
         patch_text="the patch", patch_truncated=False, source_bundle=None,
         source_files=[], source_notes=[], reviewer_username="fairy",
         ci_triage_mode=False, repo_roots=[], repo_mount_paths=["/work/ffmpeg"],
-        machines=MACHINES, shell_socket_path="/run/fairy/shell.sock",
+        machines=MACHINES,
+        open_shell=lambda label: (
+            mock.Mock(spec=podman_host.ContainerShellSession), ""),
     )
     defaults.update(kwargs)
     return ReviewContext(**defaults)
@@ -165,92 +220,67 @@ class EventParsingTests(unittest.TestCase):
 
 
 class CodexReviewerRunTests(unittest.TestCase):
+    def _reviewer(self, *, codex_home=None, **kw):
+        return CodexReviewer(
+            "gpt-5.6-sol", name="codex:gpt-5.6-sol", role=ROLE,
+            codex_host=CODEX_HOST,
+            codex_home=codex_home or _codex_home_with_auth(), **kw)
+
     def _run(self, *, jsonl="", stderr="", returncode=0,
              last_message='{"classification": "approve", "message": "ok"}',
-             ctx=None, **reviewer_kwargs):
-        reviewer = CodexReviewer(
-            "gpt-5.6-sol", name="codex:gpt-5.6-sol", role=ROLE,
-            **reviewer_kwargs)
-
-        def fake_run(cmd, **kwargs):
-            self.last_cmd = cmd
-            self.last_prompt = kwargs.get("input")
-            if last_message is not None:
-                path = cmd[cmd.index("--output-last-message") + 1]
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(last_message)
-            return subprocess.CompletedProcess(
-                cmd, returncode, stdout=jsonl, stderr=stderr)
-
-        with mock.patch.object(codex_reviewer.subprocess, "run",
-                               side_effect=fake_run):
+             ctx=None, on_run=None, reviewer=None):
+        reviewer = reviewer or self._reviewer()
+        proc = subprocess.CompletedProcess(
+            [], returncode, stdout=jsonl, stderr=stderr)
+        self.container = _FakeCodexContainer(proc, last_message, on_run=on_run)
+        with mock.patch.object(codex_reviewer, "CodexContainer",
+                               return_value=self.container), \
+                mock.patch.object(codex_reviewer, "CodexShellRelay") as relay:
+            relay.return_value.start.return_value = relay.return_value
             return reviewer.run(ctx or _ctx())
 
     def test_validated_result_from_last_message(self) -> None:
         result = self._run()
         self.assertEqual("approve", result["classification"])
-        self.assertIn("the patch", self.last_prompt)
-        self.assertIn("Review the following PR.", self.last_prompt)
+        self.assertIn("the patch", self.container.input_text)
+        self.assertIn("Review the following PR.", self.container.input_text)
 
-    def test_scratch_dir_is_not_a_git_repo(self) -> None:
-        # codex transmits cwd git metadata with no off switch; the scratch
-        # cwd staying non-git is what keeps those fields absent.
+    def test_container_gets_auth_and_bridge_files(self) -> None:
         self._run()
-        scratch = self.last_cmd[self.last_cmd.index("--cd") + 1]
-        self.assertFalse(os.path.exists(os.path.join(scratch, ".git")))
+        for name in ("auth.json", "codex_bridge.py", "shell_bridge_client.py",
+                     "relay.py", "output_schema.json"):
+            self.assertIn(name, self.container.copied)
 
-    def test_hardened_catalog_written_and_passed(self) -> None:
-        import tempfile
-        home = tempfile.mkdtemp(prefix="codex-home-")
-        with open(os.path.join(home, "models_cache.json"), "w") as f:
-            json.dump({"models": [{
-                "slug": "gpt-5.6-sol", "input_modalities": ["text", "image"],
-                "apply_patch_tool_type": "freeform",
-                "tool_mode": "code_mode_only"}]}, f)
-        captured = {}
+    def test_only_codex_home_reaches_container_env(self) -> None:
+        with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-x",
+                                          "CODEX_API_KEY": "sk-y"}):
+            self._run()
+        self.assertEqual(
+            {"CODEX_HOME": codex_container.CONTAINER_CODEX_HOME},
+            self.container.env,
+        )
 
-        def fake_run(cmd, **kwargs):
-            self.last_cmd = cmd
-            ov = [c for c in cmd if c.startswith("model_catalog_json=")]
-            if ov:
-                with open(ov[0].split("=", 1)[1], encoding="utf-8") as f:
-                    captured["catalog"] = json.load(f)
-            path = cmd[cmd.index("--output-last-message") + 1]
-            with open(path, "w", encoding="utf-8") as f:
-                f.write('{"classification": "approve", "message": "ok"}')
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-        reviewer = CodexReviewer("gpt-5.6-sol", name="codex:gpt-5.6-sol",
-                                 role=ROLE, codex_home=home)
-        with mock.patch.object(codex_reviewer.subprocess, "run",
-                               side_effect=fake_run):
-            reviewer.run(_ctx())
-        self.assertIn("catalog", captured)
-        entry = captured["catalog"]["models"][0]
+    def test_hardened_catalog_copied_and_passed(self) -> None:
+        home = _codex_home_with_auth(**{"models_cache.json": json.dumps({
+            "models": [{"slug": "gpt-5.6-sol",
+                        "input_modalities": ["text", "image"],
+                        "apply_patch_tool_type": "freeform",
+                        "tool_mode": "code_mode_only"}]})})
+        self._run(reviewer=self._reviewer(codex_home=home))
+        self.assertIn("hardened_catalog.json", self.container.copied)
+        entry = json.loads(
+            self.container.copied["hardened_catalog.json"])["models"][0]
         self.assertEqual(["text"], entry["input_modalities"])
         self.assertIsNone(entry["apply_patch_tool_type"])
-        # tool_mode is preserved (forcing it off explodes a code_mode
-        # model's surface); this gpt-5.6 entry stays code_mode_only.
         self.assertEqual("code_mode_only", entry["tool_mode"])
+        self.assertTrue(any(c.startswith("model_catalog_json=")
+                            for c in self.container.cmd))
 
-    def test_missing_catalog_skips_override_without_failing(self) -> None:
-        import tempfile
-        home = tempfile.mkdtemp(prefix="codex-home-empty-")  # no models_cache
-        reviewer = CodexReviewer("gpt-5.6-sol", name="codex:gpt-5.6-sol",
-                                 role=ROLE, codex_home=home)
-
-        def fake_run(cmd, **kwargs):
-            self.last_cmd = cmd
-            path = cmd[cmd.index("--output-last-message") + 1]
-            with open(path, "w", encoding="utf-8") as f:
-                f.write('{"classification": "approve", "message": "ok"}')
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-        with mock.patch.object(codex_reviewer.subprocess, "run",
-                               side_effect=fake_run):
-            result = reviewer.run(_ctx())
-        self.assertEqual("approve", result["classification"])
-        self.assertFalse(any("model_catalog_json" in c for c in self.last_cmd))
+    def test_missing_catalog_skips_override(self) -> None:
+        self._run()  # auth only, no models_cache.json
+        self.assertNotIn("hardened_catalog.json", self.container.copied)
+        self.assertFalse(
+            any("model_catalog_json" in c for c in self.container.cmd))
 
     def test_usage_limit_is_hard_failure(self) -> None:
         jsonl = json.dumps({"type": "turn.failed", "error": {
@@ -259,17 +289,28 @@ class CodexReviewerRunTests(unittest.TestCase):
         with self.assertRaises(CodexUsageLimit):
             self._run(jsonl=jsonl, last_message=None, returncode=1)
 
-    def test_missing_final_message_is_error_despite_rc_zero(self) -> None:
+    def test_missing_final_message_is_error(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "no final message"):
-            self._run(last_message=None, returncode=0)
+            self._run(last_message=None)
 
     def test_non_json_final_message_is_bad_model_output(self) -> None:
         with self.assertRaises(BadModelOutput):
             self._run(last_message="I approve of this patch.")
 
     def test_shellless_context_omits_mcp(self) -> None:
-        self._run(ctx=_ctx(shell_socket_path=None))
-        self.assertFalse(any("mcp_servers" in c for c in self.last_cmd))
+        self._run(ctx=_ctx(open_shell=None))
+        self.assertFalse(any("mcp_servers" in c for c in self.container.cmd))
+
+    def test_no_codex_host_is_error(self) -> None:
+        reviewer = CodexReviewer("gpt-5.6-sol", name="codex:gpt-5.6-sol",
+                                 role=ROLE, codex_home=_codex_home_with_auth())
+        with self.assertRaisesRegex(RuntimeError, "requires --codex-host"):
+            reviewer.run(_ctx())
+
+    def test_missing_auth_is_error(self) -> None:
+        home = tempfile.mkdtemp(prefix="codex-home-noauth-")  # no auth.json
+        with self.assertRaisesRegex(RuntimeError, "auth.json not found"):
+            self._run(reviewer=self._reviewer(codex_home=home))
 
     def test_invalid_effort_rejected(self) -> None:
         # "minimal" is codex's documented lowest effort but the server
@@ -277,54 +318,29 @@ class CodexReviewerRunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CodexReviewer("m", name="codex:m", role=ROLE, effort="minimal")
 
-    def test_codex_home_reaches_subprocess_env(self) -> None:
-        import tempfile
-        home = tempfile.mkdtemp(prefix="codex-home-")
-        captured = {}
-
-        def fake_run(cmd, **kwargs):
-            captured["env"] = kwargs.get("env")
-            path = cmd[cmd.index("--output-last-message") + 1]
-            with open(path, "w", encoding="utf-8") as f:
-                f.write('{"classification": "approve", "message": "ok"}')
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
-
-        reviewer = CodexReviewer("m", name="codex:m", role=ROLE,
-                                 codex_home=home)
-        with mock.patch.object(codex_reviewer.subprocess, "run",
-                               side_effect=fake_run), \
-                mock.patch.dict(os.environ, {"OPENAI_API_KEY": "sk-x",
-                                             "CODEX_API_KEY": "sk-y"}):
-            reviewer.run(_ctx())
-        self.assertEqual(home, captured["env"]["CODEX_HOME"])
-        # An exported API key must never reach codex, which would
-        # prefer it over CODEX_HOME.
-        self.assertNotIn("OPENAI_API_KEY", captured["env"])
-        self.assertNotIn("CODEX_API_KEY", captured["env"])
-
     def test_passes_are_serialized(self) -> None:
         # One auth.json must not serve concurrent jobs.
         import threading
         import time
         active = []
+        reviewer = self._reviewer(codex_home=_codex_home_with_auth())
 
-        def fake_run(cmd, **kwargs):
-            active.append(1)
-            self.assertEqual(1, len(active))
-            time.sleep(0.02)
-            active.pop()
-            path = cmd[cmd.index("--output-last-message") + 1]
-            with open(path, "w", encoding="utf-8") as f:
-                f.write('{"classification": "approve", "message": "ok"}')
-            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        def make_fake(*a, **k):
+            def busy():
+                active.append(1)
+                self.assertEqual(1, len(active))
+                time.sleep(0.02)
+                active.pop()
+            return _FakeCodexContainer(
+                subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+                '{"classification": "approve", "message": "ok"}', on_run=busy)
 
-        reviewer = CodexReviewer("m", name="codex:m", role=ROLE)
-        with mock.patch.object(codex_reviewer.subprocess, "run",
-                               side_effect=fake_run):
-            threads = [
-                threading.Thread(target=reviewer.run, args=(_ctx(),))
-                for _ in range(3)
-            ]
+        with mock.patch.object(codex_reviewer, "CodexContainer",
+                               side_effect=make_fake), \
+                mock.patch.object(codex_reviewer, "CodexShellRelay") as relay:
+            relay.return_value.start.return_value = relay.return_value
+            threads = [threading.Thread(target=reviewer.run, args=(_ctx(),))
+                       for _ in range(3)]
             for t in threads:
                 t.start()
             for t in threads:
@@ -332,30 +348,38 @@ class CodexReviewerRunTests(unittest.TestCase):
 
 
 class FactoryTests(unittest.TestCase):
-    def test_make_reviewer_builds_codex(self) -> None:
-        args = argparse.Namespace(
-            codex_bin="codex-pinned", codex_timeout_seconds=0.0, codex_home=None,
-            debug_response_dir=None, podman_max_tool_rounds=0,
-            podman_exec_timeout=600.0,
+    def _args(self, **extra):
+        base = dict(
+            codex_bin="codex-pinned", codex_timeout_seconds=0.0,
+            codex_home=None, codex_host=CODEX_HOST, codex_image="img:test",
+            podman_exec_timeout=600.0, debug_response_dir=None,
+            podman_max_tool_rounds=0,
         )
+        base.update(extra)
+        return argparse.Namespace(**base)
+
+    def test_make_reviewer_builds_codex(self) -> None:
         reviewer = review_pipeline.make_reviewer(
-            "codex:gpt-5.6-sol@xhigh", args=args, resources=None,
+            "codex:gpt-5.6-sol@xhigh", args=self._args(), resources=None,
             role=ROLE, verbose=False,
         )
         self.assertIsInstance(reviewer, CodexReviewer)
         self.assertEqual("codex:gpt-5.6-sol", reviewer.name)
         self.assertEqual("xhigh", reviewer.effort)
         self.assertEqual("codex-pinned", reviewer.codex_bin)
+        self.assertEqual(CODEX_HOST, reviewer.codex_host)
 
-    def test_bad_effort_suffix_is_cli_error(self) -> None:
-        args = argparse.Namespace(
-            codex_bin="codex", codex_timeout_seconds=0.0, codex_home=None,
-            debug_response_dir=None, podman_max_tool_rounds=0,
-            podman_exec_timeout=600.0,
-        )
+    def test_codex_without_host_is_cli_error(self) -> None:
         with self.assertRaises(SystemExit):
             review_pipeline.make_reviewer(
-                "codex:gpt-5.6-sol@minimal", args=args, resources=None,
+                "codex:gpt-5.6-sol", args=self._args(codex_host=None),
+                resources=None, role=ROLE, verbose=False,
+            )
+
+    def test_bad_effort_suffix_is_cli_error(self) -> None:
+        with self.assertRaises(SystemExit):
+            review_pipeline.make_reviewer(
+                "codex:gpt-5.6-sol@minimal", args=self._args(), resources=None,
                 role=ROLE, verbose=False,
             )
 

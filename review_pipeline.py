@@ -138,6 +138,11 @@ def make_reviewer(
     if provider == "codex":
         from codex_reviewer import CodexReviewer
 
+        if getattr(args, "codex_host", None) is None:
+            raise SystemExit(
+                f"--model {spec!r}: codex requires --codex-host "
+                "(codex runs only in a container on that host, never locally)"
+            )
         try:
             return CodexReviewer(
                 model,
@@ -145,6 +150,9 @@ def make_reviewer(
                 role=role,
                 codex_bin=args.codex_bin,
                 codex_home=args.codex_home,
+                codex_host=args.codex_host,
+                codex_image=args.codex_image,
+                exec_timeout_s=args.podman_exec_timeout,
                 effort=effort,
                 run_timeout_s=args.codex_timeout_seconds,
                 verbose=verbose,

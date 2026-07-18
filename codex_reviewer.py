@@ -54,9 +54,17 @@ import tempfile
 import threading
 import time
 
+from codex_container import (
+    CONTAINER_CODEX_HOME,
+    CONTAINER_RUN_DIR,
+    RELAY_SOCKET_PATH,
+    CodexContainer,
+    CodexShellRelay,
+)
 from common import JsonObject
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import BadModelOutput, ReviewContext, Reviewer, RoleSpec
+from podman_host import ShellHostSpec
 
 __all__ = [
     "CODEX_EFFORTS",
@@ -67,6 +75,8 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
 
 # codex -c model_reasoning_effort values. The gpt-5.6 backend rejects
 # codex's documented "minimal" ("Supported values are: 'none', 'low',
@@ -84,7 +94,17 @@ CODEX_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max", "ultra")
 # binding constraint, so: one day.
 MCP_TOOL_TIMEOUT_S = 86_400
 
-_BRIDGE_PATH = str(Path(__file__).resolve().parent / "codex_bridge.py")
+_REPO_DIR = Path(__file__).resolve().parent
+_BRIDGE_PATH = str(_REPO_DIR / "codex_bridge.py")
+# The two stdlib-only files the codex container needs for the MCP shell
+# bridge (podman cp'd in per run), plus the relay it serves.
+_BRIDGE_CLIENT_PATH = _REPO_DIR / "shell_bridge_client.py"
+_RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
+
+
+def _resolve_codex_home(codex_home: str | None) -> str:
+    return codex_home or os.environ.get("CODEX_HOME") \
+        or os.path.expanduser("~/.codex")
 
 # queue here while other providers run in parallel around them.
 _CODEX_RUN_LOCK = threading.Lock()
@@ -136,17 +156,10 @@ def harden_codex_catalog(catalog: JsonObject) -> JsonObject:
 
 
 def _load_codex_catalog(codex_home: str | None) -> JsonObject | None:
-    """Read codex's cached model catalog for ``codex_home``.
-
-    codex populates ``<CODEX_HOME>/models_cache.json`` from the server; we
-    reuse it (rather than re-fetch) so the hardened override carries the same
-    35-field entries codex would, differing only in the stripped fields.
-    Returns ``None`` (caller proceeds unhardened, loudly) when it is absent
-    or unparseable -- availability must not hinge on this inner lock.
+    """Read ``<CODEX_HOME>/models_cache.json``, or ``None`` if absent or
+    unparseable -- availability must not hinge on this inner lock.
     """
-    home = codex_home or os.environ.get("CODEX_HOME") \
-        or os.path.expanduser("~/.codex")
-    cache = os.path.join(home, "models_cache.json")
+    cache = os.path.join(_resolve_codex_home(codex_home), "models_cache.json")
     try:
         with open(cache, encoding="utf-8") as f:
             data = json.load(f)
@@ -168,6 +181,8 @@ def build_codex_exec_command(
     machine_labels: tuple[str, ...],
     web_search: str = "cached",
     catalog_override_path: str | None = None,
+    bridge_python: str = sys.executable,
+    bridge_path: str = _BRIDGE_PATH,
 ) -> list[str]:
     """The full ``codex exec`` argv for one pass; prompt arrives on stdin.
 
@@ -211,11 +226,11 @@ def build_codex_exec_command(
         for label in machine_labels:
             bridge_args += ["--machine", label]
         cmd += [
-            "-c", f'mcp_servers.shell.command="{sys.executable}"',
+            "-c", f'mcp_servers.shell.command="{bridge_python}"',
             "-c", "mcp_servers.shell.args="
-                  + json.dumps([_BRIDGE_PATH, *bridge_args]),
-            # "approve" never generates an approval request, which exec
-            # mode would auto-cancel (openai/codex#24135).
+                  + json.dumps([bridge_path, *bridge_args]),
+            # "approve" generates no approval request; exec mode auto-cancels
+            # any that are generated.
             "-c", 'mcp_servers.shell.default_tools_approval_mode="approve"',
             "-c", f"mcp_servers.shell.tool_timeout_sec={MCP_TOOL_TIMEOUT_S}",
         ]
@@ -284,6 +299,9 @@ class CodexReviewer(Reviewer):
         role: RoleSpec = REVIEWER_ROLE,
         codex_bin: str = "codex",
         codex_home: str | None = None,
+        codex_host: ShellHostSpec | None = None,
+        codex_image: str = DEFAULT_CODEX_IMAGE,
+        exec_timeout_s: float = 600.0,
         effort: str | None = None,
         run_timeout_s: float = 0.0,
         verbose: bool = False,
@@ -294,10 +312,18 @@ class CodexReviewer(Reviewer):
         self.model = model
         self.name = name
         self.role = role
+        # In-container path to the (image-baked) codex binary.
         self.codex_bin = codex_bin
-        # Where codex keeps auth.json etc.; None inherits the process env
-        # (a set CODEX_HOME or codex's ~/.codex default).
+        # Wrapper-side codex home: source of the auth.json copied into the
+        # container and of models_cache.json used to harden the catalog.
         self.codex_home = codex_home
+        # The podman host that runs the codex container. None means codex is
+        # unavailable (there is no local codex); run() rejects it.
+        self.codex_host = codex_host
+        self.codex_image = codex_image
+        # Per-MCP-shell-call cap for the relay's dispatch into review
+        # containers (mirrors the API backends' --podman-exec-timeout).
+        self.exec_timeout_s = exec_timeout_s
         self.effort = effort
         # 0 disables the whole-subprocess watchdog (a pass legitimately
         # runs for however long the model reasons and builds).
@@ -384,42 +410,84 @@ class CodexReviewer(Reviewer):
         return "\n\n".join(parts)
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
-        use_shell = bool(ctx.shell_socket_path) and bool(ctx.machines)
+        if self.codex_host is None:
+            raise RuntimeError(
+                f"{self.name}: codex requires --codex-host; there is no "
+                "local codex backend."
+            )
+        use_shell = bool(ctx.machines) and ctx.open_shell is not None
         prompt = self._build_prompt(ctx, use_shell)
-        scratch = tempfile.mkdtemp(prefix="fairy-codex-")
+        scratch = tempfile.mkdtemp(prefix="fairy-codex-")  # local staging only
+        container = CodexContainer(
+            image=self.codex_image, host=self.codex_host.host,
+            memory=self.codex_host.memory, cpus=self.codex_host.cpus,
+        )
+        relay: CodexShellRelay | None = None
+        machine_labels = tuple(m.label for m in ctx.machines)
         try:
-            schema_path = os.path.join(scratch, "output_schema.json")
-            last_message_path = os.path.join(scratch, "last_message.json")
-            with open(schema_path, "w", encoding="utf-8") as f:
-                json.dump(self.role.schema["schema"], f)
+            schema_local = Path(scratch) / "output_schema.json"
+            schema_local.write_text(
+                json.dumps(self.role.schema["schema"]), encoding="utf-8")
+            catalog_local = self._write_hardened_catalog(scratch)
+            auth_local = Path(_resolve_codex_home(self.codex_home)) / "auth.json"
+            if not auth_local.is_file():
+                raise RuntimeError(
+                    f"{self.name}: codex auth.json not found at {auth_local} "
+                    "(run `codex login` for the deployment's CODEX_HOME)"
+                )
+
+            container.start()
+            container.put_file(auth_local, CONTAINER_CODEX_HOME)
+            container.put_file(schema_local, CONTAINER_RUN_DIR)
+            catalog_container: str | None = None
+            if catalog_local:
+                container.put_file(Path(catalog_local), CONTAINER_RUN_DIR)
+                catalog_container = \
+                    f"{CONTAINER_RUN_DIR}/{Path(catalog_local).name}"
+            if use_shell:
+                for local in (Path(_BRIDGE_PATH), _BRIDGE_CLIENT_PATH,
+                              _RELAY_PATH):
+                    container.put_file(local, CONTAINER_RUN_DIR)
+                relay = CodexShellRelay(
+                    container,
+                    relay_container_path=f"{CONTAINER_RUN_DIR}/relay.py",
+                    machine_labels=machine_labels,
+                    open_shell=ctx.open_shell,
+                    max_timeout_s=self.exec_timeout_s,
+                ).start()
+
             cmd = build_codex_exec_command(
                 codex_bin=self.codex_bin,
                 model=self.model,
                 effort=self.effort,
-                scratch_dir=scratch,
-                schema_path=schema_path,
-                last_message_path=last_message_path,
-                socket_path=ctx.shell_socket_path if use_shell else None,
-                machine_labels=tuple(m.label for m in ctx.machines),
-                catalog_override_path=self._write_hardened_catalog(scratch),
+                scratch_dir=CONTAINER_RUN_DIR,
+                schema_path=f"{CONTAINER_RUN_DIR}/output_schema.json",
+                last_message_path=f"{CONTAINER_RUN_DIR}/last_message.json",
+                socket_path=RELAY_SOCKET_PATH if use_shell else None,
+                machine_labels=machine_labels,
+                catalog_override_path=catalog_container,
+                bridge_python="python3",
+                bridge_path=f"{CONTAINER_RUN_DIR}/codex_bridge.py",
             )
+
+            # Serialize the codex exec + auth write-back: concurrent passes
+            # sharing this host auth.json could race its token refresh.
+            # Container setup is isolated, so only this needs the lock.
             with _CODEX_RUN_LOCK:
                 logger.info(
-                    "codex exec start role=%s model=%s effort=%s shell=%s",
+                    "codex exec start role=%s model=%s effort=%s shell=%s host=%s",
                     self.role.name, self.model, self.effort or "-", use_shell,
+                    self.codex_host.host.ssh_dest,
                 )
                 started = time.monotonic()
-                # codex prefers API-key env auth over CODEX_HOME; an
-                # exported OPENAI_API_KEY would silently rebind this pass
-                # to another account, so strip the key vars.
-                env = {k: v for k, v in os.environ.items()
-                       if k not in ("OPENAI_API_KEY", "CODEX_API_KEY")}
-                if self.codex_home:
-                    env["CODEX_HOME"] = self.codex_home
+                # The container env carries only CODEX_HOME; the wrapper's
+                # OPENAI_API_KEY/CODEX_API_KEY are not forwarded by podman
+                # exec, so codex cannot rebind to another credential.
                 try:
-                    proc = subprocess.run(
-                        cmd, input=prompt, capture_output=True, text=True,
-                        timeout=self.run_timeout_s or None, env=env,
+                    proc = container.run(
+                        cmd, input_text=prompt,
+                        env={"CODEX_HOME": CONTAINER_CODEX_HOME},
+                        timeout_s=self.run_timeout_s or None,
                     )
                 except subprocess.TimeoutExpired:
                     raise RuntimeError(
@@ -440,12 +508,10 @@ class CodexReviewer(Reviewer):
                     f"{self.name}: plan usage limit reached; details: "
                     f"{error_text or proc.stderr.strip()[-500:]}"
                 )
-            # The known codex bug of exiting 0 with no output makes the
-            # last-message file, not the exit code, the success signal.
-            last_message = ""
-            if os.path.exists(last_message_path):
-                with open(last_message_path, encoding="utf-8") as f:
-                    last_message = f.read().strip()
+            # Treat the last-message file, not the exit code, as the
+            # success signal: codex has exited 0 with no output.
+            last_message = (container.read_file(
+                f"{CONTAINER_RUN_DIR}/last_message.json") or "").strip()
             if not last_message:
                 raise RuntimeError(
                     f"{self.name}: codex exec produced no final message "
@@ -464,6 +530,9 @@ class CodexReviewer(Reviewer):
                 logger.debug("codex %s verdict=%s", self.role.name, verdict)
             return result
         finally:
+            if relay is not None:
+                relay.stop()
+            container.stop()
             shutil.rmtree(scratch, ignore_errors=True)
 
     def _dump_debug_artifacts(

@@ -100,7 +100,6 @@ import review_pipeline
 from review_pipeline import make_reviewer, review_pr, run_triage
 import podman_host
 import podman_repos
-import shell_socket
 import shell_tool
 from llm_prompt import (
     COMBINER_ROLE,
@@ -150,6 +149,9 @@ DEFAULT_PODMAN_NETWORK = ""
 AGENT_LOCAL_PATH = Path(__file__).resolve().parent / "containers" / "fairy_agent.py"
 AGENT_CONTAINER_DIR = "/work/.fairy"
 AGENT_CONTAINER_PATH = f"{AGENT_CONTAINER_DIR}/fairy_agent.py"
+
+# Must match codex_reviewer.DEFAULT_CODEX_IMAGE.
+CODEX_DEFAULT_IMAGE = "localhost/fairy-codex:latest"
 
 
 # Default budget for the mini-model triage pre-check when ``--triage-model``
@@ -476,11 +478,27 @@ def parse_args() -> argparse.Namespace:
              "``{base_ref}`` are replaced from the PR metadata. Repeatable.",
     )
     p.add_argument(
+        "--codex-host",
+        metavar="[LABEL=]SSH_DEST",
+        default=None,
+        help="podman host that runs the codex container (same spec syntax "
+             "as --shell-host). Required for codex: model specs -- codex "
+             "runs only in a container there, never on the wrapper host. "
+             "Omit to disable codex support.",
+    )
+    p.add_argument(
+        "--codex-image",
+        default=CODEX_DEFAULT_IMAGE,
+        metavar="TAG",
+        help="Container image for the codex pass (default: %(default)s); "
+             "build it with containers/Containerfile.codex.",
+    )
+    p.add_argument(
         "--codex-bin",
         default="codex",
-        help="codex CLI binary for codex: model specs (default: codex on "
-             "PATH). Pin the deployed version; the backend depends on its "
-             "flag set.",
+        help="codex CLI path INSIDE the codex container (default: codex on "
+             "PATH, as baked by Containerfile.codex). Pin the deployed "
+             "version; the backend depends on its flag set.",
     )
     p.add_argument(
         "--codex-timeout-seconds",
@@ -493,8 +511,9 @@ def parse_args() -> argparse.Namespace:
         "--codex-home",
         default=None,
         metavar="DIR",
-        help="CODEX_HOME for codex subprocesses (auth.json location). "
-             "Default: inherit the environment / codex's ~/.codex.",
+        help="Wrapper-side CODEX_HOME: the auth.json copied into the codex "
+             "container and the models_cache.json used to harden the tool "
+             "catalog. Default: the environment / codex's ~/.codex.",
     )
     p.add_argument(
         "--podman-ssh-identity",
@@ -625,6 +644,14 @@ def parse_args() -> argparse.Namespace:
         p.error(f"duplicate machine labels in --shell-host: {', '.join(labels)}")
     if args.podman and not args.machines:
         p.error("--podman requires at least one --shell-host")
+    codex_host_spec = args.codex_host
+    args.codex_host = None
+    if codex_host_spec:
+        try:
+            args.codex_host = podman_host.parse_shell_host(
+                codex_host_spec, identity=args.podman_ssh_identity)
+        except ValueError as exc:
+            p.error(str(exc))
     return args
 
 
@@ -1246,7 +1273,6 @@ def main() -> int:
         return session, transcript
 
     uploaded_file_ids: list[str] = []
-    codex_shell_server: shell_socket.ShellDispatchServer | None = None
     # The eager container open below and everything after runs under
     # this try so the finally releases ensemble_shells (and uploads)
     # even when e.g. bundle building fails between open and review.
@@ -1361,22 +1387,6 @@ def main() -> int:
             use_podman_shell=args.podman,
         )
 
-        # The codex backend's MCP bridge runs outside this process (codex
-        # spawns it), so its shell tool calls come back over a local unix
-        # socket. Started only when a codex: spec can actually run --
-        # including via a triage model request from the allowlist.
-        codex_specs = [
-            s for s in (args.model, *args.extra_model, args.triage_model,
-                        args.combine_model, *args.allowed_model)
-            if s and s.startswith("codex:")
-        ]
-        if codex_specs and args.podman:
-            codex_shell_server = shell_socket.ShellDispatchServer(
-                machine_labels=[m.label for m in machines],
-                open_shell=open_machine_shell,
-                max_timeout_s=args.podman_exec_timeout,
-            )
-
         review_ctx = ReviewContext(
             request=request,
             patch_text=patch_bundle,
@@ -1392,9 +1402,6 @@ def main() -> int:
             machines=machines,
             session_transcript=session_transcript,
             open_shell=open_machine_shell if args.podman else None,
-            shell_socket_path=(
-                codex_shell_server.socket_path if codex_shell_server else None
-            ),
         )
         openai_resources = OpenAIResources(
             client=client,
@@ -1432,9 +1439,6 @@ def main() -> int:
                 project_facts=project_facts,
                 machines=machines,
                 open_shell=open_machine_shell if args.podman else None,
-                shell_socket_path=(
-                    codex_shell_server.socket_path if codex_shell_server else None
-                ),
             )
             triager = make_reviewer(
                 args.triage_model,
@@ -1598,8 +1602,6 @@ def main() -> int:
         )
         return 0
     finally:
-        if codex_shell_server is not None:
-            codex_shell_server.close()
         for file_id in uploaded_file_ids:
             delete_uploaded_file(client, file_id, verbose=args.verbose)
         if container_lease is not None:

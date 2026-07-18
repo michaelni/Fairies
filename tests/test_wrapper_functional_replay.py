@@ -376,7 +376,7 @@ class CodexOnlyNoOpenAIKeyTests(unittest.TestCase):
             mock.patch.object(
                 wrapper.sys, "argv",
                 ["pr_review_wrapper.py", "--model", "codex:gpt-5",
-                 "--no-source-bundle"],
+                 "--codex-host", "fairy@codexbox", "--no-source-bundle"],
             ),
             mock.patch.object(wrapper.sys, "stdin",
                               io.StringIO(json.dumps(_fixture_request()))),

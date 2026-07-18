@@ -27,20 +27,21 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-MCP stdio server bridging the codex CLI to the wrapper's shell dispatch.
+MCP stdio server bridging the codex CLI to the shell dispatch.
 
-The codex CLI spawns this script per run (``mcp_servers.shell`` in the
-config the wrapper passes via ``-c``) and speaks MCP -- JSON-RPC 2.0,
-newline-delimited over stdin/stdout -- to it. This bridge is a dumb pipe:
-it advertises the one canonical ``shell`` tool and forwards each
-``tools/call`` over the wrapper's per-run unix socket
-(``shell_socket.ShellDispatchClient``), where the real dispatch,
-container lifecycle and timeouts live. It holds no credentials and can
-execute nothing itself.
+Runs inside the codex container. The codex CLI spawns this script per run
+(``mcp_servers.shell`` in the config the wrapper passes via ``-c``) and
+speaks MCP -- JSON-RPC 2.0, newline-delimited over stdin/stdout -- to it.
+This bridge is a dumb pipe: it advertises the one canonical ``shell``
+tool and forwards each ``tools/call`` over a container-local unix socket
+(via ``shell_bridge_client.ShellDispatchClient``) to ``relay.py``, which
+pipes it out over the wrapper's ``podman exec -i`` channel to
+``serve_dispatch`` -- where the real dispatch, container lifecycle and
+timeouts live. It holds no credentials and can execute nothing itself.
 
 The socket connection opens lazily on the first ``tools/call`` and then
 persists: one bridge process = one connection = the codex run's private
-container set on the wrapper side.
+review-container set on the wrapper side.
 
 Implements the MCP subset codex needs from a tools-only server:
 ``initialize``, ``tools/list``, ``tools/call``, ``ping``, and ignores

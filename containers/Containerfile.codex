@@ -4,9 +4,10 @@
 # (`podman run --rm`) on the --codex-host, so codex never executes on the
 # wrapper host that holds the ssh key and the provider API keys. The only
 # model-reachable capability is the MCP shell into the review containers,
-# via relay.py; that and codex_bridge.py, auth.json, the prompt and the
-# schema are `podman cp`'d in per run (no bind mounts), exactly like the
-# review image copies fairy_agent.py. Host-side codex tools are stripped
+# via relay.py; that, codex_bridge.py, shell_bridge_client.py, auth.json
+# and the output schema are `podman cp`'d in per run (no bind mounts),
+# exactly like the review image copies fairy_agent.py; the prompt goes in
+# over the `podman exec -i` stdin. Host-side codex tools are stripped
 # separately (see codex_reviewer.harden_codex_catalog).
 #
 # The pinned, statically-linked codex CLI is ~298 MB and is NOT in git.

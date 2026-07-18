@@ -74,11 +74,15 @@ MODEL=${MODEL:-openai:gpt-5.4}
 # allowlist -- both would pull in an OpenAI backend, which a codex:-only
 # arm must not require (no OPENAI_API_KEY).
 TRIAGE_MODEL=${TRIAGE_MODEL-openai:gpt-5.4-mini}
+# The author-requestable model allowlist. Defaults to the openai set;
+# override (e.g. ALLOWED_MODELS="" for a codex-only arm that must not pull
+# in an OpenAI backend, or a codex list) as needed.
+ALLOWED_MODELS=${ALLOWED_MODELS-openai:gpt-5.5 openai:gpt-5.4 openai:gpt-5.6 openai:gpt-5.6-sol openai:gpt-5.6-terra}
 TRIAGE_ARGS=""
-[[ -n "$TRIAGE_MODEL" ]] && TRIAGE_ARGS="--triage-model $TRIAGE_MODEL \
-            --allowed-model openai:gpt-5.5 --allowed-model openai:gpt-5.4 \
-            --allowed-model openai:gpt-5.6 --allowed-model openai:gpt-5.6-sol \
-            --allowed-model openai:gpt-5.6-terra"
+if [[ -n "$TRIAGE_MODEL" ]]; then
+    TRIAGE_ARGS="--triage-model $TRIAGE_MODEL"
+    for m in $ALLOWED_MODELS; do TRIAGE_ARGS="$TRIAGE_ARGS --allowed-model $m"; done
+fi
 PODMAN_SSH=${PODMAN_SSH:-}
 MODE=${MODE:-podman}
 if [[ "$MODE" = container ]]; then

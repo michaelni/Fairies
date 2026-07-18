@@ -42,6 +42,7 @@ Passes are serialized on ``_CODEX_RUN_LOCK``.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -62,6 +63,7 @@ __all__ = [
     "CodexReviewer",
     "CodexUsageLimit",
     "build_codex_exec_command",
+    "harden_codex_catalog",
 ]
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,68 @@ class CodexUsageLimit(RuntimeError):
     """The usage window is exhausted; do not retry."""
 
 
+def _is_code_mode(tool_mode: object) -> bool:
+    """Whether a catalog ``tool_mode`` puts the model in a code_mode runtime."""
+    return isinstance(tool_mode, str) and tool_mode.startswith("code_mode")
+
+
+def harden_codex_catalog(catalog: JsonObject) -> JsonObject:
+    """Return a copy of a codex model catalog with the two direct host-file
+    tools closed on every model entry.
+
+    Fairy's codex only ever needs to drive the review container via the MCP
+    shell tool; codex's own host-side tools are pure attack surface on a
+    PR-derived (untrusted) prompt. The model catalog is the only lever codex
+    exposes for them:
+
+    * ``input_modalities`` loses ``image`` -- the ``view_image`` handler then
+      rejects every call ("view_image is not allowed because you do not
+      support image inputs"), so no local file is base64'd into the
+      conversation. The tool stays listed but is inert.
+    * ``apply_patch_tool_type`` -> ``None`` -- the ``apply_patch`` tool
+      (which reads and writes host files) is not offered at all.
+
+    ``tool_mode`` is deliberately left untouched: forcing a ``code_mode``
+    model (gpt-5.6-*) to standard tool calling does not shrink its surface,
+    it *explodes* it (``run``, ``spawn_agent``, multi-agent + plugin tools
+    that code_mode otherwise consolidates). code_mode models are instead
+    flagged by ``_write_hardened_catalog`` -- their JS-exec path is not
+    lockable at the catalog layer and belongs behind the container boundary.
+    """
+    hardened = copy.deepcopy(catalog)
+    models = hardened.get("models")
+    if isinstance(models, list):
+        for entry in models:
+            if not isinstance(entry, dict):
+                continue
+            mods = entry.get("input_modalities")
+            if isinstance(mods, list):
+                entry["input_modalities"] = [m for m in mods if m != "image"]
+            entry["apply_patch_tool_type"] = None
+    return hardened
+
+
+def _load_codex_catalog(codex_home: str | None) -> JsonObject | None:
+    """Read codex's cached model catalog for ``codex_home``.
+
+    codex populates ``<CODEX_HOME>/models_cache.json`` from the server; we
+    reuse it (rather than re-fetch) so the hardened override carries the same
+    35-field entries codex would, differing only in the stripped fields.
+    Returns ``None`` (caller proceeds unhardened, loudly) when it is absent
+    or unparseable -- availability must not hinge on this inner lock.
+    """
+    home = codex_home or os.environ.get("CODEX_HOME") \
+        or os.path.expanduser("~/.codex")
+    cache = os.path.join(home, "models_cache.json")
+    try:
+        with open(cache, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("codex: cannot read model catalog %s: %s", cache, exc)
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def build_codex_exec_command(
     *,
     codex_bin: str,
@@ -99,6 +163,7 @@ def build_codex_exec_command(
     socket_path: str | None,
     machine_labels: tuple[str, ...],
     web_search: str = "cached",
+    catalog_override_path: str | None = None,
 ) -> list[str]:
     """The full ``codex exec`` argv for one pass; prompt arrives on stdin.
 
@@ -118,12 +183,23 @@ def build_codex_exec_command(
         # No model-chosen execution on this machine: the local shell tool
         # is removed from the tool list outright (see module docstring).
         "-c", "features.shell_tool=false",
+        # Belt-and-suspenders: shell_tool=false already drops the
+        # exec_command tool (verified, codex 0.144.5), but unified_exec is a
+        # separately-flagged exec path -- pin it off too in case a future
+        # codex wires it independently of shell_tool.
+        "-c", "features.unified_exec=false",
         # OpenAI-side search only; also pins against a default change.
         "-c", f'web_search="{web_search}"',
         # The Statsig OTLP metrics ping is codex's only egress besides
         # the model API and token refresh; turn it off.
         "-c", "analytics.enabled=false",
     ]
+    if catalog_override_path:
+        # Hardened model catalog: view_image neutered (no image input) and
+        # apply_patch removed. See harden_codex_catalog. A file path, not
+        # inline JSON -- codex parses model_catalog_json as a path to a full
+        # catalog that replaces the built-in one.
+        cmd += ["-c", f"model_catalog_json={catalog_override_path}"]
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
     if socket_path:
@@ -225,6 +301,52 @@ class CodexReviewer(Reviewer):
         self.verbose = verbose
         self.debug_dir = debug_dir
 
+    def _write_hardened_catalog(self, scratch: str) -> str | None:
+        """Write a host-hardened copy of codex's model catalog into scratch.
+
+        Returns its path for ``-c model_catalog_json=``, or ``None`` (logged)
+        when the catalog cannot be sourced or does not contain this pass's
+        model -- in which case the pass runs without the override rather than
+        failing. See ``harden_codex_catalog``.
+        """
+        catalog = _load_codex_catalog(self.codex_home)
+        if not isinstance(catalog, dict):
+            logger.warning(
+                "codex: no model catalog to harden; running without the "
+                "view_image/apply_patch lock -- rely on container isolation "
+                "for %s", self.name,
+            )
+            return None
+        models = catalog.get("models")
+        entry = next(
+            (m for m in models
+             if isinstance(m, dict) and m.get("slug") == self.model),
+            None,
+        ) if isinstance(models, list) else None
+        if entry is None:
+            logger.warning(
+                "codex: model %r absent from cached catalog; skipping tool "
+                "hardening override for %s", self.model, self.name,
+            )
+            return None
+        if _is_code_mode(entry.get("tool_mode")):
+            logger.warning(
+                "codex: model %r uses code_mode (tool_mode=%r) -- a JS-exec "
+                "path not containable by config; run it behind the podman "
+                "boundary or switch to a tool_mode=None model. Hardening "
+                "view_image/apply_patch only for %s.",
+                self.model, entry.get("tool_mode"), self.name,
+            )
+        path = os.path.join(scratch, "hardened_catalog.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(harden_codex_catalog(catalog), f)
+        os.chmod(path, 0o600)
+        logger.info(
+            "codex: hardened model catalog (view_image neutered; apply_patch "
+            "removed) for %s", self.name,
+        )
+        return path
+
     def _build_prompt(self, ctx: ReviewContext, use_shell: bool) -> str:
         features: set[str] = {"web_search"}
         if ctx.source_bundle is not None:
@@ -275,6 +397,7 @@ class CodexReviewer(Reviewer):
                 last_message_path=last_message_path,
                 socket_path=ctx.shell_socket_path if use_shell else None,
                 machine_labels=tuple(m.label for m in ctx.machines),
+                catalog_override_path=self._write_hardened_catalog(scratch),
             )
             with _CODEX_RUN_LOCK:
                 logger.info(

@@ -102,6 +102,47 @@ class BuildCommandTests(unittest.TestCase):
         self.assertFalse(any(
             "model_reasoning_effort" in c for c in self._cmd(effort=None)))
 
+    def test_unified_exec_pinned_off(self) -> None:
+        self.assertIn("features.unified_exec=false", self._cmd())
+
+    def test_catalog_override_flag_only_when_path_given(self) -> None:
+        self.assertNotIn("model_catalog_json", " ".join(self._cmd()))
+        cmd = self._cmd(catalog_override_path="/tmp/s/hardened_catalog.json")
+        self.assertIn("model_catalog_json=/tmp/s/hardened_catalog.json", cmd)
+
+
+class HardenCatalogTests(unittest.TestCase):
+    CATALOG = {
+        "etag": "abc",
+        "models": [
+            {"slug": "gpt-5.6-sol", "input_modalities": ["text", "image"],
+             "apply_patch_tool_type": "freeform", "tool_mode": "code_mode_only",
+             "context_window": 400000},
+            {"slug": "gpt-5.5", "input_modalities": ["text", "image"],
+             "apply_patch_tool_type": "freeform", "tool_mode": None},
+        ],
+    }
+
+    def test_strips_direct_host_file_tools(self) -> None:
+        out = codex_reviewer.harden_codex_catalog(self.CATALOG)
+        for m in out["models"]:
+            self.assertEqual(["text"], m["input_modalities"])  # view_image inert
+            self.assertIsNone(m["apply_patch_tool_type"])      # no apply_patch
+        # unrelated fields survive
+        self.assertEqual(400000, out["models"][0]["context_window"])
+        self.assertEqual("abc", out["etag"])
+
+    def test_tool_mode_left_untouched(self) -> None:
+        out = codex_reviewer.harden_codex_catalog(self.CATALOG)
+        self.assertEqual("code_mode_only", out["models"][0]["tool_mode"])
+        self.assertIsNone(out["models"][1]["tool_mode"])
+
+    def test_does_not_mutate_input(self) -> None:
+        codex_reviewer.harden_codex_catalog(self.CATALOG)
+        first = self.CATALOG["models"][0]
+        self.assertEqual(["text", "image"], first["input_modalities"])
+        self.assertEqual("freeform", first["apply_patch_tool_type"])
+
 
 class EventParsingTests(unittest.TestCase):
     def test_usage_and_errors_extracted(self) -> None:
@@ -157,6 +198,59 @@ class CodexReviewerRunTests(unittest.TestCase):
         self._run()
         scratch = self.last_cmd[self.last_cmd.index("--cd") + 1]
         self.assertFalse(os.path.exists(os.path.join(scratch, ".git")))
+
+    def test_hardened_catalog_written_and_passed(self) -> None:
+        import tempfile
+        home = tempfile.mkdtemp(prefix="codex-home-")
+        with open(os.path.join(home, "models_cache.json"), "w") as f:
+            json.dump({"models": [{
+                "slug": "gpt-5.6-sol", "input_modalities": ["text", "image"],
+                "apply_patch_tool_type": "freeform",
+                "tool_mode": "code_mode_only"}]}, f)
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            self.last_cmd = cmd
+            ov = [c for c in cmd if c.startswith("model_catalog_json=")]
+            if ov:
+                with open(ov[0].split("=", 1)[1], encoding="utf-8") as f:
+                    captured["catalog"] = json.load(f)
+            path = cmd[cmd.index("--output-last-message") + 1]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"classification": "approve", "message": "ok"}')
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        reviewer = CodexReviewer("gpt-5.6-sol", name="codex:gpt-5.6-sol",
+                                 role=ROLE, codex_home=home)
+        with mock.patch.object(codex_reviewer.subprocess, "run",
+                               side_effect=fake_run):
+            reviewer.run(_ctx())
+        self.assertIn("catalog", captured)
+        entry = captured["catalog"]["models"][0]
+        self.assertEqual(["text"], entry["input_modalities"])
+        self.assertIsNone(entry["apply_patch_tool_type"])
+        # tool_mode is preserved (forcing it off explodes a code_mode
+        # model's surface); this gpt-5.6 entry stays code_mode_only.
+        self.assertEqual("code_mode_only", entry["tool_mode"])
+
+    def test_missing_catalog_skips_override_without_failing(self) -> None:
+        import tempfile
+        home = tempfile.mkdtemp(prefix="codex-home-empty-")  # no models_cache
+        reviewer = CodexReviewer("gpt-5.6-sol", name="codex:gpt-5.6-sol",
+                                 role=ROLE, codex_home=home)
+
+        def fake_run(cmd, **kwargs):
+            self.last_cmd = cmd
+            path = cmd[cmd.index("--output-last-message") + 1]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"classification": "approve", "message": "ok"}')
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        with mock.patch.object(codex_reviewer.subprocess, "run",
+                               side_effect=fake_run):
+            result = reviewer.run(_ctx())
+        self.assertEqual("approve", result["classification"])
+        self.assertFalse(any("model_catalog_json" in c for c in self.last_cmd))
 
     def test_usage_limit_is_hard_failure(self) -> None:
         jsonl = json.dumps({"type": "turn.failed", "error": {

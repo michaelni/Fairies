@@ -164,13 +164,7 @@ DEFAULT_MAX_FILE_BYTES = 500_000
 DEFAULT_MAX_HEADER_FILE_BYTES = 150_000
 DEFAULT_MAX_BUNDLE_BYTES = 1_000_000
 DEFAULT_MAX_PATCH_BYTES = 500_000
-# codex inlines the patch + source bundle as text and hard-rejects a turn
-# whose input exceeds 1,048,576 chars (codex_reviewer.CODEX_MAX_INPUT_CHARS).
-# Byte count >= UTF-8 char count, so bounding these byte limits keeps the
-# inlined text under codex's cap; the ~300 KB left over covers the
-# developer prompt + PR discussion + overhead. Applied only when a codex
-# reviewer is configured (other backends upload files / have room), and
-# codex can still read the rest of any capped file via its shell.
+# more than 1,048,576 input chars per turn was observed to be rejected by codex
 CODEX_MAX_PATCH_BYTES = 300_000
 CODEX_MAX_BUNDLE_BYTES = 450_000
 DEFAULT_MAX_OUTPUT_TOKENS = 40_000
@@ -671,8 +665,6 @@ def parse_args() -> argparse.Namespace:
             "(codex runs only in a container there, never on the wrapper host)"
         )
     if codex_specs:
-        # Tighten the inline size caps so the codex prompt fits its input
-        # limit (see CODEX_MAX_*_BYTES). Only shrinks, never grows.
         args.max_patch_bytes = min(args.max_patch_bytes, CODEX_MAX_PATCH_BYTES)
         args.max_bundle_bytes = min(args.max_bundle_bytes, CODEX_MAX_BUNDLE_BYTES)
     return args

@@ -246,10 +246,8 @@ def main(argv: list[str] | None = None) -> int:
     dockerfile = args.file if args.file.is_absolute() else (REPO_ROOT / args.file).resolve()
 
     check_reachable(host)
-    # Reap containers leaked by interrupted/crashed prior runs before we do
-    # anything else; safe because this runs at the top of a batch, before
-    # any review container of this run exists, and it skips running/paused
-    # ones and anything younger than --reap-older-than.
+    # Reap before this batch creates any container, so an in-flight one
+    # is never a reap candidate.
     if args.reap_older_than != "off":
         reaped = reap_stale_containers(
             host, images=[args.tag, args.codex_tag],

@@ -70,7 +70,6 @@ from podman_host import ShellHostSpec
 
 __all__ = [
     "CODEX_EFFORTS",
-    "CODEX_MAX_INPUT_CHARS",
     "CODEX_WEB_SEARCH_MODES",
     "CodexReviewer",
     "CodexUsageLimit",
@@ -83,27 +82,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
 
-# codex's turn/start hard input cap: it rejects a turn whose user text
-# input exceeds this many chars ("input_too_large"). Source-verified as
-# MAX_USER_INPUT_TEXT_CHARS = 1 << 20 in codex-rs protocol/src/user_input.rs
-# (checked client-side, no flag/env raises it). The wrapper bounds
-# --max-patch-bytes / --max-bundle-bytes so the inlined codex prompt stays
-# under it; bytes >= UTF-8 chars, so a byte cap is a safe proxy.
-CODEX_MAX_INPUT_CHARS = 1 << 20  # 1,048,576
-
-# codex -c model_reasoning_effort values. The gpt-5.6 backend rejects
-# codex's documented "minimal" ("Supported values are: 'none', 'low',
-# 'medium', 'high', and 'xhigh'", server error observed 2026-07-17).
-# "max" and "ultra" are additionally listed by the gpt-5.6 catalog entries
-# (supported_reasoning_levels); gpt-5.5/5.4 cap at "xhigh". This allowlist
-# is the union across models -- an unsupported pairing still fails server-
-# side, this only catches typos up front.
+# The union across models; an unsupported pairing still fails server-side.
+# 2026-07-17: gpt-5.6 rejected codex's documented "minimal" with
+# "Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'".
 CODEX_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max", "ultra")
 
-# codex -c web_search values. "disabled" removes the tool; "cached" /
-# "indexed" use OpenAI's maintained index (no live external fetch);
-# "live" reaches the current web. All run backend-side, no egress from
-# the codex container.
+# "cached"/"indexed" use OpenAI's maintained index rather than a live
+# fetch. All run backend-side, no egress from the codex container.
 CODEX_WEB_SEARCH_MODES = ("disabled", "cached", "indexed", "live")
 
 

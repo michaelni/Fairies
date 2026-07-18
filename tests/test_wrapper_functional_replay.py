@@ -463,22 +463,16 @@ class CodexHostValidationTests(unittest.TestCase):
         self.assertIsNone(args.codex_host)
 
     def test_codex_run_tightens_inline_byte_caps(self) -> None:
-        # A codex reviewer shrinks the patch/bundle caps so the inlined
-        # prompt fits codex's ~1M-char input limit.
         args = self._parse(["--model", "codex:gpt-5.6-terra",
                             "--codex-host", "fairy@codexbox"])
         self.assertEqual(wrapper.CODEX_MAX_PATCH_BYTES, args.max_patch_bytes)
         self.assertEqual(wrapper.CODEX_MAX_BUNDLE_BYTES, args.max_bundle_bytes)
-        # patch + bundle must leave >= 200 KB headroom under codex's cap
-        # for the developer prompt + PR discussion + overhead.
-        from codex_reviewer import CODEX_MAX_INPUT_CHARS
+        # 1,048,576 input chars per turn was observed rejected; leave
+        # >= 200 KB for the developer prompt + PR discussion + overhead.
         self.assertLessEqual(
-            args.max_patch_bytes + args.max_bundle_bytes,
-            CODEX_MAX_INPUT_CHARS - 200_000)
+            args.max_patch_bytes + args.max_bundle_bytes, 1_048_576 - 200_000)
 
     def test_codex_caps_only_shrink_never_grow(self) -> None:
-        # An explicit smaller --max-patch-bytes must not be raised to the
-        # codex ceiling.
         args = self._parse(["--model", "codex:gpt-5.6-terra",
                             "--codex-host", "fairy@codexbox",
                             "--max-patch-bytes", "50000"])

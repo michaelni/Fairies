@@ -64,29 +64,21 @@ from typing import Callable, Sequence
 from common import JsonObject
 from podman_host import ContainerShellSession
 from shell_tool import exec_machine_call
+# ShellDispatchClient (the codex-container side) lives in the podman-free
+# shell_bridge_client so the codex image can import it without this module;
+# re-exported here for the wrapper-side callers and tests.
+from shell_bridge_client import ShellDispatchClient, _recv_json_line
 
-__all__ = ["ShellDispatchClient", "ShellDispatchServer"]
+__all__ = ["ShellDispatchClient", "ShellDispatchServer", "serve_dispatch"]
 
 logger = logging.getLogger(__name__)
 
 SOCKET_NAME = "shell.sock"
 
 
-def _send_json(sock: socket.socket, obj: JsonObject) -> None:
-    sock.sendall(json.dumps(obj, ensure_ascii=False).encode("utf-8") + b"\n")
-
-
 def _write_json(writer, obj: JsonObject) -> None:
     writer.write(json.dumps(obj, ensure_ascii=False).encode("utf-8") + b"\n")
     writer.flush()
-
-
-def _recv_json_line(reader) -> JsonObject | None:
-    """Read one newline-delimited JSON object; ``None`` on EOF."""
-    line = reader.readline()
-    if not line:
-        return None
-    return json.loads(line)
 
 
 def serve_dispatch(
@@ -211,25 +203,3 @@ class ShellDispatchServer:
                 os.rmdir(self._dir)
             except OSError:
                 pass
-
-
-class ShellDispatchClient:
-    """Bridge-side client: one connection, sequential request/response."""
-
-    def __init__(self, socket_path: str) -> None:
-        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._sock.connect(socket_path)
-        self._reader = self._sock.makefile("rb")
-        self._next_id = 0
-
-    def call(self, args: JsonObject) -> JsonObject:
-        self._next_id += 1
-        _send_json(self._sock, {"id": self._next_id, "args": args})
-        response = _recv_json_line(self._reader)
-        if response is None:
-            raise ConnectionError("shell dispatch server closed the connection")
-        return response.get("payload") or {"error": "empty dispatch response"}
-
-    def close(self) -> None:
-        self._reader.close()
-        self._sock.close()

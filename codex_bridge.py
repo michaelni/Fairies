@@ -53,15 +53,11 @@ import argparse
 import json
 import sys
 
-from shell_socket import ShellDispatchClient
-from shell_tool import build_shell_tool_schema
+from shell_bridge_client import ShellDispatchClient, build_shell_tool_schema
 
-# JSON-RPC 2.0 error codes.
 METHOD_NOT_FOUND = -32601
 INTERNAL_ERROR = -32603
 
-# Echoed when the client's initialize carries no protocolVersion; the
-# spec revision this server's message subset was written against.
 FALLBACK_PROTOCOL_VERSION = "2025-06-18"
 
 

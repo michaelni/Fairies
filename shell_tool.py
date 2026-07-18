@@ -48,6 +48,11 @@ from typing import Callable, Sequence
 
 from common import JsonObject
 from podman_host import ContainerShellSession
+from shell_bridge_client import (  # noqa: F401
+    SHELL_TOOL_DESCRIPTION,
+    SHELL_TOOL_NAME,
+    build_shell_tool_schema,
+)
 
 __all__ = [
     "DEFAULT_SHELL_TIMEOUT_S",
@@ -60,58 +65,6 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 DEFAULT_SHELL_TIMEOUT_S = 120.0
-
-SHELL_TOOL_NAME = "shell"
-
-SHELL_TOOL_DESCRIPTION = (
-    "Run one shell command inside the ephemeral review container "
-    "(full working-tree repos under /work/...). Command runs via "
-    "``sh -c`` with an in-container timeout."
-)
-
-
-def build_shell_tool_schema(machine_labels: Sequence[str]) -> JsonObject:
-    """The one canonical shell-tool schema, in vendor-neutral form.
-
-    Returns ``{"name", "description", "input_schema"}``; each backend
-    wraps it in its own tool envelope (Anthropic ``input_schema``, OpenAI
-    function ``parameters``, MCP ``inputSchema``). The ``machine`` enum
-    exists only with two or more configured machines, mirroring
-    exec_machine_call's dispatch.
-    """
-    properties: JsonObject = {
-        "command": {
-            "type": "string",
-            "description": "Shell command (``sh -c``).",
-        },
-        "cwd": {
-            "type": "string",
-            "description": "Working directory inside the container (e.g. /work/ffmpeg).",
-        },
-        "timeout_seconds": {
-            "type": "number",
-            "description": "Max wall seconds for this command (capped by the wrapper).",
-        },
-    }
-    if len(machine_labels) >= 2:
-        properties["machine"] = {
-            "type": "string",
-            "enum": list(machine_labels),
-            "description": (
-                f"Machine to run on (default {machine_labels[0]}). "
-                "Each machine is a separate container with its own "
-                "filesystem and checkouts; state does not carry over."
-            ),
-        }
-    return {
-        "name": SHELL_TOOL_NAME,
-        "description": SHELL_TOOL_DESCRIPTION,
-        "input_schema": {
-            "type": "object",
-            "properties": properties,
-            "required": ["command"],
-        },
-    }
 
 
 def exec_shell_call(

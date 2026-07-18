@@ -40,6 +40,31 @@ class PodmanHostCmdArgsTests(unittest.TestCase):
             fairy.podman_host_cmd_args(args),
         )
 
+    def test_forwards_codex_host_and_home(self) -> None:
+        args = SimpleNamespace(
+            podman_host=["fairy@x86box"],
+            codex_host="fairy@codexbox", codex_home="/srv/fairy/codex")
+        self.assertEqual(
+            ["--podman", "--shell-host=fairy@x86box",
+             "--codex-host=fairy@codexbox", "--codex-home=/srv/fairy/codex"],
+            fairy.podman_host_cmd_args(args),
+        )
+
+    def test_codex_host_without_podman_host(self) -> None:
+        args = SimpleNamespace(podman_host=[], codex_host="fairy@codexbox")
+        self.assertEqual(
+            ["--codex-host=fairy@codexbox"],
+            fairy.podman_host_cmd_args(args),
+        )
+
+    def test_no_codex_flags_when_unset(self) -> None:
+        args = SimpleNamespace(
+            podman_host=["fairy@x86box"], codex_host=None, codex_home=None)
+        self.assertEqual(
+            ["--podman", "--shell-host=fairy@x86box"],
+            fairy.podman_host_cmd_args(args),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

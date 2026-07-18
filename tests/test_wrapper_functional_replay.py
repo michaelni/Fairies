@@ -432,5 +432,36 @@ class CodexOnlyNoOpenAIKeyTests(unittest.TestCase):
         upload.assert_not_called()
 
 
+class CodexHostValidationTests(unittest.TestCase):
+    """A codex: spec in any slot requires --codex-host, and it is checked
+    at parse time so a misconfiguration fails before any billing."""
+
+    def _parse(self, argv):
+        with mock.patch.object(wrapper.sys, "argv",
+                               ["pr_review_wrapper.py", *argv]):
+            return wrapper.parse_args()
+
+    def test_codex_model_without_host_errors(self) -> None:
+        with self.assertRaises(SystemExit):
+            self._parse(["--model", "codex:gpt-5.6-sol"])
+
+    def test_codex_in_allowlist_without_host_errors(self) -> None:
+        # The triager could pick this codex model, so it needs a host too.
+        with self.assertRaises(SystemExit):
+            self._parse(["--model", "openai:gpt-5.4",
+                         "--triage-model", "openai:gpt-5.4-mini",
+                         "--allowed-model", "codex:gpt-5.6-sol"])
+
+    def test_codex_model_with_host_parses(self) -> None:
+        args = self._parse(["--model", "codex:gpt-5.6-sol",
+                            "--codex-host", "fairy@codexbox"])
+        self.assertEqual("codex:gpt-5.6-sol", args.model)
+        self.assertIsNotNone(args.codex_host)
+
+    def test_non_codex_run_needs_no_codex_host(self) -> None:
+        args = self._parse(["--model", "openai:gpt-5.4"])
+        self.assertIsNone(args.codex_host)
+
+
 if __name__ == "__main__":
     unittest.main()

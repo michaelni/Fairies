@@ -112,10 +112,15 @@ below). A local-GPU backend is TODO -- PRs very welcome.
 
 `codex:MODEL[@EFFORT]` (e.g. `codex:gpt-5.6-sol@high`)
 runs the pass through the codex CLI. Install a
-codex version on the wrapper host (`--codex-bin` selects the binary)
-and log in once with `codex login`.
+codex version on the wrapper host
 `--codex-home DIR` points the subprocesses at that login's auth.json without
 needing CODEX_HOME in the wrapper's environment.
+Build the thin codex image once from `containers/Containerfile.codex` (bakes a
+pinned codex binary; `--codex-bin` is its in-container path, `--codex-image`
+its tag) and `codex login` once as the bot's own account. `--codex-home DIR`
+is the wrapper-side login: its `auth.json` is `podman cp`'d into the
+container per run and its `models_cache.json` is used to harden the tool
+catalog.
 
 The security model matches the API backends -- the model can execute only
 inside the review containers, never on the wrapper host: codex runs with

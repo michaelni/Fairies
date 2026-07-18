@@ -652,6 +652,16 @@ def parse_args() -> argparse.Namespace:
                 codex_host_spec, identity=args.podman_ssh_identity)
         except ValueError as exc:
             p.error(str(exc))
+    codex_specs = [
+        s for s in (args.model, *args.extra_model, args.combine_model,
+                    args.triage_model, *args.allowed_model)
+        if s and s.startswith("codex:")
+    ]
+    if codex_specs and args.codex_host is None:
+        p.error(
+            f"codex model(s) {', '.join(codex_specs)} require --codex-host "
+            "(codex runs only in a container there, never on the wrapper host)"
+        )
     return args
 
 

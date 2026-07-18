@@ -352,6 +352,27 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--codex-host",
+        default=None,
+        metavar="[LABEL=]USER@HOST",
+        help=(
+            "podman host that runs the codex container, forwarded as "
+            "--codex-host to --llm-review-cmd. Required for any codex: model "
+            "spec (codex runs only in a container there). Provision it with "
+            "containers/provision_remote.py --codex-bin."
+        ),
+    )
+    p.add_argument(
+        "--codex-home",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Wrapper-side CODEX_HOME (the bot's `codex login`), forwarded as "
+            "--codex-home to --llm-review-cmd. Default: the wrapper's "
+            "environment / codex's ~/.codex."
+        ),
+    )
+    p.add_argument(
         "--llm-timeout",
         type=int,
         default=3600*5,
@@ -1897,11 +1918,19 @@ def flex_fallback_extra_args(cmd_str: str) -> list[str]:
 
 def podman_host_cmd_args(args: argparse.Namespace) -> list[str]:
     """Extra --llm-review-cmd flags that route LLM shell work into
-    containers on the podman host(s). Empty unless --podman-host is set."""
+    containers on the podman host(s), and the codex container host when a
+    codex: model is used. Empty unless --podman-host / --codex-host is set."""
+    cmd: list[str] = []
     hosts = getattr(args, "podman_host", None)
-    if not hosts:
-        return []
-    return ["--podman", *[f"--shell-host={h}" for h in hosts]]
+    if hosts:
+        cmd += ["--podman", *[f"--shell-host={h}" for h in hosts]]
+    codex_host = getattr(args, "codex_host", None)
+    if codex_host:
+        cmd += [f"--codex-host={codex_host}"]
+    codex_home = getattr(args, "codex_home", None)
+    if codex_home:
+        cmd += [f"--codex-home={codex_home}"]
+    return cmd
 
 
 def invoke_llm_wrapper(

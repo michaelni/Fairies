@@ -30,9 +30,11 @@
 Codex-CLI pass of a ``RoleSpec`` behind the shared ``Reviewer`` interface.
 
 Unlike the API backends this one runs no tool loop of its own: it spawns
-one pinned ``codex exec`` subprocess per pass and lets codex drive the
-model, with the container shell reaching codex as an MCP tool via
-``codex_bridge.py`` and the wrapper's shell dispatch socket.
+one pinned ``codex exec`` per pass inside a container on the
+``--codex-host`` (see ``codex_container``) and lets codex drive the model,
+with the review-container shell reaching codex as an MCP tool via
+``codex_bridge.py`` -> ``relay.py`` -> the wrapper's ``serve_dispatch``,
+over a ``podman exec -i`` channel (no host-crossing socket).
 
 ``usage_limit_reached`` raises ``CodexUsageLimit`` immediately and
 run_parallel drops the pass, keeping surviving drafts.
@@ -495,6 +497,13 @@ class CodexReviewer(Reviewer):
                         f"--codex-timeout-seconds ({self.run_timeout_s:.0f}s)"
                     )
                 elapsed = time.monotonic() - started
+                # codex may have rotated the OAuth tokens mid-run; the
+                # container copy is about to be discarded with --rm, so
+                # persist it back to the host auth.json under the same lock
+                # that serializes the credential -- otherwise the next run
+                # presents a stale (and, under refresh-token rotation, soon
+                # invalid) token. Still holding the flock here.
+                self._persist_refreshed_auth(container, auth_local)
 
             usage, error_text = summarize_codex_events(proc.stdout)
             logger.info(
@@ -529,11 +538,61 @@ class CodexReviewer(Reviewer):
                 verdict = result.get("classification") or result.get("route") or "-"
                 logger.debug("codex %s verdict=%s", self.role.name, verdict)
             return result
+        except CodexUsageLimit:
+            raise  # clean quota stop; the containers are not suspect
+        except BadModelOutput:
+            raise  # codex ran fine, only the final JSON was malformed
+        except Exception:
+            # An abnormal exit may mean a PR-derived command tampered with the
+            # review containers, so mark them for forensics rather than removal.
+            if ctx.report_poisoned is not None and relay is not None:
+                for session in relay.opened_sessions():
+                    ctx.report_poisoned(session)
+            raise
         finally:
             if relay is not None:
                 relay.stop()
             container.stop()
             shutil.rmtree(scratch, ignore_errors=True)
+
+    def _persist_refreshed_auth(
+        self, container: CodexContainer, auth_local: Path,
+    ) -> None:
+        """Copy a mid-run token refresh back to the host auth.json.
+
+        Best-effort and called under the auth flock: reads the container's
+        copy, and if it is valid JSON that differs from the host file,
+        atomically replaces the host file (0600). A read/parse failure just
+        logs -- the run already succeeded, so a stale host token surfaces
+        as an auth error on a later run rather than failing this one.
+        """
+        try:
+            refreshed = container.read_file(
+                f"{CONTAINER_CODEX_HOME}/auth.json")
+        except Exception:
+            logger.warning("codex: could not read back auth.json for refresh "
+                           "persistence", exc_info=True)
+            return
+        if not refreshed:
+            return
+        try:
+            json.loads(refreshed)
+        except json.JSONDecodeError:
+            logger.warning("codex: refreshed auth.json is not valid JSON; "
+                           "not persisting")
+            return
+        current = auth_local.read_text(encoding="utf-8") \
+            if auth_local.is_file() else ""
+        if refreshed == current:
+            return
+        tmp = auth_local.with_name(auth_local.name + ".tmp")
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, refreshed.encode("utf-8"))
+        finally:
+            os.close(fd)
+        os.replace(tmp, auth_local)
+        logger.info("codex: persisted refreshed auth.json from container")
 
     def _dump_debug_artifacts(
         self, prompt: str, proc: subprocess.CompletedProcess,

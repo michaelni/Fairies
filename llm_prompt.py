@@ -271,6 +271,7 @@ In the {mount_names[0]} checkout every pull request's head is a git revision ffo
 """ if podman_shell_enabled and container_repo_mounts else ("The **shell** function tool runs shell commands in an ephemeral Linux environment with internet access.\n\n" if podman_shell_enabled else "")}\
 {'''The container contains two bare git repos without checked out working trees rg will not work.
 to search for needle in ffmpeg master you can use git --git-dir=/mnt/data/repos/ffmpeg/.git grep needle master
+to blame configure in release/8.1 you can use git --git-dir=/mnt/data/repos/ffmpeg/.git blame origin/release/8.1 configure
 to search for needle in ffmpeg pull request 21000 you can use git --git-dir=/mnt/data/repos/ffmpeg/.git grep needle fforge/pr/21000
 to see the comments & reviews for pull request 21660 you can use git --git-dir=/mnt/data/repos/all_ffmpeg/forgejo_git/.git show master:forgejo_git/pulls/021660.md
 to see the issue 21257 you can use git --git-dir=/mnt/data/repos/all_ffmpeg/forgejo_git/.git show master:forgejo_git/issues/021257.md

@@ -28,3 +28,7 @@ __pycache__/
 
 # API keys (openai_common/anthropic_common read it; never versioned).
 /.env
+
+# Pinned codex binary staged into the Containerfile.codex build context
+# (~298 MB; baked into the thin codex image, not versioned).
+/containers/codex

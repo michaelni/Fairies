@@ -1,0 +1,38 @@
+# Thin image for the codex reviewer backend.
+#
+# Runs one `codex exec` per PR review inside an ephemeral container
+# (`podman run --rm`) on the --codex-host, so codex never executes on the
+# wrapper host that holds the ssh key and the provider API keys. The only
+# model-reachable capability is the MCP shell into the review containers,
+# via relay.py; that and codex_bridge.py, auth.json, the prompt and the
+# schema are `podman cp`'d in per run (no bind mounts), exactly like the
+# review image copies fairy_agent.py. Host-side codex tools are stripped
+# separately (see codex_reviewer.harden_codex_catalog).
+#
+# The pinned, statically-linked codex CLI is ~298 MB and is NOT in git.
+# Stage it into the build context before building:
+#     cp /path/to/codex-X.Y.Z containers/codex        # gitignored
+#     python3 containers/build_image.py --ssh DEST \
+#         --tag localhost/fairy-codex:latest \
+#         --file containers/Containerfile.codex
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANG=C.UTF-8
+
+# python3 runs codex_bridge.py + relay.py (copied in per run);
+# ca-certificates lets codex reach the OpenAI API over TLS. Unlike the
+# review image, the model apt-installs nothing here, so the apt lists are
+# dropped to keep the image lean.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# The pinned codex binary, staged into the build context (see header).
+COPY codex /usr/local/bin/codex
+RUN chmod +x /usr/local/bin/codex
+
+WORKDIR /work
+CMD ["sleep", "infinity"]

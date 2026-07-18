@@ -194,6 +194,10 @@ class CodexShellRelay:
         self.max_timeout_s = max_timeout_s
         self._proc: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
+        # Kept so the reviewer can poison them for forensics after a crash.
+        self._shells: dict[str, ContainerShellSession] = {}
+        self._ready = threading.Event()
+        self._ready_lines: list[bytes] = []
 
     def start(self, *, ready_timeout_s: float = 30.0) -> "CodexShellRelay":
         argv = self.container.exec_argv(
@@ -205,10 +209,13 @@ class CodexShellRelay:
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        # relay.py prints RELAY-READY once its socket is bound; wait for it
-        # so codex_bridge can never race an unbound socket. A dead relay
-        # closes stderr (empty read) -> we raise rather than hang codex.
-        ready = self._read_ready(ready_timeout_s)
+        # relay.py prints RELAY-READY on stderr once its socket is bound;
+        # codex must not start before that, or the bridge races an unbound socket.
+        threading.Thread(
+            target=self._drain_stderr, name="codex-relay-stderr", daemon=True,
+        ).start()
+        self._ready.wait(ready_timeout_s)
+        ready = b"".join(self._ready_lines)
         if b"RELAY-READY" not in ready:
             self.stop()
             raise RuntimeError(f"codex relay failed to start: {ready!r}")
@@ -217,22 +224,33 @@ class CodexShellRelay:
             args=(self._proc.stdout, self._proc.stdin),
             kwargs=dict(machine_labels=self.machine_labels,
                         open_shell=self.open_shell,
-                        max_timeout_s=self.max_timeout_s),
+                        max_timeout_s=self.max_timeout_s,
+                        shells=self._shells),
             name="codex-shell-dispatch", daemon=True,
         )
         self._thread.start()
         return self
 
-    def _read_ready(self, timeout_s: float) -> bytes:
-        result: dict[str, bytes] = {}
+    def _drain_stderr(self) -> None:
+        # Scan stderr line by line for RELAY-READY -- ssh/podman may emit
+        # warnings before it, so the first line is not necessarily the
+        # marker -- then keep draining so the pipe never fills and blocks
+        # the relay. EOF unblocks start() with no marker seen (relay died).
+        saw_ready = False
+        for raw in iter(self._proc.stderr.readline, b""):
+            if saw_ready:
+                logger.debug("codex relay stderr: %s",
+                             raw.decode(errors="replace").rstrip())
+                continue
+            self._ready_lines.append(raw)
+            if b"RELAY-READY" in raw:
+                saw_ready = True
+                self._ready.set()
+        self._ready.set()
 
-        def _read() -> None:
-            result["line"] = self._proc.stderr.readline()
-
-        t = threading.Thread(target=_read, daemon=True)
-        t.start()
-        t.join(timeout_s)
-        return result.get("line", b"")
+    def opened_sessions(self) -> list[ContainerShellSession]:
+        """Review-container sessions this relay opened (for poisoning)."""
+        return list(self._shells.values())
 
     def stop(self) -> None:
         if self._proc is None:

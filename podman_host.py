@@ -96,6 +96,9 @@ class RemoteHost:
         "-o", "BatchMode=yes",
         "-o", "ServerAliveInterval=30",
         "-o", "ServerAliveCountMax=3",
+        # The codex relay reads its readiness marker off this stderr; an
+        # ssh warning line there would masquerade as a failed relay start.
+        "-o", "LogLevel=ERROR",
     )
     identity: str | None = None
 
@@ -554,6 +557,30 @@ def start_ephemeral_container(
     )
     return ContainerHandle(
         container_id=container_id, image=image, network=network, host=host,
+    )
+
+
+def pause_container(handle: ContainerHandle) -> None:
+    """``podman pause`` the container, preserving it for forensics.
+
+    Unlike :func:`stop_container` this leaves the container on the host --
+    frozen, not removed -- so a review container suspected of tampering
+    (see the codex poison path) can be inspected later. Best-effort:
+    logs and returns on failure. The operator must ``podman rm -f`` it by
+    hand once done, since nothing else will reclaim it.
+    """
+    logger.debug("pausing container id=%s", handle.container_id[:12])
+    cp = _podman(handle.host, "pause", handle.container_id, timeout_s=60.0)
+    if cp.returncode != 0:
+        logger.warning(
+            "podman pause id=%s failed: %s",
+            handle.container_id[:12], cp.stderr.decode(errors="replace").strip(),
+        )
+        return
+    logger.warning(
+        "container PAUSED for forensics id=%s host=%s; inspect it, then "
+        "`podman rm -f %s` on that host to release the resources",
+        handle.container_id[:12], handle.host.ssh_dest, handle.container_id[:12],
     )
 
 

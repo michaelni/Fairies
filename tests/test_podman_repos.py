@@ -144,7 +144,7 @@ class RemoteProvisionTests(unittest.TestCase):
         )
         self.assertEqual(
             "ssh -o BatchMode=yes -o ServerAliveInterval=30 "
-            "-o ServerAliveCountMax=3 -i /k/id",
+            "-o ServerAliveCountMax=3 -o LogLevel=ERROR -i /k/id",
             kwargs["ssh_command"],
         )
 

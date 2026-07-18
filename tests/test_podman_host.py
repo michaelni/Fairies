@@ -26,7 +26,8 @@ AGENT = REPO_ROOT / "containers" / "fairy_agent.py"
 HOST = lc.RemoteHost("fairy@h")
 SSH_PREFIX = [
     "ssh", "-o", "BatchMode=yes",
-    "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3", "fairy@h",
+    "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
+    "-o", "LogLevel=ERROR", "fairy@h",
 ]
 
 
@@ -73,7 +74,8 @@ class RemoteHostTests(unittest.TestCase):
         host = lc.RemoteHost("fairy@h", identity="/k/id")
         self.assertEqual(
             ["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=30",
-             "-o", "ServerAliveCountMax=3", "-i", "/k/id", "fairy@h", "true"],
+             "-o", "ServerAliveCountMax=3", "-o", "LogLevel=ERROR",
+             "-i", "/k/id", "fairy@h", "true"],
             host.argv(["true"]),
         )
 

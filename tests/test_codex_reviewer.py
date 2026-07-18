@@ -20,6 +20,7 @@ from codex_reviewer import (
     CodexReviewer,
     CodexUsageLimit,
     build_codex_exec_command,
+    resolve_web_search,
     summarize_codex_events,
 )
 from llm_review_api import BadModelOutput, ReviewContext, RoleSpec
@@ -137,6 +138,12 @@ class BuildCommandTests(unittest.TestCase):
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", cmd)
         self.assertNotIn("--yolo", cmd)
 
+    def test_web_search_mode_is_emitted(self) -> None:
+        self.assertIn('web_search="live"',
+                      self._cmd(web_search="live"))
+        self.assertIn('web_search="disabled"',
+                      self._cmd(web_search="disabled"))
+
     def test_prompt_comes_from_stdin(self) -> None:
         self.assertEqual("-", self._cmd()[-1])
 
@@ -171,6 +178,31 @@ class BuildCommandTests(unittest.TestCase):
         self.assertNotIn("model_catalog_json", " ".join(self._cmd()))
         cmd = self._cmd(catalog_override_path="/tmp/s/hardened_catalog.json")
         self.assertIn("model_catalog_json=/tmp/s/hardened_catalog.json", cmd)
+
+
+class WebSearchModeTests(unittest.TestCase):
+    def test_resolve_maps_flag_to_mode(self) -> None:
+        self.assertEqual("disabled", resolve_web_search("off"))
+        self.assertEqual("live", resolve_web_search("live"))
+        self.assertEqual("cached", resolve_web_search("cached"))
+
+    def test_invalid_mode_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            CodexReviewer("m", name="codex:m", role=ROLE, codex_host=CODEX_HOST,
+                          web_search="sometimes")
+
+    def _prompt_features(self, web_search):
+        reviewer = CodexReviewer("m", name="codex:m", role=ROLE,
+                                 codex_host=CODEX_HOST, web_search=web_search)
+        with mock.patch.object(codex_reviewer, "generate_llm_prompt",
+                               return_value="DEV") as gen:
+            reviewer._build_prompt(_ctx(), False)
+        return gen.call_args.kwargs["features"]
+
+    def test_web_search_feature_tracks_mode(self) -> None:
+        self.assertNotIn("web_search", self._prompt_features("disabled"))
+        self.assertIn("web_search", self._prompt_features("live"))
+        self.assertIn("web_search", self._prompt_features("cached"))
 
 
 class HardenCatalogTests(unittest.TestCase):
@@ -412,6 +444,7 @@ class FactoryTests(unittest.TestCase):
             codex_home=None, codex_host=CODEX_HOST, codex_image="img:test",
             podman_exec_timeout=600.0, debug_response_dir=None,
             podman_max_tool_rounds=0,
+            web_search="off",
         )
         base.update(extra)
         return argparse.Namespace(**base)
@@ -426,6 +459,17 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual("xhigh", reviewer.effort)
         self.assertEqual("codex-pinned", reviewer.codex_bin)
         self.assertEqual(CODEX_HOST, reviewer.codex_host)
+        self.assertEqual("disabled", reviewer.web_search)  # --web-search off
+
+    def test_make_reviewer_web_search_modes(self) -> None:
+        live = review_pipeline.make_reviewer(
+            "codex:gpt-5.6-sol", args=self._args(web_search="live"),
+            resources=None, role=ROLE, verbose=False)
+        self.assertEqual("live", live.web_search)
+        cached = review_pipeline.make_reviewer(
+            "codex:gpt-5.6-sol", args=self._args(web_search="cached"),
+            resources=None, role=ROLE, verbose=False)
+        self.assertEqual("cached", cached.web_search)
 
     def test_codex_without_host_is_cli_error(self) -> None:
         with self.assertRaises(SystemExit):

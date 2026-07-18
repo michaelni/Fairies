@@ -3126,9 +3126,9 @@ def warn_simulate_past_limitations(ignore_after: datetime) -> None:
     logger.warning(
         "--simulate-past=%s active. Limitations:\n"
         "  * CI status: current Forgejo state, not the state at the cutoff.\n"
-        "  * Wrapper web_search reaches today's web; OMIT --use-web-search\n"
-        "    from your --llm-review-cmd. (vector_store_search is fine if\n"
-        "    --repo-root points at the prepped mirror.)\n"
+        "  * Wrapper web_search reaches today's web; use --web-search off\n"
+        "    (or cached) in your --llm-review-cmd. (vector_store_search is\n"
+        "    fine if --repo-root points at the prepped mirror.)\n"
         "  * PR/comment bodies: post-cutoff edits cannot be reverted.\n"
         "  * Dismissed reviews: cannot be revived.\n"
         "  * --patch-repo (and the wrapper's --repo-root etc.) must be a\n"

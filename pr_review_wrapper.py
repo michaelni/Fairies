@@ -378,9 +378,13 @@ def parse_args() -> argparse.Namespace:
         help="Optional maximum number of built-in tool calls allowed in a single response.",
     )
     p.add_argument(
-        "--use-web-search",
-        action="store_true",
-        help="Enable the Responses API web_search tool for live/cached web retrieval.",
+        "--web-search",
+        choices=["off", "live", "cached"],
+        default="off",
+        help="Web search for reviewers (default off). 'live' reaches the "
+             "current web, 'cached' uses OpenAI's index only. Drives the "
+             "Responses web_search tool for openai: reviewers and codex's "
+             "built-in web_search for codex:.",
     )
     p.add_argument(
         "--use-shell",
@@ -544,11 +548,6 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         help="Restrict web_search results to an allowed domain. Can be repeated.",
-    )
-    p.add_argument(
-        "--web-search-cache-only",
-        action="store_true",
-        help="Disable live external web access and use cached/indexed web search results only.",
     )
     p.add_argument(
         "--file-search-max-num-results",
@@ -1384,9 +1383,9 @@ def main() -> int:
         tools = build_response_tools(
             vector_store_ids=vector_store_ids,
             file_search_max_num_results=args.file_search_max_num_results,
-            use_web_search=args.use_web_search,
+            use_web_search=args.web_search != "off",
             web_search_context_size=args.web_search_context_size,
-            web_search_cache_only=args.web_search_cache_only,
+            web_search_cache_only=args.web_search == "cached",
             web_search_domains=args.web_search_domain,
             use_shell=args.use_shell,
             shell_container_id=shared_container_id if shared_container_id else args.shell_container_id,
@@ -1396,7 +1395,7 @@ def main() -> int:
         )
         include = build_response_include(
             vector_store_ids=vector_store_ids,
-            use_web_search=args.use_web_search,
+            use_web_search=args.web_search != "off",
             use_podman_shell=args.podman,
         )
 

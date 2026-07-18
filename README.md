@@ -128,6 +128,7 @@ as much disabled as possible in a seperate container. Codex's own egress
 is limited to the OpenAI API + token refresh. There is no direct connection
 between the codex and review containers.
 
+
 ### Static data and vector stores
 
 Each set of static data given to the models is a git repository: source

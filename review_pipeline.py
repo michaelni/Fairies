@@ -136,7 +136,7 @@ def make_reviewer(
         except ValueError as exc:  # invalid @effort suffix
             raise SystemExit(f"--model {spec!r}: {exc}")
     if provider == "codex":
-        from codex_reviewer import CodexReviewer
+        from codex_reviewer import CodexReviewer, resolve_web_search
 
         if getattr(args, "codex_host", None) is None:
             raise SystemExit(
@@ -154,6 +154,7 @@ def make_reviewer(
                 codex_image=args.codex_image,
                 exec_timeout_s=args.podman_exec_timeout,
                 effort=effort,
+                web_search=resolve_web_search(args.web_search),
                 run_timeout_s=args.codex_timeout_seconds,
                 verbose=verbose,
                 debug_dir=(

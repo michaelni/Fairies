@@ -806,7 +806,7 @@ class OpenAIReviewer(Reviewer):
             reviewer_features.add("source_bundle")
         if res.vector_store_ids:
             reviewer_features.add("vector_store_search")
-        if args.use_web_search:
+        if args.web_search != "off":
             reviewer_features.add("web_search")
         if args.podman:
             reviewer_features.add("podman_shell")

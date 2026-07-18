@@ -70,24 +70,35 @@ from podman_host import ShellHostSpec
 
 __all__ = [
     "CODEX_EFFORTS",
+    "CODEX_WEB_SEARCH_MODES",
     "CodexReviewer",
     "CodexUsageLimit",
     "build_codex_exec_command",
     "harden_codex_catalog",
+    "resolve_web_search",
 ]
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
 
-# codex -c model_reasoning_effort values. The gpt-5.6 backend rejects
-# codex's documented "minimal" ("Supported values are: 'none', 'low',
-# 'medium', 'high', and 'xhigh'", server error observed 2026-07-17).
-# "max" and "ultra" are additionally listed by the gpt-5.6 catalog entries
-# (supported_reasoning_levels); gpt-5.5/5.4 cap at "xhigh". This allowlist
-# is the union across models -- an unsupported pairing still fails server-
-# side, this only catches typos up front.
+# The union across models; an unsupported pairing still fails server-side.
+# 2026-07-17: gpt-5.6 rejected codex's documented "minimal" with
+# "Supported values are: 'none', 'low', 'medium', 'high', and 'xhigh'".
 CODEX_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max", "ultra")
+
+# "cached"/"indexed" use OpenAI's maintained index rather than a live
+# fetch. All run backend-side, no egress from the codex container.
+CODEX_WEB_SEARCH_MODES = ("disabled", "cached", "indexed", "live")
+
+
+def resolve_web_search(mode: str) -> str:
+    """Map the wrapper's ``--web-search`` value to a codex ``web_search`` mode.
+
+    The CLI spells "off"; codex's config spells "disabled". "live" and
+    "cached" pass through unchanged.
+    """
+    return "disabled" if mode == "off" else mode
 
 # codex-side per-MCP-tool-call watchdog. The real per-command cap is
 # enforced wrapper-side (exec_shell_call clamps timeout_seconds to
@@ -204,15 +215,14 @@ def build_codex_exec_command(
         # No model-chosen execution on this machine: the local shell tool
         # is removed from the tool list outright (see module docstring).
         "-c", "features.shell_tool=false",
-        # Belt-and-suspenders: shell_tool=false already drops the
-        # exec_command tool (verified, codex 0.144.5), but unified_exec is a
-        # separately-flagged exec path -- pin it off too in case a future
-        # codex wires it independently of shell_tool.
+        # unified_exec is a separately-flagged exec path; pin it off too so
+        # a codex that wires it independently of shell_tool still can't exec.
         "-c", "features.unified_exec=false",
-        # OpenAI-side search only; also pins against a default change.
+        # Web search mode from the wrapper's --web-search flag (see
+        # resolve_web_search): disabled / cached / live. Runs backend-side,
+        # no container egress.
         "-c", f'web_search="{web_search}"',
-        # The Statsig OTLP metrics ping is codex's only egress besides
-        # the model API and token refresh; turn it off.
+        # Turn off codex's analytics/metrics ping (an egress we don't want).
         "-c", "analytics.enabled=false",
     ]
     if catalog_override_path:
@@ -305,12 +315,16 @@ class CodexReviewer(Reviewer):
         codex_image: str = DEFAULT_CODEX_IMAGE,
         exec_timeout_s: float = 600.0,
         effort: str | None = None,
+        web_search: str = "cached",
         run_timeout_s: float = 0.0,
         verbose: bool = False,
         debug_dir: str | None = None,
     ) -> None:
         if effort is not None and effort not in CODEX_EFFORTS:
             raise ValueError(f"effort {effort!r} not in {CODEX_EFFORTS}")
+        if web_search not in CODEX_WEB_SEARCH_MODES:
+            raise ValueError(
+                f"web_search {web_search!r} not in {CODEX_WEB_SEARCH_MODES}")
         self.model = model
         self.name = name
         self.role = role
@@ -327,6 +341,8 @@ class CodexReviewer(Reviewer):
         # containers (mirrors the API backends' --podman-exec-timeout).
         self.exec_timeout_s = exec_timeout_s
         self.effort = effort
+        # codex web_search mode (resolve_web_search maps the wrapper flags).
+        self.web_search = web_search
         # 0 disables the whole-subprocess watchdog (a pass legitimately
         # runs for however long the model reasons and builds).
         self.run_timeout_s = run_timeout_s
@@ -380,7 +396,9 @@ class CodexReviewer(Reviewer):
         return path
 
     def _build_prompt(self, ctx: ReviewContext, use_shell: bool) -> str:
-        features: set[str] = {"web_search"}
+        features: set[str] = set()
+        if self.web_search != "disabled":
+            features.add("web_search")
         if ctx.source_bundle is not None:
             features.add("source_bundle")
         if use_shell:
@@ -468,6 +486,7 @@ class CodexReviewer(Reviewer):
                 socket_path=RELAY_SOCKET_PATH if use_shell else None,
                 machine_labels=machine_labels,
                 catalog_override_path=catalog_container,
+                web_search=self.web_search,
                 bridge_python="python3",
                 bridge_path=f"{CONTAINER_RUN_DIR}/codex_bridge.py",
             )

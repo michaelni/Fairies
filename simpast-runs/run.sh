@@ -26,6 +26,8 @@
 #   PAR         concurrent samples per arm     (default SAMPLES: one wave)
 #   TIER        OpenAI service tier            (default flex)
 #   MODE        podman (default) | container   (OpenAI-hosted, A/B reference)
+#   FORCE_ENGAGE  non-empty passes --force-engage (review even when the
+#               harness triager votes skip; production may have engaged)
 #   MODEL       main reviewer model            (default openai:gpt-5.4);
 #               reasoning effort comes ONLY from the @suffix (bare = API default)
 #   PODMAN_SSH  ssh dest for the podman host   (e.g. fairy@podman-host)
@@ -109,7 +111,7 @@ run_one() {
         --patch-pr-ref-template "fforge/pr/{number}" \
         --cache "$outdir/cache.pkl" \
         --fairy-state-cache "$outdir/bot_state.pkl" \
-        --forced-only --force-review-non-open "${force[@]}" \
+        --forced-only --force-review-non-open ${FORCE_ENGAGE:+--force-engage} "${force[@]}" \
         --llm-parallelism "${#PRS[@]}" \
         --llm-review-cmd "./pr_review_wrapper.py \
             --repo-root $PATCH_REPO $extra \

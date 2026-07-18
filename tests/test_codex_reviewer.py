@@ -272,8 +272,10 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.assertFalse(any("mcp_servers" in c for c in self.last_cmd))
 
     def test_invalid_effort_rejected(self) -> None:
+        # "minimal" is codex's documented lowest effort but the server
+        # rejects it (see CODEX_EFFORTS); it must not validate here.
         with self.assertRaises(ValueError):
-            CodexReviewer("m", name="codex:m", role=ROLE, effort="ultra")
+            CodexReviewer("m", name="codex:m", role=ROLE, effort="minimal")
 
     def test_codex_home_reaches_subprocess_env(self) -> None:
         import tempfile
@@ -353,7 +355,7 @@ class FactoryTests(unittest.TestCase):
         )
         with self.assertRaises(SystemExit):
             review_pipeline.make_reviewer(
-                "codex:gpt-5.6-sol@ultra", args=args, resources=None,
+                "codex:gpt-5.6-sol@minimal", args=args, resources=None,
                 role=ROLE, verbose=False,
             )
 

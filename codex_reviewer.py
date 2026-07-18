@@ -71,7 +71,11 @@ logger = logging.getLogger(__name__)
 # codex -c model_reasoning_effort values. The gpt-5.6 backend rejects
 # codex's documented "minimal" ("Supported values are: 'none', 'low',
 # 'medium', 'high', and 'xhigh'", server error observed 2026-07-17).
-CODEX_EFFORTS = ("none", "low", "medium", "high", "xhigh")
+# "max" and "ultra" are additionally listed by the gpt-5.6 catalog entries
+# (supported_reasoning_levels); gpt-5.5/5.4 cap at "xhigh". This allowlist
+# is the union across models -- an unsupported pairing still fails server-
+# side, this only catches typos up front.
+CODEX_EFFORTS = ("none", "low", "medium", "high", "xhigh", "max", "ultra")
 
 # codex-side per-MCP-tool-call watchdog. The real per-command cap is
 # enforced wrapper-side (exec_shell_call clamps timeout_seconds to

@@ -110,7 +110,7 @@ below). A local-GPU backend is TODO -- PRs very welcome.
 
 ### Codex backend
 
-`codex:MODEL[@EFFORT]` (e.g. `codex:gpt-5.6-sol@xhigh`)
+`codex:MODEL[@EFFORT]` (e.g. `codex:gpt-5.6-sol@high`)
 runs the pass through the codex CLI. Install a
 codex version on the wrapper host (`--codex-bin` selects the binary)
 and log in once with `codex login`.

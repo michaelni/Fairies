@@ -756,9 +756,12 @@ def get_pr_discussion(
 def list_commit_statuses(args: argparse.Namespace, ref: str) -> list[ApiObject]:
     path = build_repo_path(args.owner, args.repo, f"/commits/{quote(ref, safe='')}/statuses")
     data = gcli_api(args, path, all_pages=True)
-    if isinstance(data, list):
-        return [s for s in data if isinstance(s, dict)]
-    return []
+    if not isinstance(data, list):
+        return []
+    statuses = [s for s in data if isinstance(s, dict)]
+    return filter_activity_after(
+        statuses, getattr(args, "simulate_past", None), "created_at", "updated_at",
+    )
 
 
 def get_self_login(args: argparse.Namespace) -> str | None:

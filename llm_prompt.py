@@ -780,7 +780,7 @@ each produced by a different model; produce one combined review.
   "Scope <model>: ..." line per draft giving the
   depth and scope of that model's review as the draft stated it (it is
   understood this cannot be verified); omit models whose draft stated none,
-  never guess. Add one "Scope <your model>: ..." line for what you verified
+  never guess. Add one "Scope combiner: ..." line for what you verified
   yourself. These lines tell developers which areas were actually reviewed,
   not just what was found.
 - Carry through help a draft provides beyond issues: helpful replies,

@@ -36,7 +36,9 @@ Given a passwordless ssh destination (``user@host``) it:
    info``), with an actionable hint if the prerequisite is missing;
 2. builds the review image on the remote, rebuilding only when the
    Containerfile changed (tracked via an image label);
-3. seeds a bare mirror per repo so per-review provisioning only has to
+3. with ``--codex-bin``, also builds the thin codex image (for a host
+   used as ``--codex-host``), staging the pinned binary in;
+4. seeds a bare mirror per repo so per-review provisioning only has to
    push the PR delta (see podman_repos).
 
 Re-running is safe: existing image/mirrors are reused.
@@ -52,9 +54,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import os
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -75,6 +80,11 @@ DEFAULT_TAG = "localhost/fairy-review:latest"
 CONTEXT_DIR = REPO_ROOT / "containers"
 DOCKERFILE = CONTEXT_DIR / "Containerfile"
 CONTAINERFILE_LABEL = "fairy.containerfile-sha256"
+
+# Built only when --codex-bin is given: the binary must be staged into the
+# build context.
+CODEX_DEFAULT_TAG = "localhost/fairy-codex:latest"
+CODEX_DOCKERFILE = CONTEXT_DIR / "Containerfile.codex"
 
 
 def _run(argv: list[str], *, timeout_s: float = 60.0) -> subprocess.CompletedProcess:
@@ -129,6 +139,56 @@ def ensure_image(
     logger.info("image ready tag=%s", tag)
 
 
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def ensure_codex_image(
+    *,
+    host: RemoteHost,
+    codex_bin: Path,
+    tag: str,
+    rebuild: bool,
+) -> None:
+    """Build the thin codex image on the remote, staging the pinned binary.
+
+    Containerfile.codex ``COPY``s ``codex`` from the build context, so the
+    binary and the Containerfile are staged into a temp context together
+    (podman requires the Containerfile inside the context). Rebuilds only
+    when the Containerfile or the binary changed (label tracks both)."""
+    if not codex_bin.is_file():
+        raise RuntimeError(f"--codex-bin {codex_bin} is not a file")
+    want = hashlib.sha256(
+        CODEX_DOCKERFILE.read_bytes() + _sha256_file(codex_bin).encode()
+    ).hexdigest()
+    have = image_label(tag, CONTAINERFILE_LABEL, host=host)
+    stale = have != want
+    if stale and have is not None:
+        logger.info("codex image %s is stale; rebuilding", tag)
+    with tempfile.TemporaryDirectory(prefix="fairy-codex-ctx-") as ctx_str:
+        ctx = Path(ctx_str)
+        shutil.copy2(CODEX_DOCKERFILE, ctx / "Containerfile.codex")
+        staged = ctx / "codex"
+        try:  # avoid a full copy when the temp dir shares the filesystem
+            os.link(codex_bin, staged)
+        except OSError:
+            shutil.copy2(codex_bin, staged)
+        build_image_if_needed(
+            image_tag=tag,
+            dockerfile=ctx / "Containerfile.codex",
+            context_dir=ctx,
+            force=rebuild or stale,
+            labels={CONTAINERFILE_LABEL: want},
+            host=host,
+            build_timeout_s=3600.0,
+        )
+    logger.info("codex image ready tag=%s", tag)
+
+
 def seed_mirrors(repo_roots: list[Path], host: RemoteHost, mirror_root: str) -> None:
     specs = podman_repos.build_repo_specs(repo_roots, mirror_root=mirror_root)
     for spec in specs:
@@ -148,6 +208,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--tag", default=DEFAULT_TAG, help="image tag (default: %(default)s)")
     p.add_argument("--context", type=Path, default=CONTEXT_DIR, help="build context")
     p.add_argument("--file", type=Path, default=DOCKERFILE, help="path to Containerfile")
+    p.add_argument(
+        "--codex-bin", type=Path, default=None, metavar="PATH",
+        help="pinned codex binary; when given, also build the thin codex "
+             "image on this host (for a host used as --codex-host).",
+    )
+    p.add_argument(
+        "--codex-tag", default=CODEX_DEFAULT_TAG,
+        help="codex image tag (default: %(default)s)",
+    )
     p.add_argument(
         "--mirror-root", default=podman_repos.DEFAULT_MIRROR_ROOT,
         help="remote bare-mirror root, relative to the ssh home (default: %(default)s)",
@@ -174,6 +243,11 @@ def main(argv: list[str] | None = None) -> int:
         host=host, tag=args.tag, dockerfile=dockerfile,
         context_dir=args.context.resolve(), rebuild=args.rebuild,
     )
+    if args.codex_bin is not None:
+        ensure_codex_image(
+            host=host, codex_bin=args.codex_bin.resolve(),
+            tag=args.codex_tag, rebuild=args.rebuild,
+        )
     if args.repo_roots:
         seed_mirrors(args.repo_roots, host, args.mirror_root)
     else:

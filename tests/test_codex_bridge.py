@@ -1,6 +1,10 @@
 """The MCP stdio bridge between the codex CLI and the shell dispatch socket."""
 
 import json
+import os
+import socket
+import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -80,6 +84,26 @@ class BridgeProtocolTests(unittest.TestCase):
         self.assertEqual(
             codex_bridge.INTERNAL_ERROR, self.out[0]["error"]["code"])
 
+    def _serve_on_unix_socket(self, open_shell, machine_labels):
+        """Bind a unix socket and run serve_dispatch on one accepted
+        connection -- the container-local role relay.py fills in prod."""
+        sock_dir = tempfile.mkdtemp(prefix="bridge-test-")
+        sock_path = os.path.join(sock_dir, "shell.sock")
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(sock_path)
+        listener.listen(1)
+        self.addCleanup(listener.close)
+
+        def _accept_and_serve():
+            conn, _ = listener.accept()
+            shell_socket.serve_dispatch(
+                conn.makefile("rb"), conn.makefile("wb"),
+                machine_labels=machine_labels, open_shell=open_shell,
+                max_timeout_s=60.0)
+
+        threading.Thread(target=_accept_and_serve, daemon=True).start()
+        return sock_path
+
     def test_tools_call_end_to_end_through_socket(self) -> None:
         opened = []
 
@@ -89,12 +113,8 @@ class BridgeProtocolTests(unittest.TestCase):
             session.exec.return_value = _result(out=f"on {label}\n")
             return session, ""
 
-        server = shell_socket.ShellDispatchServer(
-            machine_labels=("x86_64", "arm64"), open_shell=open_shell,
-            max_timeout_s=60.0,
-        )
-        self.addCleanup(server.close)
-        bridge = self._bridge(socket_path=server.socket_path)
+        sock_path = self._serve_on_unix_socket(open_shell, ("x86_64", "arm64"))
+        bridge = self._bridge(socket_path=sock_path)
         for i, machine in enumerate(("x86_64", "arm64")):
             bridge.handle({
                 "jsonrpc": "2.0", "id": 10 + i, "method": "tools/call",

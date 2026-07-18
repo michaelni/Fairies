@@ -46,10 +46,13 @@ class _FakeCodexContainer:
     argv, returns canned run output / last message. ``on_run`` fires inside
     run() (while the auth flock is held) for lock tests."""
 
-    def __init__(self, run_result, last_message, on_run=None):
+    def __init__(self, run_result, last_message, on_run=None,
+                 refreshed_auth=None):
         self._run_result = run_result
         self._last_message = last_message
         self.on_run = on_run
+        # harness knob: read_file(auth.json) returns this instead of the copied auth
+        self._refreshed_auth = refreshed_auth
         self.copied = {}       # basename -> local text content
         self.cmd = None
         self.input_text = None
@@ -75,6 +78,10 @@ class _FakeCodexContainer:
         return self._run_result
 
     def read_file(self, path, **kw):
+        if path.endswith("auth.json"):
+            if self._refreshed_auth is not None:
+                return self._refreshed_auth
+            return self.copied.get("auth.json")
         return self._last_message
 
     def stop(self):
@@ -228,15 +235,18 @@ class CodexReviewerRunTests(unittest.TestCase):
 
     def _run(self, *, jsonl="", stderr="", returncode=0,
              last_message='{"classification": "approve", "message": "ok"}',
-             ctx=None, on_run=None, reviewer=None):
+             ctx=None, on_run=None, reviewer=None, refreshed_auth=None):
         reviewer = reviewer or self._reviewer()
         proc = subprocess.CompletedProcess(
             [], returncode, stdout=jsonl, stderr=stderr)
-        self.container = _FakeCodexContainer(proc, last_message, on_run=on_run)
+        self.container = _FakeCodexContainer(
+            proc, last_message, on_run=on_run, refreshed_auth=refreshed_auth)
         with mock.patch.object(codex_reviewer, "CodexContainer",
                                return_value=self.container), \
                 mock.patch.object(codex_reviewer, "CodexShellRelay") as relay:
             relay.return_value.start.return_value = relay.return_value
+            relay.return_value.opened_sessions.return_value = \
+                getattr(self, "_relay_sessions", [])
             return reviewer.run(ctx or _ctx())
 
     def test_validated_result_from_last_message(self) -> None:
@@ -296,6 +306,54 @@ class CodexReviewerRunTests(unittest.TestCase):
     def test_non_json_final_message_is_bad_model_output(self) -> None:
         with self.assertRaises(BadModelOutput):
             self._run(last_message="I approve of this patch.")
+
+    def test_refreshed_auth_persisted_back(self) -> None:
+        home = _codex_home_with_auth()
+        reviewer = self._reviewer(codex_home=home)
+        rotated = '{"tokens": {"refresh_token": "rotated"}}'
+        self._run(reviewer=reviewer, refreshed_auth=rotated)
+        auth_path = Path(home, "auth.json")
+        self.assertEqual(rotated, auth_path.read_text(encoding="utf-8"))
+        self.assertEqual(0o600, auth_path.stat().st_mode & 0o777)
+
+    def test_unchanged_auth_not_rewritten(self) -> None:
+        home = _codex_home_with_auth()
+        auth_path = Path(home, "auth.json")
+        before = auth_path.read_text(encoding="utf-8")
+        # refreshed_auth defaults to the copied auth (identical) -> no write.
+        self._run(reviewer=self._reviewer(codex_home=home))
+        self.assertEqual(before, auth_path.read_text(encoding="utf-8"))
+
+    def test_crash_poisons_review_containers(self) -> None:
+        s1 = mock.Mock(spec=podman_host.ContainerShellSession)
+        s2 = mock.Mock(spec=podman_host.ContainerShellSession)
+        self._relay_sessions = [s1, s2]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        poisoned = []
+        ctx = _ctx(report_poisoned=poisoned.append)
+        with self.assertRaises(RuntimeError):
+            self._run(ctx=ctx, last_message=None)
+        self.assertEqual([s1, s2], poisoned)
+
+    def test_bad_output_does_not_poison(self) -> None:
+        self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        poisoned = []
+        ctx = _ctx(report_poisoned=poisoned.append)
+        with self.assertRaises(BadModelOutput):
+            self._run(ctx=ctx, last_message="not json")
+        self.assertEqual([], poisoned)  # codex ran fine; not suspect
+
+    def test_usage_limit_does_not_poison(self) -> None:
+        self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        poisoned = []
+        ctx = _ctx(report_poisoned=poisoned.append)
+        jsonl = json.dumps({"type": "turn.failed",
+                            "error": {"type": "usage_limit_reached"}})
+        with self.assertRaises(CodexUsageLimit):
+            self._run(ctx=ctx, jsonl=jsonl, last_message=None)
+        self.assertEqual([], poisoned)  # clean quota stop
 
     def test_shellless_context_omits_mcp(self) -> None:
         self._run(ctx=_ctx(open_shell=None))

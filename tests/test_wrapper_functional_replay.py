@@ -347,6 +347,47 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
         session.close.assert_called_once_with()
         self.assertEqual([handle], stopped)
 
+    def test_poisoned_container_paused_not_removed(self) -> None:
+        request_obj = _fixture_request()
+        paused: list[object] = []
+        stopped: list[object] = []
+
+        def fake_open_review(spec, repo_specs, args, session_commands=()):
+            return mock.Mock(name="handle"), mock.Mock(name="session"), ""
+
+        def fake_review_pr(ctx, reviewers, combiner):
+            session, _ = ctx.open_shell("x86_64")   # opens+registers one
+            ctx.report_poisoned(session)            # flag it suspect
+            return wrapper.llm_review_api.Review(
+                classification="approve", message="")
+
+        with (
+            mock.patch.object(wrapper, "OpenAI", return_value=mock.Mock()),
+            mock.patch.object(wrapper, "load_api_key", return_value="test-key"),
+            mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
+            mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
+            mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
+            mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
+            mock.patch.object(wrapper, "open_review_container_shell",
+                              side_effect=fake_open_review),
+            mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
+            mock.patch.object(wrapper.podman_host, "pause_container", paused.append),
+            mock.patch.object(wrapper.podman_host, "stop_container", stopped.append),
+            mock.patch.object(
+                wrapper.sys, "argv",
+                # anthropic: keeps the OpenAI patch-upload path out of the way
+                ["pr_review_wrapper.py", "--model", "anthropic:claude-opus-4",
+                 "--podman", "--shell-host", "fairy@h", "--no-source-bundle"],
+            ),
+            mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(request_obj))),
+            mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
+        ):
+            wrapper.main()
+
+        self.assertEqual(1, len(paused))
+        self.assertEqual(1, len(stopped))
+        self.assertNotIn(paused[0], stopped)
+
 
 class CodexOnlyNoOpenAIKeyTests(unittest.TestCase):
     """A codex:- (or anthropic:-) only run must not require OPENAI_API_KEY.

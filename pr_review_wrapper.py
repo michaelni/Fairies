@@ -1124,7 +1124,7 @@ def main() -> int:
     # (including one the triager may pick from ``--allowed-model``), or one
     # of the OpenAI-hosted subsystems (container repos, vector-store
     # search/prepare). A codex:- or anthropic:-only run must not require the
-    # key. Same spec set the codex-socket gate below scans.
+    # key.
     model_specs = [
         s for s in (args.model, *args.extra_model, args.triage_model,
                     args.combine_model, *args.allowed_model)
@@ -1256,12 +1256,11 @@ def main() -> int:
     podman_repo_specs: list[podman_repos.RepoSpec] = []
     machines: list[podman_host.ShellHostSpec] = args.machines if args.podman else []
     spec_by_label = {m.label: m for m in machines}
-    # Every opened container+session, default and lazily instantiated alike
-    # (one isolated container per machine per non-OpenAI reviewer);
-    # released in finally.
     ensemble_shells: list[tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]] = []
-    # Live sessions shared by all OpenAI role passes, keyed by machine label.
     primary_shells: dict[str, podman_host.ContainerShellSession] = {}
+    # Keyed by id() since sessions are unhashable; their containers are
+    # paused, not removed, at cleanup.
+    poisoned_session_ids: set[int] = set()
 
     def open_machine_shell(
         label: str,
@@ -1272,10 +1271,14 @@ def main() -> int:
         ensemble_shells.append((handle, session))
         return session, transcript
 
+    def report_poisoned(session: podman_host.ContainerShellSession) -> None:
+        poisoned_session_ids.add(id(session))
+        logger.warning(
+            "review container flagged as poisoned (codex run crashed); it "
+            "will be paused for forensics instead of removed"
+        )
+
     uploaded_file_ids: list[str] = []
-    # The eager container open below and everything after runs under
-    # this try so the finally releases ensemble_shells (and uploads)
-    # even when e.g. bundle building fails between open and review.
     try:
         if args.podman:
             if not repo_roots:
@@ -1402,6 +1405,7 @@ def main() -> int:
             machines=machines,
             session_transcript=session_transcript,
             open_shell=open_machine_shell if args.podman else None,
+            report_poisoned=report_poisoned if args.podman else None,
         )
         openai_resources = OpenAIResources(
             client=client,
@@ -1439,6 +1443,7 @@ def main() -> int:
                 project_facts=project_facts,
                 machines=machines,
                 open_shell=open_machine_shell if args.podman else None,
+                report_poisoned=report_poisoned if args.podman else None,
             )
             triager = make_reviewer(
                 args.triage_model,
@@ -1608,7 +1613,10 @@ def main() -> int:
             container_lease.release(healthy=container_lease_healthy)
         for handle, session in ensemble_shells:
             session.close()
-            podman_host.stop_container(handle)
+            if id(session) in poisoned_session_ids:
+                podman_host.pause_container(handle)
+            else:
+                podman_host.stop_container(handle)
 
 
 if __name__ == "__main__":

@@ -670,13 +670,10 @@ class ReviewContext:
     repo_roots: list[Path]
     repo_mount_paths: list[str]
     project_facts: str = ""
-    # The CLI-configured machines running review containers; machines[0]
-    # is the default. Empty when --podman is off.
     machines: Sequence[ShellHostSpec] = ()
-    # Transcript of --session-command runs in the default machine's review
-    # container, spliced into shell-capable roles' user text.
     session_transcript: str = ""
     open_shell: Callable[[str], tuple[ContainerShellSession, str]] | None = None
+    report_poisoned: Callable[[ContainerShellSession], None] | None = None
     drafts: list[Review] = field(default_factory=list)
 
     def review_drafts(self) -> list[Review]:

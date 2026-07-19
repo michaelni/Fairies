@@ -56,6 +56,11 @@ class ServeDispatchTests(unittest.TestCase):
         self._cw.flush()
         return json.loads(self._cr.readline())["payload"]
 
+    def _raw(self, raw: bytes):
+        self._cw.write(raw)
+        self._cw.flush()
+        return json.loads(self._cr.readline())["payload"]
+
     def test_round_trip_and_machine_routing(self) -> None:
         opened = []
         self._serve(opened)
@@ -76,6 +81,44 @@ class ServeDispatchTests(unittest.TestCase):
         self._serve([])
         payload = self._call({"command": "true", "machine": "riscv"})
         self.assertIn("unknown machine", payload["error"])
+
+    # the request stream arrives from inside the codex container
+
+    def test_bad_json_request_survives(self) -> None:
+        self._serve([])
+        payload = self._raw(b"{oops\n")
+        self.assertIn("malformed request", payload["error"])
+        self.assertEqual("on x86_64\n", self._call({"command": "true"})["stdout"])
+
+    def test_invalid_utf8_request_survives(self) -> None:
+        self._serve([])
+        payload = self._raw(b'\xff\xfe\xfa\n')
+        self.assertIn("malformed request", payload["error"])
+        self.assertEqual("on x86_64\n", self._call({"command": "true"})["stdout"])
+
+    def test_non_object_request_survives(self) -> None:
+        self._serve([])
+        for raw in (b"[1, 2, 3]\n", b'"shell"\n', b"7\n"):
+            payload = self._raw(raw)
+            self.assertIn("not a JSON object", payload["error"])
+        self.assertEqual("on x86_64\n", self._call({"command": "true"})["stdout"])
+
+    def test_null_request_is_error_not_eof(self) -> None:
+        self._serve([])
+        payload = self._raw(b"null\n")
+        self.assertIn("not a JSON object", payload["error"])
+        self.assertEqual("on x86_64\n", self._call({"command": "true"})["stdout"])
+
+    def test_oversized_request_line_dropped_and_survives(self) -> None:
+        # Patch the cap before the dispatch thread first blocks in
+        # readline, which captures the cap as its size argument.
+        with mock.patch.object(shell_socket, "MAX_REQUEST_BYTES", 4096):
+            self._serve([])
+            big = b'{"id": 1, "args": {"command": "' + b"A" * 8192 + b'"}}\n'
+            payload = self._raw(big)
+            self.assertIn("exceeds", payload["error"])
+            self.assertEqual("on x86_64\n",
+                             self._call({"command": "true"})["stdout"])
 
     def test_failed_open_is_in_band_error(self) -> None:
         def open_shell(label):

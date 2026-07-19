@@ -60,14 +60,30 @@ from typing import Callable, Sequence
 
 from podman_host import ContainerShellSession
 from shell_tool import exec_machine_call
-# ShellDispatchClient (the codex-container side) lives in the podman-free
-# shell_bridge_client so the codex image can import it without this module;
-# re-exported here for the tests that drive both ends together.
-from shell_bridge_client import ShellDispatchClient, _recv_json_line
+from shell_bridge_client import ShellDispatchClient
 
 __all__ = ["ShellDispatchClient", "serve_dispatch"]
 
 logger = logging.getLogger(__name__)
+
+# Request lines come from inside the codex container, so they are
+# attacker-forgeable rather than just what codex_bridge emits.
+MAX_REQUEST_BYTES = 8 * 1024 * 1024
+
+
+def _read_request_line(reader) -> bytes | None:
+    """Bounded readline: ``None`` on EOF, ``b""`` for an over-long line
+    (drained through its newline so the next read starts on a frame
+    boundary)."""
+    line = reader.readline(MAX_REQUEST_BYTES)
+    if not line:
+        return None
+    if len(line) >= MAX_REQUEST_BYTES and not line.endswith(b"\n"):
+        while True:
+            rest = reader.readline(MAX_REQUEST_BYTES)
+            if not rest or rest.endswith(b"\n"):
+                return b""
+    return line
 
 
 def _write_json(writer, obj: dict) -> None:
@@ -101,15 +117,30 @@ def serve_dispatch(
     if shells is None:
         shells = {}
     while True:
+        line = _read_request_line(reader)
+        if line is None:
+            return
+        if line == b"":
+            logger.warning("shell dispatch: request line over %d bytes dropped",
+                           MAX_REQUEST_BYTES)
+            _write_json(writer, {"id": None, "payload": {
+                "error": f"malformed request: line exceeds {MAX_REQUEST_BYTES} bytes"}})
+            continue
+        # ValueError also covers UnicodeDecodeError: the line may be
+        # arbitrary hostile bytes, not just malformed JSON text.
         try:
-            request = _recv_json_line(reader)
-        except json.JSONDecodeError as exc:
+            request = json.loads(line)
+        except ValueError as exc:
             logger.warning("shell dispatch: bad request line: %s", exc)
             _write_json(writer, {"id": None, "payload": {
                 "error": f"malformed request: {exc}"}})
             continue
-        if request is None:
-            return
+        if not isinstance(request, dict):
+            logger.warning("shell dispatch: request is not a JSON object: %r",
+                           type(request).__name__)
+            _write_json(writer, {"id": None, "payload": {
+                "error": "malformed request: not a JSON object"}})
+            continue
         try:
             payload = exec_machine_call(
                 shells, tuple(machine_labels), open_shell,

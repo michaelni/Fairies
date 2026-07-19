@@ -26,7 +26,7 @@ class Prepared:
 
 
 class ConsumeReviewedTests(unittest.TestCase):
-    def _consume(self, items, answers, *, echo_retries=False):
+    def _consume(self, items, answers, *, echo_retries=False, cancelled=None):
         reviewed: SimpleQueue = SimpleQueue()
         llm: SimpleQueue = SimpleQueue()
         for item in items:
@@ -46,6 +46,7 @@ class ConsumeReviewedTests(unittest.TestCase):
                 manual=True, approve=False, kind="PR",
                 apply=lambda p, d: applied.append(d),
                 item_url=lambda p: p.url,
+                cancelled=cancelled,
             )
         return decisions, stopped, applied, pending, pm
 
@@ -87,6 +88,14 @@ class ConsumeReviewedTests(unittest.TestCase):
         decisions, stopped, applied, pending, _ = self._consume([(d, d)], ["retry"])
         self.assertEqual(decisions, [])
         self.assertEqual(pending.value, 0)
+
+    def test_cancelled_item_is_recorded_without_prompting(self) -> None:
+        decisions, stopped, applied, pending, pm = self._consume(
+            [(Prepared(6), make_decision(6))], [], cancelled={6})
+        self.assertEqual([d.pr_number for d in decisions], [6])
+        self.assertEqual(pm.call_count, 0)
+        self.assertEqual(applied, [])
+        self.assertFalse(stopped)
 
     def test_review_ui_drives_decisions(self) -> None:
         class UI:

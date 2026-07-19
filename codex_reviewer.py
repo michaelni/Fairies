@@ -63,7 +63,7 @@ from codex_container import (
     CodexContainer,
     CodexShellRelay,
 )
-from common import JsonObject
+from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import BadModelOutput, ReviewContext, Reviewer, RoleSpec
 from podman_host import ShellHostSpec
@@ -526,7 +526,7 @@ class CodexReviewer(Reviewer):
                 proc.returncode, elapsed,
                 json.dumps(usage, ensure_ascii=False) if usage else "-",
             )
-            self._dump_debug_artifacts(prompt, proc)
+            self._dump_debug_artifacts(ctx, prompt, cmd, proc, usage)
             if _is_usage_limit(error_text) or _is_usage_limit(proc.stderr):
                 raise CodexUsageLimit(
                     f"{self.name}: plan usage limit reached; details: "
@@ -615,22 +615,28 @@ class CodexReviewer(Reviewer):
         logger.info("codex: persisted refreshed auth.json from container")
 
     def _dump_debug_artifacts(
-        self, prompt: str, proc: subprocess.CompletedProcess,
+        self, ctx: ReviewContext, prompt: str, cmd: list[str],
+        proc: subprocess.CompletedProcess, usage: JsonObject,
     ) -> None:
+        """One dump file per run in the API backends' request/response
+        format (``dump_response_debug_artifacts``), so codex runs read
+        the same way as openai:/anthropic: ones in the debug dir."""
         if not self.debug_dir:
             return
-        try:
-            os.makedirs(self.debug_dir, exist_ok=True)
-            stamp = time.strftime("%Y%m%d-%H%M%S")
-            base = os.path.join(
-                self.debug_dir, f"codex-{stamp}-{self.role.name}",
-            )
-            for suffix, text in (
-                ("prompt.txt", prompt),
-                ("events.jsonl", proc.stdout),
-                ("stderr.txt", proc.stderr),
-            ):
-                with open(f"{base}-{suffix}", "w", encoding="utf-8") as f:
-                    f.write(text)
-        except OSError:
-            logger.exception("codex debug artifact dump failed")
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        dump_response_debug_artifacts(
+            {
+                "id": f"codex-{stamp}-{self.role.name}",
+                "model": self.model,
+                "events": [_parse_event_line(line) or {"raw": line}
+                           for line in proc.stdout.splitlines()
+                           if line.strip()],
+                "stderr": proc.stderr,
+                "returncode": proc.returncode,
+                "usage": usage,
+            },
+            {"model": self.model, "effort": self.effort, "cmd": cmd,
+             "input": prompt},
+            wrapper_request=ctx.request,
+            debug_dir=self.debug_dir, verbose=self.verbose,
+        )

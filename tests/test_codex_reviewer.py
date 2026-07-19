@@ -299,6 +299,45 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.assertIn("the patch", self.container.input_text)
         self.assertIn("Review the following PR.", self.container.input_text)
 
+    # verbatim from a production codex run
+    _REAL_EVENTS = (
+        '{"type":"thread.started","thread_id":"019f76bf-fbae-7c91-a0a2-c7691bcfa16b"}\n'
+        '{"type":"turn.started"}\n'
+        '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\\"route\\":\\"engage\\",\\"message\\":\\"\\",\\"reason\\":\\"The author pushed substantial force-pushed revisions after our May 3 review and stated that the previously identified issues were addressed; a fresh full review is warranted.\\",\\"prompt_injection\\":false,\\"requested_models\\":[],\\"requested_effort\\":null,\\"label_changes\\":[]}"}}\n'
+        '{"type":"turn.completed","usage":{"input_tokens":99767,"cached_input_tokens":0,"output_tokens":186,"reasoning_output_tokens":113}}\n'
+    )
+    _REAL_STDERR = (
+        "2026-07-18T19:42:29.206563Z ERROR rmcp::transport::worker: worker "
+        "quit with fatal: Transport channel closed, when "
+        "Client(HttpRequest(HttpRequest(\"http/request failed: error sending "
+        "request for url (https://host/backend-api/ps/mcp)\")))\n"
+    )
+
+    def test_debug_dump_matches_api_backend_format(self) -> None:
+        """One request/response JSONL per run, like openai:/anthropic:, not
+        loose prompt/events/stderr files."""
+        debug_dir = tempfile.mkdtemp(prefix="codex-dbg-")
+        ctx = _ctx()
+        self._run(reviewer=self._reviewer(debug_dir=debug_dir),
+                  jsonl=self._REAL_EVENTS, stderr=self._REAL_STDERR, ctx=ctx)
+        (path,) = Path(debug_dir).iterdir()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual({"request", "response", "wrapper_request"},
+                         set(payload))
+        response = payload["response"]
+        self.assertEqual(response["id"], path.name.removesuffix(".jsonl"))
+        self.assertRegex(response["id"], r"^codex-\d{8}-\d{6}-reviewer$")
+        self.assertEqual(
+            [json.loads(line) for line in self._REAL_EVENTS.splitlines()],
+            response["events"])
+        self.assertEqual(self._REAL_STDERR, response["stderr"])
+        self.assertEqual(0, response["returncode"])
+        self.assertEqual(99767, response["usage"]["input_tokens"])
+        self.assertEqual(self.container.input_text,
+                         payload["request"]["input"])
+        self.assertEqual(self.container.cmd, payload["request"]["cmd"])
+        self.assertEqual(ctx.request, payload["wrapper_request"])
+
     def test_container_gets_auth_and_bridge_files(self) -> None:
         self._run()
         for name in ("auth.json", "codex_bridge.py", "shell_bridge_client.py",

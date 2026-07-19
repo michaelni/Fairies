@@ -226,12 +226,6 @@ class PreparedPR:
     force_engage: bool = False
 
 
-@dataclass(frozen=True)
-class ReviewedPR:
-    prepared: PreparedItem
-    decision: Decision
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -3051,9 +3045,9 @@ def start_review_pipeline(
     cache: gcli_cache.Cache,
     state: bot_state.State,
     discussion_cache_max_age: timedelta,
-) -> tuple[SimpleQueue[ReviewedPR], SimpleQueue[PreparedPR | object]]:
+) -> tuple[SimpleQueue[tuple[PreparedItem, Decision]], SimpleQueue[PreparedPR | object]]:
     llm_queue: SimpleQueue[PreparedPR | object] = SimpleQueue()
-    reviewed_queue: SimpleQueue[ReviewedPR | object] = SimpleQueue()
+    reviewed_queue: SimpleQueue[tuple[PreparedItem, Decision]] = SimpleQueue()
 
     def prepare_worker() -> None:
         queued = 0
@@ -3069,7 +3063,7 @@ def start_review_pipeline(
                         f"candidate not evaluated; --limit {args.limit} reached",
                         first_dt(pr, "updated_at", "created_at"),
                     )
-                    reviewed_queue.put(ReviewedPR(prepared=decision, decision=decision))
+                    reviewed_queue.put((decision, decision))
                     continue
                 prepared = safe_prepare_pr(
                     args,
@@ -3082,7 +3076,7 @@ def start_review_pipeline(
                     discussion_cache_max_age=discussion_cache_max_age,
                 )
                 if isinstance(prepared, Decision):
-                    reviewed_queue.put(ReviewedPR(prepared=prepared, decision=prepared))
+                    reviewed_queue.put((prepared, prepared))
                 else:
                     queued += 1
                     llm_queue.put(prepared)
@@ -3102,14 +3096,10 @@ def start_review_pipeline(
                 return
             if not isinstance(prepared, PreparedPR):
                 raise RuntimeError(f"unexpected LLM queue item type: {type(prepared)!r}")
-            reviewed_queue.put(
-                ReviewedPR(
-                    prepared=prepared,
-                    decision=safe_apply_llm_review_to_prepared(
-                        args, prepared, state=state,
-                    ),
-                )
-            )
+            reviewed_queue.put((
+                prepared,
+                safe_apply_llm_review_to_prepared(args, prepared, state=state),
+            ))
 
     llm_parallelism = max(1, int(getattr(args, "llm_parallelism", 1) or 1))
     logger.debug("starting review pipeline llm_parallelism=%d", llm_parallelism)
@@ -3211,7 +3201,7 @@ def main() -> int:
         discussion_cache_max_age=discussion_cache_max_age,
     )
 
-    ready_reviewed: deque[ReviewedPR] = deque()
+    ready_reviewed: deque[tuple[PreparedItem, Decision]] = deque()
     pending_reviewed = len(prs)
 
     try:
@@ -3228,10 +3218,8 @@ def main() -> int:
                     break
                 ready_reviewed.append(reviewed)
 
-            reviewed = ready_reviewed.popleft()
+            prepared, d = ready_reviewed.popleft()
             pending_reviewed -= 1
-            prepared = reviewed.prepared
-            d = reviewed.decision
 
             age = describe_age(now, d.last_activity)
             prefix = f"PR #{d.pr_number}" if d.pr_number >= 0 else "PR<?>"
@@ -3298,7 +3286,7 @@ def main() -> int:
                         # eventually blocks forever on ``reviewed_queue.get()``
                         # once ``ready_reviewed`` finally empties.
                         pending_reviewed += 1
-                        ready_reviewed.append(reviewed)
+                        ready_reviewed.append((prepared, d))
                         continue
                     if choice == "quit":
                         stopped_by_user = True

@@ -75,13 +75,13 @@ class PipelineLimitTests(unittest.TestCase):
 
     def test_limit_zero_evaluates_every_pr(self) -> None:
         results = self._run(make_args(llm_parallelism=2, limit=0), [1, 2, 3, 4])
-        self.assertEqual(sorted(r.decision.pr_number for r in results), [1, 2, 3, 4])
-        self.assertTrue(all(r.decision.llm_classification == "reply" for r in results))
+        self.assertEqual(sorted(d.pr_number for _, d in results), [1, 2, 3, 4])
+        self.assertTrue(all(d.llm_classification == "reply" for _, d in results))
 
     def test_limit_caps_llm_evaluations(self) -> None:
         results = self._run(make_args(llm_parallelism=2, limit=2), [1, 2, 3, 4, 5])
-        evaluated = [r for r in results if r.decision.llm_classification == "reply"]
-        skipped = [r for r in results if "--limit" in r.decision.reason]
+        evaluated = [d for _, d in results if d.llm_classification == "reply"]
+        skipped = [d for _, d in results if "--limit" in d.reason]
         self.assertEqual(len(evaluated), 2)
         self.assertEqual(len(skipped), 3)
 

@@ -127,15 +127,18 @@ as well as senior developers to make the final decision to merge, wait or reject
 
 """
 
+CR_PROMPT_CLAIM_VERIFICATION = """- Do not report a bug based only on a quick mental calculation.
+- When arithmetic, bounds, integer behavior, bit operations, indexing, or similar details are material to a claim, verify them with inspected code, specifications, or the python tool as appropriate.
+- Do not present stylistic preferences or unsupported speculation as issues.
+- Do not state non-local assumptions as fact. Claims about earlier validation, reachability, helper guarantees, or project-wide invariants must be verified from inspected code or tools. Otherwise state them explicitly as unverified and conditional, and do not present them as blocking facts.
+"""
+
 R_PROMPT_REVIEWER_ROLE = """##In your Code Reviewer role
 - review / check each commit.
 - ignore harmless style nits unless they materially affect maintainability or correctness.
 - include all verified issues in the message, even moderate and minor, and also include any material conditional concerns.
 - For each conditional concern that you include, explicitly state the unverified assumption it depends on. Do not present it as confirmed or blocking by itself.
-- Do not report a bug based only on a quick mental calculation.
-- When arithmetic, bounds, integer behavior, bit operations, indexing, or similar details are material to a claim, verify them with inspected code, specifications, or the python tool as appropriate.
-- Do not present stylistic preferences or unsupported speculation as issues.
-- Do not state non-local assumptions as fact. Claims about earlier validation, reachability, helper guarantees, or project-wide invariants must be verified from inspected code or tools. Otherwise state them explicitly as unverified and conditional, and do not present them as blocking facts.
+""" + CR_PROMPT_CLAIM_VERIFICATION + """\
 - Suggest to add tests when they are missing and the tests benefits clearly outweigh the amount of additional work. But don't be too pushy, a test can be written by an assistant later, but a test sample cannot be invented by one easily.
 - Provide enough details so the author can understand the problems and improve the PR, and so the decision maker can confirm the issues you describe and understands their impact.
 - Do not repeat a point already made by the current reviewer identity unless you add materially new evidence, clarification,  a concrete fix, or a reminder is necessary
@@ -732,6 +735,7 @@ each produced by a different model; produce one combined review.
   makes each point once.
 - Do not introduce a new issue that no draft raised, unless verifying a
   draft's point exposes a clearly-confirmed adjacent correctness problem.
+{CR_PROMPT_CLAIM_VERIFICATION}\
 - If the drafts disagree, decide from the evidence and state briefly why when
   it matters. You can include both sides of a disagreement if you like.
 - Classify the {subject} with the same classes and rules as a normal

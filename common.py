@@ -237,6 +237,7 @@ def setup_logging(
     verbose: bool,
     *extra_loggers: logging.Logger,
     color: str = "auto",
+    handlers: list[logging.Handler] | None = None,
 ) -> None:
     """Configure given loggers to print DEBUG/INFO/WARNING with timestamps.
 
@@ -261,6 +262,22 @@ def setup_logging(
     handler.
     """
     level = logging.DEBUG if verbose else logging.INFO
+
+    if handlers is not None:
+        # ``handlers`` replaces the stderr stream handlers entirely.
+        thread_prefix_filter = _ThreadPrefixFilter()
+        seen: set[int] = set()
+        for target in (logger, *extra_loggers, logging.getLogger(__name__)):
+            if id(target) in seen:
+                continue
+            seen.add(id(target))
+            target.setLevel(level)
+            target.handlers.clear()
+            target.propagate = False
+            for handler in handlers:
+                handler.addFilter(thread_prefix_filter)
+                target.addHandler(handler)
+        return
 
     # ``auto`` (default) keeps color tied to a real TTY and respects the
     # de-facto NO_COLOR convention so CI logs and redirected runs stay

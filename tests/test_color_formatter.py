@@ -163,5 +163,23 @@ class AddColorArgTests(unittest.TestCase):
             p.parse_args(["--color", "rainbow"])
 
 
+class CustomHandlersTests(unittest.TestCase):
+    def test_custom_handlers_replace_stream_handlers(self) -> None:
+        records: list[logging.LogRecord] = []
+
+        class Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        lg = logging.getLogger("test_setup_logging_custom_handlers")
+        handler = Capture()
+        common.setup_logging(lg, True, handlers=[handler])
+        self.assertEqual(lg.handlers, [handler])
+        self.assertFalse(lg.propagate)
+        self.assertEqual(lg.level, logging.DEBUG)
+        lg.info("hello")
+        self.assertEqual(records[0].thread_prefix, "M ")
+
+
 if __name__ == "__main__":
     unittest.main()

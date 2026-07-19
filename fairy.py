@@ -235,6 +235,7 @@ ActivityPredicate: TypeAlias = Callable[[ApiObject], bool]
 PreparedItem: TypeAlias = Decision | PreparedPR
 
 _LLM_REVIEW_DONE = object()
+_PREPARE_DONE = object()
 
 
 def parse_pr_number_csv(value: str) -> list[int]:
@@ -3061,6 +3062,18 @@ class ReviewUI(Protocol):
     issue_fairy.PreparedIssue) or a terminal ``Decision`` for gate skips.
     """
 
+    def candidates(self, items: list[ApiObject]) -> None:
+        """Full fetched candidate list, before the pipeline starts."""
+
+    def pipeline(
+        self,
+        input_queue: SimpleQueue,
+        llm_queue: SimpleQueue,
+        pending: PendingCount,
+        cancelled: set[int],
+    ) -> None:
+        """Handles for runtime force-add (put + pending.add) and cancel."""
+
     def decide(self, prepared: object, decision: Decision, url: str) -> str:
         """Return "apply", "skip", "defer", "retry" or "quit"."""
 
@@ -3085,6 +3098,7 @@ def consume_reviewed(
     kind: str,  # "PR" | "issue"; log-line and prompt wording only
     apply: Callable[[object, Decision], None],
     item_url: Callable[[object], str],
+    cancelled: set[int] | None = None,
     ui: ReviewUI | None = None,
 ) -> tuple[list[Decision], bool]:
     """Drain ``reviewed_queue`` of (prepared, decision) tuples, prompting
@@ -3126,6 +3140,11 @@ def consume_reviewed(
             needs_interaction = (
                 d.action in ACTIONABLE_DECISIONS or decision_has_label_changes(d)
             )
+            if needs_interaction and cancelled and d.pr_number in cancelled:
+                # Thrown out by the operator while waiting here (deferred /
+                # not yet prompted): record it like an answered "skip".
+                logger.info("%s #%s: cancelled by operator", kind, d.pr_number)
+                needs_interaction = False
             # In manual mode the summary line, the LLM note, the label lines
             # and the prompt are one actionable block. Frame it with a blank
             # line before and after -- emitted on stderr, the same stream the
@@ -3204,7 +3223,7 @@ def consume_reviewed(
 
 def start_review_pipeline(
     args: argparse.Namespace,
-    prs: list[ApiObject],
+    input_queue: SimpleQueue,
     *,
     now: datetime,
     self_login: str | None,
@@ -3212,14 +3231,18 @@ def start_review_pipeline(
     cache: gcli_cache.Cache,
     state: bot_state.State,
     discussion_cache_max_age: timedelta,
+    cancelled: set[int] | None = None,
 ) -> tuple[SimpleQueue[tuple[PreparedItem, Decision]], SimpleQueue[PreparedPR | object]]:
+    """``input_queue`` feeds PR ApiObjects to the prepare worker until
+    ``_PREPARE_DONE``; a UI may keep injecting force-added PRs after
+    start. ``cancelled`` numbers skip their queued LLM evaluation."""
     llm_queue: SimpleQueue[PreparedPR | object] = SimpleQueue()
     reviewed_queue: SimpleQueue[tuple[PreparedItem, Decision]] = SimpleQueue()
 
     def prepare_worker() -> None:
         queued = 0
         try:
-            for pr in prs:
+            while (pr := input_queue.get()) is not _PREPARE_DONE:
                 if args.limit and queued >= args.limit:
                     decision = Decision(
                         pr.get("number", 0),
@@ -3263,6 +3286,17 @@ def start_review_pipeline(
                 return
             if not isinstance(prepared, PreparedPR):
                 raise RuntimeError(f"unexpected LLM queue item type: {type(prepared)!r}")
+            if cancelled and prepared.number in cancelled:
+                logger.info(
+                    "PR #%s: skipping queued LLM evaluation: cancelled by operator",
+                    prepared.number,
+                )
+                reviewed_queue.put((prepared, Decision(
+                    prepared.number, prepared.title, prepared.author,
+                    prepared.auto_merge, "skip", "cancelled by operator",
+                    prepared.last_activity,
+                )))
+                continue
             reviewed_queue.put((
                 prepared,
                 safe_apply_llm_review_to_prepared(args, prepared, state=state),
@@ -3349,20 +3383,33 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
 
     submitted_counts = {action: 0 for action in ACTIONABLE_DECISIONS}
 
+    if ui is not None:
+        ui.candidates(prs)
+    input_queue: SimpleQueue = SimpleQueue()
+    for pr in prs:
+        input_queue.put(pr)
+    if ui is None:
+        input_queue.put(_PREPARE_DONE)
+    cancelled: set[int] | None = set() if ui is not None else None
+    pending = PendingCount(len(prs))
+
     reviewed_queue, llm_queue = start_review_pipeline(
         args,
-        prs,
+        input_queue,
         now=now,
         self_login=self_login,
         wip_re=wip_re,
         cache=cache,
         state=state,
         discussion_cache_max_age=discussion_cache_max_age,
+        cancelled=cancelled,
     )
+    if ui is not None:
+        ui.pipeline(input_queue, llm_queue, pending, cancelled)
 
     try:
         decisions, stopped_by_user = consume_reviewed(
-            reviewed_queue, llm_queue, PendingCount(len(prs)),
+            reviewed_queue, llm_queue, pending,
             now=now,
             manual=args.manual,
             approve=args.approve,
@@ -3372,9 +3419,12 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
             ),
             item_url=lambda prepared: url
             if isinstance(url := prepared.pr.get("html_url"), str) else "",
+            cancelled=cancelled,
             ui=ui,
         )
     finally:
+        if ui is not None:
+            input_queue.put(_PREPARE_DONE)
         for _ in range(max(1, int(getattr(args, "llm_parallelism", 1) or 1))):
             llm_queue.put(_LLM_REVIEW_DONE)
         try:

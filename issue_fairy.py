@@ -99,6 +99,7 @@ from fairy import (
     parse_pr_number_csv,
     post_label_explanations,
     writeback_llm_skip_backoff,
+    _PREPARE_DONE,
 )
 
 __all__ = ["main"]
@@ -620,26 +621,30 @@ _LLM_DONE = object()
 
 def start_issue_pipeline(
     args: argparse.Namespace,
-    issues: list[ApiObject],
+    input_queue: SimpleQueue,
     *,
     now: datetime,
     self_login: str | None,
     cache: gcli_cache.Cache,
     state: bot_state.State,
     discussion_cache_max_age: timedelta,
+    cancelled: set[int] | None = None,
 ) -> tuple[
     SimpleQueue[tuple[PreparedIssue | Decision, Decision]],
     SimpleQueue[PreparedIssue | object],
 ]:
     """One prepare thread feeds ``--llm-parallelism`` LLM workers; every
-    issue yields exactly one ``(prepared, decision)`` on the reviewed
-    queue. ``--limit`` caps how many candidates reach the LLM."""
+    issue ApiObject on ``input_queue`` (until ``_PREPARE_DONE``; a UI may
+    keep injecting force-added issues) yields exactly one
+    ``(prepared, decision)`` on the reviewed queue. ``--limit`` caps how
+    many candidates reach the LLM; ``cancelled`` numbers skip their
+    queued LLM evaluation."""
     llm_queue: SimpleQueue[PreparedIssue | object] = SimpleQueue()
     reviewed_queue: SimpleQueue[tuple[PreparedIssue | Decision, Decision]] = SimpleQueue()
 
     def prepare_worker() -> None:
         queued = 0
-        for issue in issues:
+        while (issue := input_queue.get()) is not _PREPARE_DONE:
             try:
                 prepared = prepare_issue(
                     args, issue,
@@ -676,6 +681,16 @@ def start_issue_pipeline(
                 return
             if not isinstance(prepared, PreparedIssue):
                 raise RuntimeError(f"unexpected LLM queue item type: {type(prepared)!r}")
+            if cancelled and prepared.number in cancelled:
+                logger.info(
+                    "issue #%s: skipping queued LLM evaluation: cancelled by operator",
+                    prepared.number,
+                )
+                reviewed_queue.put((prepared, Decision(
+                    prepared.number, prepared.title, prepared.author, "-",
+                    "skip", "cancelled by operator", prepared.last_activity,
+                )))
+                continue
             d = evaluate_issue(args, prepared)
             writeback_llm_skip_backoff(
                 state, args.owner, args.repo, d.pr_number,
@@ -721,17 +736,30 @@ def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> i
 
     submitted_counts = {"comment": 0}
 
+    if ui is not None:
+        ui.candidates(issues)
+    input_queue: SimpleQueue = SimpleQueue()
+    for issue in issues:
+        input_queue.put(issue)
+    if ui is None:
+        input_queue.put(_PREPARE_DONE)
+    cancelled: set[int] | None = set() if ui is not None else None
+    pending = PendingCount(len(issues))
+
     reviewed_queue, llm_queue = start_issue_pipeline(
-        args, issues,
+        args, input_queue,
         now=now,
         self_login=self_login,
         cache=cache,
         state=state,
         discussion_cache_max_age=discussion_cache_max_age,
+        cancelled=cancelled,
     )
+    if ui is not None:
+        ui.pipeline(input_queue, llm_queue, pending, cancelled)
     try:
         decisions, stopped_by_user = consume_reviewed(
-            reviewed_queue, llm_queue, PendingCount(len(issues)),
+            reviewed_queue, llm_queue, pending,
             now=now,
             manual=args.manual,
             approve=args.approve,
@@ -741,9 +769,12 @@ def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> i
             ),
             item_url=lambda prepared: url
             if isinstance(url := prepared.issue.get("html_url"), str) else "",
+            cancelled=cancelled,
             ui=ui,
         )
     finally:
+        if ui is not None:
+            input_queue.put(_PREPARE_DONE)
         for _ in range(max(1, args.llm_parallelism)):
             llm_queue.put(_LLM_DONE)
         try:

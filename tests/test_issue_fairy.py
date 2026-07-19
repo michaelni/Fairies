@@ -11,6 +11,7 @@ import subprocess
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
+from queue import SimpleQueue
 from unittest import mock
 from pathlib import Path
 
@@ -354,9 +355,7 @@ class PipelineTests(unittest.TestCase):
     """start_issue_pipeline yields exactly one (prepared, decision) per
     issue; candidates beyond --limit are skipped without an LLM call."""
 
-    def _run(self, args: argparse.Namespace, numbers: list[int]) -> list:
-        issues = [{"number": n} for n in numbers]
-
+    def _patched(self):
         def fake_prepare(a, issue, **kw):
             return issue_fairy.PreparedIssue(
                 issue=issue, number=issue["number"], title="t", author="a",
@@ -368,19 +367,60 @@ class PipelineTests(unittest.TestCase):
             return Decision(p.number, p.title, p.author, "-", "comment",
                             "llm", None, "reply", "m")
 
-        with mock.patch.object(issue_fairy, "prepare_issue", side_effect=fake_prepare), \
-             mock.patch.object(issue_fairy, "evaluate_issue", side_effect=fake_evaluate), \
-             mock.patch.object(issue_fairy, "writeback_llm_skip_backoff"):
-            reviewed_queue, llm_queue = issue_fairy.start_issue_pipeline(
-                args, issues,
-                now=datetime.now(timezone.utc), self_login="fairy",
-                cache=mock.Mock(), state=bot_state.State(),
-                discussion_cache_max_age=timedelta(hours=1),
-            )
-            results = [reviewed_queue.get(timeout=10) for _ in issues]
+        return (
+            mock.patch.object(issue_fairy, "prepare_issue", side_effect=fake_prepare),
+            mock.patch.object(issue_fairy, "evaluate_issue", side_effect=fake_evaluate),
+            mock.patch.object(issue_fairy, "writeback_llm_skip_backoff"),
+        )
+
+    def _start(self, args: argparse.Namespace, numbers: list[int],
+               cancelled: set[int] | None = None):
+        input_queue: SimpleQueue = SimpleQueue()
+        for n in numbers:
+            input_queue.put({"number": n})
+        return input_queue, issue_fairy.start_issue_pipeline(
+            args, input_queue,
+            now=datetime.now(timezone.utc), self_login="fairy",
+            cache=mock.Mock(), state=bot_state.State(),
+            discussion_cache_max_age=timedelta(hours=1),
+            cancelled=cancelled,
+        )
+
+    def _run(self, args: argparse.Namespace, numbers: list[int]) -> list:
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
+            input_queue, (reviewed_queue, llm_queue) = self._start(args, numbers)
+            input_queue.put(issue_fairy._PREPARE_DONE)
+            results = [reviewed_queue.get(timeout=10) for _ in numbers]
             for _ in range(max(1, args.llm_parallelism)):
                 llm_queue.put(issue_fairy._LLM_DONE)
         return results
+
+    def test_candidate_injected_after_start_is_prepared(self) -> None:
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
+            input_queue, (reviewed_queue, llm_queue) = self._start(
+                make_args(llm_parallelism=1, limit=0), [1])
+            self.assertEqual(reviewed_queue.get(timeout=10)[1].pr_number, 1)
+            # Force-add while the pipeline is already running (TUI "f" key).
+            input_queue.put({"number": 2})
+            input_queue.put(issue_fairy._PREPARE_DONE)
+            self.assertEqual(reviewed_queue.get(timeout=10)[1].pr_number, 2)
+            llm_queue.put(issue_fairy._LLM_DONE)
+
+    def test_cancelled_number_skips_llm_call(self) -> None:
+        p1, p2, p3 = self._patched()
+        with p1, p2 as evaluate_mock, p3:
+            input_queue, (reviewed_queue, llm_queue) = self._start(
+                make_args(llm_parallelism=1, limit=0), [1, 2], cancelled={2})
+            input_queue.put(issue_fairy._PREPARE_DONE)
+            results = [reviewed_queue.get(timeout=10) for _ in range(2)]
+            llm_queue.put(issue_fairy._LLM_DONE)
+        by_number = {d.pr_number: d for _, d in results}
+        self.assertEqual(by_number[2].reason, "cancelled by operator")
+        self.assertEqual(by_number[2].action, "skip")
+        self.assertEqual(
+            [c.args[1].number for c in evaluate_mock.call_args_list], [1])
 
     def test_parallel_workers_evaluate_every_issue(self) -> None:
         results = self._run(make_args(llm_parallelism=3, limit=0), [1, 2, 3, 4, 5])

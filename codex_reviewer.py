@@ -210,19 +210,19 @@ def build_codex_exec_command(
         "--cd", scratch_dir,
         "--skip-git-repo-check",
         "--ignore-user-config",
-        "--sandbox", "read-only",
+        # With the local exec tools removed below, codex has no way to run
+        # anything on this host, so the sandbox mode grants it nothing here.
+        # Under read-only, terra reviewed by reading and never built/tested;
+        # under danger-full-access it builds and runs tests via the MCP
+        # shell in the review container.
+        "--sandbox", "danger-full-access",
         "--model", model,
-        # No model-chosen execution on this machine: the local shell tool
-        # is removed from the tool list outright (see module docstring).
+        # Remove codex's native exec tools so its only shell is the MCP one
+        # (into the review container). Its native shell would run in this
+        # empty codex container instead.
         "-c", "features.shell_tool=false",
-        # unified_exec is a separately-flagged exec path; pin it off too so
-        # a codex that wires it independently of shell_tool still can't exec.
         "-c", "features.unified_exec=false",
-        # Web search mode from the wrapper's --web-search flag (see
-        # resolve_web_search): disabled / cached / live. Runs backend-side,
-        # no container egress.
         "-c", f'web_search="{web_search}"',
-        # Turn off codex's analytics/metrics ping (an egress we don't want).
         "-c", "analytics.enabled=false",
     ]
     if catalog_override_path:

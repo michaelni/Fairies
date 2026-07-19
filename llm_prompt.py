@@ -267,6 +267,7 @@ Additional Moderate issues:
 * Security fixes should credit the researcher finding them.
 * Public API should be documented.
 * Major inconsistencies between commit message, documentation and implementation.
+* Commits should not span ABI boundaries, that is feature added to a library and its use outside the library should be seperate commits
 
 Additional Major issues:
 * Out of array access.

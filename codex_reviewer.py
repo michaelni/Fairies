@@ -100,17 +100,17 @@ def resolve_web_search(mode: str) -> str:
     """
     return "disabled" if mode == "off" else mode
 
-# codex-side per-MCP-tool-call watchdog. The real per-command cap is
-# enforced wrapper-side (exec_shell_call clamps timeout_seconds to
-# --podman-exec-timeout) and a first call may additionally pay for a lazy
-# container open (podman/ssh bounded); this only needs to never be the
-# binding constraint, so: one day.
+# Deliberately far above the real per-command cap, which is enforced
+# wrapper-side (exec_shell_call clamps to --podman-exec-timeout).
 MCP_TOOL_TIMEOUT_S = 86_400
+
+# Read-back caps for the untrusted codex container: an oversized file
+# arrives truncated, so its JSON parse fails closed.
+MAX_LAST_MESSAGE_BYTES = 8 * 1024 * 1024
+MAX_AUTH_BYTES = 256 * 1024
 
 _REPO_DIR = Path(__file__).resolve().parent
 _BRIDGE_PATH = str(_REPO_DIR / "codex_bridge.py")
-# The two stdlib-only files the codex container needs for the MCP shell
-# bridge (podman cp'd in per run), plus the relay it serves.
 _BRIDGE_CLIENT_PATH = _REPO_DIR / "shell_bridge_client.py"
 _RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
 
@@ -535,7 +535,8 @@ class CodexReviewer(Reviewer):
             # Treat the last-message file, not the exit code, as the
             # success signal: codex has exited 0 with no output.
             last_message = (container.read_file(
-                f"{CONTAINER_RUN_DIR}/last_message.json") or "").strip()
+                f"{CONTAINER_RUN_DIR}/last_message.json",
+                max_bytes=MAX_LAST_MESSAGE_BYTES) or "").strip()
             if not last_message:
                 raise RuntimeError(
                     f"{self.name}: codex exec produced no final message "
@@ -583,7 +584,7 @@ class CodexReviewer(Reviewer):
         """
         try:
             refreshed = container.read_file(
-                f"{CONTAINER_CODEX_HOME}/auth.json")
+                f"{CONTAINER_CODEX_HOME}/auth.json", max_bytes=MAX_AUTH_BYTES)
         except Exception:
             logger.warning("codex: could not read back auth.json for refresh "
                            "persistence", exc_info=True)
@@ -591,9 +592,13 @@ class CodexReviewer(Reviewer):
         if not refreshed:
             return
         try:
-            json.loads(refreshed)
-        except json.JSONDecodeError:
+            parsed = json.loads(refreshed)
+        except ValueError:
             logger.warning("codex: refreshed auth.json is not valid JSON; "
+                           "not persisting")
+            return
+        if not isinstance(parsed, dict):
+            logger.warning("codex: refreshed auth.json is not a JSON object; "
                            "not persisting")
             return
         current = auth_local.read_text(encoding="utf-8") \

@@ -47,6 +47,15 @@ class ExecArgvTests(unittest.TestCase):
         self.assertEqual(
             "podman exec abc123 cat /work/.codex-run/out.json", argv[-1])
 
+    def test_read_file_max_bytes_uses_head(self) -> None:
+        c = self._container()
+        with mock.patch.object(codex_container.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout="{}")
+            c.read_file("/work/.codex-run/last_message.json", max_bytes=1024)
+        self.assertEqual(
+            "podman exec abc123 head -c 1024 /work/.codex-run/last_message.json",
+            run.call_args.args[0][-1])
+
     def test_exec_before_start_is_error(self) -> None:
         c = CodexContainer(image="img", host=HOST)
         with self.assertRaises(RuntimeError):
@@ -95,6 +104,12 @@ class RelayReadinessTests(unittest.TestCase):
             b"Warning: Permanently added 'box' to known hosts.\n"
             b"RELAY-READY\n")
         self.assertIsNotNone(relay._thread)  # dispatch started -> ready seen
+
+    def test_ready_scan_buffer_is_capped(self) -> None:
+        noise = (b"x" * 20000 + b"\n") * 10
+        relay, proc = self._start_with_stderr(noise + b"RELAY-READY\n")
+        self.assertIsNotNone(relay._thread)  # marker still seen
+        self.assertLessEqual(sum(map(len, relay._ready_lines)), 2 * 65536)
 
     def test_dead_relay_raises_not_hangs(self) -> None:
         relay = self._relay()

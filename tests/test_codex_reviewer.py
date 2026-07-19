@@ -59,6 +59,7 @@ class _FakeCodexContainer:
         self.input_text = None
         self.env = None
         self.stopped = False
+        self.read_file_calls = []  # (path, kwargs) per read_file
 
     def start(self):
         return self
@@ -79,6 +80,7 @@ class _FakeCodexContainer:
         return self._run_result
 
     def read_file(self, path, **kw):
+        self.read_file_calls.append((path, kw))
         if path.endswith("auth.json"):
             if self._refreshed_auth is not None:
                 return self._refreshed_auth
@@ -365,6 +367,20 @@ class CodexReviewerRunTests(unittest.TestCase):
         # refreshed_auth defaults to the copied auth (identical) -> no write.
         self._run(reviewer=self._reviewer(codex_home=home))
         self.assertEqual(before, auth_path.read_text(encoding="utf-8"))
+
+    def test_non_object_refreshed_auth_not_persisted(self) -> None:
+        home = _codex_home_with_auth()
+        before = Path(home, "auth.json").read_text(encoding="utf-8")
+        for planted in ('["not", "auth"]', '"a-string"', "not json at all"):
+            self._run(reviewer=self._reviewer(codex_home=home),
+                      refreshed_auth=planted)
+            self.assertEqual(
+                before, Path(home, "auth.json").read_text(encoding="utf-8"))
+
+    def test_container_read_backs_are_size_capped(self) -> None:
+        self._run()
+        for path, kw in self.container.read_file_calls:
+            self.assertIsNotNone(kw.get("max_bytes"), path)
 
     def test_crash_poisons_review_containers(self) -> None:
         s1 = mock.Mock(spec=podman_host.ContainerShellSession)

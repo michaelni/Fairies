@@ -137,11 +137,22 @@ class CodexContainer:
             self.put_file(local, dest_dir, timeout_s=timeout_s)
 
     def read_file(self, container_path: str,
-                  *, timeout_s: float = 60.0) -> str | None:
-        """``cat`` a file out of the container; ``None`` if it is absent."""
+                  *, timeout_s: float = 60.0,
+                  max_bytes: int | None = None) -> str | None:
+        """``cat`` a file out of the container; ``None`` if it is absent.
+
+        The container's filesystem is untrusted, so callers reading a
+        file whose content feeds a parser should pass ``max_bytes``: the
+        read is then ``head -c`` capped, and an oversized file comes back
+        silently truncated (its consumer's parse fails closed) instead of
+        streaming unbounded data into host memory. Bytes that are not
+        valid UTF-8 are replaced rather than raising.
+        """
+        argv = ["cat", container_path] if max_bytes is None \
+            else ["head", "-c", str(max_bytes), container_path]
         cp = subprocess.run(
-            self.exec_argv(["cat", container_path]),
-            capture_output=True, text=True, timeout=timeout_s,
+            self.exec_argv(argv),
+            capture_output=True, text=True, errors="replace", timeout=timeout_s,
         )
         return cp.stdout if cp.returncode == 0 else None
 
@@ -153,10 +164,15 @@ class CodexContainer:
         env: dict[str, str] | None = None,
         timeout_s: float | None = None,
     ) -> subprocess.CompletedProcess:
-        """Exec ``argv`` in the container with ``input_text`` on stdin."""
+        """Exec ``argv`` in the container with ``input_text`` on stdin.
+
+        Output decoding replaces invalid UTF-8: the container is
+        untrusted, and a strict decode would turn hostile bytes on
+        stdout/stderr into a raised UnicodeDecodeError.
+        """
         return subprocess.run(
             self.exec_argv(argv, interactive=True, env=env),
-            input=input_text, capture_output=True, text=True,
+            input=input_text, capture_output=True, text=True, errors="replace",
             timeout=timeout_s,
         )
 
@@ -232,20 +248,21 @@ class CodexShellRelay:
         return self
 
     def _drain_stderr(self) -> None:
-        # Scan stderr line by line for RELAY-READY -- ssh/podman may emit
-        # warnings before it, so the first line is not necessarily the
-        # marker -- then keep draining so the pipe never fills and blocks
-        # the relay. EOF unblocks start() with no marker seen (relay died).
+        buffered = 0
         saw_ready = False
-        for raw in iter(self._proc.stderr.readline, b""):
+        for raw in iter(lambda: self._proc.stderr.readline(65536), b""):
             if saw_ready:
                 logger.debug("codex relay stderr: %s",
                              raw.decode(errors="replace").rstrip())
                 continue
-            self._ready_lines.append(raw)
             if b"RELAY-READY" in raw:
                 saw_ready = True
+                self._ready_lines.append(raw)
                 self._ready.set()
+                continue
+            if buffered < 65536:
+                self._ready_lines.append(raw)
+                buffered += len(raw)
         self._ready.set()
 
     def opened_sessions(self) -> list[ContainerShellSession]:

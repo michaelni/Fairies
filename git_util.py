@@ -96,6 +96,19 @@ def git_merge_base(repo_root: Path, sha_a: str, sha_b: str) -> str:
     return cp.stdout.strip()
 
 
+def git_merge_tree(repo_root: Path, sha_a: str, sha_b: str) -> str | None:
+    """Tree OID of merging ``sha_a`` and ``sha_b`` without a worktree
+    (``git merge-tree --write-tree``); None when the merge conflicts or
+    merge-tree is unavailable (git < 2.38)."""
+    cp = subprocess.run(
+        ["git", "-C", str(repo_root), "merge-tree", "--write-tree", sha_a, sha_b],
+        check=False, text=True, capture_output=True,
+    )
+    if cp.returncode != 0 or not cp.stdout.strip():
+        return None
+    return cp.stdout.splitlines()[0].strip()
+
+
 def git_format_patch_series(
     repo_root: Path, base_sha: str, head_sha: str,
 ) -> bytes:

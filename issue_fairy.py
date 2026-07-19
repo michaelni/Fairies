@@ -692,13 +692,9 @@ def start_issue_pipeline(
     return reviewed_queue, llm_queue
 
 
-def main() -> int:
-    args = parse_args()
-    setup_logging(
-        logger, args.verbose,
-        forge_gcli.logger, gcli_cache.logger, bot_state.logger,
-        color=args.color,
-    )
+def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> int:
+    """Issue-side twin of fairy.run_reviews: everything main() does after
+    logging setup, runnable on an embedding UI's controller thread."""
     if args.forced_only and not args.force_review_issues:
         logger.error("--forced-only requires at least one --force-review-issue")
         return 2
@@ -745,6 +741,7 @@ def main() -> int:
             ),
             item_url=lambda prepared: url
             if isinstance(url := prepared.issue.get("html_url"), str) else "",
+            ui=ui,
         )
     finally:
         for _ in range(max(1, args.llm_parallelism)):
@@ -771,6 +768,16 @@ def main() -> int:
     if actionable_total and not args.approve and not args.manual:
         logger.info("Dry-run only. Re-run with --approve to submit actions.")
     return 130 if stopped_by_user else 0
+
+
+def main() -> int:
+    args = parse_args()
+    setup_logging(
+        logger, args.verbose,
+        forge_gcli.logger, gcli_cache.logger, bot_state.logger,
+        color=args.color,
+    )
+    return run_reviews(args)
 
 
 if __name__ == "__main__":

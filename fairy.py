@@ -3297,13 +3297,10 @@ def warn_simulate_past_limitations(ignore_after: datetime) -> None:
     )
 
 
-def main() -> int:
-    args = parse_args()
-    setup_logging(
-        logger, args.verbose,
-        forge_gcli.logger, gcli_cache.logger, bot_state.logger, ci_log.logger,
-        color=args.color,
-    )
+def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
+    """Fetch candidates, run the review pipeline and drain it. Everything
+    main() does after logging setup, so an embedding UI can run the PR
+    side on its own thread with an already-parsed args namespace."""
     if args.llm_review_cmd and args.patch_repo is None:
         logger.error("--llm-review-cmd requires --patch-repo PATH")
         return 2
@@ -3375,6 +3372,7 @@ def main() -> int:
             ),
             item_url=lambda prepared: url
             if isinstance(url := prepared.pr.get("html_url"), str) else "",
+            ui=ui,
         )
     finally:
         for _ in range(max(1, int(getattr(args, "llm_parallelism", 1) or 1))):
@@ -3507,6 +3505,16 @@ def main() -> int:
         logger.info("Dry-run only. Re-run with --approve to submit actions.")
 
     return 130 if stopped_by_user else 0
+
+
+def main() -> int:
+    args = parse_args()
+    setup_logging(
+        logger, args.verbose,
+        forge_gcli.logger, gcli_cache.logger, bot_state.logger, ci_log.logger,
+        color=args.color,
+    )
+    return run_reviews(args)
 
 
 if __name__ == "__main__":

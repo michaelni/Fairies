@@ -281,7 +281,7 @@ def flatten_label_args(values: list[list[str]] | None) -> list[str]:
     ))
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Approve stale Forgejo/Gitea PRs via gcli.",
     )
@@ -580,8 +580,8 @@ def parse_args() -> argparse.Namespace:
              "gated only on pr.updated_at and ignore this TTL. "
              "(default: 24)",
     )
-    apply_config_file_defaults(p)
-    args = p.parse_args()
+    apply_config_file_defaults(p, argv)
+    args = p.parse_args(argv)
     args.force_review_prs = flatten_pr_number_args(args.force_review_pr)
     args.force_skip_prs = flatten_pr_number_args(args.force_skip_pr)
     args.triage_labels = flatten_label_args(args.triage_label)

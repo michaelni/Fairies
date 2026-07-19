@@ -120,7 +120,7 @@ class PreparedIssue:
     reviewer_username: str | None
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Analyze open Forgejo/Gitea issues via an LLM wrapper and post verdicts.",
     )
@@ -275,7 +275,7 @@ def parse_args() -> argparse.Namespace:
              "be edited server-side without bumping issue.updated_at, the TTL "
              "forces a periodic refetch as a backstop (default: 24).",
     )
-    args = p.parse_args()
+    args = p.parse_args(argv)
     args.force_review_issues = flatten_pr_number_args(args.force_review_issue)
     args.force_skip_issues = flatten_pr_number_args(args.force_skip_issue)
     args.triage_labels = flatten_label_args(args.issue_label)

@@ -77,6 +77,20 @@ class RepoCookbookTests(unittest.TestCase):
         self.assertNotIn("aggregates project data as subtrees", text)
         self.assertNotIn("FATE sample-suite snapshot", text)
 
+    def test_recoll_advertised_only_with_checkouts(self) -> None:
+        text = _prompt(["ffmpeg", "all_ffmpeg"])
+        self.assertIn("recollq", text)
+        # the index is a snapshot the model cannot refresh
+        self.assertIn("does not reflect anything you check out", text)
+        self.assertIn("not regexes or substrings", text)
+        bare = llm_prompt.generate_llm_prompt(
+            role="reviewer", vendor="openai", model="m",
+            features={"podman_shell"}, repo_roots=[],
+            container_repo_mounts=[], reviewer_username="fairy",
+            machines=[_machine()],
+        )
+        self.assertNotIn("recollq", bare)
+
 
 if __name__ == "__main__":
     unittest.main()

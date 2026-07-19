@@ -782,8 +782,12 @@ def main() -> int:
         for th in threads:
             th.start()
         ui.run()
-        for th in threads:
-            th.join(timeout=10)
+    if any(th.is_alive() for th in threads):
+        print("waiting up to 10s for the pipelines to wind down"
+              + (f" (their logs land in {args.log_file})" if args.log_file else "")
+              + " ...", file=sys.stderr)
+    for th in threads:
+        th.join(timeout=10)
     sink.close()
     for th in threads:
         if th.is_alive():

@@ -54,8 +54,9 @@ Output JSON keys:
   - message: review/analysis message, may be empty for approve and skip
 
 The wrapper enriches the review with source code context from a local git
-checkout. It always includes touched files from pull_request.head_sha when a
-source bundle is enabled. Direct quoted include files can also be included
+checkout. When a source bundle is enabled it includes the touched files as
+they would look merged into the current target-branch tip (falling back to
+their pull_request.head_sha state when the merge conflicts). Direct quoted include files can also be included
 optionally. In addition, the wrapper can optionally build or reuse an OpenAI
 vector store containing the repository HEAD as separate file objects and enable
 Responses API file_search for additional retrieval.
@@ -89,7 +90,7 @@ from patch_util import (
     extract_submodule_changes_from_patch,
     extract_submodule_paths_from_patch,
 )
-from git_util import git_show_file
+from git_util import git_merge_tree, git_rev_parse, git_show_file
 import llm_review_api
 from llm_review_api import (
     EXIT_BAD_MODEL_OUTPUT,
@@ -894,7 +895,7 @@ def append_source_bundle_files(
     ordered_paths: list[str],
     loaded_texts: dict[str, str],
     *,
-    source_revisions: dict[str, str],
+    source_labels: dict[str, str],
     max_file_bytes: int,
     max_header_file_bytes: int,
     max_bundle_bytes: int,
@@ -906,7 +907,7 @@ def append_source_bundle_files(
 
     for relpath in ordered_paths:
         text = loaded_texts[relpath]
-        source_from = f"git show {source_revisions[relpath]}:{relpath}"
+        source_from = source_labels[relpath]
 
         raw = text.encode("utf-8", errors="replace")
         truncated = False
@@ -953,6 +954,24 @@ def build_source_bundle(
 
     _pr, patch, changed_paths, head_sha = parse_source_bundle_request_info(request)
 
+    # Contents come from the predicted merge of PR head into the current target
+    # tip, so a model cannot conclude the PR "removes" unrelated target work.
+    merged_tree = base_sha = None
+    base_ref = _pr.get("base_ref") if isinstance(_pr.get("base_ref"), str) else ""
+    if base_ref:
+        for ref in (f"fforge/{base_ref}", f"origin/{base_ref}", base_ref):
+            try:
+                base_sha = git_rev_parse(repo_root, ref)
+                break
+            except RuntimeError:
+                continue
+        if base_sha:
+            merged_tree = git_merge_tree(repo_root, head_sha, base_sha)
+        logger.info(
+            "source bundle: merge of %s into %s (%s): %s",
+            head_sha, base_ref, base_sha, merged_tree or "unavailable",
+        )
+
     bundle_parts: list[str] = []
     notes: list[str] = []
     total_bytes = 0
@@ -960,13 +979,23 @@ def build_source_bundle(
     header = (
         f"Repository: {repo_root.name}\n"
         f"Head SHA: {head_sha}\n"
-        f"Changed files seen in patch: {len(changed_paths)}\n\n"
+        + (f"File contents are the merge result of the PR head into the current "
+           f"{base_ref} tip {base_sha}.\n"
+           if merged_tree else "")
+        + f"Changed files seen in patch: {len(changed_paths)}\n\n"
     )
     bundle_parts.append(header)
     total_bytes += len(header.encode("utf-8"))
 
     direct_paths = changed_paths[:max_source_files]
     commit_shas = extract_commit_shas_from_patch(patch) or [head_sha]
+    if merged_tree:
+        commit_shas = [merged_tree] + commit_shas
+    elif base_sha:
+        notes.append(
+            f"PR head does not merge cleanly into {base_ref} {base_sha}; "
+            f"source files are from the PR commits"
+        )
     ordered_paths, loaded_texts, source_revisions, include_notes = load_source_bundle_texts(
         repo_root,
         head_sha,
@@ -976,10 +1005,15 @@ def build_source_bundle(
     )
     notes.extend(include_notes)
 
+    source_labels = {
+        relpath: (f"merge of PR head {head_sha} into {base_ref} {base_sha}"
+                  if revision == merged_tree else f"git show {revision}:{relpath}")
+        for relpath, revision in source_revisions.items()
+    }
     used_paths, truncated_paths, total_bytes = append_source_bundle_files(
         ordered_paths,
         loaded_texts,
-        source_revisions=source_revisions,
+        source_labels=source_labels,
         max_file_bytes=max_file_bytes,
         max_header_file_bytes=max_header_file_bytes,
         max_bundle_bytes=max_bundle_bytes,

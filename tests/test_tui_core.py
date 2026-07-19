@@ -76,6 +76,15 @@ class RingBufferTests(unittest.TestCase):
         self.assertEqual(rb.all_text(), "l3\nl4\nl5\nl6\nl7")
 
 
+class SanitizeTests(unittest.TestCase):
+    def test_strips_escape_and_control_characters(self) -> None:
+        # payloads: OSC window-title write, C1 CSI
+        self.assertEqual(
+            tui_core.sanitize("evil\x1b]0;pwned\x07 t\x9bmore\ttab"),
+            "evil]0;pwned tmore tab",
+        )
+
+
 class RenderMarkdownTests(unittest.TestCase):
     def test_constructs(self) -> None:
         lines = render_markdown(

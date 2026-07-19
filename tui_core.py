@@ -16,13 +16,23 @@ from dataclasses import dataclass
 from itertools import islice
 from threading import Lock
 
-__all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "render_markdown"]
+__all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "render_markdown", "sanitize"]
 
 # One rendered line: (style, text) segments. Styles come from the closed
 # set emitted by render_markdown ("h1" "h2" "h3" "bold" "italic" "code"
 # "codeblock" "quote" "bullet" "text"); the painter maps them to terminal
 # attributes and treats unknown styles as "text".
 StyledLine = list[tuple[str, str]]
+
+
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def sanitize(text: str) -> str:
+    """Strip C0/C1 control characters (tabs become one space) so
+    forge/LLM-controlled text cannot inject terminal escape sequences
+    into a pane."""
+    return _CONTROL_RE.sub("", text.replace("\t", " "))
 
 
 def _clamp(v: int, lo: int, hi: int) -> int:

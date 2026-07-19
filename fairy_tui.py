@@ -572,13 +572,12 @@ class UILoop:
         for i in range(rect.h - 1):
             buf.append(t.move_xy(rect.x, rect.y + 1 + i))
             line = lines[i] if i < len(lines) else ""
-            # Lines are plain strings, (style, text) rows (list pane) or
-            # StyledLine segment lists (message pane).
+            # sanitize(): forge/LLM text must not inject escape sequences.
             if isinstance(line, str):
-                buf.append(line[:rect.w].ljust(rect.w))
+                buf.append(tui_core.sanitize(line)[:rect.w].ljust(rect.w))
             elif line and isinstance(line[0], str):
                 style, text = line
-                text = text[:rect.w].ljust(rect.w)
+                text = tui_core.sanitize(text)[:rect.w].ljust(rect.w)
                 fn = self.styles.get(style)
                 buf.append(fn(text) if fn else text)
             else:
@@ -590,7 +589,7 @@ class UILoop:
         for style, text in segs:
             if used >= width:
                 break
-            text = text[:width - used]
+            text = tui_core.sanitize(text)[:width - used]
             fn = self.styles.get(style)
             out.append(fn(text) if fn else text)
             used += len(text)

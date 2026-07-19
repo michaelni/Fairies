@@ -92,6 +92,23 @@ class PaintSmokeTests(unittest.TestCase):
         for expected in ("stats", "debug", "message", "#1", "a debug line", "Head"):
             self.assertIn(expected, out)
 
+    def test_paint_strips_hostile_escape_sequences(self) -> None:
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            stream = io.StringIO()
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=stream, force_styling=True)
+            model = fairy_tui.Model()
+            model.add_candidates(
+                "PR", [{"number": 2, "title": "evil\x1b]0;pwned\x07title"}])
+            model.finish("PR", decision(2, msg="body\x1b]0;pwned\x07text"))
+            ring = tui_core.RingBuffer()
+            ring.append("wrapper says \x1b]0;pwned\x07hi")
+            ui = fairy_tui.UILoop(term, model, ring, Path("."), ["PR"])
+            ui.paint()
+            out = stream.getvalue()
+        self.assertNotIn("\x1b]0;", out)
+        self.assertNotIn("\x07", out)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -66,13 +66,13 @@ When a human @-mentions fairy or requests it as a reviewer, the run may enter a
 from __future__ import annotations
 
 import argparse
-from collections import deque
+from collections import Counter, deque
 import json
 import logging
 import os
 import re
 from queue import Empty, SimpleQueue
-from threading import Thread
+from threading import Lock, Thread
 import shlex
 import subprocess
 import sys
@@ -81,7 +81,7 @@ import time
 from dataclasses import dataclass, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Iterable, NamedTuple, TypeAlias
+from typing import Callable, Iterable, NamedTuple, Protocol, TypeAlias
 from urllib.parse import quote, urlencode, urljoin
 
 import bot_state
@@ -3035,6 +3035,173 @@ def safe_apply_llm_review_to_prepared(
     return decision
 
 
+class PendingCount:
+    """Count of (prepared, decision) tuples still expected on a reviewed
+    queue. Thread-safe so a UI thread can add() work while the consumer
+    runs."""
+
+    def __init__(self, n: int) -> None:
+        self._n = n
+        self._lock = Lock()
+
+    def add(self, k: int = 1) -> None:
+        with self._lock:
+            self._n += k
+
+    @property
+    def value(self) -> int:
+        with self._lock:
+            return self._n
+
+
+class ReviewUI(Protocol):
+    """Interactive frontend for consume_reviewed; None = prompt_manual.
+
+    ``prepared`` is the pipeline's prepared item (PreparedPR /
+    issue_fairy.PreparedIssue) or a terminal ``Decision`` for gate skips.
+    """
+
+    def decide(self, prepared: object, decision: Decision, url: str) -> str:
+        """Return "apply", "skip", "defer", "retry" or "quit"."""
+
+    def item_done(self, prepared: object, decision: Decision) -> None:
+        """Called once per item after its final dispatch."""
+
+    def keep_open(self) -> bool:
+        """True while the consumer should wait for more work at pending==0."""
+
+    def stopped(self) -> bool:
+        """True once the operator asked to quit."""
+
+
+def consume_reviewed(
+    reviewed_queue: SimpleQueue,
+    llm_queue: SimpleQueue,
+    pending: PendingCount,
+    *,
+    now: datetime,
+    manual: bool,
+    approve: bool,
+    kind: str,  # "PR" | "issue"; log-line and prompt wording only
+    apply: Callable[[object, Decision], None],
+    item_url: Callable[[object], str],
+    ui: ReviewUI | None = None,
+) -> tuple[list[Decision], bool]:
+    """Drain ``reviewed_queue`` of (prepared, decision) tuples, prompting
+    for / applying each actionable decision. ``item_url`` maps a prepared
+    item (never a Decision) to its html_url. Returns the collected
+    decisions and whether the operator stopped the run."""
+    decisions: list[Decision] = []
+    stopped = False
+    ready: deque[tuple[object, Decision]] = deque()
+    try:
+        while True:
+            if not ready:
+                if pending.value == 0 and (ui is None or not ui.keep_open()):
+                    break
+                try:
+                    # With a UI the consumer runs on a controller thread and
+                    # must wake up to notice ui.stopped(); plain mode blocks.
+                    ready.append(reviewed_queue.get(timeout=0.25 if ui else None))
+                except Empty:
+                    pass
+            while True:
+                try:
+                    ready.append(reviewed_queue.get_nowait())
+                except Empty:
+                    break
+            if ui is not None and ui.stopped():
+                stopped = True
+                break
+            if not ready:
+                continue
+
+            prepared, d = ready.popleft()
+            pending.add(-1)
+
+            age = describe_age(now, d.last_activity)
+            prefix = f"{kind} #{d.pr_number}" if d.pr_number >= 0 else f"{kind}<?>"
+            action = format_action(d)
+            llm_short = format_llm_classification(d.llm_classification)
+            needs_interaction = (
+                d.action in ACTIONABLE_DECISIONS or decision_has_label_changes(d)
+            )
+            # In manual mode the summary line, the LLM note, the label lines
+            # and the prompt are one actionable block. Frame it with a blank
+            # line before and after -- emitted on stderr, the same stream the
+            # log lines and the prompt use -- so the whole block stands out
+            # from the SKIP stream and the blanks stay around it instead of
+            # landing in the middle.
+            interactive = needs_interaction and manual and ui is None
+            if interactive:
+                sys.stderr.write("\n")
+                sys.stderr.flush()
+            logger.info(
+                f"{prefix}: {action} age={age:>8} author={d.author:<20} "
+                f"auto={d.auto_merge:<10} llm={llm_short:<9}  {d.reason}  -- {d.title}"
+            )
+            if d.llm_message:
+                logger.info(f"    LLM: {d.llm_message}")
+            for c in d.label_changes:
+                logger.info(
+                    "    label %s %s%s: %s",
+                    c.op, c.label, " (post)" if c.post else "", c.reason or "-",
+                )
+
+            if needs_interaction and (manual or approve or ui is not None):
+                if ui is not None:
+                    choice = ui.decide(
+                        prepared, d,
+                        "" if isinstance(prepared, Decision) else item_url(prepared),
+                    )
+                elif manual:
+                    choice = prompt_manual(
+                        d.pr_number, manual_action_description(d),
+                        pr_url="" if isinstance(prepared, Decision)
+                        else item_url(prepared),
+                    )
+                    # Close the framed block (see ``interactive`` above).
+                    sys.stderr.write("\n")
+                    sys.stderr.flush()
+                else:
+                    choice = "apply"
+                if choice == "retry":
+                    if isinstance(prepared, Decision):
+                        logger.info(
+                            "%s #%s has no queued LLM evaluation to retry",
+                            kind, d.pr_number,
+                        )
+                    else:
+                        logger.info("Retrying %s #%s LLM evaluation", kind, d.pr_number)
+                        pending.add(1)
+                        llm_queue.put(prepared)
+                    continue
+                if choice == "defer":
+                    pending.add(1)
+                    ready.append((prepared, d))
+                    continue
+                if choice == "quit":
+                    stopped = True
+                elif choice == "apply":
+                    try:
+                        apply(prepared, d)
+                    except Exception as exc:
+                        logger.error(
+                            "ERROR applying %s for %s #%s: %s",
+                            manual_action_description(d), kind, d.pr_number, exc,
+                        )
+
+            decisions.append(d)
+            if ui is not None:
+                ui.item_done(prepared, d)
+            if stopped:
+                break
+    except KeyboardInterrupt:
+        stopped = True
+        logger.warning("Stopped by user.")
+    return decisions, stopped
+
+
 def start_review_pipeline(
     args: argparse.Namespace,
     prs: list[ApiObject],
@@ -3183,12 +3350,7 @@ def main() -> int:
         logger.error("ERROR: %s", exc)
         return 2
 
-    decisions: list[Decision] = []
-    auto_counts: dict[str, int] = {}
-    llm_counts: dict[str, int] = {}
-
     submitted_counts = {action: 0 for action in ACTIONABLE_DECISIONS}
-    stopped_by_user = False
 
     reviewed_queue, llm_queue = start_review_pipeline(
         args,
@@ -3201,130 +3363,19 @@ def main() -> int:
         discussion_cache_max_age=discussion_cache_max_age,
     )
 
-    ready_reviewed: deque[tuple[PreparedItem, Decision]] = deque()
-    pending_reviewed = len(prs)
-
     try:
-        while True:
-            if not ready_reviewed:
-                if pending_reviewed == 0:
-                    break
-                ready_reviewed.append(reviewed_queue.get())
-
-            while True:
-                try:
-                    reviewed = reviewed_queue.get_nowait()
-                except Empty:
-                    break
-                ready_reviewed.append(reviewed)
-
-            prepared, d = ready_reviewed.popleft()
-            pending_reviewed -= 1
-
-            age = describe_age(now, d.last_activity)
-            prefix = f"PR #{d.pr_number}" if d.pr_number >= 0 else "PR<?>"
-            action = format_action(d)
-            llm_short = format_llm_classification(d.llm_classification)
-            needs_interaction = (
-                d.action in ACTIONABLE_DECISIONS or decision_has_label_changes(d)
-            )
-            # In manual mode the summary line, the LLM note, the labels line
-            # and the prompt are one actionable block. Frame it with a blank
-            # line before and after -- emitted on stderr, the same stream the
-            # log lines and the prompt use -- so the whole block stands out
-            # from the SKIP stream and the blanks stay around it instead of
-            # landing in the middle.
-            interactive = needs_interaction and args.manual
-            if interactive:
-                sys.stderr.write("\n")
-                sys.stderr.flush()
-            logger.info(
-                f"{prefix}: {action} age={age:>8} author={d.author:<20} auto={d.auto_merge:<10} llm={llm_short:<9}  {d.reason}  -- {d.title}"
-            )
-            if d.llm_message:
-                logger.info(f"    LLM: {d.llm_message}")
-            if decision_has_label_changes(d):
-                logger.info(
-                    "    labels: add=%r remove=%r",
-                    list(label_names(d.label_changes, "add")),
-                    list(label_names(d.label_changes, "remove")),
-                )
-
-            if needs_interaction:
-                if args.manual:
-                    # ``prepared`` is a ``PreparedPR | Decision`` union
-                    # (intentional polymorphism, see the retry branch
-                    # below): only the PreparedPR side carries the
-                    # original ``pr`` ApiObject and therefore the
-                    # ``html_url`` we want to surface in the prompt.
-                    pr_url = ""
-                    if not isinstance(prepared, Decision):
-                        raw_url = prepared.pr.get("html_url")
-                        if isinstance(raw_url, str):
-                            pr_url = raw_url
-                    choice = prompt_manual(
-                        d.pr_number, manual_action_description(d), pr_url=pr_url,
-                    )
-                    # Close the framed block (see ``interactive`` above).
-                    sys.stderr.write("\n")
-                    sys.stderr.flush()
-                    if choice == "retry":
-                        if isinstance(prepared, Decision):
-                            logger.info("PR #%s has no queued LLM evaluation to retry", d.pr_number)
-                        else:
-                            logger.info("Retrying PR #%s LLM evaluation", d.pr_number)
-                            pending_reviewed += 1
-                            llm_queue.put(prepared)
-                        continue
-                    if choice == "defer":
-                        # Re-appending to ``ready_reviewed`` puts the item
-                        # back in flight, so we must compensate the ``-=1``
-                        # that ran above after ``popleft`` -- mirroring how
-                        # the ``retry`` branch does it for ``llm_queue.put``.
-                        # Skipping this makes ``pending_reviewed`` drift
-                        # negative on every "defer" press and the loop
-                        # eventually blocks forever on ``reviewed_queue.get()``
-                        # once ``ready_reviewed`` finally empties.
-                        pending_reviewed += 1
-                        ready_reviewed.append((prepared, d))
-                        continue
-                    if choice == "quit":
-                        stopped_by_user = True
-                    elif choice == "apply":
-                        try:
-                            apply_decision(
-                                args, prepared, d,
-                                cache=cache,
-                                submitted_counts=submitted_counts,
-                            )
-                        except Exception as exc:
-                            logger.error(
-                                "ERROR applying %s for PR #%s: %s",
-                                manual_action_description(d), d.pr_number, exc,
-                            )
-                elif args.approve:
-                    try:
-                        apply_decision(
-                            args, prepared, d,
-                            cache=cache,
-                            submitted_counts=submitted_counts,
-                        )
-                    except Exception as exc:
-                        logger.error(
-                            "ERROR applying %s for PR #%s: %s",
-                            manual_action_description(d), d.pr_number, exc,
-                        )
-
-            decisions.append(d)
-
-            auto_counts[d.auto_merge] = auto_counts.get(d.auto_merge, 0) + 1
-            llm_counts[d.llm_classification] = llm_counts.get(d.llm_classification, 0) + 1
-
-            if stopped_by_user:
-                break
-    except KeyboardInterrupt:
-        stopped_by_user = True
-        logger.warning("Stopped by user.")
+        decisions, stopped_by_user = consume_reviewed(
+            reviewed_queue, llm_queue, PendingCount(len(prs)),
+            now=now,
+            manual=args.manual,
+            approve=args.approve,
+            kind="PR",
+            apply=lambda prepared, d: apply_decision(
+                args, prepared, d, cache=cache, submitted_counts=submitted_counts,
+            ),
+            item_url=lambda prepared: url
+            if isinstance(url := prepared.pr.get("html_url"), str) else "",
+        )
     finally:
         for _ in range(max(1, int(getattr(args, "llm_parallelism", 1) or 1))):
             llm_queue.put(_LLM_REVIEW_DONE)
@@ -3334,6 +3385,8 @@ def main() -> int:
         except Exception as exc:
             logger.warning("failed to save PR-data cache %s: %s", args.cache, exc)
 
+    auto_counts = Counter(d.auto_merge for d in decisions)
+    llm_counts = Counter(d.llm_classification for d in decisions)
     auto_merge_candidates = [d for d in decisions if d.auto_merge == "merge"]
     auto_merge_approvable = [d for d in decisions if would_auto_merge_after_approval(d)]
 

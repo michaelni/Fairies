@@ -47,11 +47,11 @@ files so it can run concurrently with fairy.py.
 from __future__ import annotations
 
 import argparse
-from collections import deque
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from queue import Empty, SimpleQueue
+from queue import SimpleQueue
 from threading import Thread
 from urllib.parse import urlencode
 
@@ -75,13 +75,14 @@ from fairy import (
     ApiObject,
     Decision,
     LLMReview,
+    PendingCount,
     backoff_for_consecutive_skips,
     build_llm_discussion,
     call_llm_with_retries,
     compile_user_mention_regex,
     compute_llm_skip_backoff,
+    consume_reviewed,
     decision_has_label_changes,
-    describe_age,
     first_dt,
     flatten_label_args,
     flatten_pr_number_args,
@@ -93,12 +94,10 @@ from fairy import (
     item_body_mentions_user,
     label_names,
     list_open_prs,
-    manual_action_description,
     max_dt,
     parse_label_csv,
     parse_pr_number_csv,
     post_label_explanations,
-    prompt_manual,
     writeback_llm_skip_backoff,
 )
 
@@ -724,10 +723,7 @@ def main() -> int:
         logger.error("ERROR: %s", exc)
         return 2
 
-    decisions: list[Decision] = []
-    llm_counts: dict[str, int] = {}
     submitted_counts = {"comment": 0}
-    stopped_by_user = False
 
     reviewed_queue, llm_queue = start_issue_pipeline(
         args, issues,
@@ -737,96 +733,19 @@ def main() -> int:
         state=state,
         discussion_cache_max_age=discussion_cache_max_age,
     )
-    ready: deque[tuple[PreparedIssue | Decision, Decision]] = deque()
-    pending = len(issues)
     try:
-        while not stopped_by_user:
-            if not ready:
-                if pending == 0:
-                    break
-                ready.append(reviewed_queue.get())
-            while True:
-                try:
-                    ready.append(reviewed_queue.get_nowait())
-                except Empty:
-                    break
-
-            prepared, d = ready.popleft()
-            pending -= 1
-
-            age = describe_age(now, d.last_activity)
-            logger.info(
-                f"issue #{d.pr_number}: {d.action.upper():<15} age={age:>8} "
-                f"author={d.author:<20} llm={d.llm_classification:<9}  {d.reason}  -- {d.title}"
-            )
-            if d.llm_message:
-                logger.info(f"    LLM: {d.llm_message}")
-            for c in d.label_changes:
-                logger.info(
-                    "    label %s %s%s: %s",
-                    c.op, c.label, " (post)" if c.post else "", c.reason or "-",
-                )
-
-            if d.action in ACTIONABLE_DECISIONS or decision_has_label_changes(d):
-                if args.manual:
-                    url = ""
-                    # ``prepared`` is a ``PreparedIssue | Decision`` union
-                    # (same shape as fairy's reviewed pipeline): only the
-                    # PreparedIssue side carries the issue and can be
-                    # re-queued for an LLM retry.
-                    if not isinstance(prepared, Decision):
-                        raw_url = prepared.issue.get("html_url")
-                        if isinstance(raw_url, str):
-                            url = raw_url
-                    choice = prompt_manual(
-                        d.pr_number, manual_action_description(d), pr_url=url,
-                    )
-                    if choice == "retry":
-                        if isinstance(prepared, Decision):
-                            logger.info(
-                                "issue #%s has no queued LLM evaluation to retry",
-                                d.pr_number,
-                            )
-                        else:
-                            pending += 1
-                            llm_queue.put(prepared)
-                        continue
-                    if choice == "defer":
-                        # Compensate the ``pending -= 1`` above: the item
-                        # goes back in flight.
-                        pending += 1
-                        ready.append((prepared, d))
-                        continue
-                    if choice == "quit":
-                        stopped_by_user = True
-                    elif choice == "apply":
-                        try:
-                            apply_issue_decision(
-                                args, d, cache=cache,
-                                submitted_counts=submitted_counts,
-                            )
-                        except Exception as exc:
-                            logger.error(
-                                "ERROR applying %s for issue #%s: %s",
-                                manual_action_description(d), d.pr_number, exc,
-                            )
-                elif args.approve:
-                    try:
-                        apply_issue_decision(
-                            args, d, cache=cache,
-                            submitted_counts=submitted_counts,
-                        )
-                    except Exception as exc:
-                        logger.error(
-                            "ERROR applying %s for issue #%s: %s",
-                            manual_action_description(d), d.pr_number, exc,
-                        )
-
-            decisions.append(d)
-            llm_counts[d.llm_classification] = llm_counts.get(d.llm_classification, 0) + 1
-    except KeyboardInterrupt:
-        stopped_by_user = True
-        logger.warning("Stopped by user.")
+        decisions, stopped_by_user = consume_reviewed(
+            reviewed_queue, llm_queue, PendingCount(len(issues)),
+            now=now,
+            manual=args.manual,
+            approve=args.approve,
+            kind="issue",
+            apply=lambda prepared, d: apply_issue_decision(
+                args, d, cache=cache, submitted_counts=submitted_counts,
+            ),
+            item_url=lambda prepared: url
+            if isinstance(url := prepared.issue.get("html_url"), str) else "",
+        )
     finally:
         for _ in range(max(1, args.llm_parallelism)):
             llm_queue.put(_LLM_DONE)
@@ -837,6 +756,7 @@ def main() -> int:
             logger.warning("failed to save issue-data cache %s: %s", args.cache, exc)
 
     actionable_total = sum(1 for d in decisions if d.action in ACTIONABLE_DECISIONS)
+    llm_counts = Counter(d.llm_classification for d in decisions)
     llm_counts_text = ", ".join(
         f"{name}={llm_counts[name]}"
         for name in sorted(llm_counts, key=lambda x: (x == "-", x))

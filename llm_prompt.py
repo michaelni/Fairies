@@ -306,7 +306,8 @@ def prompt_output_guideline(ctx: PromptFor) -> str:
 """
 
 
-CR_PROMPT_REVIEW_CLASSIFICATIONS = """Classify the pull request into exactly one of these JSON classes after you have finished reviewing all commit(s) and read all comments:
+def cr_prompt_review_classifications(ctx: PromptFor) -> str:
+    return f"""Classify the pull request into exactly one of these JSON classes after you have finished {"verifying the drafts against" if ctx.combiner else "reviewing"} all commit(s) and read all comments:
 - approve: no substantive issues; the PR can be merged in its current form. The message may be empty or carry a brief non-issue comment.
 - minor_issues_approve: only minor or pre-existing issues, non-blocking issues or suggestions or helpful comments; the PR can be merged in its current form but there is some additional comment you would like to make
 - moderate_issues: You do not want to approve the PR but the current code would not be worse off if its merged
@@ -705,7 +706,7 @@ def make_developer_prompt(
         + CRT_PROMPT_MINOR_ISSUE_POLICY
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
         + prompt_output_guideline(ctx)
-        + CR_PROMPT_REVIEW_CLASSIFICATIONS
+        + cr_prompt_review_classifications(ctx)
         + prompt_triage_labels(allowed_labels or [])
         + prompt_persistence_and_verification(ctx)
         + R_PROMPT_REVIEW_EXAMPLES
@@ -799,7 +800,7 @@ def make_combiner_developer_prompt(
         + CRT_PROMPT_MINOR_ISSUE_POLICY
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
         + prompt_output_guideline(ctx)
-        + CR_PROMPT_REVIEW_CLASSIFICATIONS
+        + cr_prompt_review_classifications(ctx)
         + prompt_triage_labels(allowed_labels or [])
         + prompt_persistence_and_verification(ctx)
         + CR_PROMPT_MESSAGE_RULES

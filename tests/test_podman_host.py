@@ -11,6 +11,7 @@ they double as the regression test for the live transport.
 
 from __future__ import annotations
 
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -388,8 +389,8 @@ class CopyAndOpenShellTests(unittest.TestCase):
         self.assertEqual(4096, captured["kw"]["max_output_bytes"])
 
 
-class ContainerShellSessionTests(unittest.TestCase):
-    """Drive the real fairy_agent over a pipe (argv = python3 agent)."""
+class _SessionHarness:
+    """Shared driver: a real ContainerShellSession over a pipe subprocess."""
 
     def _session(self, argv, **kw) -> lc.ContainerShellSession:
         s = lc.ContainerShellSession(argv, **kw).start()
@@ -398,6 +399,10 @@ class ContainerShellSessionTests(unittest.TestCase):
 
     def _agent(self, **kw) -> lc.ContainerShellSession:
         return self._session([sys.executable, str(AGENT)], **kw)
+
+
+class ContainerShellSessionTests(_SessionHarness, unittest.TestCase):
+    """Drive the real fairy_agent over a pipe (argv = python3 agent)."""
 
     def test_exec_returns_execresult(self) -> None:
         r = self._agent().exec("echo hi")
@@ -439,6 +444,85 @@ class ContainerShellSessionTests(unittest.TestCase):
         with mock.patch.object(lc, "HOST_RESPONSE_MARGIN_S", 0.3):
             with self.assertRaisesRegex(RuntimeError, "timed out"):
                 s.exec("echo hi", timeout_s=0.1)
+
+
+class HostileFrameTests(_SessionHarness, unittest.TestCase):
+    """Frames a compromised container can inject into the agent's stdout
+    (PR-derived code shares the container and can open the agent's
+    ``/proc/<pid>/fd/1``). The host must reject each with a clean
+    RuntimeError and a dead channel -- never crash with a raw parse error
+    or interpret the forged frame."""
+
+    def _evil(self, payload: bytes, **kw) -> lc.ContainerShellSession:
+        code = ("import sys\n"
+                "sys.stdin.readline()\n"
+                f"sys.stdout.buffer.write({payload!r})\n"
+                "sys.stdout.buffer.flush()\n"
+                "sys.stdin.read()\n")
+        return self._session([sys.executable, "-c", code], **kw)
+
+    def _assert_rejected(self, payload: bytes, **kw) -> None:
+        s = self._evil(payload, **kw)
+        with self.assertRaisesRegex(RuntimeError, "protocol"):
+            s.exec("echo hi")
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            s.exec("echo again")
+
+    def test_not_json(self) -> None:
+        self._assert_rejected(b"segfault: core dumped\n")
+
+    def test_invalid_utf8(self) -> None:
+        self._assert_rejected(b'\xff\xfe{"id": 0}\n')
+
+    def test_non_object_frames(self) -> None:
+        for payload in (b"[1, 2, 3]\n", b'"a string"\n', b"null\n", b"7\n"):
+            with self.subTest(payload=payload):
+                self._assert_rejected(payload)
+
+    def test_forged_id_desyncs(self) -> None:
+        self._assert_rejected(b'{"id": 7, "exit_code": 0}\n')
+
+    def test_missing_fields(self) -> None:
+        self._assert_rejected(b'{"id": 0}\n')
+
+    def test_wrong_typed_exit_code(self) -> None:
+        self._assert_rejected(
+            b'{"id": 0, "exit_code": {"a": 1}, "stdout_b64": "", '
+            b'"stderr_b64": "", "stdout_truncated": false, '
+            b'"stderr_truncated": false}\n')
+
+    def test_infinite_exit_code(self) -> None:
+        # 1e999 parses as float inf; int(inf) is OverflowError, which must
+        # not escape raw.
+        self._assert_rejected(
+            b'{"id": 0, "exit_code": 1e999, "stdout_b64": "", '
+            b'"stderr_b64": "", "stdout_truncated": false, '
+            b'"stderr_truncated": false}\n')
+
+    def test_huge_int_literal(self) -> None:
+        # Overflows the int digit limit inside json.loads itself.
+        self._assert_rejected(
+            b'{"id": 0, "exit_code": ' + b"9" * 5000 + b'}\n')
+
+    def test_bad_base64(self) -> None:
+        self._assert_rejected(
+            b'{"id": 0, "exit_code": 0, "stdout_b64": "A", '
+            b'"stderr_b64": "", "stdout_truncated": false, '
+            b'"stderr_truncated": false}\n')
+
+    def test_oversized_frame(self) -> None:
+        s = self._evil(b"A" * 70_000, max_output_bytes=1024)
+        with self.assertRaisesRegex(RuntimeError, "exceeds"):
+            s.exec("echo hi")
+
+    def test_nonfinite_duration_is_replaced(self) -> None:
+        s = self._evil(
+            b'{"id": 0, "exit_code": 0, "stdout_b64": "aGk=", '
+            b'"stderr_b64": "", "stdout_truncated": false, '
+            b'"stderr_truncated": false, "duration_s": NaN}\n')
+        r = s.exec("echo hi")
+        self.assertEqual("hi", r.stdout)
+        self.assertTrue(math.isfinite(r.duration_s))
 
 
 if __name__ == "__main__":

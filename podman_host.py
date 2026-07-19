@@ -61,6 +61,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import math
 import queue
 import shlex
 import subprocess
@@ -139,6 +140,13 @@ class ExecResult:
 
 HOST_RESPONSE_MARGIN_S = 30.0
 
+# The legitimate agent has at most one response in flight; blocking the
+# reader pushes back on the pipe instead of growing host memory.
+_RESPONSE_QUEUE_MAX = 32
+
+# Reader-thread sentinel for a frame exceeding the line cap.
+_OVERSIZED_FRAME = object()
+
 
 class ContainerShellSession:
     """A persistent shell channel into a review container.
@@ -151,6 +159,13 @@ class ContainerShellSession:
     (no shell re-tokenisation, and no podman REST surface on the local
     side -- only this fixed JSON schema does).
 
+    The response stream is untrusted: PR-derived code runs in the
+    container and can write to the agent's stdout (e.g. via
+    ``/proc/<agent>/fd/1``), so frames may be arbitrary hostile bytes,
+    not just what ``fairy_agent`` emits. Every frame is therefore
+    size-capped and type-checked here, and any malformed frame kills the
+    channel (fail closed) rather than being interpreted.
+
     Constructed from the launch ``argv`` so tests can run the real agent
     directly (``[python3, fairy_agent.py]``) without podman.
     """
@@ -159,10 +174,13 @@ class ContainerShellSession:
                  max_output_bytes: int = 256 * 1024) -> None:
         self._argv = list(launch_argv)
         self._max_output_bytes = max_output_bytes
+        # A well-formed frame holds two base64 payloads of at most
+        # max_output_bytes each (4/3 expansion) plus small fixed fields.
+        self._max_frame_bytes = 3 * max_output_bytes + 65536
         self._lock = threading.Lock()
         self._next_id = 0
         self._proc: subprocess.Popen | None = None
-        self._responses: queue.Queue = queue.Queue()
+        self._responses: queue.Queue = queue.Queue(maxsize=_RESPONSE_QUEUE_MAX)
 
     def start(self) -> "ContainerShellSession":
         logger.info("opening container shell session cmd=%s", shlex.join(self._argv))
@@ -180,8 +198,11 @@ class ContainerShellSession:
         stdout = self._proc.stdout
         try:
             while True:
-                line = stdout.readline()
+                line = stdout.readline(self._max_frame_bytes)
                 if not line:
+                    return
+                if len(line) >= self._max_frame_bytes and not line.endswith(b"\n"):
+                    self._responses.put(_OVERSIZED_FRAME)
                     return
                 self._responses.put(line)
         finally:
@@ -236,20 +257,54 @@ class ContainerShellSession:
         if line is None:
             self._terminate()
             raise RuntimeError("container shell channel closed (eof)")
-        resp = json.loads(line)
+        if line is _OVERSIZED_FRAME:
+            self._terminate()
+            raise RuntimeError(
+                f"container shell protocol violation: frame exceeds "
+                f"{self._max_frame_bytes} bytes"
+            )
+        # ValueError covers JSONDecodeError, UnicodeDecodeError and binascii.Error.
+        try:
+            resp = json.loads(line)
+        except ValueError as exc:
+            self._terminate()
+            raise RuntimeError(
+                "container shell protocol violation: undecodable frame"
+            ) from exc
+        if not isinstance(resp, dict):
+            self._terminate()
+            raise RuntimeError(
+                "container shell protocol violation: frame is not an object"
+            )
         if resp.get("id") != req_id:
             self._terminate()
             raise RuntimeError(
                 f"container shell protocol desync: want id={req_id} got {resp.get('id')!r}"
             )
         dt = time.monotonic() - t0
+        try:
+            exit_code = int(resp["exit_code"])
+            stdout = base64.b64decode(resp["stdout_b64"]).decode("utf-8", "replace")
+            stderr = base64.b64decode(resp["stderr_b64"]).decode("utf-8", "replace")
+            duration_s = float(resp.get("duration_s", dt))
+            stdout_truncated = bool(resp["stdout_truncated"])
+            stderr_truncated = bool(resp["stderr_truncated"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            self._terminate()
+            raise RuntimeError(
+                f"container shell protocol violation: bad response field: {exc!r}"
+            ) from exc
+        if not math.isfinite(duration_s):
+            # NaN/Infinity parse as JSON here but do not survive re-encoding
+            # to strict JSON downstream (tool-result payloads).
+            duration_s = dt
         result = ExecResult(
-            exit_code=int(resp["exit_code"]),
-            stdout=base64.b64decode(resp["stdout_b64"]).decode("utf-8", "replace"),
-            stderr=base64.b64decode(resp["stderr_b64"]).decode("utf-8", "replace"),
-            duration_s=float(resp.get("duration_s", dt)),
-            stdout_truncated=bool(resp["stdout_truncated"]),
-            stderr_truncated=bool(resp["stderr_truncated"]),
+            exit_code=exit_code,
+            stdout=stdout,
+            stderr=stderr,
+            duration_s=duration_s,
+            stdout_truncated=stdout_truncated,
+            stderr_truncated=stderr_truncated,
         )
         logger.debug(
             "container shell resp id=%d rc=%d dt=%.3fs out=%d%s err=%d%s",

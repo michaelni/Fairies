@@ -8,10 +8,14 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+
+import podman_host  # noqa: E402
+import podman_repos  # noqa: E402
 
 CONTAINERFILE = (REPO_ROOT / "containers" / "Containerfile").read_text()
 RECOLL_CONF = (REPO_ROOT / "containers" / "recoll.conf").read_text()
@@ -56,6 +60,28 @@ class RecollqWrapperTests(unittest.TestCase):
         self.assertIn('exec /usr/bin/recollq "$@"', text)
         self.assertTrue(RECOLLQ_WRAPPER.stat().st_mode & 0o111,
                         "wrapper must be executable (COPY keeps the mode)")
+
+
+class StartRecollIndexTests(unittest.TestCase):
+    HANDLE = podman_host.ContainerHandle(
+        "cid42", "img", None, podman_host.RemoteHost("fairy@h"))
+
+    def test_detached_exec_builds_index_and_marker(self) -> None:
+        ok = mock.Mock(returncode=0, stdout=b"", stderr=b"")
+        with mock.patch.object(podman_repos, "run_on_remote_host",
+                               return_value=ok) as r:
+            podman_repos.start_recoll_index(self.HANDLE)
+        argv = r.call_args[0]
+        self.assertEqual(("podman", "exec", "-d", "cid42", "sh", "-c"), argv[1:7])
+        self.assertIn("recollindex", argv[7])
+        # marker the recollq wrapper blocks on
+        self.assertIn("touch /root/.recoll/index.done", argv[7])
+
+    def test_kickoff_failure_does_not_raise(self) -> None:
+        boom = mock.Mock(returncode=1, stdout=b"", stderr=b"no recollindex")
+        with mock.patch.object(podman_repos, "run_on_remote_host",
+                               return_value=boom):
+            podman_repos.start_recoll_index(self.HANDLE)
 
 
 if __name__ == "__main__":

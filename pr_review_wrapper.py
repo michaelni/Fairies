@@ -1086,6 +1086,7 @@ def open_review_container_shell(
                 if args.simulate_past_cutoff else None
             ),
         )
+        podman_repos.start_recoll_index(handle)
         podman_host.copy_into_container(handle, AGENT_LOCAL_PATH, AGENT_CONTAINER_DIR)
         session = podman_host.open_container_shell(handle, AGENT_CONTAINER_PATH)
         transcript = shell_tool.run_session_commands(

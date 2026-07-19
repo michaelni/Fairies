@@ -166,6 +166,21 @@ def provision_repos_into_container(
         )
 
 
+def start_recoll_index(handle: ContainerHandle) -> None:
+    """Start a detached recollindex over the provisioned checkouts (the
+    recoll config is baked into the image). The image's recollq wrapper
+    blocks on the done marker, so searches wait for this build instead
+    of seeing a half-built index. Failure is logged, not raised: it
+    costs full-text search, not the review."""
+    try:
+        # marker path must match the containers/recollq wrapper
+        _ssh_podman(handle.host, "exec", "-d", handle.container_id, "sh", "-c",
+                    "recollindex > /root/.recoll/index.log 2>&1;"
+                    " touch /root/.recoll/index.done")
+    except RuntimeError as exc:
+        logger.warning("recoll index kickoff failed: %s", exc)
+
+
 def ensure_remote_mirror(
     host: RemoteHost, mirror_path: str, *, timeout_s: float = 120.0, attempts: int = 3,
 ) -> None:

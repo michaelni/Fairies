@@ -50,6 +50,24 @@ adding, removing or reordering them is an edit, not a restructuring.
    concurrently, give each launcher its own `--cache`, `--fairy-state-cache`
    and `--debug-response-dir`.
 
+### Interactive TUI
+
+`fairy_tui.py` (requires `pip install blessed`) runs the PR and the issue
+pipeline in one 4-pane terminal UI: statistics, the PR/issue list, the
+captured debug output, and the rendered review message with its label
+changes. Pass each side its full argument string:
+
+    ./fairy_tui.py --pr-args '<fairy.py args>' --issue-args '<issue_fairy.py args>' \
+        --log-file fairy_tui.log
+
+`a` toggles between all open items and today's relevant set, `y/s/d/r`
+answer the selected item's pending prompt (same letters as `--manual`,
+`q` quits), `f` force-queues the selected item for review, `x` throws it
+out, `e`/`E` export the focused pane (visible/full), arrows and
+PgUp/PgDn scroll, Tab or a mouse click moves focus, and the pane
+dividers are draggable with the mouse. See `fairy-ui-ref.sh` for a
+launcher example.
+
 ### Self-hosted Podman container
 
 The LLM's shell tool runs in an ephemeral Podman container on an ssh host

@@ -1,0 +1,5 @@
+# Extends the stock recoll mimemap (user entries take precedence).
+# texinfo is searchable as plain text; without this, file(1) types
+# doc/developer.texi as text/x-tex, whose filter needs the absent
+# untex helper, and the file's content ends up not indexed at all.
+.texi = text/plain

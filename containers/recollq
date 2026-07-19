@@ -1,0 +1,19 @@
+#!/bin/sh
+# recollq wrapper, installed ahead of /usr/bin/recollq on PATH.  The
+# default root index is built in the background from container start;
+# block until that build finished so a search never sees a half-built
+# index (and repeated runs stay reproducible).  Marker path must match
+# podman_repos.start_recoll_index; the bound covers a kickoff that
+# never happened.  Only queries against that index wait: with an
+# explicit confdir (-c/RECOLL_CONFDIR) or as a non-root user (who
+# could not stat the marker anyway) there is no build to wait for.
+case " $* " in *" -c "*) exec /usr/bin/recollq "$@" ;; esac
+if [ -n "${RECOLL_CONFDIR:-}" ] || [ "$(id -u)" != 0 ]; then
+    exec /usr/bin/recollq "$@"
+fi
+i=0
+while [ ! -f /root/.recoll/index.done ] && [ "$i" -lt 900 ]; do
+    sleep 1
+    i=$((i+1))
+done
+exec /usr/bin/recollq "$@"

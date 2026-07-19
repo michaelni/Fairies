@@ -116,5 +116,17 @@ RUN rsync -a rsync://fate-suite.ffmpeg.org/fate-suite/ /opt/fate-suite/
 RUN apt-get update && apt-get install -y --no-install-recommends \
         vim valgrind
 
+# Full-text search over /work (source, issue/PR exports, spec PDFs).
+# The index is built in the background at review start
+# (pr_review_wrapper) and queried with ``recollq``; antiword and
+# python3-lxml let the filters read the .doc/.docx specs in for_ffmpeg.
+# The recollq wrapper (earlier on PATH than /usr/bin/recollq) blocks
+# until that background build finished, so searches never see a
+# half-built index.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        recollcmd antiword python3-lxml
+COPY recoll.conf mimemap /root/.recoll/
+COPY recollq /usr/local/bin/recollq
+
 WORKDIR /work
 CMD ["sleep", "infinity"]

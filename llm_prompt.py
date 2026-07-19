@@ -992,6 +992,8 @@ def make_user_text(
     source_notes: list[str],
     source_files: list[str],
     patch_was_truncated: bool,
+    *,
+    lead: str = "Review this pull request.",
 ) -> str:
     pr = request.get("pull_request")
     if not isinstance(pr, dict):
@@ -1029,7 +1031,7 @@ def make_user_text(
     discussion_text = json.dumps(discussion, ensure_ascii=False, indent=2)
 
     parts = [
-        "Review this pull request.\n\n",
+        f"{lead}\n\n",
         "Pull request metadata:\n",
         f"{json.dumps(info, ensure_ascii=False, indent=2)}\n\n",
         "Pull request body:\n",
@@ -1319,7 +1321,8 @@ COMBINER_ROLE = RoleSpec(
     name="combiner",
     schema=REVIEW_SCHEMA,
     user_texts=lambda ctx: [
-        make_user_text(ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated),
+        make_user_text(ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated,
+                       lead="Verify and combine the draft reviews of this pull request."),
         *make_session_transcript_texts(ctx),
         make_combiner_user_text(ctx.review_drafts()),
     ],
@@ -1340,7 +1343,8 @@ ISSUE_COMBINER_ROLE = RoleSpec(
     name="issue_combiner",
     schema=ISSUE_REPORT_SCHEMA,
     user_texts=lambda ctx: [
-        make_issue_user_text(ctx.request),
+        make_issue_user_text(ctx.request,
+                             lead="Verify and combine the draft analyses of this issue."),
         *make_session_transcript_texts(ctx),
         make_combiner_user_text(ctx.review_drafts()),
     ],

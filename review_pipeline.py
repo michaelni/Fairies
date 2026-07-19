@@ -155,6 +155,8 @@ def make_reviewer(
                 exec_timeout_s=args.podman_exec_timeout,
                 effort=effort,
                 web_search=resolve_web_search(args.web_search),
+                verbosity=args.verbosity,
+                reasoning_summary=args.reasoning_summary,
                 run_timeout_s=args.codex_timeout_seconds,
                 verbose=verbose,
                 debug_dir=(

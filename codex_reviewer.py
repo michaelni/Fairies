@@ -193,6 +193,8 @@ def build_codex_exec_command(
     socket_path: str | None,
     machine_labels: tuple[str, ...],
     web_search: str = "cached",
+    verbosity: str | None = None,
+    reasoning_summary: str | None = None,
     catalog_override_path: str | None = None,
     bridge_python: str = sys.executable,
     bridge_path: str = _BRIDGE_PATH,
@@ -210,26 +212,22 @@ def build_codex_exec_command(
         "--cd", scratch_dir,
         "--skip-git-repo-check",
         "--ignore-user-config",
-        # With the local exec tools removed below, codex has no way to run
-        # anything on this host, so the sandbox mode grants it nothing here.
-        # Under read-only, terra reviewed by reading and never built/tested;
-        # under danger-full-access it builds and runs tests via the MCP
-        # shell in the review container.
+        # Safe despite the name: the exec tools are removed below, leaving
+        # the MCP shell into the review container as codex's only shell.
         "--sandbox", "danger-full-access",
         "--model", model,
-        # Remove codex's native exec tools so its only shell is the MCP one
-        # (into the review container). Its native shell would run in this
-        # empty codex container instead.
         "-c", "features.shell_tool=false",
         "-c", "features.unified_exec=false",
         "-c", f'web_search="{web_search}"',
         "-c", "analytics.enabled=false",
     ]
+    if verbosity:
+        cmd += ["-c", f'model_verbosity="{verbosity}"']
+    if reasoning_summary:
+        cmd += ["-c", f'model_reasoning_summary="{reasoning_summary}"']
     if catalog_override_path:
-        # Hardened model catalog: view_image neutered (no image input) and
-        # apply_patch removed. See harden_codex_catalog. A file path, not
-        # inline JSON -- codex parses model_catalog_json as a path to a full
-        # catalog that replaces the built-in one.
+        # A path, not inline JSON, and it replaces the built-in catalog
+        # wholesale. See harden_codex_catalog.
         cmd += ["-c", f"model_catalog_json={catalog_override_path}"]
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
@@ -316,6 +314,8 @@ class CodexReviewer(Reviewer):
         exec_timeout_s: float = 600.0,
         effort: str | None = None,
         web_search: str = "cached",
+        verbosity: str | None = None,
+        reasoning_summary: str | None = None,
         run_timeout_s: float = 0.0,
         verbose: bool = False,
         debug_dir: str | None = None,
@@ -328,24 +328,18 @@ class CodexReviewer(Reviewer):
         self.model = model
         self.name = name
         self.role = role
-        # In-container path to the (image-baked) codex binary.
         self.codex_bin = codex_bin
-        # Wrapper-side codex home: source of the auth.json copied into the
-        # container and of models_cache.json used to harden the catalog.
         self.codex_home = codex_home
-        # The podman host that runs the codex container. None means codex is
-        # unavailable (there is no local codex); run() rejects it.
+        # None means codex is unavailable (there is no local codex); run()
+        # rejects it.
         self.codex_host = codex_host
         self.codex_image = codex_image
-        # Per-MCP-shell-call cap for the relay's dispatch into review
-        # containers (mirrors the API backends' --podman-exec-timeout).
         self.exec_timeout_s = exec_timeout_s
         self.effort = effort
-        # codex web_search mode (resolve_web_search maps the wrapper flags).
         self.web_search = web_search
-        # 0 disables the whole-subprocess watchdog (a pass legitimately
-        # runs for however long the model reasons and builds).
-        self.run_timeout_s = run_timeout_s
+        self.verbosity = verbosity
+        self.reasoning_summary = reasoning_summary
+        self.run_timeout_s = run_timeout_s  # 0 disables the watchdog
         self.verbose = verbose
         self.debug_dir = debug_dir
 
@@ -487,6 +481,8 @@ class CodexReviewer(Reviewer):
                 machine_labels=machine_labels,
                 catalog_override_path=catalog_container,
                 web_search=self.web_search,
+                verbosity=self.verbosity,
+                reasoning_summary=self.reasoning_summary,
                 bridge_python="python3",
                 bridge_path=f"{CONTAINER_RUN_DIR}/codex_bridge.py",
             )

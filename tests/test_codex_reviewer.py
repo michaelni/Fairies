@@ -146,6 +146,14 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn('web_search="disabled"',
                       self._cmd(web_search="disabled"))
 
+    def test_verbosity_and_reasoning_summary_emitted(self) -> None:
+        cmd = self._cmd(verbosity="high", reasoning_summary="detailed")
+        self.assertIn('model_verbosity="high"', cmd)
+        self.assertIn('model_reasoning_summary="detailed"', cmd)
+        bare = self._cmd()
+        self.assertFalse(any("model_verbosity" in c for c in bare))
+        self.assertFalse(any("model_reasoning_summary" in c for c in bare))
+
     def test_prompt_comes_from_stdin(self) -> None:
         self.assertEqual("-", self._cmd()[-1])
 
@@ -446,7 +454,7 @@ class FactoryTests(unittest.TestCase):
             codex_home=None, codex_host=CODEX_HOST, codex_image="img:test",
             podman_exec_timeout=600.0, debug_response_dir=None,
             podman_max_tool_rounds=0,
-            web_search="off",
+            web_search="off", verbosity="high", reasoning_summary="detailed",
         )
         base.update(extra)
         return argparse.Namespace(**base)

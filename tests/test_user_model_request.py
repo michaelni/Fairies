@@ -73,9 +73,7 @@ class TriageSchemaShapeTests(unittest.TestCase):
 
     def test_requestable_efforts_are_subset_of_cli_choices(self) -> None:
         # The user-requestable effort enum must be a subset of the
-        # operator's --reasoning-effort CLI choices, otherwise
-        # honoring the override would feed an invalid value into
-        # ``responses.create``.
+        # CLI ones, else the override feeds ``responses.create`` a bad value.
         cli_efforts = {"none", "minimal", "low", "medium", "high", "xhigh"}
         for effort in llm_review_api.TRIAGE_REQUESTABLE_EFFORTS:
             self.assertIn(effort, cli_efforts)

@@ -49,7 +49,7 @@ def _ctx() -> ReviewContext:
 def _args() -> argparse.Namespace:
     return argparse.Namespace(
         model="gpt-5.4-mini", podman_max_tool_rounds=0, podman_exec_timeout=600.0,
-        reasoning_effort="high", service_tier="flex",
+        service_tier="flex",
     )
 
 
@@ -105,13 +105,14 @@ class MakeReviewerTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             review_pipeline.make_reviewer("grok:x", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
 
-    def test_effort_suffix_overrides_openai_reasoning_effort(self) -> None:
-        r = review_pipeline.make_reviewer("openai:gpt-5.5@xhigh", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+    def test_effort_suffix_and_default_effort(self) -> None:
+        r = review_pipeline.make_reviewer("openai:gpt-5.5@xhigh", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False, default_effort="high")
         self.assertEqual("gpt-5.5", r.model)
         self.assertEqual("xhigh", r.effort)
-        # Without a suffix the shared --reasoning-effort applies.
-        r = review_pipeline.make_reviewer("openai:gpt-5.5", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+        r = review_pipeline.make_reviewer("openai:gpt-5.5", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False, default_effort="high")
         self.assertEqual("high", r.effort)
+        r = review_pipeline.make_reviewer("openai:gpt-5.5", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+        self.assertIsNone(r.effort)
 
     def test_effort_suffix_sets_anthropic_thinking_effort(self) -> None:
         r = review_pipeline.make_reviewer("zai:glm-5.2@low", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)

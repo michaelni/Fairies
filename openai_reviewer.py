@@ -771,7 +771,7 @@ class OpenAIReviewer(Reviewer):
         self.res = resources
         self.model = model or args.model
         self.role = role
-        self.effort = effort if effort is not None else args.reasoning_effort
+        self.effort = effort
         self.max_output_tokens = max_output_tokens
         # An explicit ``service_tier=None`` sends no tier: the triage call
         # is documented (--triage-service-tier) as independent of

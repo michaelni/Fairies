@@ -87,12 +87,12 @@ def make_reviewer(
     CodexReviewer driving the pinned codex CLI. Provider modules (and
     their SDKs) are imported only when actually requested.
 
-    ``@effort`` sets that reviewer's effort: an OpenAI reasoning effort
-    (overriding --reasoning-effort for this pass), an Anthropic/GLM
-    thinking effort (``ANTHROPIC_EFFORTS``), or a codex
-    ``model_reasoning_effort`` (``CODEX_EFFORTS``); no suffix keeps the
-    provider default. When the spec has no ``@effort``,
-    ``default_effort`` applies.
+    ``@effort`` sets that reviewer's effort: an OpenAI reasoning effort,
+    an Anthropic/GLM thinking effort (``ANTHROPIC_EFFORTS``), or a codex
+    ``model_reasoning_effort`` (``CODEX_EFFORTS``). When the spec has no
+    ``@effort``, ``default_effort`` applies (``None`` keeps the provider
+    default). This is the only way to set effort -- there is no shared
+    main-pass effort flag; efforts live on the model specs.
 
     ``service_tier`` (OpenAI only) is used verbatim; ``None`` sends no
     tier. Leaving it unset inherits ``--service-tier``.

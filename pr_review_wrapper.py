@@ -308,11 +308,6 @@ def parse_args() -> argparse.Namespace:
         help=f"Maximum output tokens from the model (default: {DEFAULT_MAX_OUTPUT_TOKENS})",
     )
     p.add_argument(
-        "--reasoning-effort",
-        choices=["none", "minimal", "low", "medium", "high", "xhigh"],
-        help="Reasoning effort for GPT-5/o-series models. If omitted, the model/API default is used.",
-    )
-    p.add_argument(
         "--allowed-model",
         action="append",
         default=[],
@@ -1437,6 +1432,7 @@ def main() -> int:
 
         triage_label_allowlist = triage_label_allowlist_from_request(request)
         requested_models: list[str] = []
+        requested_effort: str | None = None
 
         if args.triage_model:
             triager_role = make_triager_role(
@@ -1550,13 +1546,12 @@ def main() -> int:
                             "main pass model lineup overridden by user request: %r -> %r",
                             [args.model, *args.extra_model], requested_models,
                         )
-                    requested_effort = triage_result.get("requested_effort")
+                    requested_effort = triage_result.get("requested_effort") or None
                     if requested_effort:
                         logger.info(
-                            "main pass reasoning_effort overridden by user request: %r -> %r",
-                            args.reasoning_effort, requested_effort,
+                            "main pass reasoning effort set by user request: %r",
+                            requested_effort,
                         )
-                        args.reasoning_effort = requested_effort
                     logger.info(
                         "triage route=engage; reason=%r; running main reviewer pass",
                         triage_result.get("reason", ""),
@@ -1581,19 +1576,19 @@ def main() -> int:
 
         if requested_models:
             model_reviewers = [
-                make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose)
+                make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose, default_effort=requested_effort)
                 for spec in requested_models
             ]
         else:
             model_reviewers = [
-                make_reviewer(args.model, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose)
+                make_reviewer(args.model, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose, default_effort=requested_effort)
             ]
             for spec in args.extra_model:
                 model_reviewers.append(
-                    make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose)
+                    make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose, default_effort=requested_effort)
                 )
         combiner = (
-            make_reviewer(args.combine_model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose)
+            make_reviewer(args.combine_model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose, default_effort=requested_effort)
             if args.combine_model
             else None
         )

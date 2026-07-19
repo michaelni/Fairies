@@ -109,6 +109,18 @@ class PaintSmokeTests(unittest.TestCase):
         self.assertNotIn("\x1b]0;", out)
         self.assertNotIn("\x07", out)
 
+    def test_export_failure_is_logged_not_fatal(self) -> None:
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+            model = fairy_tui.Model()
+            ui = fairy_tui.UILoop(
+                term, model, tui_core.RingBuffer(),
+                Path("/proc/no-such-dir"), ["PR"])
+            with self.assertLogs(fairy_tui.logger, level="ERROR") as logs:
+                ui.export(full=True)  # must not raise
+        self.assertIn("export", logs.output[0])
+
 
 if __name__ == "__main__":
     unittest.main()

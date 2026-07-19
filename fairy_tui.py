@@ -705,7 +705,12 @@ class UILoop:
                 text = "\n".join("".join(t for _, t in ln) for ln in lines)
         path = self.save_dir / (
             f"fairy_tui-{PANES[pane]}-{datetime.now():%Y%m%d-%H%M%S}.txt")
-        path.write_text(text + "\n", encoding="utf-8")
+        try:
+            self.save_dir.mkdir(parents=True, exist_ok=True)
+            path.write_text(text + "\n", encoding="utf-8")
+        except OSError as exc:
+            logger.error("export to %s failed: %s", path, exc)
+            return
         logger.info("exported %s pane (%s) to %s",
                     PANES[pane], "full" if full else "visible", path)
 

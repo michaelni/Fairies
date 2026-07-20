@@ -81,6 +81,40 @@ class ModelTests(unittest.TestCase):
         model.note_stage("PR", 5, "queued", None)
         self.assertIs(item.status, fairy_tui.Status.CANCELLED)
 
+    def test_wrapper_lines_track_triage_review_combine(self) -> None:
+        model = fairy_tui.Model()
+        model.add_candidates("PR", [{"number": 7, "title": "t"}])
+        model.add_candidates("issue", [{"number": 7, "title": "t"}])
+        model.note_stage("PR", 7, "evaluating", None)
+        item = model.items[("PR", 7)]
+        model.note_wrapper_line(
+            "2026-07-20 L [wrapper pr=#7] triage decision route=engage ...")
+        self.assertEqual(item.stage, "triage")
+        model.note_wrapper_line(
+            "2026-07-20 L [wrapper pr=#7] triage route=engage; running main reviewer pass")
+        self.assertEqual(item.stage, "review")
+        model.note_wrapper_line(
+            "2026-07-20 L [wrapper pr=#7] combine stage: gpt merging 2 draft(s)")
+        self.assertEqual(item.stage, "combine")
+        # issue lines key the issue item, not the same-numbered PR
+        model.note_wrapper_line(
+            "x [wrapper issue=#7] triage decision route=engage")
+        self.assertEqual(model.items[("issue", 7)].stage, "triage")
+        self.assertEqual(item.stage, "combine")
+        # non-wrapper and unknown-number lines are ignored
+        model.note_wrapper_line("plain log line with triage word")
+        model.note_wrapper_line("x [wrapper pr=#999] triage y")
+        # leaving the LLM clears the sub-stage
+        model.note_stage("PR", 7, "reviewed", decision(7))
+        self.assertEqual(item.stage, "")
+
+    def test_sink_watch_sees_every_captured_line(self) -> None:
+        seen: list[str] = []
+        sink = fairy_tui.OutputSink(
+            tui_core.RingBuffer(), fairy_tui.Event(), None, watch=seen.append)
+        sink.line("one\ntwo")
+        self.assertEqual(seen, ["one", "two"])
+
     def test_quit_answers_pending_prompts(self) -> None:
         model = fairy_tui.Model()
         got: dict[str, str] = {}

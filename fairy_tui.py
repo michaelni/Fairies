@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import faulthandler
 import logging
+import re
 import shlex
 import sys
 import time
@@ -103,8 +104,10 @@ class Item:
     status: Status = Status.PENDING
     decision: fairy.Decision | None = None
     url: str = ""
+    stage: str = ""  # wrapper sub-stage while IN_LLM: triage/review/combine
 
 
+_WRAPPER_LINE_RE = re.compile(r"\[wrapper (pr|issue)=#(\d+)\] (.*)")
 _STAGE_STATUS = {"queued": Status.QUEUED, "evaluating": Status.IN_LLM,
                  "reviewed": Status.REVIEWED}
 # States a pipeline stage report may move an item out of.
@@ -202,10 +205,38 @@ class Model:
                 item = self._ensure(kind, decision)
             if decision is not None:
                 item.decision = decision
+            if stage != "evaluating":
+                item.stage = ""
             # Never resurrect an item the operator already acted on
             # (cancelled/deferred/terminal states stay put).
             if item.status in _IN_PIPELINE:
                 item.status = _STAGE_STATUS[stage]
+        self.dirty.set()
+
+    def note_wrapper_line(self, text: str) -> None:
+        """Track the wrapper's internal stage from its streamed stderr.
+        Keyed on the ``[wrapper pr=#N]`` / ``[wrapper issue=#N]`` prefix
+        run_cmd prepends; the keywords are review_pipeline's own log
+        lines (\"triage ...\", \"running main reviewer pass\",
+        \"combine stage:\")."""
+        m = _WRAPPER_LINE_RE.search(text)
+        if m is None:
+            return
+        rest = m.group(3)
+        if "combine stage" in rest:
+            stage = "combine"
+        elif "running main reviewer pass" in rest:
+            stage = "review"
+        elif "triage" in rest:
+            stage = "triage"
+        else:
+            return
+        with self.lock:
+            item = self.items.get(
+                ("PR" if m.group(1) == "pr" else "issue", int(m.group(2))))
+            if item is None or item.stage == stage:
+                return
+            item.stage = stage
         self.dirty.set()
 
     # ---- UI-thread side ----
@@ -374,15 +405,22 @@ class OutputSink:
     """Fan-in for every captured line: the debug-pane ring buffer, an
     optional tee file, and the painter's dirty event."""
 
-    def __init__(self, ring: tui_core.RingBuffer, dirty: Event, path: Path | None) -> None:
+    def __init__(self, ring: tui_core.RingBuffer, dirty: Event, path: Path | None,
+                 watch=None) -> None:
         self.ring = ring
         self.dirty = dirty
+        self.watch = watch  # optional per-line observer (wrapper-stage scraping)
         self._lock = Lock()
         self._fh = open(path, "a", encoding="utf-8") if path else None
 
     def line(self, text: str, level: int | None = None) -> None:
         for ln in text.splitlines() or [""]:
             self.ring.append(ln, level)
+            if self.watch is not None:
+                try:
+                    self.watch(ln)
+                except Exception:
+                    pass  # observing must never break the capture path
             if self._fh is not None:
                 with self._lock:
                     self._fh.write(ln + "\n")
@@ -593,6 +631,11 @@ class UILoop:
                         row += [(f"st_{s.name.lower()}", f"{s.name.lower()}="),
                                 ("num", str(by[s])), ("text", "  ")]
                 lines.append(row)
+            stages = Counter(it.stage or "starting" for it in group
+                             if it.status is Status.IN_LLM)
+            if stages:
+                lines.append([("text", "  "), ("label", "llm stage: "), ("st_in_llm",
+                    ", ".join(f"{k}={v}" for k, v in sorted(stages.items())))])
             cls = Counter(
                 fairy.format_llm_classification(it.decision.llm_classification)
                 for it in group if it.decision)
@@ -614,7 +657,9 @@ class UILoop:
         rows: list = []
         for i, it in enumerate(vis):
             d = it.decision
-            llm = fairy.format_llm_classification(d.llm_classification) if d else ""
+            # While the wrapper runs, its sub-stage takes the llm column.
+            llm = (fairy.format_llm_classification(d.llm_classification) if d
+                   else it.stage or ("llm" if it.status is Status.IN_LLM else ""))
             mark = "▶" if m._prompt_for((it.kind, it.number)) else " "
             if i == m.cursor:
                 # The cursor row is a single reversed block; per-segment
@@ -912,7 +957,8 @@ def main() -> int:
     args = parse_args()
     ring = tui_core.RingBuffer()
     model = Model()
-    sink = OutputSink(ring, model.dirty, args.log_file)
+    sink = OutputSink(ring, model.dirty, args.log_file,
+                      watch=model.note_wrapper_line)
 
     sides = []
     if args.pr_args:

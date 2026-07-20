@@ -422,6 +422,17 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(d.action, "comment")
         self.assertEqual(d.llm_message, "persisted")
 
+    def test_deleted_workset_file_vetoes_the_post(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = make_args(workset_dir=Path(tmp.name))
+        decision = Decision(5, "t", "a", "-", "comment", "llm", None, "reply", "m")
+        with mock.patch.object(issue_fairy, "post_issue_comment") as post:
+            issue_fairy.apply_issue_decision(
+                args, decision, cache=mock.Mock(), submitted_counts={"comment": 0},
+            )
+        post.assert_not_called()
+
     def test_workset_file_written_reviewed(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

@@ -592,6 +592,10 @@ def apply_issue_decision(
     applied without re-checking (same ordering as fairy's
     ``apply_decision``).
     """
+    updated = fairy.workset_operator_review(args, "issue", decision)
+    if updated is None:
+        return
+    decision = updated
     changed_reason = check_issue_still_unchanged(args, decision)
     if changed_reason is not None:
         logger.info(
@@ -634,6 +638,9 @@ def apply_issue_decision(
             args, decision.pr_number, decision.label_changes, current,
             kind=KIND_ISSUE,
         )
+    fairy.workset_transition(
+        args, "issue", decision.pr_number, workset.WorkState.POSTED,
+    )
 
 
 _LLM_DONE = object()

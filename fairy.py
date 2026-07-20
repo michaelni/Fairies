@@ -1654,6 +1654,10 @@ def apply_decision(
     pristine ``updated_at``; a drifted action skips labels too because
     label apply would drift identically.
     """
+    updated = workset_operator_review(args, "pr", decision)
+    if updated is None:
+        return
+    decision = updated
     if decision.action in ACTIONABLE_DECISIONS:
         if not submit_decision_action(
             args, prepared, decision, cache=cache,
@@ -1662,9 +1666,11 @@ def apply_decision(
         submitted_counts[decision.action] += 1
         if decision_has_label_changes(decision):
             apply_triage_labels(args, prepared, decision, skip_guard=True)
+        workset_transition(args, "pr", decision.pr_number, workset.WorkState.POSTED)
         return
     if decision_has_label_changes(decision):
         apply_triage_labels(args, prepared, decision, skip_guard=False)
+        workset_transition(args, "pr", decision.pr_number, workset.WorkState.POSTED)
 
 
 def prompt_manual(pr_number: int, action: str, pr_url: str = "") -> str:
@@ -3225,6 +3231,53 @@ def workset_transition(
         workset.update_item(
             path, lambda item: item.set_state(state, datetime.now(timezone.utc))
         )
+
+
+def workset_operator_review(
+    args: argparse.Namespace, kind: str, decision: Decision,
+) -> Decision | None:
+    """Re-read the item file just before posting: the file is the
+    operator's veto/edit surface. Returns the decision with the file's
+    review content (edits to message/labels win; the action mapping is
+    not re-derived), or None when the post must not happen (file deleted
+    or no longer REVIEWED). Non-LLM decisions never had a file and pass
+    through."""
+    path = workset_path(args, kind, decision.pr_number)
+    if path is None or decision.llm_classification in ("-", ""):
+        return decision
+    item = workset.load_item(path)
+    if item is None:
+        logger.info(
+            "%s #%d: workset file %s deleted/unreadable; not posting",
+            kind, decision.pr_number, path,
+        )
+        return None
+    if item.state is not workset.WorkState.REVIEWED or item.review is None:
+        logger.info(
+            "%s #%d: workset file is %s, not REVIEWED; not posting",
+            kind, decision.pr_number, item.state.name,
+        )
+        return None
+    file_labels = tuple(
+        LabelChange(c.label, c.op, c.reason, c.post)
+        for c in item.review.label_changes
+    )
+    if (
+        item.review.classification == decision.llm_classification
+        and item.review.message == decision.llm_message
+        and file_labels == decision.label_changes
+    ):
+        return decision
+    logger.info(
+        "%s #%d: posting the operator-edited review from %s",
+        kind, decision.pr_number, path,
+    )
+    return dataclasses_replace(
+        decision,
+        llm_classification=item.review.classification,
+        llm_message=item.review.message,
+        label_changes=file_labels,
+    )
 
 
 def workset_on_choice(args: argparse.Namespace, kind: str) -> Callable[[Decision, str], None]:

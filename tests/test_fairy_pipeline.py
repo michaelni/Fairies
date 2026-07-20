@@ -258,5 +258,72 @@ class WorksetReuseTests(unittest.TestCase):
         llm.assert_called_once()
 
 
+class WorksetOperatorEditTests(unittest.TestCase):
+    """apply_decision re-reads the item file: edits win, deletion vetoes."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.args = make_args(
+            workset_dir=Path(self._tmp.name), owner="o", repo="r",
+            forge_type="gitea", gcli_account=None,
+        )
+        self.prepared = fairy.PreparedPR(
+            pr=make_pr(1), number=1, title="t", author="a", auto_merge="-",
+            last_activity=None, base_reason="review", discussion=[],
+            reviewer_username="fairy",
+        )
+        self.decision = fairy.Decision(
+            1, "t", "a", "-", "comment", "llm", None, "reply", "original")
+
+    def _seed(self, message: str = "original",
+              state: workset.WorkState = workset.WorkState.REVIEWED) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        workset.save_item(fairy.workset_path(self.args, "pr", 1), workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=1, state=state, created_at=now, state_changed_at=now,
+            review=workset.ReviewResult(classification="reply", message=message),
+        ))
+
+    def _apply(self):
+        counts = {action: 0 for action in fairy.ACTIONABLE_DECISIONS}
+        with mock.patch.object(fairy, "check_pr_still_unchanged", return_value=None), \
+                mock.patch.object(fairy, "post_issue_comment") as post:
+            fairy.apply_decision(
+                self.args, self.prepared, self.decision,
+                cache=None, submitted_counts=counts,
+            )
+        return post
+
+    def test_edited_message_is_what_gets_posted(self) -> None:
+        self._seed(message="operator-corrected body")
+        post = self._apply()
+        self.assertEqual(post.call_args.args[4], "operator-corrected body")
+        item = workset.load_item(fairy.workset_path(self.args, "pr", 1))
+        self.assertEqual(item.state, workset.WorkState.POSTED)
+
+    def test_deleted_file_vetoes_the_post(self) -> None:
+        post = self._apply()
+        post.assert_not_called()
+
+    def test_cancelled_file_vetoes_the_post(self) -> None:
+        self._seed(state=workset.WorkState.CANCELLED)
+        post = self._apply()
+        post.assert_not_called()
+
+    def test_non_llm_decision_passes_through(self) -> None:
+        # Gate decisions (llm "-") never had a file; the veto must not
+        # apply to them.
+        self.decision = fairy.Decision(1, "t", "a", "-", "approve", "rules", None)
+        counts = {action: 0 for action in fairy.ACTIONABLE_DECISIONS}
+        with mock.patch.object(fairy, "check_pr_still_unchanged", return_value=None), \
+                mock.patch.object(fairy, "gcli_approve") as approve:
+            fairy.apply_decision(
+                self.args, self.prepared, self.decision,
+                cache=None, submitted_counts=counts,
+            )
+        approve.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

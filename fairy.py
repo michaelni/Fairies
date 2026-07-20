@@ -562,6 +562,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "(default: ~/.fairy/workset).",
     )
     p.add_argument(
+        "--workset-retention-days",
+        type=float,
+        default=14.0,
+        help="Days after an item leaves the open listing before its "
+             "finished workset file is deleted (default: 14).",
+    )
+    p.add_argument(
         "--discussion-cache-max-age-hours",
         type=float,
         default=24.0,
@@ -3258,6 +3265,21 @@ def workset_operator_review(
     )
 
 
+def workset_prune(args: argparse.Namespace, kind: str, open_numbers: set[int]) -> None:
+    """End-of-run cleanup of finished item files. Skipped for
+    --forced-only runs: their candidate list is not the open listing,
+    so still-open items would look closed."""
+    if getattr(args, "forced_only", False):
+        return
+    d = workset_repo_dir(args)
+    if d is None or not d.is_dir():
+        return
+    workset.prune(
+        d, kind, open_numbers,
+        datetime.now(timezone.utc) - timedelta(days=args.workset_retention_days),
+    )
+
+
 def workset_on_choice(args: argparse.Namespace, kind: str) -> Callable[[Decision, str], None]:
     """consume_reviewed ``on_choice`` callback: record operator answers."""
     states = {
@@ -3683,6 +3705,8 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
             gcli_cache.save_cache(args.cache, cache)
         except Exception as exc:
             logger.warning("failed to save PR-data cache %s: %s", args.cache, exc)
+
+    workset_prune(args, "pr", {pr["number"] for pr in prs})
 
     auto_counts = Counter(d.auto_merge for d in decisions)
     llm_counts = Counter(d.llm_classification for d in decisions)

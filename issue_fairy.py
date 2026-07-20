@@ -267,6 +267,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "(default: ~/.fairy/workset).",
     )
     p.add_argument(
+        "--workset-retention-days",
+        type=float,
+        default=14.0,
+        help="Days after an item leaves the open listing before its "
+             "finished workset file is deleted (default: 14).",
+    )
+    p.add_argument(
         "--discussion-cache-max-age-hours",
         type=float,
         default=24.0,
@@ -805,6 +812,8 @@ def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> i
             gcli_cache.save_cache(args.cache, cache)
         except Exception as exc:
             logger.warning("failed to save issue-data cache %s: %s", args.cache, exc)
+
+    fairy.workset_prune(args, "issue", {i["number"] for i in issues})
 
     actionable_total = sum(1 for d in decisions if d.action in ACTIONABLE_DECISIONS)
     llm_counts = Counter(d.llm_classification for d in decisions)

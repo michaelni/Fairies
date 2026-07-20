@@ -53,7 +53,7 @@ from typing import Callable, Literal
 # resolution; pydantic's own JsonValue is the schema-capable equivalent.
 from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
-from common import atomic_write_text
+from common import atomic_write_text, iso_to_dt
 
 __all__ = [
     "SCHEMA_VERSION",
@@ -67,6 +67,7 @@ __all__ = [
     "load_item",
     "save_item",
     "update_item",
+    "prune",
     "logger",
 ]
 
@@ -188,6 +189,33 @@ def load_item(path: Path) -> WorkItem | None:
 def save_item(path: Path, item: WorkItem) -> None:
     atomic_write_text(path, item.model_dump_json(indent=2) + "\n")
     logger.debug("workset: wrote %s state=%s", path, item.state.name)
+
+
+_TERMINAL_STATES = (
+    WorkState.POSTED, WorkState.SKIPPED, WorkState.CANCELLED, WorkState.ERROR,
+)
+
+
+def prune(d: Path, kind: str, open_numbers: set[int], older_than: datetime) -> None:
+    """Delete finished item files (``_TERMINAL_STATES``) of ``kind`` whose
+    item is gone from the open listing and whose last transition predates
+    ``older_than``. REVIEWED files are never pruned: they are un-posted
+    work."""
+    for path in d.glob(f"{kind}-*.json"):
+        item = load_item(path)
+        if item is None or item.number in open_numbers:
+            continue
+        if item.state not in _TERMINAL_STATES:
+            continue
+        changed = iso_to_dt(item.state_changed_at)
+        if changed is None or changed >= older_than:
+            continue
+        path.unlink(missing_ok=True)
+        path.with_suffix(".lock").unlink(missing_ok=True)
+        logger.info(
+            "workset: pruned %s (state=%s since %s, item closed)",
+            path, item.state.name, item.state_changed_at,
+        )
 
 
 def update_item(path: Path, mutate: Callable[[WorkItem], None]) -> WorkItem | None:

@@ -116,5 +116,44 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(load_item(self.path), updated)
 
 
+class PruneTests(unittest.TestCase):
+
+    OLD = "2026-06-01T00:00:00+00:00"
+    CUTOFF = datetime(2026, 7, 1, tzinfo=timezone.utc)
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+
+    def _write(self, number: int, state: WorkState, changed: str) -> Path:
+        path = self.dir / f"pr-{number}.json"
+        save_item(path, make_item(number=number, state=state,
+                                  state_changed_at=changed))
+        return path
+
+    def test_old_finished_closed_item_is_deleted(self) -> None:
+        path = self._write(1, WorkState.POSTED, self.OLD)
+        path.with_suffix(".lock").touch()
+        workset.prune(self.dir, "pr", set(), self.CUTOFF)
+        self.assertFalse(path.exists())
+        self.assertFalse(path.with_suffix(".lock").exists())
+
+    def test_open_item_is_kept(self) -> None:
+        path = self._write(1, WorkState.POSTED, self.OLD)
+        workset.prune(self.dir, "pr", {1}, self.CUTOFF)
+        self.assertTrue(path.exists())
+
+    def test_reviewed_item_is_never_pruned(self) -> None:
+        path = self._write(1, WorkState.REVIEWED, self.OLD)
+        workset.prune(self.dir, "pr", set(), self.CUTOFF)
+        self.assertTrue(path.exists())
+
+    def test_recent_finished_item_is_kept(self) -> None:
+        path = self._write(1, WorkState.SKIPPED, self.CUTOFF.isoformat())
+        workset.prune(self.dir, "pr", set(), self.CUTOFF)
+        self.assertTrue(path.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

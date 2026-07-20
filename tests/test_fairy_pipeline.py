@@ -305,9 +305,54 @@ class WorksetOperatorEditTests(unittest.TestCase):
         post = self._apply()
         post.assert_not_called()
 
+    def test_guard_suppressed_labels_do_not_mark_posted(self) -> None:
+        # regression: the label-only path used to flip the file to POSTED
+        label = fairy.LabelChange("needs docs", "add")
+        self.decision = fairy.Decision(
+            1, "t", "a", "-", "skip", "llm", None, "reply", "original",
+            label_changes=(label,))
+        self._seed_with_label()
+        counts = {action: 0 for action in fairy.ACTIONABLE_DECISIONS}
+        with mock.patch.object(fairy, "check_pr_still_unchanged",
+                               return_value="PR updated_at changed"):
+            fairy.apply_decision(
+                self.args, self.prepared, self.decision,
+                cache=None, submitted_counts=counts,
+            )
+        item = workset.load_item(fairy.workset_path(self.args, "pr", 1))
+        self.assertEqual(item.state, workset.WorkState.REVIEWED)
+
+    def test_applied_labels_mark_posted(self) -> None:
+        label = fairy.LabelChange("needs docs", "add")
+        self.decision = fairy.Decision(
+            1, "t", "a", "-", "skip", "llm", None, "reply", "original",
+            label_changes=(label,))
+        self._seed_with_label()
+        counts = {action: 0 for action in fairy.ACTIONABLE_DECISIONS}
+        with mock.patch.object(fairy, "check_pr_still_unchanged", return_value=None), \
+                mock.patch.object(fairy, "get_pr", return_value={"labels": []}), \
+                mock.patch.object(fairy, "apply_issue_label_changes"), \
+                mock.patch.object(fairy, "post_label_explanations"):
+            fairy.apply_decision(
+                self.args, self.prepared, self.decision,
+                cache=None, submitted_counts=counts,
+            )
+        item = workset.load_item(fairy.workset_path(self.args, "pr", 1))
+        self.assertEqual(item.state, workset.WorkState.POSTED)
+
+    def _seed_with_label(self) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        workset.save_item(fairy.workset_path(self.args, "pr", 1), workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=1, state=workset.WorkState.REVIEWED,
+            created_at=now, state_changed_at=now,
+            review=workset.ReviewResult(
+                classification="reply", message="original",
+                label_changes=[workset.LabelChange(label="needs docs", op="add")]),
+        ))
+
     def test_non_llm_decision_passes_through(self) -> None:
-        # Gate decisions (llm "-") never had a file; the veto must not
-        # apply to them.
+        # gate decisions (llm "-") never had a file
         self.decision = fairy.Decision(1, "t", "a", "-", "approve", "rules", None)
         counts = {action: 0 for action in fairy.ACTIONABLE_DECISIONS}
         with mock.patch.object(fairy, "check_pr_still_unchanged", return_value=None), \

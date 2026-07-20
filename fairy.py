@@ -1563,8 +1563,9 @@ def apply_triage_labels(
     decision: Decision,
     *,
     skip_guard: bool,
-) -> None:
-    """Apply label changes for ``decision``.
+) -> bool:
+    """Apply label changes for ``decision``; False when the staleness
+    guard suppressed them.
 
     When ``skip_guard`` is True the caller has just successfully run
     ``submit_decision_action``; re-checking ``check_pr_still_unchanged``
@@ -1579,7 +1580,7 @@ def apply_triage_labels(
                 decision.pr_number,
                 changed_reason,
             )
-            return
+            return False
 
     pr = get_pr(args, decision.pr_number)
     current = set(labels(pr))
@@ -1593,6 +1594,7 @@ def apply_triage_labels(
         current,
     )
     post_label_explanations(args, decision.pr_number, decision.label_changes, current)
+    return True
 
 
 def post_label_explanations(
@@ -1660,8 +1662,8 @@ def apply_decision(
         workset_transition(args, "pr", decision.pr_number, workset.WorkState.POSTED)
         return
     if decision_has_label_changes(decision):
-        apply_triage_labels(args, prepared, decision, skip_guard=False)
-        workset_transition(args, "pr", decision.pr_number, workset.WorkState.POSTED)
+        if apply_triage_labels(args, prepared, decision, skip_guard=False):
+            workset_transition(args, "pr", decision.pr_number, workset.WorkState.POSTED)
 
 
 def prompt_manual(pr_number: int, action: str, pr_url: str = "") -> str:

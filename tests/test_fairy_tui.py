@@ -112,6 +112,22 @@ class PaintSmokeTests(unittest.TestCase):
         self.assertNotIn("\x1b]0;", out)
         self.assertNotIn("\x07", out)
 
+    def test_debug_scrollback_stops_at_the_oldest_line(self) -> None:
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            stream = io.StringIO()
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=stream, force_styling=True)
+            ring = tui_core.RingBuffer()
+            for i in range(5):
+                ring.append(f"line{i}")
+            ui = fairy_tui.UILoop(
+                term, fairy_tui.Model(), ring, Path("."), ["PR"])
+            ui.scroll["bl"] = 10_000
+            ui.paint()
+            out = stream.getvalue()
+        self.assertLessEqual(ui.scroll["bl"], 5)
+        self.assertIn("line0", out)
+
     def test_export_failure_is_logged_not_fatal(self) -> None:
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
             term = blessed.Terminal(

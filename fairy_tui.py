@@ -528,6 +528,8 @@ class UILoop:
         body_h = max(3, h - 1)
         rects = self.layout.rects(w, body_h)
         col_t, col_b, row = self.layout.splits(w, body_h)
+        self.scroll["bl"] = min(self.scroll["bl"],
+                                max(0, len(self.ring) - (rects["bl"].h - 1)))
         with self.model.lock:
             content: dict[str, list] = {
                 "tl": self._scrolled("tl", self.stats_lines(), rects["tl"].h - 1),

@@ -1736,7 +1736,7 @@ def format_llm_classification(classification: str) -> str:
 
 
 
-def asset_attachments(obj: ApiObject) -> list[dict[str, object]]:
+def attachment_urls(obj: ApiObject) -> list[dict[str, object]]:
     """Forgejo/Gitea ``assets`` of an issue or comment; an unlinked
     attachment appears nowhere in the markdown body. GitHub and GitLab
     upload as inline body links and have no such field."""
@@ -1772,9 +1772,9 @@ def build_llm_discussion(
         body = comment.get("body")
         if not isinstance(body, str):
             body = ""
-        attachments = asset_attachments(comment)
+        urls = attachment_urls(comment)
         # a Forgejo comment can be an attachment with no text at all
-        if not body.strip() and not attachments:
+        if not body.strip() and not urls:
             continue
         user = comment.get("user") or {}
         author = user.get("login") or user.get("username") or user.get("full_name") or "?"
@@ -1785,8 +1785,8 @@ def build_llm_discussion(
             "updated_at": comment.get("updated_at"),
             "body": body,
         }
-        if attachments:
-            item["attachments"] = attachments
+        if urls:
+            item["attachment_urls"] = urls
         items.append(item)
 
     for review in reviews:

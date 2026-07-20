@@ -376,7 +376,7 @@ class AttachmentTests(unittest.TestCase):
         ) as invoke:
             issue_fairy.run_llm_issue(make_args(), p, None)
         payload = invoke.call_args.args[1]
-        attachments = payload["issue"]["attachments"]
+        attachments = payload["issue"]["attachment_urls"]
         self.assertEqual(
             [a["name"] for a in attachments],
             ["Screenshot 2025-09-22 033012.png", "Screenshot 2025-09-22 033032.png",
@@ -391,9 +391,9 @@ class AttachmentTests(unittest.TestCase):
         comment = dict(comments[0], body="", assets=[zip_asset])
         items = fairy.build_llm_discussion([], [comment], [])
         self.assertEqual(len(items), 1)
-        self.assertEqual(items[0]["attachments"],
+        self.assertEqual(items[0]["attachment_urls"],
                          [{"name": "Files.zip", "size": 77292, "url": self.ZIP_URL}])
-        self.assertNotIn("attachments", fairy.build_llm_discussion([], [comments[0]], [])[0])
+        self.assertNotIn("attachment_urls", fairy.build_llm_discussion([], [comments[0]], [])[0])
 
 
 class PipelineTests(unittest.TestCase):

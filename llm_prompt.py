@@ -1132,7 +1132,7 @@ def make_issue_user_text(request: JsonObject, *, lead: str = "Analyze this issue
         "reviewer_username": reviewer_username,
         "labels": [name for name in (issue.get("labels") or []) if isinstance(name, str) and name],
         # includes attachments not linked from the body text; download by url
-        "attachments": issue.get("attachments") or [],
+        "attachment_urls": issue.get("attachment_urls") or [],
         "discussion_items": len(discussion),
         "vector_store_repo_heads": request.get("vector_store_repo_heads"),
     }

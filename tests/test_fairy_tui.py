@@ -327,6 +327,20 @@ class PaintSmokeTests(unittest.TestCase):
         self.assertLessEqual(ui.scroll["bl"], 5)
         self.assertIn("line0", out)
 
+    def test_divider_gutter_keeps_selection_clean(self) -> None:
+        # A URL in a right pane must not sit directly against the "│"
+        # divider: the terminal's own shift/double-click selection would
+        # copy the divider with it. One blank gutter column separates them.
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+            ui = fairy_tui.UILoop(term, fairy_tui.Model(),
+                                  tui_core.RingBuffer(), Path("."), ["PR"])
+            buf: list = []
+            ui._blit(buf, tui_core.Rect(10, 0, 20, 3), "br", ["https://x/y"])
+        self.assertTrue(buf[1].endswith(" "))          # gutter after divider
+        self.assertEqual(buf[2], "https://x/y" + " " * 8)  # 18 wide + right gutter
+
     def test_export_failure_is_logged_not_fatal(self) -> None:
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
             term = blessed.Terminal(

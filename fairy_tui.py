@@ -825,21 +825,27 @@ class UILoop:
         bar_fn = self.styles.get("bar_focus" if pane == self.focus else "bar_blur") \
             or (t.reverse if pane == self.focus else (lambda s: s))
         buf.append(t.move_xy(rect.x, rect.y) + bar_fn(bar))
+        # One blank gutter column on any divider-adjacent edge: without it
+        # the terminal's own shift-click / double-click selection glues the
+        # "│" to the pane text (e.g. copying a URL picks up the divider).
+        lpad = " " if rect.x > 0 else ""
+        w = max(1, rect.w - len(lpad) - (1 if rect.x + rect.w < t.width else 0))
         for i in range(rect.h - 1):
-            buf.append(t.move_xy(rect.x, rect.y + 1 + i))
+            buf.append(t.move_xy(rect.x, rect.y + 1 + i) + lpad)
             line = lines[i] if i < len(lines) else ""
             # sanitize(): forge/LLM text must not inject escape sequences.
             if isinstance(line, str):
-                buf.append(tui_core.sanitize(line)[:rect.w].ljust(rect.w))
+                buf.append(tui_core.sanitize(line)[:w].ljust(rect.w - len(lpad)))
             elif line and isinstance(line[0], str):
                 style, text = line
-                text = tui_core.sanitize(text)[:rect.w].ljust(rect.w)
+                text = tui_core.sanitize(text)[:w].ljust(rect.w - len(lpad))
                 fn = self.styles.get(style)
                 buf.append(fn(text) if fn else text)
             else:
-                buf.append(self._styled_line(line, rect.w))
+                buf.append(self._styled_line(line, w, rect.w - len(lpad)))
 
-    def _styled_line(self, segs: tui_core.StyledLine, width: int) -> str:
+    def _styled_line(self, segs: tui_core.StyledLine, width: int,
+                     pad_to: int | None = None) -> str:
         out = []
         used = 0
         for style, text in segs:
@@ -849,7 +855,7 @@ class UILoop:
             fn = self.styles.get(style)
             out.append(fn(text) if fn else text)
             used += len(text)
-        return "".join(out) + " " * (width - used)
+        return "".join(out) + " " * ((pad_to or width) - used)
 
     def run(self) -> None:
         try:

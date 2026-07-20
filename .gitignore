@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 *.pyo
 
+/.venv/
+
 # Wrapper debug-response dumps (one JSON per OpenAI call; rotates freely).
 # Serves as the source pool for tests/fixtures/wrapper_functional_runs/*.json,
 # but the raw dump directory itself is not meant to be versioned.
@@ -24,7 +26,7 @@ __pycache__/
 !/simpast-runs/run.sh
 
 # Operator-prepped cutoff mirrors the simpast harness reviews against.
-/simpast-mirror/
+/simpast-mirror*/
 
 # API keys (openai_common/anthropic_common read it; never versioned).
 /.env

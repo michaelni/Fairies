@@ -577,6 +577,23 @@ def check_issue_still_unchanged(
     return None
 
 
+def issue_table_decision(args: argparse.Namespace, number: int) -> Decision | None:
+    """Issue twin of fairy.workset_table_decision: a postable Decision
+    rebuilt purely from the item file, guard included."""
+    path = fairy.workset_path(args, "issue", number)
+    item = workset.load_item(path) if path is not None else None
+    if item is None or item.state is not workset.WorkState.REVIEWED or item.review is None:
+        return None
+    review = fairy.workset_llm_review(item)
+    action = "comment" if review.classification == "reply" else "skip"
+    return Decision(
+        number, item.title, "", "-", action, "persisted review",
+        iso_to_dt(item.last_activity_iso), review.classification, review.message,
+        expected_pr_updated_at=item.expected_updated_at,
+        label_changes=review.label_changes,
+    )
+
+
 def apply_issue_decision(
     args: argparse.Namespace,
     decision: Decision,
@@ -787,8 +804,21 @@ def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> i
         discussion_cache_max_age=discussion_cache_max_age,
         cancelled=cancelled,
     )
+    poll_actions = None
     if ui is not None:
-        ui.pipeline(input_queue, pending, cancelled)
+        table_actions: SimpleQueue = SimpleQueue()
+        ui.pipeline(input_queue, pending, cancelled, table_actions)
+        poll_actions = fairy.drain_table_actions(
+            args, "issue", table_actions,
+            build_decision=lambda n: issue_table_decision(args, n),
+            apply_fn=lambda d: apply_issue_decision(
+                args, d, cache=cache, submitted_counts=submitted_counts,
+            ),
+            fetch=lambda n: get_issue(args, n),
+            input_queue=input_queue,
+            pending=pending,
+            forced=args.force_review_issues,
+        )
     try:
         decisions, stopped_by_user = consume_reviewed(
             reviewed_queue, llm_queue, pending,
@@ -804,6 +834,7 @@ def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> i
             cancelled=cancelled,
             ui=ui,
             on_choice=fairy.workset_on_choice(args, "issue"),
+            poll_actions=poll_actions,
         )
     finally:
         if ui is not None:

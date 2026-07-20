@@ -65,6 +65,44 @@ class ConsumeReviewedTests(unittest.TestCase):
         self.assertEqual(pm.call_count, 3)
         self.assertIn("https://forge/pr/7", pm.call_args.kwargs["pr_url"])
 
+    def test_hold_records_without_applying_and_polls_actions(self) -> None:
+        # A "hold" ui (fairy-ui table mode) never blocks the consumer:
+        # decisions are recorded, nothing is applied, and the action
+        # channel is polled while draining.
+        class HoldUI:
+            def decide(self, prepared, d, url):
+                return "hold"
+
+            def item_done(self, prepared, d):
+                pass
+
+            def keep_open(self):
+                return False
+
+            def stopped(self):
+                return False
+
+        reviewed: SimpleQueue = SimpleQueue()
+        llm: SimpleQueue = SimpleQueue()
+        items = [(Prepared(1), make_decision(1)), (Prepared(2), make_decision(2))]
+        for item in items:
+            reviewed.put(item)
+        applied: list[fairy.Decision] = []
+        polls: list[int] = []
+        decisions, stopped = fairy.consume_reviewed(
+            reviewed, llm, fairy.PendingCount(2),
+            now=datetime.now(timezone.utc),
+            manual=False, approve=False, kind="PR",
+            apply=lambda p, d: applied.append(d),
+            item_url=lambda p: p.url,
+            ui=HoldUI(),
+            poll_actions=lambda: polls.append(1),
+        )
+        self.assertEqual([d.pr_number for d in decisions], [1, 2])
+        self.assertEqual(applied, [])
+        self.assertFalse(stopped)
+        self.assertTrue(polls)
+
     def test_on_choice_reports_retry_skip_and_cancel(self) -> None:
         choices: list[tuple[int, str]] = []
         record = lambda d, c: choices.append((d.pr_number, c))  # noqa: E731

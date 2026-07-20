@@ -36,8 +36,14 @@ runs run_reviews() on its own controller thread and talks to the screen
 through a fairy.ReviewUI adapter. Panes: stats (top left), PR/issue
 list (top right), captured debug output (bottom left), rendered
 review message + label changes (bottom right). Dividers move with the
-mouse; the operator answers each actionable decision with the
-prompt_manual letters (y/s/d/r, q quits).
+mouse.
+
+The list is a table over the workset files, not a queue: the operator
+selects any row and acts on it whenever they choose -- y posts a
+reviewed item (guard-checked), s skips it, x drops it, r reruns the
+LLM, f force-queues a candidate. Actions travel over a per-side channel
+and execute on that side's controller thread; nothing ever waits for a
+prompt.
 
 What belongs here: everything terminal-facing -- blessed painting,
 key/mouse dispatch, output capture, the ReviewUI adapters and the
@@ -60,9 +66,9 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections import Counter, deque
+from collections import Counter
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import IntEnum
 from pathlib import Path
@@ -89,15 +95,12 @@ class Status(IntEnum):
     PENDING = 0    # candidate listed; nothing back from the pipeline yet
     QUEUED = 1     # passed the gates; waiting for an LLM worker
     IN_LLM = 2     # LLM evaluation running
-    REVIEWED = 3   # decision ready; waiting its turn with the operator
-    AWAITING = 4   # actionable decision waiting for the operator
-    RETRYING = 5   # operator sent it back to the LLM
-    DEFERRED = 6   # operator pushed it to the back of the queue
-    APPLIED = 7
-    SKIPPED = 8    # operator answered skip
-    CANCELLED = 9  # operator threw it out (x)
-    DONE = 10      # non-actionable decision arrived (gate/LLM skip)
-    INVALID = 11   # workset file failed validation (broken hand-edit)
+    REVIEWED = 3   # verdict in the file; actionable with y/s/x/r any time
+    APPLIED = 4    # posted to the forge
+    SKIPPED = 5    # operator answered skip
+    CANCELLED = 6  # operator threw it out (x)
+    DONE = 7       # non-actionable decision arrived (gate/LLM skip)
+    INVALID = 8    # workset file failed validation (broken hand-edit)
 
 
 @dataclass
@@ -115,7 +118,7 @@ class Item:
 
 
 _IN_PIPELINE = (Status.PENDING, Status.QUEUED, Status.IN_LLM,
-                Status.REVIEWED, Status.RETRYING, Status.INVALID)
+                Status.REVIEWED, Status.INVALID)
 _KIND_FILE = {"PR": "pr", "issue": "issue"}  # TUI kind -> workset file kind
 _WORKSET_STATUS = {
     workset.WorkState.QUEUED: Status.QUEUED,
@@ -136,16 +139,11 @@ _WORKSET_STAGE = {
 
 
 @dataclass
-class PromptReq:
-    key: tuple[str, int]
-    reply: SimpleQueue = field(default_factory=SimpleQueue)
-
-
-@dataclass
 class Pipeline:
     input_queue: SimpleQueue
     pending: fairy.PendingCount
     cancelled: set[int]
+    actions: SimpleQueue  # (number, action) tuples for the controller
 
 
 class Model:
@@ -158,7 +156,6 @@ class Model:
         self.dirty = Event()
         self.items: dict[tuple[str, int], Item] = {}
         self.order: list[tuple[str, int]] = []
-        self.prompts: deque[PromptReq] = deque()
         self.pipelines: dict[str, Pipeline] = {}
         self.forced: dict[str, set[int]] = {}
         self.workset_dirs: dict[str, Path] = {}  # kind -> per-repo dir
@@ -193,26 +190,25 @@ class Model:
             self.forced[kind] = forced
         self.dirty.set()
 
-    def ask(self, kind: str, decision: fairy.Decision, url: str) -> str:
-        req = PromptReq((kind, decision.pr_number))
+    def note_reviewed(self, kind: str, decision: fairy.Decision, url: str) -> None:
+        """A decision arrived; record it for the detail pane. The row's
+        status comes from the workset file (poll), the operator acts on
+        it whenever they choose."""
         with self.lock:
-            if self.quit_flag:
-                return "quit"
             item = self._ensure(kind, decision)
             item.decision = decision
             item.url = url or item.url
-            item.status = Status.AWAITING
-            self.prompts.append(req)
-            if self._prompt_for(self._cursor_key()) is None:
-                self._move_cursor_to(req.key)
         self.dirty.set()
-        return req.reply.get()
 
     def finish(self, kind: str, decision: fairy.Decision) -> None:
         with self.lock:
             item = self._ensure(kind, decision)
             item.decision = decision
-            if item.status in _IN_PIPELINE:
+            actionable = (decision.action in fairy.ACTIONABLE_DECISIONS
+                          or bool(decision.label_changes))
+            # Actionable items stay at their file state (reviewed) so the
+            # operator can still act on them; everything else is done.
+            if item.status in _IN_PIPELINE and not actionable:
                 item.status = Status.DONE
         self.dirty.set()
 
@@ -297,40 +293,52 @@ class Model:
             return items
         return [it for it in items if self._relevant(it)]
 
-    def answer(self, choice: str) -> bool:
-        """Answer the cursor item's pending prompt; False if it has none."""
+    def act(self, action: str) -> None:
+        """Route a table action ("apply"/"skip"/"cancel"/"rerun") on the
+        cursor row to its side's controller, which executes it with the
+        run's args and caches. Any row is actionable at any time; the
+        controller re-validates against the file before doing anything."""
         with self.lock:
             key = self._cursor_key()
-            req = self._prompt_for(key)
-            if req is None:
-                return False
-            self.items[key].status = {
-                "apply": Status.APPLIED, "skip": Status.SKIPPED,
-                "defer": Status.DEFERRED, "retry": Status.RETRYING,
-            }[choice]
-            self.prompts.remove(req)
-            # Jump to the next decision waiting: the first pending prompt
-            # at or after the cursor, wrapping to the first one overall.
-            if self.prompts:
-                pending = {r.key for r in self.prompts}
+            item = self.items.get(key) if key else None
+            pipe = self.pipelines.get(item.kind) if item else None
+            if item is None or pipe is None:
+                return
+            if action == "rerun" and item.status in (Status.PENDING, Status.QUEUED,
+                                                     Status.IN_LLM):
+                logger.info("%s #%s is already being evaluated", item.kind, item.number)
+                return
+            if action in ("apply", "skip", "cancel") and (
+                item.ws is None
+                or item.ws.state not in (workset.WorkState.REVIEWED,
+                                         workset.WorkState.ERROR)
+            ):
+                logger.info("%s #%s has no reviewed workset file to %s",
+                            item.kind, item.number, action)
+                return
+            logger.info("requested %s for %s #%s", action, item.kind, item.number)
+            pipe.actions.put((item.number, action))
+            # Jump to the next reviewed row waiting for the operator: the
+            # first at/after the cursor, wrapping to the first overall.
+            remaining = {(it.kind, it.number) for it in self.visible()
+                         if it.status is Status.REVIEWED} - {key}
+            if remaining:
                 keys = [(it.kind, it.number) for it in self.visible()]
-                nxt = next((k for k in keys[self.cursor:] if k in pending),
-                           next((k for k in keys if k in pending), None))
+                nxt = next((k for k in keys[self.cursor:] if k in remaining),
+                           next((k for k in keys if k in remaining), None))
                 if nxt is not None:
                     self._move_cursor_to(nxt)
-        req.reply.put(choice)
         self.dirty.set()
-        return True
 
     def force(self) -> None:
         """Force-queue the cursor item for (re-)review, bypassing gates."""
         with self.lock:
             key = self._cursor_key()
-            item = self.items.get(key)
+            item = self.items.get(key) if key else None
             pipe = self.pipelines.get(item.kind) if item else None
-            if item is None or pipe is None or self._prompt_for(key):
+            if item is None or pipe is None:
                 return
-            if item.status in (Status.PENDING, Status.RETRYING, Status.DEFERRED):
+            if item.status in (Status.PENDING, Status.QUEUED, Status.IN_LLM):
                 logger.info("%s #%s is already in flight", item.kind, item.number)
                 return
             if not item.api:
@@ -345,31 +353,27 @@ class Model:
         self.dirty.set()
 
     def cancel(self) -> None:
-        """Throw the cursor item out: skip its prompt if one is pending,
-        else cancel it before/instead of its LLM evaluation."""
-        if self.answer("skip"):
-            return
+        """x: throw the cursor item out -- stop an upcoming evaluation,
+        or cancel a persisted review via the controller."""
         with self.lock:
             key = self._cursor_key()
-            item = self.items.get(key)
+            item = self.items.get(key) if key else None
             pipe = self.pipelines.get(item.kind) if item else None
             if item is None or pipe is None:
                 return
-            if item.status in (Status.PENDING, Status.RETRYING, Status.DEFERRED):
+            if item.status in (Status.PENDING, Status.QUEUED):
                 pipe.cancelled.add(item.number)
                 item.status = Status.CANCELLED
                 logger.info("cancelled %s #%s", item.kind, item.number)
-        self.dirty.set()
+                self.dirty.set()
+                return
+        self.act("cancel")
 
     def quit_all(self) -> None:
         with self.lock:
             if self.quit_flag:
                 return
             self.quit_flag = True
-            reqs = list(self.prompts)
-            self.prompts.clear()
-        for req in reqs:
-            req.reply.put("quit")
         logger.info("quit requested; waiting for the pipelines to wind down")
         self.dirty.set()
 
@@ -389,7 +393,6 @@ class Model:
         if item.number in self.forced.get(item.kind, ()):
             return True
         if item.status in (Status.QUEUED, Status.IN_LLM, Status.REVIEWED,
-                           Status.AWAITING, Status.RETRYING, Status.DEFERRED,
                            Status.INVALID):
             return True
         d = item.decision
@@ -404,9 +407,6 @@ class Model:
         self.cursor = max(0, min(self.cursor, len(vis) - 1))
         it = vis[self.cursor]
         return (it.kind, it.number)
-
-    def _prompt_for(self, key: tuple[str, int] | None) -> PromptReq | None:
-        return next((r for r in self.prompts if r.key == key), None)
 
     def _move_cursor_to(self, key: tuple[str, int]) -> None:
         """Cursor onto ``key``; if the filter hides it, onto the nearest
@@ -434,14 +434,17 @@ class SideUI:
     def candidates(self, items: list[dict]) -> None:
         self.model.add_candidates(self.kind, items)
 
-    def pipeline(self, input_queue, pending, cancelled) -> None:
+    def pipeline(self, input_queue, pending, cancelled, actions) -> None:
         self.model.attach_pipeline(
-            self.kind, Pipeline(input_queue, pending, cancelled),
+            self.kind, Pipeline(input_queue, pending, cancelled, actions),
             self.forced,
         )
 
     def decide(self, prepared, decision, url) -> str:
-        return self.model.ask(self.kind, decision, url)
+        # Table model: never block the controller; the operator acts on
+        # the row (y/s/x/r) whenever they choose.
+        self.model.note_reviewed(self.kind, decision, url)
+        return "hold"
 
     def item_done(self, prepared, decision) -> None:
         self.model.finish(self.kind, decision)
@@ -530,9 +533,10 @@ def captured_output(sink: OutputSink):
 PANES = {"tl": "stats", "tr": "list", "bl": "debug", "br": "message"}
 PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
-CHOICE_KEYS = {"y": "apply", "s": "skip", "d": "defer", "r": "retry"}
-KEYMAP = (("q", "quit"), ("y/s/d/r", "decide"), ("f", "force"), ("x", "drop"),
-          ("o", "edit msg"), ("a", "all/relevant"), ("e/E", "export"),
+ACTION_KEYS = {"y": "apply", "s": "skip", "r": "rerun"}
+KEYMAP = (("q", "quit"), ("y", "apply"), ("s", "skip"), ("r", "rerun"),
+          ("f", "force"), ("x", "drop"), ("o", "edit msg"),
+          ("a", "all/relevant"), ("e/E", "export"),
           ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
 
 
@@ -574,10 +578,9 @@ def _styles(t: blessed.Terminal) -> dict:
             "num": t.bold,                    "mark": mix(t.bold, c(203)),
             "kind_pr": c(75),                 "kind_issue": c(176),
             "llm": c(141),                    "title": c(252),
-            "st_pending": c(244),             "st_awaiting": mix(t.bold, c(214)),
+            "st_pending": c(244),
             "st_queued": c(117),              "st_in_llm": mix(t.bold, c(45)),
-            "st_reviewed": c(150),
-            "st_retrying": c(135),            "st_deferred": c(109),
+            "st_reviewed": mix(t.bold, c(214)),
             "st_applied": c(78),              "st_skipped": c(244),
             "st_cancelled": c(167),           "st_done": c(108),
             "st_invalid": mix(t.bold, c(196)),
@@ -604,9 +607,9 @@ def _styles(t: blessed.Terminal) -> dict:
         "num": t.bold,          "mark": t.bold_red,
         "kind_pr": t.cyan,      "kind_issue": t.magenta,
         "llm": t.magenta,       "title": t.white,
-        "st_pending": t.bright_black, "st_awaiting": t.bold_yellow,
-        "st_queued": t.cyan, "st_in_llm": t.bold_cyan, "st_reviewed": t.green,
-        "st_retrying": t.magenta, "st_deferred": t.yellow,
+        "st_pending": t.bright_black,
+        "st_queued": t.cyan, "st_in_llm": t.bold_cyan,
+        "st_reviewed": t.bold_yellow,
         "st_applied": t.green,  "st_skipped": t.bright_black,
         "st_cancelled": t.red,  "st_done": t.cyan, "st_invalid": t.bold_red,
         "cursor": t.reverse,
@@ -671,13 +674,14 @@ class UILoop:
 
     def stats_lines(self) -> list[tui_core.StyledLine]:
         m = self.model
+        items = [m.items[k] for k in m.order]
+        actionable = sum(1 for it in items if it.status is Status.REVIEWED)
         lines: list[tui_core.StyledLine] = [[
             ("label", "elapsed "),
             ("num", f"{int(time.monotonic() - m.started)}s"),
-            ("label", "   prompts waiting "),
-            ("st_awaiting" if m.prompts else "num", str(len(m.prompts))),
+            ("label", "   reviewed, awaiting you "),
+            ("st_reviewed" if actionable else "num", str(actionable)),
         ]]
-        items = [m.items[k] for k in m.order]
         for kind in self.kinds:
             group = [it for it in items if it.kind == kind]
             by = Counter(it.status for it in group)
@@ -727,7 +731,7 @@ class UILoop:
                 llm = fairy.format_llm_classification(it.ws.review.classification)
             else:
                 llm = it.stage or ("llm" if it.status is Status.IN_LLM else "")
-            mark = "▶" if m._prompt_for((it.kind, it.number)) else " "
+            mark = "▶" if it.status is Status.REVIEWED else " "
             if i == m.cursor:
                 rows.append(("cursor",
                              f"{mark}{it.kind:<5} #{it.number:<6} "
@@ -800,7 +804,8 @@ class UILoop:
                 "br": self._scrolled("br", self.detail_lines(max(8, rects["br"].w - 1)),
                                      rects["br"].h - 1),
             }
-            nprompts = len(self.model.prompts)
+            nact = sum(1 for it in self.model.items.values()
+                       if it.status is Status.REVIEWED)
         buf = []
         for pane, rect in rects.items():
             self._blit(buf, rect, pane, content[pane])
@@ -813,12 +818,12 @@ class UILoop:
         buf.append(t.move_xy(0, row) + divider("─" * w))
         for col in {col_t, col_b}:
             buf.append(t.move_xy(col, row) + divider("┼"))
-        note = f" ▶ {nprompts} pending  " if nprompts else " "
+        note = f" ▶ {nact} reviewed  " if nact else " "
         if len(note) + len(self._status_plain) > w:
             status = (note + self._status_plain)[:w].ljust(w)
         else:
-            mark = self.styles.get("st_awaiting") or (lambda s: s)
-            status = ((mark(note) if nprompts else note) + self._status_styled
+            mark = self.styles.get("st_reviewed") or (lambda s: s)
+            status = ((mark(note) if nact else note) + self._status_styled
                       + " " * (w - len(note) - len(self._status_plain)))
         buf.append(t.move_xy(0, h - 1) + status)
         print("".join(buf), end="", flush=True, file=t.stream)
@@ -971,9 +976,8 @@ class UILoop:
                 self.model.show_all = not self.model.show_all
                 if key is not None:
                     self.model._move_cursor_to(key)
-        elif str(ks) in CHOICE_KEYS:
-            if not self.model.answer(CHOICE_KEYS[str(ks)]):
-                logger.debug("key %r: no pending prompt under the cursor", str(ks))
+        elif str(ks) in ACTION_KEYS:
+            self.model.act(ACTION_KEYS[str(ks)])
         elif ks == "f":
             self.model.force()
         elif ks == "x":

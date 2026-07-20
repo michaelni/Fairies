@@ -6,10 +6,9 @@ import io
 import os
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
-from threading import Thread
+from queue import SimpleQueue
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -27,28 +26,22 @@ def decision(n: int, action: str = "comment", msg: str = "msg") -> fairy.Decisio
     return fairy.Decision(n, "t", "a", "-", action, "llm", None, "reply", msg)
 
 
+def make_pipe() -> fairy_tui.Pipeline:
+    return fairy_tui.Pipeline(SimpleQueue(), fairy.PendingCount(0), set(),
+                              SimpleQueue())
+
+
 class ModelTests(unittest.TestCase):
-    def test_ask_answer_roundtrip(self) -> None:
+    def test_decide_holds_and_records(self) -> None:
+        # The controller never blocks: decide records the decision and
+        # returns "hold"; acting is the operator's move on the table.
         model = fairy_tui.Model()
         model.add_candidates("PR", [{"number": 7, "title": "t", "html_url": "u"}])
-        got: dict[str, str] = {}
-        th = Thread(
-            target=lambda: got.setdefault("choice", model.ask("PR", decision(7), "u")))
-        th.start()
-        for _ in range(500):
-            with model.lock:
-                if model.prompts:
-                    break
-            time.sleep(0.01)
-        self.assertTrue(model.answer("apply"))
-        th.join(timeout=2)
-        self.assertEqual(got.get("choice"), "apply")
-        self.assertIs(model.items[("PR", 7)].status, fairy_tui.Status.APPLIED)
-
-    def test_answer_without_prompt_is_refused(self) -> None:
-        model = fairy_tui.Model()
-        model.add_candidates("PR", [{"number": 1, "title": "t"}])
-        self.assertFalse(model.answer("apply"))
+        ui = fairy_tui.SideUI("PR", model, set())
+        self.assertEqual(ui.decide(None, decision(7), "u"), "hold")
+        item = model.items[("PR", 7)]
+        self.assertIsNotNone(item.decision)
+        self.assertIs(item.status, fairy_tui.Status.PENDING)  # file drives status
 
     def test_relevant_filter_hides_gate_skips(self) -> None:
         model = fairy_tui.Model()
@@ -61,44 +54,16 @@ class ModelTests(unittest.TestCase):
             model.show_all = True
             self.assertEqual([it.number for it in model.visible()], [1, 2])
 
-    def test_answer_advances_to_the_next_pending_prompt(self) -> None:
+    def test_finish_marks_only_non_actionable_done(self) -> None:
         model = fairy_tui.Model()
-        model.add_candidates("PR", [{"number": n, "title": "t"} for n in (1, 2)])
-        got: dict[int, str] = {}
-        for n in (1, 2):
-            Thread(target=lambda n=n: got.setdefault(
-                n, model.ask("PR", decision(n), ""))).start()
-            for _ in range(500):
-                with model.lock:
-                    if len(model.prompts) == n:
-                        break
-                time.sleep(0.01)
-        with model.lock:
-            self.assertEqual(model._cursor_key(), ("PR", 1))
-        self.assertTrue(model.answer("skip"))
-        with model.lock:
-            self.assertEqual(model._cursor_key(), ("PR", 2))
-        self.assertTrue(model.answer("apply"))
-        for _ in range(500):
-            if len(got) == 2:
-                break
-            time.sleep(0.01)
-        self.assertEqual(got, {1: "skip", 2: "apply"})
-
-    def test_quit_answers_pending_prompts(self) -> None:
-        model = fairy_tui.Model()
-        got: dict[str, str] = {}
-        th = Thread(
-            target=lambda: got.setdefault("choice", model.ask("PR", decision(3), "")))
-        th.start()
-        for _ in range(500):
-            with model.lock:
-                if model.prompts:
-                    break
-            time.sleep(0.01)
-        model.quit_all()
-        th.join(timeout=2)
-        self.assertEqual(got.get("choice"), "quit")
+        model.add_candidates("PR", [{"number": 1, "title": "a"},
+                                    {"number": 2, "title": "b"}])
+        model.finish("PR", decision(1, action="skip", msg=""))  # gate skip
+        model.finish("PR", decision(2))                         # actionable
+        self.assertIs(model.items[("PR", 1)].status, fairy_tui.Status.DONE)
+        # Actionable items keep their file-driven status so the operator
+        # can still act on the row.
+        self.assertIs(model.items[("PR", 2)].status, fairy_tui.Status.PENDING)
 
 
 class WorksetDirCase(unittest.TestCase):
@@ -179,12 +144,80 @@ class WorksetPollTests(WorksetDirCase):
                       fairy_tui.Status.CANCELLED)
 
     def test_operator_states_are_not_clobbered(self) -> None:
+        # APPLIED (just posted this run) must not be downgraded by a poll
+        # that still sees the file in REVIEWED for a moment.
         self.model.add_candidates("PR", [{"number": 5, "title": "t"}])
-        self.model.items[("PR", 5)].status = fairy_tui.Status.AWAITING
+        self.model.items[("PR", 5)].status = fairy_tui.Status.APPLIED
         self._write(5, workset.WorkState.REVIEWED)
         self.model.poll_workset()
         self.assertIs(self.model.items[("PR", 5)].status,
-                      fairy_tui.Status.AWAITING)
+                      fairy_tui.Status.APPLIED)
+
+
+class ActTests(WorksetDirCase):
+    """y/s/x/r route table actions for the cursor row to the controller."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.pipe = make_pipe()
+        with self.model.lock:
+            self.model.pipelines["PR"] = self.pipe
+            self.model.forced["PR"] = set()
+
+    def _actions(self) -> list:
+        out = []
+        while True:
+            try:
+                out.append(self.pipe.actions.get_nowait())
+            except Exception:
+                return out
+
+    def test_apply_on_reviewed_row_is_routed(self) -> None:
+        self._write(5, workset.WorkState.REVIEWED)
+        self.model.poll_workset()
+        self.model.act("apply")
+        self.assertEqual(self._actions(), [(5, "apply")])
+
+    def test_apply_without_reviewed_file_is_refused(self) -> None:
+        self.model.add_candidates("PR", [{"number": 5, "title": "t"}])
+        self.model.act("apply")
+        self.assertEqual(self._actions(), [])
+
+    def test_rerun_refused_while_evaluating(self) -> None:
+        self._write(5, workset.WorkState.REVIEW)  # wrapper running
+        self.model.poll_workset()
+        self.model.act("rerun")
+        self.assertEqual(self._actions(), [])
+
+    def test_rerun_on_reviewed_row_is_routed(self) -> None:
+        self._write(5, workset.WorkState.REVIEWED)
+        self.model.poll_workset()
+        self.model.act("rerun")
+        self.assertEqual(self._actions(), [(5, "rerun")])
+
+    def test_act_advances_to_the_next_reviewed_row(self) -> None:
+        self._write(1, workset.WorkState.REVIEWED)
+        self._write(2, workset.WorkState.REVIEWED)
+        self.model.poll_workset()
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), ("PR", 1))
+        self.model.act("apply")
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), ("PR", 2))
+
+    def test_x_cancels_pending_via_set_and_reviewed_via_action(self) -> None:
+        self.model.add_candidates("PR", [{"number": 1, "title": "t"}])
+        self.model.show_all = True  # pending rows live in the "all" view
+        self.model.cancel()
+        self.assertIn(1, self.pipe.cancelled)
+        self.assertIs(self.model.items[("PR", 1)].status,
+                      fairy_tui.Status.CANCELLED)
+        self._write(5, workset.WorkState.REVIEWED)
+        self.model.poll_workset()
+        with self.model.lock:
+            self.model.cursor = [it.number for it in self.model.visible()].index(5)
+        self.model.cancel()
+        self.assertEqual(self._actions(), [(5, "cancel")])
 
 
 class DetailFromFileTests(WorksetDirCase):

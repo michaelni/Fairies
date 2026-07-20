@@ -364,5 +364,80 @@ class WorksetOperatorEditTests(unittest.TestCase):
         approve.assert_called_once()
 
 
+class TableActionTests(unittest.TestCase):
+    """drain_table_actions executes operator y/s/x/r on the controller,
+    building postable decisions purely from the item files."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.args = make_args(
+            workset_dir=Path(self._tmp.name), owner="o", repo="r",
+            forge_type="gitea", gcli_account=None, force_review_prs=set(),
+        )
+        self.actions: SimpleQueue = SimpleQueue()
+        self.input_queue: SimpleQueue = SimpleQueue()
+        self.pending = fairy.PendingCount(0)
+        self.applied: list[fairy.Decision] = []
+        self.poll = fairy.drain_table_actions(
+            self.args, "pr", self.actions,
+            build_decision=lambda n: fairy.workset_table_decision(self.args, n),
+            apply_fn=self.applied.append,
+            fetch=lambda n: {"number": n},
+            input_queue=self.input_queue,
+            pending=self.pending,
+            forced=self.args.force_review_prs,
+        )
+
+    def _seed(self, number: int = 1) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        workset.save_item(fairy.workset_path(self.args, "pr", number), workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=number, state=workset.WorkState.REVIEWED,
+            created_at=now, state_changed_at=now, title="t",
+            expected_updated_at="U1", expected_head_ref="h1",
+            review=workset.ReviewResult(
+                classification="moderate_issues", message="persisted body",
+                label_changes=[workset.LabelChange(label="needs docs", op="add")]),
+        ))
+
+    def _item(self, n: int = 1) -> workset.WorkItem | None:
+        return workset.load_item(fairy.workset_path(self.args, "pr", n))
+
+    def test_apply_builds_the_decision_from_the_file(self) -> None:
+        self._seed()
+        self.actions.put((1, "apply"))
+        self.poll()
+        [d] = self.applied
+        self.assertEqual(d.action, "comment")  # moderate_issues mapping
+        self.assertEqual(d.llm_message, "persisted body")
+        self.assertEqual(d.expected_pr_updated_at, "U1")
+        self.assertEqual(d.expected_head_ref, "h1")
+        self.assertEqual(d.label_changes[0].label, "needs docs")
+
+    def test_apply_without_reviewed_file_is_a_noop(self) -> None:
+        self.actions.put((1, "apply"))
+        self.poll()
+        self.assertEqual(self.applied, [])
+
+    def test_rerun_requeues_with_gate_and_reuse_bypass(self) -> None:
+        self._seed()
+        self.actions.put((1, "rerun"))
+        self.poll()
+        self.assertIn(1, self.args.force_review_prs)
+        self.assertEqual(self._item().state, workset.WorkState.QUEUED)
+        self.assertEqual(self.input_queue.get_nowait(), {"number": 1})
+        self.assertEqual(self.pending.value, 1)
+
+    def test_skip_and_cancel_transition_the_file(self) -> None:
+        self._seed(1)
+        self._seed(2)
+        self.actions.put((1, "skip"))
+        self.actions.put((2, "cancel"))
+        self.poll()
+        self.assertEqual(self._item(1).state, workset.WorkState.SKIPPED)
+        self.assertEqual(self._item(2).state, workset.WorkState.CANCELLED)
+
+
 if __name__ == "__main__":
     unittest.main()

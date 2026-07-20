@@ -3224,6 +3224,88 @@ def workset_llm_review(item: workset.WorkItem) -> LLMReview:
     )
 
 
+def workset_table_decision(args: argparse.Namespace, number: int) -> Decision | None:
+    """Rebuild a postable PR Decision purely from the item file, for
+    operator table actions (fairy-ui) that hold no in-memory prepared
+    object -- e.g. reviews left by a previous run. The file's guard rides
+    on the Decision, so ``check_pr_still_unchanged`` still pins the post
+    to the reviewed state."""
+    path = workset_path(args, "pr", number)
+    item = workset.load_item(path) if path is not None else None
+    if item is None or item.state is not workset.WorkState.REVIEWED or item.review is None:
+        return None
+    decision = decision_from_review(
+        workset_llm_review(item),
+        number=number,
+        title=item.title,
+        author="",
+        auto_merge="-",
+        last_activity=iso_to_dt(item.last_activity_iso),
+        base_reason="persisted review",
+    )
+    return dataclasses_replace(
+        decision,
+        expected_pr_updated_at=item.expected_updated_at,
+        expected_head_ref=item.expected_head_ref,
+    )
+
+
+def drain_table_actions(
+    args: argparse.Namespace,
+    kind: str,
+    actions: SimpleQueue,
+    *,
+    build_decision: Callable[[int], Decision | None],
+    apply_fn: Callable[[Decision], None],
+    fetch: Callable[[int], ApiObject],
+    input_queue: SimpleQueue,
+    pending: PendingCount,
+    forced: set[int],
+) -> Callable[[], None]:
+    """Poll callback for consume_reviewed: execute operator table actions
+    from fairy-ui (y/s/x/r on any row) on this controller thread, where
+    the run's args and caches live. ``apply`` posts the persisted review
+    (subject to the staleness guard), ``skip``/``cancel`` end the item,
+    ``rerun`` forces a fresh LLM pass through the normal pipeline."""
+
+    def poll() -> None:
+        while True:
+            try:
+                number, act = actions.get_nowait()
+            except Empty:
+                return
+            logger.info("table action %r on %s #%s", act, kind, number)
+            try:
+                if act == "apply":
+                    decision = build_decision(number)
+                    if decision is None:
+                        logger.info(
+                            "%s #%s: no reviewed workset file; nothing to apply",
+                            kind, number,
+                        )
+                        continue
+                    apply_fn(decision)
+                elif act == "skip":
+                    workset_transition(args, kind, number, workset.WorkState.SKIPPED)
+                elif act == "cancel":
+                    workset_transition(args, kind, number, workset.WorkState.CANCELLED)
+                elif act == "rerun":
+                    # A fresh LLM pass: QUEUED disables verdict reuse and
+                    # the forced set bypasses the prepare gates. Fetch
+                    # first so a forge error leaves nothing half-done.
+                    api = fetch(number)
+                    forced.add(number)
+                    workset_transition(args, kind, number, workset.WorkState.QUEUED)
+                    pending.add(1)
+                    input_queue.put(api)
+                else:
+                    logger.warning("unknown table action %r on %s #%s", act, kind, number)
+            except Exception as exc:
+                logger.error("table action %r on %s #%s failed: %s", act, kind, number, exc)
+
+    return poll
+
+
 def workset_transition(
     args: argparse.Namespace, kind: str, number: int, state: workset.WorkState,
 ) -> None:
@@ -3340,11 +3422,16 @@ class ReviewUI(Protocol):
         input_queue: SimpleQueue,
         pending: PendingCount,
         cancelled: set[int],
+        actions: SimpleQueue,
     ) -> None:
-        """Handles for runtime force-add (put + pending.add) and cancel."""
+        """Handles for runtime force-add (put + pending.add), cancel, and
+        the table-action channel ((number, action) tuples the controller
+        executes via its poll_actions callback)."""
 
     def decide(self, prepared: object, decision: Decision, url: str) -> str:
-        """Return "apply", "skip", "defer", "retry" or "quit"."""
+        """Return "apply", "skip", "defer", "retry", "quit" -- or "hold":
+        record the decision and move on without acting; the operator acts
+        on the row later through the table-action channel."""
 
     def item_done(self, prepared: object, decision: Decision) -> None:
         """Called once per item after its final dispatch."""
@@ -3370,13 +3457,15 @@ def consume_reviewed(
     cancelled: set[int] | None = None,
     ui: ReviewUI | None = None,
     on_choice: Callable[[Decision, str], None] | None = None,
+    poll_actions: Callable[[], None] | None = None,
 ) -> tuple[list[Decision], bool]:
     """Drain ``reviewed_queue`` of (prepared, decision) tuples, prompting
     for / applying each actionable decision. ``item_url`` maps a prepared
     item (never a Decision) to its html_url. ``on_choice`` is told each
     operator answer that ends or re-runs an item ("retry", "skip",
-    "cancel"). Returns the collected decisions and whether the operator
-    stopped the run."""
+    "cancel"). ``poll_actions`` runs every loop iteration (<=0.25s apart
+    with a ui) to execute pending operator table actions. Returns the
+    collected decisions and whether the operator stopped the run."""
     decisions: list[Decision] = []
     stopped = False
     idle_logged = False
@@ -3401,6 +3490,8 @@ def consume_reviewed(
                     ready.append(reviewed_queue.get_nowait())
                 except Empty:
                     break
+            if poll_actions is not None:
+                poll_actions()
             if ui is not None and ui.stopped():
                 stopped = True
                 break
@@ -3692,8 +3783,21 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
         discussion_cache_max_age=discussion_cache_max_age,
         cancelled=cancelled,
     )
+    poll_actions = None
     if ui is not None:
-        ui.pipeline(input_queue, pending, cancelled)
+        table_actions: SimpleQueue = SimpleQueue()
+        ui.pipeline(input_queue, pending, cancelled, table_actions)
+        poll_actions = drain_table_actions(
+            args, "pr", table_actions,
+            build_decision=lambda n: workset_table_decision(args, n),
+            apply_fn=lambda d: apply_decision(
+                args, d, d, cache=cache, submitted_counts=submitted_counts,
+            ),
+            fetch=lambda n: get_pr(args, n),
+            input_queue=input_queue,
+            pending=pending,
+            forced=args.force_review_prs,
+        )
 
     try:
         decisions, stopped_by_user = consume_reviewed(
@@ -3710,6 +3814,7 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
             cancelled=cancelled,
             ui=ui,
             on_choice=workset_on_choice(args, "pr"),
+            poll_actions=poll_actions,
         )
     finally:
         if ui is not None:

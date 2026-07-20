@@ -69,6 +69,7 @@ from forge_gcli import (
 )
 from forgejo_export import labels
 from llm_review_api import ISSUE_REPORT_CLASSIFICATIONS
+import workset
 import fairy
 from fairy import (
     ACTIONABLE_DECISIONS,
@@ -266,6 +267,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=default_cache_path("issue_bot_state.pkl"),
         help="Pickle path for the LLM-skip backoff bookkeeping "
              "(default: ~/.fairy/issue_bot_state.pkl).",
+    )
+    p.add_argument(
+        "--workset-dir",
+        type=Path,
+        default=default_cache_path("workset"),
+        help="Root of the persistent per-item JSON work files "
+             "(default: ~/.fairy/workset).",
     )
     p.add_argument(
         "--discussion-cache-max-age-hours",
@@ -672,6 +680,12 @@ def start_issue_pipeline(
                 )))
             else:
                 queued += 1
+                fairy.workset_record_queued(
+                    args, "issue",
+                    number=prepared.number,
+                    title=prepared.title,
+                    html_url=str(prepared.issue.get("html_url") or ""),
+                )
                 llm_queue.put(prepared)
 
     def llm_worker() -> None:
@@ -686,6 +700,9 @@ def start_issue_pipeline(
                     "issue #%s: skipping queued LLM evaluation: cancelled by operator",
                     prepared.number,
                 )
+                fairy.workset_transition(
+                    args, "issue", prepared.number, workset.WorkState.CANCELLED,
+                )
                 reviewed_queue.put((prepared, Decision(
                     prepared.number, prepared.title, prepared.author, "-",
                     "skip", "cancelled by operator", prepared.last_activity,
@@ -695,6 +712,11 @@ def start_issue_pipeline(
             writeback_llm_skip_backoff(
                 state, args.owner, args.repo, d.pr_number,
                 None, prepared.last_activity, d.llm_classification,
+            )
+            fairy.workset_record_reviewed(
+                args, "issue", d,
+                expected_updated_at=prepared.issue.get("updated_at"),
+                expected_head_ref=None,
             )
             reviewed_queue.put((prepared, d))
 
@@ -771,6 +793,7 @@ def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> i
             if isinstance(url := prepared.issue.get("html_url"), str) else "",
             cancelled=cancelled,
             ui=ui,
+            on_choice=fairy.workset_on_choice(args, "issue"),
         )
     finally:
         if ui is not None:

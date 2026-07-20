@@ -9,6 +9,7 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from queue import SimpleQueue
@@ -20,9 +21,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import bot_state  # noqa: E402
+import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 import llm_review_api  # noqa: E402
 import issue_fairy  # noqa: E402
+import workset  # noqa: E402
 from fairy import Decision, LLMReview  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "issue_fairy"
@@ -395,6 +398,17 @@ class PipelineTests(unittest.TestCase):
             for _ in range(max(1, args.llm_parallelism)):
                 llm_queue.put(issue_fairy._LLM_DONE)
         return results
+
+    def test_workset_file_written_reviewed(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = make_args(workset_dir=Path(tmp.name), llm_parallelism=1, limit=0)
+        self._run(args, [5])
+        item = workset.load_item(fairy.workset_path(args, "issue", 5))
+        assert item is not None
+        self.assertEqual(item.kind, "issue")
+        self.assertEqual(item.state, workset.WorkState.REVIEWED)
+        self.assertEqual(item.review.message, "m")
 
     def test_candidate_injected_after_start_is_prepared(self) -> None:
         p1, p2, p3 = self._patched()

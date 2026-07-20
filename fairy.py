@@ -116,6 +116,7 @@ from forge_gcli import (
     run_gcli_editor_submission,
 )
 from forgejo_export import labels
+import workset
 
 
 DEFAULT_WIP_PREFIXES = ["WIP:", "[WIP]"]
@@ -562,6 +563,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "informational only, lost state costs one extra LLM call "
              "per previously-suppressed PR "
              "(default: ~/.fairy/bot_state.pkl).",
+    )
+    p.add_argument(
+        "--workset-dir",
+        type=Path,
+        default=default_cache_path("workset"),
+        help="Root of the persistent per-item JSON work files "
+             "(default: ~/.fairy/workset).",
     )
     p.add_argument(
         "--discussion-cache-max-age-hours",
@@ -3036,6 +3044,111 @@ def safe_apply_llm_review_to_prepared(
     return decision
 
 
+def workset_path(args: argparse.Namespace, kind: str, number: int) -> Path | None:
+    """Item file for this run's repo; ``kind`` is "pr" | "issue". None for
+    bare test namespaces without --workset-dir (all writes then no-op)."""
+    root = getattr(args, "workset_dir", None)
+    if not root:
+        return None
+    return workset.item_path(
+        Path(root),
+        forge_type=args.forge_type,
+        account=args.gcli_account or "",
+        owner=args.owner,
+        repo=args.repo,
+        kind=kind,
+        number=number,
+    )
+
+
+def workset_record_queued(
+    args: argparse.Namespace, kind: str, *, number: int, title: str, html_url: str,
+) -> None:
+    path = workset_path(args, kind, number)
+    if path is None:
+        return
+    existing = workset.load_item(path)
+    if existing is not None:
+        logger.debug("workset: keeping %s state=%s", path, existing.state.name)
+        return
+    now_iso = datetime.now(timezone.utc).isoformat()
+    workset.save_item(path, workset.WorkItem(
+        kind=kind,
+        forge_type=args.forge_type,
+        account=args.gcli_account or "",
+        owner=args.owner,
+        repo=args.repo,
+        number=number,
+        state=workset.WorkState.QUEUED,
+        created_at=now_iso,
+        state_changed_at=now_iso,
+        title=title,
+        html_url=html_url,
+    ))
+
+
+def workset_record_reviewed(
+    args: argparse.Namespace,
+    kind: str,
+    decision: Decision,
+    *,
+    expected_updated_at: str | None,
+    expected_head_ref: str | None,
+) -> None:
+    """Persist the LLM verdict; an operator-deleted file stays deleted."""
+    path = workset_path(args, kind, decision.pr_number)
+    if path is None:
+        return
+
+    def record(item: workset.WorkItem) -> None:
+        now = datetime.now(timezone.utc)
+        if decision.llm_classification == "error":
+            item.error = decision.reason
+            item.set_state(workset.WorkState.ERROR, now)
+            return
+        item.error = None
+        item.review = workset.ReviewResult(
+            classification=decision.llm_classification,
+            message=decision.llm_message,
+            label_changes=[
+                workset.LabelChange(label=c.label, op=c.op, reason=c.reason, post=c.post)
+                for c in decision.label_changes
+            ],
+        )
+        item.expected_updated_at = expected_updated_at
+        item.expected_head_ref = expected_head_ref
+        item.last_activity_iso = (
+            decision.last_activity.isoformat() if decision.last_activity else None
+        )
+        item.set_state(workset.WorkState.REVIEWED, now)
+
+    if workset.update_item(path, record) is None:
+        logger.warning(
+            "workset: %s #%d reviewed but %s is gone; verdict not persisted",
+            kind, decision.pr_number, path,
+        )
+
+
+def workset_transition(
+    args: argparse.Namespace, kind: str, number: int, state: workset.WorkState,
+) -> None:
+    path = workset_path(args, kind, number)
+    if path is not None:
+        workset.update_item(
+            path, lambda item: item.set_state(state, datetime.now(timezone.utc))
+        )
+
+
+def workset_on_choice(args: argparse.Namespace, kind: str) -> Callable[[Decision, str], None]:
+    """consume_reviewed ``on_choice`` callback: record operator answers."""
+    states = {
+        "retry": workset.WorkState.QUEUED,
+        "skip": workset.WorkState.SKIPPED,
+        "cancel": workset.WorkState.CANCELLED,
+    }
+    return lambda d, choice: workset_transition(args, kind, d.pr_number, states[choice])
+
+
 class PendingCount:
     """Count of (prepared, decision) tuples still expected on a reviewed
     queue. Thread-safe so a UI thread can add() work while the consumer
@@ -3100,11 +3213,14 @@ def consume_reviewed(
     item_url: Callable[[object], str],
     cancelled: set[int] | None = None,
     ui: ReviewUI | None = None,
+    on_choice: Callable[[Decision, str], None] | None = None,
 ) -> tuple[list[Decision], bool]:
     """Drain ``reviewed_queue`` of (prepared, decision) tuples, prompting
     for / applying each actionable decision. ``item_url`` maps a prepared
-    item (never a Decision) to its html_url. Returns the collected
-    decisions and whether the operator stopped the run."""
+    item (never a Decision) to its html_url. ``on_choice`` is told each
+    operator answer that ends or re-runs an item ("retry", "skip",
+    "cancel"). Returns the collected decisions and whether the operator
+    stopped the run."""
     decisions: list[Decision] = []
     stopped = False
     idle_logged = False
@@ -3147,11 +3263,11 @@ def consume_reviewed(
                 d.action in ACTIONABLE_DECISIONS or decision_has_label_changes(d)
             )
             if needs_interaction and cancelled and d.pr_number in cancelled:
-                # Thrown out by the operator while waiting here (deferred /
-                # not yet prompted): record it like an answered "skip".
                 logger.info("%s #%s: cancelled by operator", kind, d.pr_number)
                 needs_interaction = False
-            # In manual mode the summary line, the LLM note, the label lines
+                if on_choice is not None:
+                    on_choice(d, "cancel")
+            # In manual mode the summary line, the LLM note, the labels line
             # and the prompt are one actionable block. Frame it with a blank
             # line before and after -- emitted on stderr, the same stream the
             # log lines and the prompt use -- so the whole block stands out
@@ -3198,6 +3314,8 @@ def consume_reviewed(
                         )
                     else:
                         logger.info("Retrying %s #%s LLM evaluation", kind, d.pr_number)
+                        if on_choice is not None:
+                            on_choice(d, "retry")
                         pending.add(1)
                         llm_queue.put(prepared)
                     continue
@@ -3215,6 +3333,8 @@ def consume_reviewed(
                             "ERROR applying %s for %s #%s: %s",
                             manual_action_description(d), kind, d.pr_number, exc,
                         )
+                elif choice == "skip" and on_choice is not None:
+                    on_choice(d, "skip")
 
             decisions.append(d)
             if ui is not None:
@@ -3275,6 +3395,12 @@ def start_review_pipeline(
                     reviewed_queue.put((prepared, prepared))
                 else:
                     queued += 1
+                    workset_record_queued(
+                        args, "pr",
+                        number=prepared.number,
+                        title=prepared.title,
+                        html_url=str(prepared.pr.get("html_url") or ""),
+                    )
                     llm_queue.put(prepared)
         finally:
             try:
@@ -3297,16 +3423,20 @@ def start_review_pipeline(
                     "PR #%s: skipping queued LLM evaluation: cancelled by operator",
                     prepared.number,
                 )
+                workset_transition(args, "pr", prepared.number, workset.WorkState.CANCELLED)
                 reviewed_queue.put((prepared, Decision(
                     prepared.number, prepared.title, prepared.author,
                     prepared.auto_merge, "skip", "cancelled by operator",
                     prepared.last_activity,
                 )))
                 continue
-            reviewed_queue.put((
-                prepared,
-                safe_apply_llm_review_to_prepared(args, prepared, state=state),
-            ))
+            decision = safe_apply_llm_review_to_prepared(args, prepared, state=state)
+            workset_record_reviewed(
+                args, "pr", decision,
+                expected_updated_at=prepared.pr.get("updated_at"),
+                expected_head_ref=get_pr_head_ref(prepared.pr),
+            )
+            reviewed_queue.put((prepared, decision))
 
     llm_parallelism = max(1, int(getattr(args, "llm_parallelism", 1) or 1))
     logger.debug("starting review pipeline llm_parallelism=%d", llm_parallelism)
@@ -3332,7 +3462,8 @@ def warn_simulate_past_limitations(ignore_after: datetime) -> None:
         "    cutoff-prepped mirror: master rewound, every replayed PR's\n"
         "    head pinned at --patch-pr-ref-template. The bot trusts those\n"
         "    refs verbatim; nothing here verifies they match the cutoff.\n"
-        "  * Pass --cache <separate-path> to keep the live PR-data cache clean.",
+        "  * Pass --cache <separate-path> to keep the live PR-data cache clean,\n"
+        "    and --workset-dir <separate-path> to keep the live work set clean.",
         ignore_after.isoformat(),
     )
 
@@ -3427,6 +3558,7 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
             if isinstance(url := prepared.pr.get("html_url"), str) else "",
             cancelled=cancelled,
             ui=ui,
+            on_choice=workset_on_choice(args, "pr"),
         )
     finally:
         if ui is not None:

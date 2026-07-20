@@ -26,7 +26,8 @@ class Prepared:
 
 
 class ConsumeReviewedTests(unittest.TestCase):
-    def _consume(self, items, answers, *, echo_retries=False, cancelled=None):
+    def _consume(self, items, answers, *, echo_retries=False, cancelled=None,
+                 on_choice=None):
         reviewed: SimpleQueue = SimpleQueue()
         llm: SimpleQueue = SimpleQueue()
         for item in items:
@@ -47,6 +48,7 @@ class ConsumeReviewedTests(unittest.TestCase):
                 apply=lambda p, d: applied.append(d),
                 item_url=lambda p: p.url,
                 cancelled=cancelled,
+                on_choice=on_choice,
             )
         return decisions, stopped, applied, pending, pm
 
@@ -62,6 +64,15 @@ class ConsumeReviewedTests(unittest.TestCase):
         self.assertEqual(pending.value, 0)
         self.assertEqual(pm.call_count, 3)
         self.assertIn("https://forge/pr/7", pm.call_args.kwargs["pr_url"])
+
+    def test_on_choice_reports_retry_skip_and_cancel(self) -> None:
+        choices: list[tuple[int, str]] = []
+        record = lambda d, c: choices.append((d.pr_number, c))  # noqa: E731
+        self._consume([(Prepared(7), make_decision(7))], ["retry", "skip"],
+                      echo_retries=True, on_choice=record)
+        self._consume([(Prepared(6), make_decision(6))], [], cancelled={6},
+                      on_choice=record)
+        self.assertEqual(choices, [(7, "retry"), (7, "skip"), (6, "cancel")])
 
     def test_skip_records_without_applying(self) -> None:
         decisions, stopped, applied, pending, _ = self._consume(

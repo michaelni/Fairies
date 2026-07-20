@@ -48,6 +48,7 @@ from collections.abc import Sequence
 
 from anthropic import Anthropic
 
+import concurrency
 from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 import podman_host
@@ -245,11 +246,12 @@ class AnthropicReviewer(Reviewer):
             elif self.effort is not None:
                 request_kwargs["thinking"] = {"type": "adaptive"}
                 request_kwargs["output_config"] = {"effort": self.effort}
-            response = call_with_anthropic_retry(
-                lambda: client.messages.create(**request_kwargs),
-                what="messages.create",
-                verbose=self.verbose,
-            )
+            with concurrency.slot(self.name.partition(":")[0]):
+                response = call_with_anthropic_retry(
+                    lambda: client.messages.create(**request_kwargs),
+                    what="messages.create",
+                    verbose=self.verbose,
+                )
             if self.debug_dir:
                 conv_path = dump_response_debug_artifacts(
                     response, request_kwargs, wrapper_request=ctx.request,

@@ -91,6 +91,7 @@ from patch_util import (
     extract_submodule_paths_from_patch,
 )
 from git_util import git_merge_tree, git_rev_parse, git_show_file
+import concurrency
 import llm_review_api
 from llm_review_api import (
     EXIT_BAD_MODEL_OUTPUT,
@@ -219,6 +220,14 @@ def parse_args() -> argparse.Namespace:
             "that reviewer's effort: an OpenAI reasoning effort, or off/low/"
             "medium/high/xhigh/max as the Anthropic/GLM thinking effort."
         ),
+    )
+    p.add_argument(
+        "--concurrency",
+        action="append",
+        default=[],
+        type=concurrency.parse_limit,
+        metavar="PROVIDER:COUNT",
+        help="Cap in-flight calls to one provider across all fairy processes, e.g. 'codex:2'.",
     )
     p.add_argument(
         "--combine-model",
@@ -1146,6 +1155,7 @@ def main() -> int:
     setup_logging(
         logger,
         args.verbose,
+        concurrency.logger,
         llm_review_api.logger,
         openai_common.logger,
         openai_reviewer.logger,
@@ -1163,13 +1173,9 @@ def main() -> int:
         logging.getLogger("anthropic_reviewer"),
         color=args.color,
     )
+    concurrency.configure(args.concurrency)
 
-    # The OpenAI client -- and therefore OPENAI_API_KEY -- is only needed
-    # when an OpenAI backend actually runs: an ``openai:`` model in any slot
-    # (including one the triager may pick from ``--allowed-model``), or one
-    # of the OpenAI-hosted subsystems (container repos, vector-store
-    # search/prepare). A codex:- or anthropic:-only run must not require the
-    # key.
+    # OPENAI_API_KEY is only required when an OpenAI backend actually runs.
     model_specs = [
         s for s in (args.model, *args.extra_model, args.triage_model,
                     args.combine_model, *args.allowed_model)

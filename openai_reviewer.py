@@ -55,6 +55,7 @@ from typing import Callable, Sequence
 import httpx
 from openai import DefaultHttpxClient, OpenAI
 
+import concurrency
 from common import dump_response_debug_artifacts, response_to_debug_json
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import (
@@ -344,12 +345,13 @@ def run_responses_resolving_podman_shell(
 
     def create_and_dump(kwargs: ResponseKwargs, what_label: str) -> object:
         nonlocal conv_path
-        resp = call_with_rate_limit_retry(
-            lambda: client.responses.create(**kwargs),
-            what=what_label,
-            verbose=verbose,
-            retry_transient=False,
-        )
+        with concurrency.slot("openai"):
+            resp = call_with_rate_limit_retry(
+                lambda: client.responses.create(**kwargs),
+                what=what_label,
+                verbose=verbose,
+                retry_transient=False,
+            )
         if debug_dir:
             conv_path = dump_response_debug_artifacts(
                 resp, kwargs, wrapper_request=wrapper_request,
@@ -894,17 +896,18 @@ class OpenAIReviewer(Reviewer):
                     parallel_tool_calls=args.podman_parallel_tool_calls,
                 )
             else:
-                response = call_with_rate_limit_retry(
-                    lambda: client.responses.create(**response_kwargs),
-                    what="responses.create",
-                    verbose=args.verbose,
-                    # Main LLM request: APITimeoutError / APIConnectionError
-                    # are propagated to the outer caller (e.g. fairy.py)
-                    # which decides whether to retry the entire wrapper. These
-                    # requests are long and unpredictable, so silently re-issuing
-                    # them here would risk piling up duplicate billed runs.
-                    retry_transient=False,
-                )
+                with concurrency.slot("openai"):
+                    response = call_with_rate_limit_retry(
+                        lambda: client.responses.create(**response_kwargs),
+                        what="responses.create",
+                        verbose=args.verbose,
+                        # Main LLM request: APITimeoutError / APIConnectionError
+                        # are propagated to the outer caller (e.g. fairy.py)
+                        # which decides whether to retry the entire wrapper. These
+                        # requests are long and unpredictable, so silently re-issuing
+                        # them here would risk piling up duplicate billed runs.
+                        retry_transient=False,
+                    )
         except Exception as exc:
             if args.verbose:
                 logger.debug("responses.create failed dt=%.3fs error=%s %s", time.monotonic() - create_started, type(exc).__name__, str(exc).replace("\n", " "))

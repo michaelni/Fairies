@@ -59,6 +59,28 @@ class ModelTests(unittest.TestCase):
             model.show_all = True
             self.assertEqual([it.number for it in model.visible()], [1, 2])
 
+    def test_stage_progress_updates_status_and_relevance(self) -> None:
+        model = fairy_tui.Model()
+        model.add_candidates("PR", [{"number": 5, "title": "t"}])
+        model.note_stage("PR", 5, "queued", None)
+        with model.lock:
+            self.assertEqual([it.number for it in model.visible()], [5])
+        self.assertIs(model.items[("PR", 5)].status, fairy_tui.Status.QUEUED)
+        model.note_stage("PR", 5, "evaluating", None)
+        self.assertIs(model.items[("PR", 5)].status, fairy_tui.Status.IN_LLM)
+        # a reviewed actionable decision is visible (with classification)
+        # while the operator is still busy with another prompt
+        model.note_stage("PR", 5, "reviewed", decision(5))
+        item = model.items[("PR", 5)]
+        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
+        self.assertEqual(item.decision.llm_classification, "reply")
+        with model.lock:
+            self.assertEqual([it.number for it in model.visible()], [5])
+        # stage reports never resurrect a cancelled item
+        item.status = fairy_tui.Status.CANCELLED
+        model.note_stage("PR", 5, "queued", None)
+        self.assertIs(item.status, fairy_tui.Status.CANCELLED)
+
     def test_quit_answers_pending_prompts(self) -> None:
         model = fairy_tui.Model()
         got: dict[str, str] = {}

@@ -82,13 +82,16 @@ logger = logging.getLogger(__name__)
 
 class Status(IntEnum):
     PENDING = 0    # candidate listed; nothing back from the pipeline yet
-    AWAITING = 1   # actionable decision waiting for the operator
-    RETRYING = 2   # operator sent it back to the LLM
-    DEFERRED = 3   # operator pushed it to the back of the queue
-    APPLIED = 4
-    SKIPPED = 5    # operator answered skip
-    CANCELLED = 6  # operator threw it out (x)
-    DONE = 7       # non-actionable decision arrived (gate/LLM skip)
+    QUEUED = 1     # passed the gates; waiting for an LLM worker
+    IN_LLM = 2     # LLM evaluation running
+    REVIEWED = 3   # decision ready; waiting its turn with the operator
+    AWAITING = 4   # actionable decision waiting for the operator
+    RETRYING = 5   # operator sent it back to the LLM
+    DEFERRED = 6   # operator pushed it to the back of the queue
+    APPLIED = 7
+    SKIPPED = 8    # operator answered skip
+    CANCELLED = 9  # operator threw it out (x)
+    DONE = 10      # non-actionable decision arrived (gate/LLM skip)
 
 
 @dataclass
@@ -100,6 +103,13 @@ class Item:
     status: Status = Status.PENDING
     decision: fairy.Decision | None = None
     url: str = ""
+
+
+_STAGE_STATUS = {"queued": Status.QUEUED, "evaluating": Status.IN_LLM,
+                 "reviewed": Status.REVIEWED}
+# States a pipeline stage report may move an item out of.
+_IN_PIPELINE = (Status.PENDING, Status.QUEUED, Status.IN_LLM,
+                Status.REVIEWED, Status.RETRYING)
 
 
 @dataclass
@@ -178,8 +188,24 @@ class Model:
         with self.lock:
             item = self._ensure(kind, decision)
             item.decision = decision
-            if item.status in (Status.PENDING, Status.RETRYING):
+            if item.status in _IN_PIPELINE:
                 item.status = Status.DONE
+        self.dirty.set()
+
+    def note_stage(self, kind: str, number: int, stage: str,
+                   decision: fairy.Decision | None) -> None:
+        with self.lock:
+            item = self.items.get((kind, number))
+            if item is None:
+                if decision is None:
+                    return
+                item = self._ensure(kind, decision)
+            if decision is not None:
+                item.decision = decision
+            # Never resurrect an item the operator already acted on
+            # (cancelled/deferred/terminal states stay put).
+            if item.status in _IN_PIPELINE:
+                item.status = _STAGE_STATUS[stage]
         self.dirty.set()
 
     # ---- UI-thread side ----
@@ -277,7 +303,8 @@ class Model:
         # whose decision proposed an action or label change.
         if item.number in self.forced.get(item.kind, ()):
             return True
-        if item.status in (Status.AWAITING, Status.RETRYING, Status.DEFERRED):
+        if item.status in (Status.QUEUED, Status.IN_LLM, Status.AWAITING,
+                           Status.RETRYING, Status.DEFERRED):
             return True
         d = item.decision
         return d is not None and (
@@ -326,6 +353,9 @@ class SideUI:
             self.kind, Pipeline(input_queue, llm_queue, pending, cancelled),
             self.forced,
         )
+
+    def item_stage(self, number, stage, decision=None) -> None:
+        self.model.note_stage(self.kind, number, stage, decision)
 
     def decide(self, prepared, decision, url) -> str:
         return self.model.ask(self.kind, decision, url)
@@ -462,6 +492,8 @@ def _styles(t: blessed.Terminal) -> dict:
             "kind_pr": c(75),                 "kind_issue": c(176),
             "llm": c(141),                    "title": c(252),
             "st_pending": c(244),             "st_awaiting": mix(t.bold, c(214)),
+            "st_queued": c(117),              "st_in_llm": mix(t.bold, c(45)),
+            "st_reviewed": c(150),
             "st_retrying": c(135),            "st_deferred": c(109),
             "st_applied": c(78),              "st_skipped": c(244),
             "st_cancelled": c(167),           "st_done": c(108),
@@ -489,6 +521,7 @@ def _styles(t: blessed.Terminal) -> dict:
         "kind_pr": t.cyan,      "kind_issue": t.magenta,
         "llm": t.magenta,       "title": t.white,
         "st_pending": t.bright_black, "st_awaiting": t.bold_yellow,
+        "st_queued": t.cyan, "st_in_llm": t.bold_cyan, "st_reviewed": t.green,
         "st_retrying": t.magenta, "st_deferred": t.yellow,
         "st_applied": t.green,  "st_skipped": t.bright_black,
         "st_cancelled": t.red,  "st_done": t.cyan,

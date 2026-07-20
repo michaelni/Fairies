@@ -82,8 +82,10 @@ relevant set, `y` posts the selected reviewed item (guard-checked),
 `$EDITOR`, `q` quits, `f` force-queues the selected item for review,
 `x` throws it out, `e`/`E` export the focused pane (visible/full), arrows and
 PgUp/PgDn scroll, Tab or a mouse click moves focus, clicking a URL,
-git hash or `#number` copies it to the clipboard (OSC 52; in tmux turn
-`set-clipboard` on), and the pane dividers are draggable with the
+git hash or `#number` copies it to the primary selection for
+middle-click paste (falling back to the OSC 52 clipboard without a
+display; in tmux turn `set-clipboard` on), and the pane dividers are
+draggable with the
 mouse. See `fairy-ui-ref.sh` for a
 launcher example.
 

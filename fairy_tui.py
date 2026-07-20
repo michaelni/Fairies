@@ -626,12 +626,15 @@ def _clipboard_cmd() -> list[str] | None:
     OSC 52 this works with every terminal (rxvt has no OSC 52), and over
     ssh -X/-Y the forwarded connection carries the clipboard home."""
     if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
-        return ["wl-copy"]
+        return ["wl-copy", "--primary"]
     if os.environ.get("DISPLAY"):
+        # PRIMARY, not CLIPBOARD: a mouse click is a selection in Unix
+        # terms -- it must middle-click-paste, and must never clobber an
+        # explicitly Ctrl-C'd clipboard.
         if shutil.which("xclip"):
-            return ["xclip", "-selection", "clipboard"]
+            return ["xclip", "-selection", "primary"]
         if shutil.which("xsel"):
-            return ["xsel", "-ib"]
+            return ["xsel", "-ip"]
     return None
 
 
@@ -1069,11 +1072,15 @@ class UILoop:
                     self._clip_cmd, input=token.encode(), timeout=2, check=True,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
-                logger.info("copied %r via %s", token, self._clip_cmd[0])
+                logger.info("copied %r via %s (primary selection)",
+                            token, self._clip_cmd[0])
                 return
             except Exception as exc:
                 logger.debug("clipboard helper %s failed (%s); trying OSC 52",
                              self._clip_cmd, exc)
+        # Display-less fallback stays on the c (clipboard) target: no
+        # PRIMARY reaches the local end of a plain ssh session and several
+        # terminals ignore 52;p.
         b64 = base64.b64encode(token.encode()).decode()
         print(f"\x1b]52;c;{b64}\x07", end="", flush=True, file=self.term.stream)
         logger.info("copied %r to the clipboard (OSC 52)", token)

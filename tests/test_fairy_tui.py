@@ -425,14 +425,22 @@ class PaintSmokeTests(unittest.TestCase):
                 kind="xterm-256color", stream=stream, force_styling=True)
             ui = fairy_tui.UILoop(term, fairy_tui.Model(),
                                   tui_core.RingBuffer(), Path("."), ["PR"])
-            ui._clip_cmd = ["xclip", "-selection", "clipboard"]
+            ui._clip_cmd = ["xclip", "-selection", "primary"]
             buf: list = []
             ui._blit(buf, tui_core.Rect(10, 0, 20, 4), "br", ["see 5144acb now"])
             with mock.patch.object(fairy_tui.subprocess, "run") as run:
                 ui._copy_click("br", 10 + 1 + 5, 1)
-        self.assertEqual(run.call_args.args[0], ["xclip", "-selection", "clipboard"])
+        self.assertEqual(run.call_args.args[0], ["xclip", "-selection", "primary"])
         self.assertEqual(run.call_args.kwargs["input"], b"5144acb")
         self.assertNotIn("\x1b]52;", stream.getvalue())  # no fallback needed
+
+    def test_clipboard_helper_targets_the_primary_selection(self) -> None:
+        with mock.patch.dict(os.environ,
+                             {"DISPLAY": ":0", "WAYLAND_DISPLAY": ""}), \
+             mock.patch.object(fairy_tui.shutil, "which",
+                               lambda n: "/usr/bin/xclip" if n == "xclip" else None):
+            self.assertEqual(fairy_tui._clipboard_cmd(),
+                             ["xclip", "-selection", "primary"])
 
     def test_export_failure_is_logged_not_fatal(self) -> None:
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):

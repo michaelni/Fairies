@@ -123,11 +123,14 @@ class RingBuffer:
 
     def view(self, offset_from_end: int, count: int) -> list[str]:
         """``count`` lines ending ``offset_from_end`` lines above the
-        newest; offsets beyond the start return what exists."""
+        newest; offsets beyond the start return what exists. Walks from
+        the newest end so the follow-tail case (offset 0) is O(count),
+        not O(buffer) -- this runs on every repaint."""
         with self._lock:
-            end = max(0, len(self._lines) - max(0, offset_from_end))
+            n = len(self._lines)
+            end = max(0, n - max(0, offset_from_end))
             start = max(0, end - count)
-            return list(islice(self._lines, start, end))
+            return list(islice(reversed(self._lines), n - end, n - start))[::-1]
 
     def all_text(self) -> str:
         with self._lock:

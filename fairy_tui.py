@@ -598,18 +598,17 @@ class UILoop:
             used += len(text)
         return "".join(out) + " " * (width - used)
 
-    # ---- input ----
-
     def run(self) -> None:
         try:
             while not self.model.quit_flag:
                 ks = self.term.inkey(timeout=0.1)
+                while ks:
+                    self.dispatch(ks)
+                    ks = self.term.inkey(timeout=0)
                 size = (self.term.width, self.term.height)
                 if size != self._last_size:
                     self._last_size = size
                     self.model.dirty.set()
-                if ks:
-                    self.dispatch(ks)
                 if self.model.dirty.is_set():
                     self.model.dirty.clear()
                     self.paint()
@@ -651,7 +650,10 @@ class UILoop:
                         with self.model.lock:
                             self.model.cursor = max(0, self.list_top + row)
             elif name.endswith("_MOTION") and self.drag:
+                before = self.layout.splits(self.term.width, body_h)
                 self.layout.drag(self.drag, x, y, self.term.width, body_h)
+                if self.layout.splits(self.term.width, body_h) == before:
+                    return  # divider did not actually move; skip the repaint
             elif name.endswith("_RELEASED"):
                 self.drag = None
             self.model.dirty.set()

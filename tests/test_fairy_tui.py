@@ -61,6 +61,30 @@ class ModelTests(unittest.TestCase):
             model.show_all = True
             self.assertEqual([it.number for it in model.visible()], [1, 2])
 
+    def test_answer_advances_to_the_next_pending_prompt(self) -> None:
+        model = fairy_tui.Model()
+        model.add_candidates("PR", [{"number": n, "title": "t"} for n in (1, 2)])
+        got: dict[int, str] = {}
+        for n in (1, 2):
+            Thread(target=lambda n=n: got.setdefault(
+                n, model.ask("PR", decision(n), ""))).start()
+            for _ in range(500):
+                with model.lock:
+                    if len(model.prompts) == n:
+                        break
+                time.sleep(0.01)
+        with model.lock:
+            self.assertEqual(model._cursor_key(), ("PR", 1))
+        self.assertTrue(model.answer("skip"))
+        with model.lock:
+            self.assertEqual(model._cursor_key(), ("PR", 2))
+        self.assertTrue(model.answer("apply"))
+        for _ in range(500):
+            if len(got) == 2:
+                break
+            time.sleep(0.01)
+        self.assertEqual(got, {1: "skip", 2: "apply"})
+
     def test_quit_answers_pending_prompts(self) -> None:
         model = fairy_tui.Model()
         got: dict[str, str] = {}

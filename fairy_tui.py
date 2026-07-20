@@ -307,6 +307,15 @@ class Model:
                 "defer": Status.DEFERRED, "retry": Status.RETRYING,
             }[choice]
             self.prompts.remove(req)
+            # Jump to the next decision waiting: the first pending prompt
+            # at or after the cursor, wrapping to the first one overall.
+            if self.prompts:
+                pending = {r.key for r in self.prompts}
+                keys = [(it.kind, it.number) for it in self.visible()]
+                nxt = next((k for k in keys[self.cursor:] if k in pending),
+                           next((k for k in keys if k in pending), None))
+                if nxt is not None:
+                    self._move_cursor_to(nxt)
         req.reply.put(choice)
         self.dirty.set()
         return True

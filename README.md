@@ -9,6 +9,20 @@ LLM tools for development forges, talking to the forge through
 Send a pull request if something doesn't work or looks ugly or is aisloppy.
 Make sure it's readable, reviewable and tested!
 
+## Self tests
+
+From the repository root, run the whole suite:
+
+    python -m unittest discover -s tests -b
+
+or a single module:
+
+    python -m unittest -b tests.test_mail_fairy
+
+Many tests exercise error paths on purpose; `-b` hides the stderr
+diagnostics they provoke (unittest replays them for failing tests).
+The tests are offline: no forge, API keys or podman host needed.
+
 ## Forgejo Fairy
 
 Note: Forgejo Fairy is under heavy development and this codebase has not been cleaned up yet!

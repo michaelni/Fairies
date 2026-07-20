@@ -44,6 +44,7 @@ import forge_gcli
 import gcli_cache
 from common import (
     add_color_arg,
+    attachment_urls,
     default_cache_path,
     iso_to_dt,
     setup_logging,
@@ -314,6 +315,7 @@ def norm_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "updated_at": utc_str(issue.get("updated_at")),
         "closed_at": utc_str(issue.get("closed_at")),
         "url": issue.get("html_url"),
+        "attachment_urls": attachment_urls(issue),
         "body": issue.get("body") or "",
     }
 
@@ -325,6 +327,7 @@ def norm_comment(comment: dict[str, Any]) -> dict[str, Any]:
         "created_at": utc_str(comment.get("created_at")),
         "updated_at": utc_str(comment.get("updated_at")),
         "url": comment.get("html_url"),
+        "attachment_urls": attachment_urls(comment),
         "body": comment.get("body") or "",
     }
 
@@ -448,6 +451,13 @@ def by_time(items: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
     return sorted(items, key=lambda x: (x.get(field) or "", int(x.get("id") or 0)))
 
 
+def attachment_lines(item: dict[str, Any]) -> list[str]:
+    return [
+        f"Attachment: {a['name']} ({a['size']} bytes) {a['url']}"
+        for a in item.get("attachment_urls") or []
+    ]
+
+
 def meta_lines(item: dict[str, Any]) -> list[str]:
     out = [
         f"- Kind: {item['kind']}",
@@ -463,6 +473,7 @@ def meta_lines(item: dict[str, Any]) -> list[str]:
         f"- Milestone: {item.get('milestone') or '-'}",
         f"- URL: {item.get('url') or '-'}",
     ]
+    out += [f"- {line}" for line in attachment_lines(item)]
     if item["kind"] == "pull_request":
         out += [
             f"- Draft: {bool(item.get('draft'))}",
@@ -514,7 +525,8 @@ def render_issue_md(data: dict[str, Any]) -> str:
         lines += ["_No comments._", ""]
     else:
         for i, comment in enumerate(data["comments"], 1):
-            add_message_block(lines, f"### Comment {i}", comment["author"], comment["created_at"], comment["body"])
+            add_message_block(lines, f"### Comment {i}", comment["author"], comment["created_at"], comment["body"],
+                              attachment_lines(comment) or None)
     add_timeline_section(lines, data["timeline"])
     return "\n".join(lines).rstrip() + "\n"
 
@@ -530,7 +542,8 @@ def render_pr_md(data: dict[str, Any]) -> str:
         lines += ["_No issue comments._", ""]
     else:
         for i, comment in enumerate(data["issue_comments"], 1):
-            add_message_block(lines, f"### Comment {i}", comment["author"], comment["created_at"], comment["body"])
+            add_message_block(lines, f"### Comment {i}", comment["author"], comment["created_at"], comment["body"],
+                              attachment_lines(comment) or None)
 
     lines += ["## Reviews", ""]
     if not data["reviews"]:

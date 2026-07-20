@@ -1,4 +1,5 @@
-"""Regression tests for ``forgejo_export.get_item_fields``.
+"""Regression tests for ``forgejo_export``: attachment export and
+``get_item_fields``.
 
 The exporter is a thin adapter on top of ``gcli_cache.get`` -- it
 just collapses gcli_cache's atomic-or-raise contract into a
@@ -8,6 +9,7 @@ fetch does not abort the whole export run.
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -34,6 +36,45 @@ def _args() -> SimpleNamespace:
 
 def _item(number: int = 42, updated_at: str | None = LIVE_ISO) -> dict:
     return {"number": number, "updated_at": updated_at}
+
+
+class AttachmentExportTests(unittest.TestCase):
+    """Exports must list forge attachments: issue 20572's ZIP was attached
+    but not linked from the body, so the exported 020572.md had no trace
+    of it. Reuses the real capture from fixtures/issue_fairy/."""
+
+    def setUp(self) -> None:
+        self.issue = json.loads(
+            (Path(__file__).parent / "fixtures" / "issue_fairy"
+             / "ffmpeg_issue_20572.json").read_text()
+        )
+
+    def _render(self, comments: list[dict]) -> str:
+        return forgejo_export.render_issue_md({
+            "number": self.issue["number"], "title": self.issue["title"],
+            "issue": forgejo_export.norm_issue(self.issue),
+            "comments": comments, "timeline": [], "fetch_warnings": [],
+        })
+
+    def test_issue_md_lists_unlinked_attachment(self) -> None:
+        zip_asset = self.issue["assets"][3]
+        self.assertIn(
+            f"- Attachment: {zip_asset['name']} ({zip_asset['size']} bytes) "
+            f"{zip_asset['browser_download_url']}",
+            self._render([]),
+        )
+
+    def test_comment_attachment_renders(self) -> None:
+        zip_asset = self.issue["assets"][3]
+        comment = forgejo_export.norm_comment(
+            {"id": 1, "user": self.issue["user"], "body": "sample attached",
+             "assets": [zip_asset]}
+        )
+        self.assertIn(
+            f"Attachment: {zip_asset['name']} ({zip_asset['size']} bytes) "
+            f"{zip_asset['browser_download_url']}\n",
+            self._render([comment]),
+        )
 
 
 class GetItemFieldsTests(unittest.TestCase):

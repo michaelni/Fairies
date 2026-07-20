@@ -2156,6 +2156,27 @@ def apply_llm_review(
             "",
         )
 
+    return decision_from_review(
+        review,
+        number=number,
+        title=title,
+        author=author,
+        auto_merge=auto_merge,
+        last_activity=last_activity,
+        base_reason=base_reason,
+    )
+
+
+def decision_from_review(
+    review: LLMReview,
+    *,
+    number: int,
+    title: str,
+    author: str,
+    auto_merge: str,
+    last_activity: datetime | None,
+    base_reason: str,
+) -> Decision:
     reason = base_reason
     label_kwargs = {"label_changes": review.label_changes}
     if review.classification == "approve":

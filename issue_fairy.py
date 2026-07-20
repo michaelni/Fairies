@@ -539,6 +539,10 @@ def evaluate_issue(args: argparse.Namespace, prepared: PreparedIssue) -> Decisio
             f"LLM analysis failed after {max_attempts} attempt(s): {exc}",
             prepared.last_activity, "error", "",
         )
+    return issue_decision_from_review(prepared, review)
+
+
+def issue_decision_from_review(prepared: PreparedIssue, review: LLMReview) -> Decision:
     action = "comment" if review.classification == "reply" else "skip"
     reason = (
         "LLM chose skip" if review.classification == "skip"

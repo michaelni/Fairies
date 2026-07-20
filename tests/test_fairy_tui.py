@@ -125,8 +125,15 @@ class PaintSmokeTests(unittest.TestCase):
             out = stream.getvalue()
         for expected in ("stats", "debug", "message", "#1", "a debug line", "Head"):
             self.assertIn(expected, out)
-        # WARNING lines keep their (bold-)yellow coloring in the pane
         self.assertIn("\x1b[33ma warning line", out)
+
+    def test_palette_covers_every_markdown_style(self) -> None:
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        # "text" deliberately has no entry: it means unstyled.
+        self.assertLessEqual(tui_core.MARKDOWN_STYLES - {"text"},
+                             set(fairy_tui._styles(term)))
 
     def test_paint_strips_hostile_escape_sequences(self) -> None:
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):

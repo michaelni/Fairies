@@ -415,12 +415,100 @@ def captured_output(sink: OutputSink):
 
 
 PANES = {"tl": "stats", "tr": "list", "bl": "debug", "br": "message"}
+PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
 CHOICE_KEYS = {"y": "apply", "s": "skip", "d": "defer", "r": "retry"}
-STATUS_LINE = (
-    " q quit  y/s/d/r decide  f force  x drop  a all/relevant  "
-    "e/E export  Tab/click focus  arrows/pgup/pgdn scroll "
-)
+KEYMAP = (("q", "quit"), ("y/s/d/r", "decide"), ("f", "force"), ("x", "drop"),
+          ("a", "all/relevant"), ("e/E", "export"), ("Tab/click", "focus"),
+          ("↑↓ PgUp/PgDn", "scroll"))
+
+
+def _styles(t: blessed.Terminal) -> dict:
+    """Style-name -> callable(text). 256-color palette, degrading to the
+    16-color attribute names on lesser terminals; empty (= everything
+    plain) when the terminal does no styling at all."""
+    if not t.does_styling:
+        return {}
+
+    def strike(s: str) -> str:
+        return f"\x1b[9m{s}\x1b[29m"
+
+    def mix(*fns):
+        def go(s: str) -> str:
+            for fn in reversed(fns):
+                s = fn(s)
+            return s
+        return go
+
+    if t.number_of_colors >= 256:
+        c, on = t.color, t.on_color
+        return {
+            "h1": mix(t.bold, c(212)),        "h2": mix(t.bold, c(141)),
+            "h3": mix(t.bold, c(75)),         "h4": mix(t.bold, c(73)),
+            "bold": t.bold,                   "italic": t.italic,
+            "bold_italic": mix(t.bold, t.italic), "strike": strike,
+            "code": mix(c(203), on(236)),     "codeblock": mix(c(252), on(235)),
+            "codeblock_lang": c(244),
+            "quote": mix(t.italic, c(246)),   "quote_bar": c(141),
+            "bullet": c(212),
+            "checkbox_on": c(78),             "checkbox_off": c(244),
+            "link": mix(t.underline, c(75)),  "url": c(244),
+            "hr": c(240),
+            "table_border": c(240),           "th": mix(t.bold, c(223)),
+            "divider": c(240),                "divider_drag": mix(t.bold, c(81)),
+            "bar_focus": mix(t.bold, c(231), on(25)), "bar_blur": mix(c(245), on(236)),
+            "key": mix(t.bold, c(81)),        "label": c(245),
+            "num": t.bold,                    "mark": mix(t.bold, c(203)),
+            "kind_pr": c(75),                 "kind_issue": c(176),
+            "llm": c(141),                    "title": c(252),
+            "st_pending": c(244),             "st_awaiting": mix(t.bold, c(214)),
+            "st_retrying": c(135),            "st_deferred": c(109),
+            "st_applied": c(78),              "st_skipped": c(244),
+            "st_cancelled": c(167),           "st_done": c(108),
+            "cursor": t.reverse,
+            # debug-pane log levels; palette mirrors common._ColorFormatter
+            "log_debug": t.dim_bright_black,  "log_warn": t.bold_yellow,
+            "log_err": t.bold_red,
+        }
+    return {
+        "h1": t.bold_magenta,   "h2": t.bold_blue,  "h3": t.bold_cyan,
+        "h4": t.cyan,           "bold": t.bold,     "italic": t.italic,
+        "bold_italic": t.bold,  "strike": strike,
+        "code": t.reverse,      "codeblock": t.reverse,
+        "codeblock_lang": t.bright_black,
+        "quote": t.bright_black, "quote_bar": t.magenta,
+        "bullet": t.bold,
+        "checkbox_on": t.green, "checkbox_off": t.bright_black,
+        "link": t.underline_blue, "url": t.bright_black,
+        "hr": t.bright_black,
+        "table_border": t.bright_black, "th": t.bold,
+        "divider": t.bright_black, "divider_drag": t.bold_cyan,
+        "bar_focus": t.reverse, "bar_blur": t.underline,
+        "key": t.bold_cyan,     "label": t.bright_black,
+        "num": t.bold,          "mark": t.bold_red,
+        "kind_pr": t.cyan,      "kind_issue": t.magenta,
+        "llm": t.magenta,       "title": t.white,
+        "st_pending": t.bright_black, "st_awaiting": t.bold_yellow,
+        "st_retrying": t.magenta, "st_deferred": t.yellow,
+        "st_applied": t.green,  "st_skipped": t.bright_black,
+        "st_cancelled": t.red,  "st_done": t.cyan,
+        "cursor": t.reverse,
+        "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
+        "log_err": t.bold_red,
+    }
+
+
+def _plain(lines: list) -> str:
+    """Pane content back to text for exports. Lines are the same three
+    shapes _blit paints: plain strings, one (style, text) row, or a
+    StyledLine segment list."""
+    def one(line) -> str:
+        if isinstance(line, str):
+            return line
+        if line and isinstance(line[0], str):
+            return line[1]
+        return "".join(t for _, t in line)
+    return "\n".join(one(x) for x in lines)
 
 
 class UILoop:
@@ -438,65 +526,78 @@ class UILoop:
         self.drag: str | None = None
         self._last_size: tuple[int, int] | None = None
         self._last_paint = 0.0
-        t = term
-        self.styles = {
-            "h1": t.bold_underline, "h2": t.bold, "h3": t.underline,
-            "bold": t.bold, "italic": t.italic, "code": t.reverse,
-            "codeblock": t.on_bright_black, "quote": t.bright_black,
-            "bullet": t.bold,
-            "cursor": t.reverse, "awaiting": t.bold_red, "plain": None,
-            "text": None,
-            # debug-pane log levels; palette mirrors common._ColorFormatter
-            "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
-            "log_err": t.bold_red,
-        }
+        self.styles = _styles(term)
+        key = self.styles.get("key") or (lambda s: s)
+        label = self.styles.get("label") or (lambda s: s)
+        self._status_plain = "  ".join(f"{k} {d}" for k, d in KEYMAP)
+        self._status_styled = "  ".join(f"{key(k)} {label(d)}" for k, d in KEYMAP)
 
     # ---- pane content (caller holds model.lock) ----
 
-    def stats_lines(self) -> list[str]:
+    def stats_lines(self) -> list[tui_core.StyledLine]:
         m = self.model
-        lines = [
-            f"elapsed {int(time.monotonic() - m.started)}s"
-            f"   prompts waiting {len(m.prompts)}",
-        ]
+        lines: list[tui_core.StyledLine] = [[
+            ("label", "elapsed "),
+            ("num", f"{int(time.monotonic() - m.started)}s"),
+            ("label", "   prompts waiting "),
+            ("st_awaiting" if m.prompts else "num", str(len(m.prompts))),
+        ]]
         items = [m.items[k] for k in m.order]
         for kind in self.kinds:
             group = [it for it in items if it.kind == kind]
             by = Counter(it.status for it in group)
             pipe = m.pipelines.get(kind)
-            in_flight = pipe.pending.value if pipe else "-"
-            lines += ["", f"{kind}s: {len(group)} candidates, in flight {in_flight}"]
+            lines += [[], [
+                ("kind_pr" if kind == "PR" else "kind_issue", f"{kind}s "),
+                ("num", str(len(group))),
+                ("label", " candidates, in flight "),
+                ("num", str(pipe.pending.value) if pipe else "-"),
+            ]]
             if by:
-                lines.append("  " + "  ".join(
-                    f"{s.name.lower()}={by[s]}" for s in Status if by[s]))
+                row: tui_core.StyledLine = [("text", "  ")]
+                for s in Status:
+                    if by[s]:
+                        row += [(f"st_{s.name.lower()}", f"{s.name.lower()}="),
+                                ("num", str(by[s])), ("text", "  ")]
+                lines.append(row)
             cls = Counter(
                 fairy.format_llm_classification(it.decision.llm_classification)
                 for it in group if it.decision)
             cls.pop("-", None)
             if cls:
-                lines.append("  llm: " + ", ".join(
-                    f"{k}={v}" for k, v in sorted(cls.items())))
+                lines.append([("text", "  "), ("label", "llm: "), ("llm",
+                    ", ".join(f"{k}={v}" for k, v in sorted(cls.items())))])
             acts = Counter(it.decision.action for it in group
                            if it.status is Status.APPLIED and it.decision)
             if acts:
-                lines.append("  applied: " + ", ".join(
-                    f"{k}={v}" for k, v in sorted(acts.items())))
+                lines.append([("text", "  "), ("label", "applied: "), ("st_applied",
+                    ", ".join(f"{k}={v}" for k, v in sorted(acts.items())))])
         return lines
 
-    def list_rows(self) -> list[tuple[str, str]]:
+    def list_rows(self) -> list:
         m = self.model
         vis = m.visible()
         m.cursor = max(0, min(m.cursor, len(vis) - 1)) if vis else 0
-        rows = []
+        rows: list = []
         for i, it in enumerate(vis):
             d = it.decision
             llm = fairy.format_llm_classification(d.llm_classification) if d else ""
-            mark = ">" if m._prompt_for((it.kind, it.number)) else " "
-            text = (f"{mark}{it.kind:<5} #{it.number:<6} "
-                    f"{it.status.name.lower():<9} {llm:<9} {it.title}")
-            style = "cursor" if i == m.cursor else (
-                "awaiting" if mark == ">" else "plain")
-            rows.append((style, text))
+            mark = "▶" if m._prompt_for((it.kind, it.number)) else " "
+            if i == m.cursor:
+                # The cursor row is a single reversed block; per-segment
+                # colors under reverse video read worse than none.
+                rows.append(("cursor",
+                             f"{mark}{it.kind:<5} #{it.number:<6} "
+                             f"{it.status.name.lower():<9} {llm:<9}  {it.title}"))
+                continue
+            rows.append([
+                ("mark", mark),
+                ("kind_pr" if it.kind == "PR" else "kind_issue", f"{it.kind:<5} "),
+                ("num", f"#{it.number:<6} "),
+                (f"st_{it.status.name.lower()}", f"{it.status.name.lower():<9} "),
+                ("llm", f"{llm:<9}  "),
+                ("title", it.title),
+            ])
         return rows
 
     def detail_lines(self, width: int) -> list[tui_core.StyledLine]:
@@ -510,7 +611,7 @@ class UILoop:
             [("h2", f"{item.kind} #{item.number}  {item.title}"[:width])],
         ]
         if item.url:
-            head.append([("text", item.url[:width])])
+            head.append([("link", item.url[:width])])
         if d is None:
             return head + [[], [("text", f"({item.status.name.lower()}: no decision yet)")]]
         head += [
@@ -549,20 +650,27 @@ class UILoop:
                 "br": self._scrolled("br", self.detail_lines(max(8, rects["br"].w - 1)),
                                      rects["br"].h - 1),
             }
-            status = (f" {len(self.model.prompts)} pending |{STATUS_LINE}"
-                      if self.model.prompts else STATUS_LINE)
+            nprompts = len(self.model.prompts)
         buf = []
         for pane, rect in rects.items():
             self._blit(buf, rect, pane, content[pane])
-        divider = t.bold if self.drag else (lambda s: s)
+        divider = self.styles.get("divider_drag" if self.drag else "divider") \
+            or (lambda s: s)
         for y in range(row):
-            buf.append(t.move_xy(col_t, y) + divider("|"))
+            buf.append(t.move_xy(col_t, y) + divider("│"))
         for y in range(row + 1, body_h):
-            buf.append(t.move_xy(col_b, y) + divider("|"))
-        buf.append(t.move_xy(0, row) + divider("-" * w))
+            buf.append(t.move_xy(col_b, y) + divider("│"))
+        buf.append(t.move_xy(0, row) + divider("─" * w))
         for col in {col_t, col_b}:
-            buf.append(t.move_xy(col, row) + divider("+"))
-        buf.append(t.move_xy(0, h - 1) + t.reverse(status[:w].ljust(w)))
+            buf.append(t.move_xy(col, row) + divider("┼"))
+        note = f" ▶ {nprompts} pending  " if nprompts else " "
+        if len(note) + len(self._status_plain) > w:
+            status = (note + self._status_plain)[:w].ljust(w)
+        else:
+            mark = self.styles.get("st_awaiting") or (lambda s: s)
+            status = ((mark(note) if nprompts else note) + self._status_styled
+                      + " " * (w - len(note) - len(self._status_plain)))
+        buf.append(t.move_xy(0, h - 1) + status)
         print("".join(buf), end="", flush=True, file=t.stream)
 
     def _log_style(self, level: int | None) -> str:
@@ -589,12 +697,13 @@ class UILoop:
         t = self.term
         if rect.w <= 0 or rect.h <= 0:
             return
-        title = f" {PANES[pane]} "
+        title = f" {PANE_GLYPHS[pane]} {PANES[pane]} "
         if pane == "tr":
             title += f"[{'all' if self.model.show_all else 'relevant'}] "
         bar = title[:rect.w].ljust(rect.w)
-        buf.append(t.move_xy(rect.x, rect.y)
-                   + (t.reverse(bar) if pane == self.focus else t.underline(bar)))
+        bar_fn = self.styles.get("bar_focus" if pane == self.focus else "bar_blur") \
+            or (t.reverse if pane == self.focus else (lambda s: s))
+        buf.append(t.move_xy(rect.x, rect.y) + bar_fn(bar))
         for i in range(rect.h - 1):
             buf.append(t.move_xy(rect.x, rect.y + 1 + i))
             line = lines[i] if i < len(lines) else ""
@@ -725,17 +834,17 @@ class UILoop:
                                        self.ring.view(self.scroll["bl"], inner_h)))
             elif pane == "tl":
                 lines = self.stats_lines()
-                text = "\n".join(lines if full else self._scrolled("tl", lines, inner_h))
+                text = _plain(lines if full else self._scrolled("tl", lines, inner_h))
             elif pane == "tr":
                 rows = self.list_rows()
                 if not full:
                     rows = self._list_window(rows, inner_h)
-                text = "\n".join(r for _, r in rows)
+                text = _plain(rows)
             else:
                 lines = self.detail_lines(200 if full else max(8, self.term.width // 2))
                 if not full:
                     lines = self._scrolled("br", lines, inner_h)
-                text = "\n".join("".join(t for _, t in ln) for ln in lines)
+                text = _plain(lines)
         path = self.save_dir / (
             f"fairy_tui-{PANES[pane]}-{datetime.now():%Y%m%d-%H%M%S}.txt")
         try:

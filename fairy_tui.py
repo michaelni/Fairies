@@ -141,7 +141,6 @@ class PromptReq:
 @dataclass
 class Pipeline:
     input_queue: SimpleQueue
-    llm_queue: SimpleQueue
     pending: fairy.PendingCount
     cancelled: set[int]
 
@@ -410,9 +409,9 @@ class SideUI:
     def candidates(self, items: list[dict]) -> None:
         self.model.add_candidates(self.kind, items)
 
-    def pipeline(self, input_queue, llm_queue, pending, cancelled) -> None:
+    def pipeline(self, input_queue, pending, cancelled) -> None:
         self.model.attach_pipeline(
-            self.kind, Pipeline(input_queue, llm_queue, pending, cancelled),
+            self.kind, Pipeline(input_queue, pending, cancelled),
             self.forced,
         )
 

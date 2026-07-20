@@ -3322,7 +3322,6 @@ class ReviewUI(Protocol):
     def pipeline(
         self,
         input_queue: SimpleQueue,
-        llm_queue: SimpleQueue,
         pending: PendingCount,
         cancelled: set[int],
     ) -> None:
@@ -3678,7 +3677,7 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
         cancelled=cancelled,
     )
     if ui is not None:
-        ui.pipeline(input_queue, llm_queue, pending, cancelled)
+        ui.pipeline(input_queue, pending, cancelled)
 
     try:
         decisions, stopped_by_user = consume_reviewed(

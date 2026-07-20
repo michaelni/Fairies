@@ -3207,6 +3207,13 @@ def workset_reusable_review(
         )
         return None
     logger.info("%s #%d: reusing persisted review from %s (guard match)", kind, number, path)
+    return workset_llm_review(item)
+
+
+def workset_llm_review(item: workset.WorkItem) -> LLMReview:
+    """The item file's persisted verdict as an ``LLMReview``. The caller
+    has checked ``item.review`` is present."""
+    assert item.review is not None
     return LLMReview(
         item.review.classification,
         item.review.message,

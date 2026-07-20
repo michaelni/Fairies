@@ -197,5 +197,66 @@ class WorksetWriteTests(PipelineDriver, unittest.TestCase):
         self.assertIsNone(self._item(1))
 
 
+class WorksetReuseTests(unittest.TestCase):
+    """A persisted REVIEWED file with a matching guard replaces the LLM call."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.args = make_args(
+            workset_dir=Path(self._tmp.name), owner="o", repo="r",
+            forge_type="gitea", gcli_account=None, force_review_prs=set(),
+        )
+        self.prepared = fairy.PreparedPR(
+            pr=make_pr(1), number=1, title="t", author="a", auto_merge="-",
+            last_activity=None, base_reason="review", discussion=[],
+            reviewer_username="fairy",
+        )
+
+    def _seed(self, classification: str = "moderate_issues",
+              updated_at: str = "2026-07-19T10:00:00Z") -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        workset.save_item(fairy.workset_path(self.args, "pr", 1), workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=1, state=workset.WorkState.REVIEWED,
+            created_at=now, state_changed_at=now,
+            expected_updated_at=updated_at, expected_head_ref="h1",
+            review=workset.ReviewResult(
+                classification=classification, message="persisted body"),
+        ))
+
+    def _evaluate(self):
+        with mock.patch.object(fairy, "apply_llm_review_to_prepared") as llm:
+            llm.return_value = fairy.Decision(
+                1, "t", "a", "-", "comment", "llm", None, "reply", "fresh")
+            decision = fairy.safe_apply_llm_review_to_prepared(
+                self.args, self.prepared, state=bot_state.State())
+        return decision, llm
+
+    def test_guard_match_reuses_without_llm_call(self) -> None:
+        self._seed()
+        decision, llm = self._evaluate()
+        llm.assert_not_called()
+        self.assertEqual(decision.llm_message, "persisted body")
+        self.assertEqual(decision.action, "comment")
+
+    def test_guard_mismatch_reruns_llm(self) -> None:
+        self._seed(updated_at="2026-07-01T00:00:00Z")
+        decision, llm = self._evaluate()
+        llm.assert_called_once()
+        self.assertEqual(decision.llm_message, "fresh")
+
+    def test_persisted_skip_is_not_reused(self) -> None:
+        self._seed(classification="skip")
+        _, llm = self._evaluate()
+        llm.assert_called_once()
+
+    def test_forced_number_reruns_llm(self) -> None:
+        self._seed()
+        self.args.force_review_prs = {1}
+        _, llm = self._evaluate()
+        llm.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

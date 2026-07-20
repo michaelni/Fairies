@@ -399,6 +399,29 @@ class PipelineTests(unittest.TestCase):
                 llm_queue.put(issue_fairy._LLM_DONE)
         return results
 
+    def test_persisted_review_reused_without_llm(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = make_args(workset_dir=Path(tmp.name))
+        prepared = issue_fairy.PreparedIssue(
+            issue={"number": 5, "updated_at": "U1"}, number=5, title="t",
+            author="a", last_activity=None, base_reason="stale",
+            discussion=[], reviewer_username="fairy",
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        workset.save_item(fairy.workset_path(args, "issue", 5), workset.WorkItem(
+            kind="issue", forge_type=args.forge_type, account="",
+            owner=args.owner, repo=args.repo, number=5,
+            state=workset.WorkState.REVIEWED, created_at=now, state_changed_at=now,
+            expected_updated_at="U1",
+            review=workset.ReviewResult(classification="reply", message="persisted"),
+        ))
+        with mock.patch.object(issue_fairy, "call_llm_with_retries") as llm:
+            d = issue_fairy.evaluate_issue(args, prepared)
+        llm.assert_not_called()
+        self.assertEqual(d.action, "comment")
+        self.assertEqual(d.llm_message, "persisted")
+
     def test_workset_file_written_reviewed(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

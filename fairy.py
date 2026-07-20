@@ -3022,7 +3022,25 @@ def safe_apply_llm_review_to_prepared(
     # funnel point. ``dataclasses.replace`` keeps the rest of the decision
     # intact.
     try:
-        decision = apply_llm_review_to_prepared(args, prepared)
+        cached = workset_reusable_review(
+            args, "pr", prepared.number,
+            expected_updated_at=prepared.pr.get("updated_at"),
+            expected_head_ref=get_pr_head_ref(prepared.pr),
+            forced=prepared.number in args.force_review_prs,
+        )
+        decision = (
+            decision_from_review(
+                cached,
+                number=prepared.number,
+                title=prepared.title,
+                author=prepared.author,
+                auto_merge=prepared.auto_merge,
+                last_activity=prepared.last_activity,
+                base_reason=prepared.base_reason,
+            )
+            if cached is not None
+            else apply_llm_review_to_prepared(args, prepared)
+        )
     except Exception as exc:
         return Decision(
             prepared.number,
@@ -3148,6 +3166,55 @@ def workset_record_reviewed(
             "workset: %s #%d reviewed but %s is gone; verdict not persisted",
             kind, decision.pr_number, path,
         )
+
+
+def workset_reusable_review(
+    args: argparse.Namespace,
+    kind: str,
+    number: int,
+    *,
+    expected_updated_at: str | None,
+    expected_head_ref: str | None,
+    forced: bool = False,
+) -> LLMReview | None:
+    """Persisted verdict for an unchanged item, or None to run the LLM.
+
+    ``forced`` (--force-review-*) always re-runs, like every other gate.
+    A persisted "skip" is never reused: that would make the exponential
+    skip-backoff (see compute_llm_skip_backoff) permanent.
+    """
+    if forced:
+        return None
+    path = workset_path(args, kind, number)
+    if path is None:
+        return None
+    item = workset.load_item(path)
+    if item is None or item.state is not workset.WorkState.REVIEWED or item.review is None:
+        return None
+    if item.review.classification in ("skip", "error", "-", ""):
+        logger.debug(
+            "workset: %s #%d persisted %r is not reusable",
+            kind, number, item.review.classification,
+        )
+        return None
+    if (item.expected_updated_at != expected_updated_at
+            or item.expected_head_ref != expected_head_ref):
+        logger.info(
+            "%s #%d: persisted review is stale (updated_at %r -> %r, head %r -> %r);"
+            " re-reviewing",
+            kind, number, item.expected_updated_at, expected_updated_at,
+            item.expected_head_ref, expected_head_ref,
+        )
+        return None
+    logger.info("%s #%d: reusing persisted review from %s (guard match)", kind, number, path)
+    return LLMReview(
+        item.review.classification,
+        item.review.message,
+        tuple(
+            LabelChange(c.label, c.op, c.reason, c.post)
+            for c in item.review.label_changes
+        ),
+    )
 
 
 def workset_transition(

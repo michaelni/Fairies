@@ -526,6 +526,14 @@ def run_llm_issue(
 def evaluate_issue(args: argparse.Namespace, prepared: PreparedIssue) -> Decision:
     """LLM verdict -> Decision: ``reply`` posts the message as an issue
     comment, ``skip`` posts nothing; label changes apply either way."""
+    cached = fairy.workset_reusable_review(
+        args, "issue", prepared.number,
+        expected_updated_at=prepared.issue.get("updated_at"),
+        expected_head_ref=None,
+        forced=prepared.number in args.force_review_issues,
+    )
+    if cached is not None:
+        return issue_decision_from_review(prepared, cached)
     try:
         review = call_llm_with_retries(
             args,

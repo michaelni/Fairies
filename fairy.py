@@ -1736,6 +1736,20 @@ def format_llm_classification(classification: str) -> str:
 
 
 
+def asset_attachments(obj: ApiObject) -> list[dict[str, object]]:
+    """Files attached to a Forgejo/Gitea issue or comment, from its
+    ``assets`` field. An attachment not linked from the markdown body
+    appears nowhere else, so the LLM cannot discover it from the text
+    alone (seen on issue 20572, where the reproduction ZIP was attached
+    but unlinked). GitHub and GitLab have no such field -- their uploads
+    are always inline body links -- so this is empty there."""
+    return [
+        {"name": a.get("name"), "size": a.get("size"),
+         "url": a.get("browser_download_url")}
+        for a in obj.get("assets") or []
+    ]
+
+
 def build_llm_discussion(
     reviews: list[ApiObject],
     comments: list[ApiObject],
@@ -1759,19 +1773,24 @@ def build_llm_discussion(
 
     for comment in comments:
         body = comment.get("body")
-        if not isinstance(body, str) or not body.strip():
+        if not isinstance(body, str):
+            body = ""
+        attachments = asset_attachments(comment)
+        # a Forgejo comment can be an attachment with no text at all
+        if not body.strip() and not attachments:
             continue
         user = comment.get("user") or {}
         author = user.get("login") or user.get("username") or user.get("full_name") or "?"
-        items.append(
-            {
-                "kind": "comment",
-                "author": author,
-                "created_at": comment.get("created_at"),
-                "updated_at": comment.get("updated_at"),
-                "body": body,
-            }
-        )
+        item: DiscussionItem = {
+            "kind": "comment",
+            "author": author,
+            "created_at": comment.get("created_at"),
+            "updated_at": comment.get("updated_at"),
+            "body": body,
+        }
+        if attachments:
+            item["attachments"] = attachments
+        items.append(item)
 
     for review in reviews:
         body = review.get("body")

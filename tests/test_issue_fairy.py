@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
+import llm_prompt  # noqa: E402
 import llm_review_api  # noqa: E402
 import issue_fairy  # noqa: E402
 import workset  # noqa: E402
@@ -350,6 +351,49 @@ class LLMPayloadTests(unittest.TestCase):
         ):
             d = issue_fairy.evaluate_issue(args, p)
         self.assertEqual(d.action, "skip")
+
+
+class AttachmentTests(unittest.TestCase):
+    """Issue 20572's reproduction ZIP (``Files.zip``) was attached to the
+    issue but never linked from the markdown body, so the LLM denied any
+    ZIP existed and asked the reporter to re-attach it. Forgejo lists such
+    attachments only in the ``assets`` field; pin that they reach the LLM
+    payload and prompt. ``ffmpeg_issue_20572.json`` is a capture from
+    code.ffmpeg.org with the 185 KB ``-v 9`` log cut from the body."""
+
+    ZIP_URL = "https://code.ffmpeg.org/attachments/99d1af9c-d61e-4465-b5d8-46f2b990a4df"
+
+    def test_unlinked_asset_reaches_payload_and_prompt(self) -> None:
+        issue = load_fixture("ffmpeg_issue_20572.json")
+        self.assertNotIn(self.ZIP_URL, issue["body"])
+        p = issue_fairy.PreparedIssue(
+            issue=issue, number=20572, title=issue["title"], author="Maguku",
+            last_activity=None, base_reason="stale enough for analysis",
+            discussion=[], reviewer_username="fairy",
+        )
+        with mock.patch.object(
+            issue_fairy, "invoke_llm_wrapper", return_value=LLMReview("skip", ""),
+        ) as invoke:
+            issue_fairy.run_llm_issue(make_args(), p, None)
+        payload = invoke.call_args.args[1]
+        attachments = payload["issue"]["attachments"]
+        self.assertEqual(
+            [a["name"] for a in attachments],
+            ["Screenshot 2025-09-22 033012.png", "Screenshot 2025-09-22 033032.png",
+             "Screenshot 2025-09-22 033528.png", "Files.zip"],
+        )
+        self.assertEqual(attachments[3]["url"], self.ZIP_URL)
+        self.assertIn(self.ZIP_URL, llm_prompt.make_issue_user_text(payload))
+
+    def test_attachment_only_comment_survives_discussion(self) -> None:
+        comments = load_fixture("ffmpeg_issue_23738_comments.json")
+        zip_asset = load_fixture("ffmpeg_issue_20572.json")["assets"][3]
+        comment = dict(comments[0], body="", assets=[zip_asset])
+        items = fairy.build_llm_discussion([], [comment], [])
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["attachments"],
+                         [{"name": "Files.zip", "size": 77292, "url": self.ZIP_URL}])
+        self.assertNotIn("attachments", fairy.build_llm_discussion([], [comments[0]], [])[0])
 
 
 class PipelineTests(unittest.TestCase):

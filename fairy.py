@@ -2170,6 +2170,13 @@ def apply_llm_review(
     )
 
 
+def llm_skip_reason(message: str) -> str:
+    """One-line reason for an LLM skip: the first line of the model's own
+    explanation, never a narration of what skip means in general."""
+    first = message.strip().splitlines()[0] if message.strip() else ""
+    return f"LLM skip: {first}"[:160] if first else "LLM chose skip"
+
+
 def decision_from_review(
     review: LLMReview,
     *,
@@ -2246,7 +2253,7 @@ def decision_from_review(
             author,
             auto_merge,
             "skip",
-            "LLM chose skip",
+            llm_skip_reason(review.message),
             last_activity,
             review.classification,
             review.message,

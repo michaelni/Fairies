@@ -1600,7 +1600,14 @@ def main() -> int:
                         "triage route=skip; reason=%r; skipping main reviewer pass",
                         triage_result.get("reason", ""),
                     )
-                    emit_review_stdout("skip", "", label_changes=triage_label_changes)
+                    # The triager's reason is the only explanation this run
+                    # produces; pass it along instead of an empty message so
+                    # the operator sees WHY, not just "skip". Skip messages
+                    # are never posted to the forge.
+                    emit_review_stdout(
+                        "skip", str(triage_result.get("reason") or ""),
+                        label_changes=triage_label_changes,
+                    )
                     return 0
                 if route == "reply_no_verdict":
                     logger.info(

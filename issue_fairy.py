@@ -94,6 +94,7 @@ from fairy import (
     item_body_mentions_user,
     label_names,
     list_open_prs,
+    llm_skip_reason,
     max_dt,
     parse_label_csv,
     parse_pr_number_csv,
@@ -550,7 +551,7 @@ def evaluate_issue(args: argparse.Namespace, prepared: PreparedIssue) -> Decisio
 def issue_decision_from_review(prepared: PreparedIssue, review: LLMReview) -> Decision:
     action = "comment" if review.classification == "reply" else "skip"
     reason = (
-        "LLM chose skip" if review.classification == "skip"
+        llm_skip_reason(review.message) if review.classification == "skip"
         else f"{prepared.base_reason}; LLM: {review.classification}"
     )
     return Decision(

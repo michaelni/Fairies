@@ -429,6 +429,7 @@ class UILoop:
         self.list_top = 0
         self.drag: str | None = None
         self._last_size: tuple[int, int] | None = None
+        self._last_paint = 0.0
         t = term
         self.styles = {
             "h1": t.bold_underline, "h2": t.bold, "h3": t.underline,
@@ -523,6 +524,7 @@ class UILoop:
     # ---- painting ----
 
     def paint(self) -> None:
+        self._last_paint = time.monotonic()
         t = self.term
         w, h = t.width, t.height
         body_h = max(3, h - 1)
@@ -621,6 +623,9 @@ class UILoop:
                 size = (self.term.width, self.term.height)
                 if size != self._last_size:
                     self._last_size = size
+                    self.model.dirty.set()
+                # 1 Hz heartbeat so the elapsed clock moves without input.
+                if time.monotonic() - self._last_paint >= 1.0:
                     self.model.dirty.set()
                 if self.model.dirty.is_set():
                     self.model.dirty.clear()

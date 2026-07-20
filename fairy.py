@@ -1737,12 +1737,9 @@ def format_llm_classification(classification: str) -> str:
 
 
 def asset_attachments(obj: ApiObject) -> list[dict[str, object]]:
-    """Files attached to a Forgejo/Gitea issue or comment, from its
-    ``assets`` field. An attachment not linked from the markdown body
-    appears nowhere else, so the LLM cannot discover it from the text
-    alone (seen on issue 20572, where the reproduction ZIP was attached
-    but unlinked). GitHub and GitLab have no such field -- their uploads
-    are always inline body links -- so this is empty there."""
+    """Forgejo/Gitea ``assets`` of an issue or comment; an unlinked
+    attachment appears nowhere in the markdown body. GitHub and GitLab
+    upload as inline body links and have no such field."""
     return [
         {"name": a.get("name"), "size": a.get("size"),
          "url": a.get("browser_download_url")}

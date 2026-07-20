@@ -3107,15 +3107,20 @@ def consume_reviewed(
     decisions and whether the operator stopped the run."""
     decisions: list[Decision] = []
     stopped = False
+    idle_logged = False
     ready: deque[tuple[object, Decision]] = deque()
     try:
         while True:
             if not ready:
                 if pending.value == 0 and (ui is None or not ui.keep_open()):
                     break
+                if ui is not None and pending.value == 0 and not idle_logged:
+                    idle_logged = True
+                    logger.info(
+                        "%s side idle: all candidates processed, nothing in "
+                        "flight; waiting for force-added work or quit", kind,
+                    )
                 try:
-                    # With a UI the consumer runs on a controller thread and
-                    # must wake up to notice ui.stopped(); plain mode blocks.
                     ready.append(reviewed_queue.get(timeout=0.25 if ui else None))
                 except Empty:
                     pass
@@ -3132,6 +3137,7 @@ def consume_reviewed(
 
             prepared, d = ready.popleft()
             pending.add(-1)
+            idle_logged = False
 
             age = describe_age(now, d.last_activity)
             prefix = f"{kind} #{d.pr_number}" if d.pr_number >= 0 else f"{kind}<?>"

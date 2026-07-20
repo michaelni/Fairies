@@ -97,6 +97,29 @@ class ConsumeReviewedTests(unittest.TestCase):
         self.assertEqual(applied, [])
         self.assertFalse(stopped)
 
+    def test_ui_idle_state_is_logged_once(self) -> None:
+        class UI:
+            def __init__(self) -> None:
+                self.keeps = iter((True, True, False))
+
+            def keep_open(self):
+                return next(self.keeps)
+
+            def stopped(self):
+                return False
+
+        with self.assertLogs(fairy.logger, level="INFO") as logs:
+            decisions, stopped = fairy.consume_reviewed(
+                SimpleQueue(), SimpleQueue(), fairy.PendingCount(0),
+                now=datetime.now(timezone.utc),
+                manual=False, approve=False, kind="PR",
+                apply=lambda p, d: None, item_url=lambda p: "",
+                ui=UI(),
+            )
+        self.assertEqual(decisions, [])
+        self.assertEqual(
+            sum("idle" in line for line in logs.output), 1)
+
     def test_review_ui_drives_decisions(self) -> None:
         class UI:
             def __init__(self) -> None:

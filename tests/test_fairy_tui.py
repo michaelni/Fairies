@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -19,6 +20,7 @@ import blessed  # noqa: E402
 import fairy  # noqa: E402
 import fairy_tui  # noqa: E402
 import tui_core  # noqa: E402
+import workset  # noqa: E402
 
 
 def decision(n: int, action: str = "comment", msg: str = "msg") -> fairy.Decision:
@@ -59,62 +61,6 @@ class ModelTests(unittest.TestCase):
             model.show_all = True
             self.assertEqual([it.number for it in model.visible()], [1, 2])
 
-    def test_stage_progress_updates_status_and_relevance(self) -> None:
-        model = fairy_tui.Model()
-        model.add_candidates("PR", [{"number": 5, "title": "t"}])
-        model.note_stage("PR", 5, "queued", None)
-        with model.lock:
-            self.assertEqual([it.number for it in model.visible()], [5])
-        self.assertIs(model.items[("PR", 5)].status, fairy_tui.Status.QUEUED)
-        model.note_stage("PR", 5, "evaluating", None)
-        self.assertIs(model.items[("PR", 5)].status, fairy_tui.Status.IN_LLM)
-        # a reviewed actionable decision is visible (with classification)
-        # while the operator is still busy with another prompt
-        model.note_stage("PR", 5, "reviewed", decision(5))
-        item = model.items[("PR", 5)]
-        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
-        self.assertEqual(item.decision.llm_classification, "reply")
-        with model.lock:
-            self.assertEqual([it.number for it in model.visible()], [5])
-        # stage reports never resurrect a cancelled item
-        item.status = fairy_tui.Status.CANCELLED
-        model.note_stage("PR", 5, "queued", None)
-        self.assertIs(item.status, fairy_tui.Status.CANCELLED)
-
-    def test_wrapper_lines_track_triage_review_combine(self) -> None:
-        model = fairy_tui.Model()
-        model.add_candidates("PR", [{"number": 7, "title": "t"}])
-        model.add_candidates("issue", [{"number": 7, "title": "t"}])
-        model.note_stage("PR", 7, "evaluating", None)
-        item = model.items[("PR", 7)]
-        model.note_wrapper_line(
-            "2026-07-20 L [wrapper pr=#7] triage decision route=engage ...")
-        self.assertEqual(item.stage, "triage")
-        model.note_wrapper_line(
-            "2026-07-20 L [wrapper pr=#7] triage route=engage; running main reviewer pass")
-        self.assertEqual(item.stage, "review")
-        model.note_wrapper_line(
-            "2026-07-20 L [wrapper pr=#7] combine stage: gpt merging 2 draft(s)")
-        self.assertEqual(item.stage, "combine")
-        # issue lines key the issue item, not the same-numbered PR
-        model.note_wrapper_line(
-            "x [wrapper issue=#7] triage decision route=engage")
-        self.assertEqual(model.items[("issue", 7)].stage, "triage")
-        self.assertEqual(item.stage, "combine")
-        # non-wrapper and unknown-number lines are ignored
-        model.note_wrapper_line("plain log line with triage word")
-        model.note_wrapper_line("x [wrapper pr=#999] triage y")
-        # leaving the LLM clears the sub-stage
-        model.note_stage("PR", 7, "reviewed", decision(7))
-        self.assertEqual(item.stage, "")
-
-    def test_sink_watch_sees_every_captured_line(self) -> None:
-        seen: list[str] = []
-        sink = fairy_tui.OutputSink(
-            tui_core.RingBuffer(), fairy_tui.Event(), None, watch=seen.append)
-        sink.line("one\ntwo")
-        self.assertEqual(seen, ["one", "two"])
-
     def test_quit_answers_pending_prompts(self) -> None:
         model = fairy_tui.Model()
         got: dict[str, str] = {}
@@ -129,6 +75,103 @@ class ModelTests(unittest.TestCase):
         model.quit_all()
         th.join(timeout=2)
         self.assertEqual(got.get("choice"), "quit")
+
+
+class WorksetPollTests(unittest.TestCase):
+    """poll_workset drives item state from the on-disk files."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+        self.model = fairy_tui.Model()
+        self.model.workset_dirs["PR"] = self.dir
+
+    def _write(self, number: int, state: workset.WorkState,
+               message: str = "m", mtime: float | None = None) -> Path:
+        path = self.dir / f"pr-{number}.json"
+        now = "2026-07-20T00:00:00+00:00"
+        workset.save_item(path, workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=number, state=state, created_at=now, state_changed_at=now,
+            title="from disk", html_url="u",
+            review=workset.ReviewResult(classification="reply", message=message)
+            if state >= workset.WorkState.REVIEWED else None,
+        ))
+        if mtime is not None:
+            os.utime(path, (mtime, mtime))
+        return path
+
+    def test_states_map_to_status_and_stage(self) -> None:
+        self.model.add_candidates("PR", [{"number": 5, "title": "t"}])
+        self._write(5, workset.WorkState.REVIEW, mtime=100.0)
+        self.model.poll_workset()
+        item = self.model.items[("PR", 5)]
+        self.assertIs(item.status, fairy_tui.Status.IN_LLM)
+        self.assertEqual(item.stage, "review")
+        self._write(5, workset.WorkState.REVIEWED)
+        self.model.poll_workset()
+        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
+        self.assertEqual(item.stage, "")
+
+    def test_unknown_disk_item_is_added_and_relevant(self) -> None:
+        self._write(9, workset.WorkState.REVIEWED)
+        self.model.poll_workset()
+        item = self.model.items[("PR", 9)]
+        self.assertEqual(item.title, "from disk")
+        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
+        with self.model.lock:
+            self.assertEqual([it.number for it in self.model.visible()], [9])
+
+    def test_deleted_file_cancels_in_pipeline_item(self) -> None:
+        path = self._write(5, workset.WorkState.QUEUED)
+        self.model.poll_workset()
+        self.assertIs(self.model.items[("PR", 5)].status, fairy_tui.Status.QUEUED)
+        path.unlink()
+        self.model.poll_workset()
+        self.assertIs(self.model.items[("PR", 5)].status,
+                      fairy_tui.Status.CANCELLED)
+
+    def test_operator_states_are_not_clobbered(self) -> None:
+        self.model.add_candidates("PR", [{"number": 5, "title": "t"}])
+        self.model.items[("PR", 5)].status = fairy_tui.Status.AWAITING
+        self._write(5, workset.WorkState.REVIEWED)
+        self.model.poll_workset()
+        self.assertIs(self.model.items[("PR", 5)].status,
+                      fairy_tui.Status.AWAITING)
+
+
+class EditReviewTests(unittest.TestCase):
+    def test_o_key_round_trips_the_message_through_the_editor(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = Path(tmp.name)
+        now = "2026-07-20T00:00:00+00:00"
+        workset.save_item(d / "pr-5.json", workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=5, state=workset.WorkState.REVIEWED,
+            created_at=now, state_changed_at=now, title="t",
+            review=workset.ReviewResult(classification="reply", message="original"),
+        ))
+        model = fairy_tui.Model()
+        model.workset_dirs["PR"] = d
+        model.poll_workset()
+
+        def fake_call(cmd, **kw):
+            Path(cmd[-1]).write_text("edited body", encoding="utf-8")
+            return 0
+
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40",
+                                          "EDITOR": "myeditor"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+            ui = fairy_tui.UILoop(term, model, tui_core.RingBuffer(), Path("."), ["PR"])
+            with mock.patch.object(fairy_tui.subprocess, "call",
+                                   side_effect=fake_call) as call:
+                ui.edit_review()
+        self.assertEqual(call.call_args.args[0][0], "myeditor")
+        item = workset.load_item(d / "pr-5.json")
+        self.assertEqual(item.review.message, "edited body")
 
 
 class FilterToggleTests(unittest.TestCase):

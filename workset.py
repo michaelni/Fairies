@@ -61,6 +61,8 @@ __all__ = [
     "LabelChange",
     "ReviewResult",
     "WorkItem",
+    "repo_dir",
+    "item_path_in",
     "item_path",
     "load_item",
     "save_item",
@@ -135,6 +137,16 @@ def _segment(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", value) or "default"
 
 
+def repo_dir(root: Path, *, forge_type: str, account: str, owner: str, repo: str) -> Path:
+    parts = [_segment(s) for s in (forge_type, account, owner, repo)]
+    return root / "~".join(parts)
+
+
+def item_path_in(d: Path, kind: str, number: int) -> Path:
+    """``kind`` is "pr" | "issue"."""
+    return d / f"{kind}-{number}.json"
+
+
 def item_path(
     root: Path,
     *,
@@ -145,8 +157,8 @@ def item_path(
     kind: str,  # "pr" | "issue"
     number: int,
 ) -> Path:
-    parts = [_segment(s) for s in (forge_type, account, owner, repo)]
-    return root / "~".join(parts) / f"{kind}-{number}.json"
+    d = repo_dir(root, forge_type=forge_type, account=account, owner=owner, repo=repo)
+    return item_path_in(d, kind, number)
 
 
 def load_item(path: Path) -> WorkItem | None:

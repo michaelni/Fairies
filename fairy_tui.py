@@ -52,9 +52,11 @@ from __future__ import annotations
 import argparse
 import faulthandler
 import logging
-import re
+import os
 import shlex
+import subprocess
 import sys
+import tempfile
 import time
 from collections import Counter, deque
 from contextlib import contextmanager
@@ -74,6 +76,7 @@ import forge_gcli
 import gcli_cache
 import issue_fairy
 import tui_core
+import workset
 from common import setup_logging
 
 __all__ = ["main"]
@@ -107,12 +110,27 @@ class Item:
     stage: str = ""  # wrapper sub-stage while IN_LLM: triage/review/combine
 
 
-_WRAPPER_LINE_RE = re.compile(r"\[wrapper (pr|issue)=#(\d+)\] (.*)")
-_STAGE_STATUS = {"queued": Status.QUEUED, "evaluating": Status.IN_LLM,
-                 "reviewed": Status.REVIEWED}
-# States a pipeline stage report may move an item out of.
+# States a workset-file report may move an item out of; anything the
+# operator already acted on (awaiting/terminal states) stays put.
 _IN_PIPELINE = (Status.PENDING, Status.QUEUED, Status.IN_LLM,
                 Status.REVIEWED, Status.RETRYING)
+_KIND_FILE = {"PR": "pr", "issue": "issue"}  # TUI kind -> workset file kind
+_WORKSET_STATUS = {
+    workset.WorkState.QUEUED: Status.QUEUED,
+    workset.WorkState.TRIAGE: Status.IN_LLM,
+    workset.WorkState.REVIEW: Status.IN_LLM,
+    workset.WorkState.COMBINE: Status.IN_LLM,
+    workset.WorkState.REVIEWED: Status.REVIEWED,
+    workset.WorkState.POSTED: Status.APPLIED,
+    workset.WorkState.SKIPPED: Status.SKIPPED,
+    workset.WorkState.CANCELLED: Status.CANCELLED,
+    workset.WorkState.ERROR: Status.DONE,
+}
+_WORKSET_STAGE = {
+    workset.WorkState.TRIAGE: "triage",
+    workset.WorkState.REVIEW: "review",
+    workset.WorkState.COMBINE: "combine",
+}
 
 
 @dataclass
@@ -142,6 +160,8 @@ class Model:
         self.prompts: deque[PromptReq] = deque()
         self.pipelines: dict[str, Pipeline] = {}
         self.forced: dict[str, set[int]] = {}
+        self.workset_dirs: dict[str, Path] = {}  # kind -> per-repo dir
+        self._ws_mtimes: dict[Path, float] = {}  # poll_workset change detection
         self.show_all = False
         self.cursor = 0
         self.quit_flag = False
@@ -195,48 +215,63 @@ class Model:
                 item.status = Status.DONE
         self.dirty.set()
 
-    def note_stage(self, kind: str, number: int, stage: str,
-                   decision: fairy.Decision | None) -> None:
-        with self.lock:
-            item = self.items.get((kind, number))
-            if item is None:
-                if decision is None:
-                    return
-                item = self._ensure(kind, decision)
-            if decision is not None:
-                item.decision = decision
-            if stage != "evaluating":
-                item.stage = ""
-            # Never resurrect an item the operator already acted on
-            # (cancelled/deferred/terminal states stay put).
-            if item.status in _IN_PIPELINE:
-                item.status = _STAGE_STATUS[stage]
-        self.dirty.set()
+    def workset_file(self, kind: str, number: int) -> Path | None:
+        d = self.workset_dirs.get(kind)
+        return workset.item_path_in(d, _KIND_FILE[kind], number) if d else None
 
-    def note_wrapper_line(self, text: str) -> None:
-        """Track the wrapper's internal stage from its streamed stderr.
-        Keyed on the ``[wrapper pr=#N]`` / ``[wrapper issue=#N]`` prefix
-        run_cmd prepends; the keywords are review_pipeline's own log
-        lines (\"triage ...\", \"running main reviewer pass\",
-        \"combine stage:\")."""
-        m = _WRAPPER_LINE_RE.search(text)
-        if m is None:
-            return
-        rest = m.group(3)
-        if "combine stage" in rest:
-            stage = "combine"
-        elif "running main reviewer pass" in rest:
-            stage = "review"
-        elif "triage" in rest:
-            stage = "triage"
-        else:
+    def poll_workset(self) -> None:
+        """Refresh item state from the on-disk work files (1 Hz, UI loop).
+
+        The files are the durable source of truth: they carry the pipeline
+        and wrapper stage transitions, items left behind by a previous or
+        killed run, and external edits/deletions by the operator. File IO
+        happens outside ``lock``."""
+        changed: list[tuple[str, workset.WorkItem]] = []
+        removed: list[tuple[str, int]] = []
+        for kind, d in self.workset_dirs.items():
+            prefix = f"{_KIND_FILE[kind]}-"
+            try:
+                paths = set(d.glob(prefix + "*.json"))
+            except OSError:
+                continue
+            gone = [p for p in self._ws_mtimes
+                    if p.parent == d and p.name.startswith(prefix) and p not in paths]
+            for path in gone:
+                del self._ws_mtimes[path]
+                number = path.stem.removeprefix(prefix)
+                if number.isdigit():
+                    removed.append((kind, int(number)))
+            for path in paths:
+                try:
+                    mtime = path.stat().st_mtime
+                except OSError:
+                    continue
+                if self._ws_mtimes.get(path) == mtime:
+                    continue
+                self._ws_mtimes[path] = mtime
+                ws = workset.load_item(path)  # invalid files log loudly
+                if ws is not None:
+                    changed.append((kind, ws))
+        if not changed and not removed:
             return
         with self.lock:
-            item = self.items.get(
-                ("PR" if m.group(1) == "pr" else "issue", int(m.group(2))))
-            if item is None or item.stage == stage:
-                return
-            item.stage = stage
+            for kind, ws in changed:
+                key = (kind, ws.number)
+                item = self.items.get(key)
+                if item is None:
+                    item = Item(kind, ws.number, {}, ws.title, url=ws.html_url)
+                    self.items[key] = item
+                    self.order.append(key)
+                item.title = item.title or ws.title
+                item.url = item.url or ws.html_url
+                item.stage = _WORKSET_STAGE.get(ws.state, "")
+                if item.status in _IN_PIPELINE:
+                    item.status = _WORKSET_STATUS[ws.state]
+            for kind, number in removed:
+                item = self.items.get((kind, number))
+                if item is not None and item.status in _IN_PIPELINE:
+                    item.status = Status.CANCELLED
+                    item.stage = ""
         self.dirty.set()
 
     # ---- UI-thread side ----
@@ -329,13 +364,10 @@ class Model:
         return item
 
     def _relevant(self, item: Item) -> bool:
-        # "Today's relevant set": what this run works on -- forced items,
-        # items in flight toward/awaiting the operator, and finished ones
-        # whose decision proposed an action or label change.
         if item.number in self.forced.get(item.kind, ()):
             return True
-        if item.status in (Status.QUEUED, Status.IN_LLM, Status.AWAITING,
-                           Status.RETRYING, Status.DEFERRED):
+        if item.status in (Status.QUEUED, Status.IN_LLM, Status.REVIEWED,
+                           Status.AWAITING, Status.RETRYING, Status.DEFERRED):
             return True
         d = item.decision
         return d is not None and (
@@ -385,9 +417,6 @@ class SideUI:
             self.forced,
         )
 
-    def item_stage(self, number, stage, decision=None) -> None:
-        self.model.note_stage(self.kind, number, stage, decision)
-
     def decide(self, prepared, decision, url) -> str:
         return self.model.ask(self.kind, decision, url)
 
@@ -405,22 +434,15 @@ class OutputSink:
     """Fan-in for every captured line: the debug-pane ring buffer, an
     optional tee file, and the painter's dirty event."""
 
-    def __init__(self, ring: tui_core.RingBuffer, dirty: Event, path: Path | None,
-                 watch=None) -> None:
+    def __init__(self, ring: tui_core.RingBuffer, dirty: Event, path: Path | None) -> None:
         self.ring = ring
         self.dirty = dirty
-        self.watch = watch  # optional per-line observer (wrapper-stage scraping)
         self._lock = Lock()
         self._fh = open(path, "a", encoding="utf-8") if path else None
 
     def line(self, text: str, level: int | None = None) -> None:
         for ln in text.splitlines() or [""]:
             self.ring.append(ln, level)
-            if self.watch is not None:
-                try:
-                    self.watch(ln)
-                except Exception:
-                    pass  # observing must never break the capture path
             if self._fh is not None:
                 with self._lock:
                     self._fh.write(ln + "\n")
@@ -487,8 +509,8 @@ PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
 CHOICE_KEYS = {"y": "apply", "s": "skip", "d": "defer", "r": "retry"}
 KEYMAP = (("q", "quit"), ("y/s/d/r", "decide"), ("f", "force"), ("x", "drop"),
-          ("a", "all/relevant"), ("e/E", "export"), ("Tab/click", "focus"),
-          ("↑↓ PgUp/PgDn", "scroll"))
+          ("o", "edit msg"), ("a", "all/relevant"), ("e/E", "export"),
+          ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
 
 
 def _styles(t: blessed.Terminal) -> dict:
@@ -819,8 +841,8 @@ class UILoop:
                 if size != self._last_size:
                     self._last_size = size
                     self.model.dirty.set()
-                # 1 Hz heartbeat so the elapsed clock moves without input.
                 if time.monotonic() - self._last_paint >= 1.0:
+                    self.model.poll_workset()
                     self.model.dirty.set()
                 if self.model.dirty.is_set():
                     self.model.dirty.clear()
@@ -896,11 +918,69 @@ class UILoop:
             self.model.force()
         elif ks == "x":
             self.model.cancel()
+        elif ks == "o":
+            self.edit_review()
         elif ks in ("e", "E"):
             self.export(full=(ks == "E"))
         else:
             return
         self.model.dirty.set()
+
+    def edit_review(self) -> None:
+        """o: open $EDITOR on the cursor item's persisted review message.
+
+        The message round-trips through a temp ``.md`` file (the raw JSON
+        stays editable by hand outside the TUI); the result is written
+        back through the flock'd update path."""
+        with self.model.lock:
+            key = self.model._cursor_key()
+            item = self.model.items.get(key) if key else None
+        if item is None:
+            return
+        path = self.model.workset_file(item.kind, item.number)
+        ws = workset.load_item(path) if path is not None else None
+        if ws is None or ws.review is None:
+            logger.info("%s #%s has no persisted review to edit",
+                        item.kind, item.number)
+            return
+        editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
+        fd, tmp_name = tempfile.mkstemp(
+            suffix=".md", prefix=f"fairy-{_KIND_FILE[item.kind]}-{item.number}-")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(ws.review.message)
+            cmd = [*shlex.split(editor), str(tmp)]
+            logger.info("editing %s via: %s", path, shlex.join(cmd))
+            t = self.term
+            print(t.exit_fullscreen + t.normal_cursor, end="", flush=True,
+                  file=t.stream)
+            try:
+                rc = subprocess.call(
+                    cmd, stdin=sys.__stdin__, stdout=sys.__stdout__,
+                    stderr=sys.__stderr__)
+            finally:
+                print(t.enter_fullscreen + t.hide_cursor, end="", flush=True,
+                      file=t.stream)
+                self.model.dirty.set()
+            if rc != 0:
+                logger.warning("editor exited rc=%d; review unchanged", rc)
+                return
+            edited = tmp.read_text(encoding="utf-8")
+            if edited == ws.review.message:
+                logger.info("%s #%s review unchanged", item.kind, item.number)
+                return
+
+            def record(it: workset.WorkItem) -> None:
+                if it.review is not None:
+                    it.review.message = edited
+
+            if workset.update_item(path, record) is not None:
+                logger.info("%s #%s review message updated (%d -> %d chars)",
+                            item.kind, item.number,
+                            len(ws.review.message), len(edited))
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def export(self, full: bool) -> None:
         pane = self.focus
@@ -957,8 +1037,7 @@ def main() -> int:
     args = parse_args()
     ring = tui_core.RingBuffer()
     model = Model()
-    sink = OutputSink(ring, model.dirty, args.log_file,
-                      watch=model.note_wrapper_line)
+    sink = OutputSink(ring, model.dirty, args.log_file)
 
     sides = []
     if args.pr_args:
@@ -981,6 +1060,10 @@ def main() -> int:
             logger.warning("--approve on the %s side is ignored: the TUI always "
                            "asks per decision", kind)
         logger.info("%s side enabled: %s/%s", kind, ns.owner, ns.repo)
+        ws_dir = fairy.workset_repo_dir(ns)
+        if ws_dir is not None:
+            model.workset_dirs[kind] = ws_dir
+            logger.info("%s workset dir: %s", kind, ws_dir)
     if args.log_file:
         logger.info("teeing captured output to %s", args.log_file)
 

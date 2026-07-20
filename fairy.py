@@ -3110,6 +3110,20 @@ def workset_path(args: argparse.Namespace, kind: str, number: int) -> Path | Non
     )
 
 
+def workset_repo_dir(args: argparse.Namespace) -> Path | None:
+    """This run's per-repo workset directory; None without --workset-dir."""
+    root = getattr(args, "workset_dir", None)
+    if not root:
+        return None
+    return workset.repo_dir(
+        Path(root),
+        forge_type=args.forge_type,
+        account=args.gcli_account or "",
+        owner=args.owner,
+        repo=args.repo,
+    )
+
+
 def workset_record_queued(
     args: argparse.Namespace, kind: str, *, number: int, title: str, html_url: str,
 ) -> None:

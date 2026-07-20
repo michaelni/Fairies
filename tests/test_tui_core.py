@@ -94,6 +94,17 @@ class SanitizeTests(unittest.TestCase):
         )
 
 
+class TokenAtTests(unittest.TestCase):
+    def test_url_hash_and_number(self) -> None:
+        text = "fix 5144acb see https://ffmpeg.org/x (PR #123)"
+        self.assertEqual(tui_core.token_at(text, text.index("144")), "5144acb")
+        self.assertEqual(tui_core.token_at(text, text.index("org")),
+                         "https://ffmpeg.org/x")
+        self.assertEqual(tui_core.token_at(text, text.index("#123") + 1), "123")
+        self.assertIsNone(tui_core.token_at(text, 0))
+        self.assertIsNone(tui_core.token_at(text, text.index("PR")))
+
+
 class RenderMarkdownTests(unittest.TestCase):
     def test_constructs(self) -> None:
         lines = render_markdown(

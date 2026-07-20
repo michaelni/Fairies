@@ -365,6 +365,24 @@ class PaintSmokeTests(unittest.TestCase):
         self.assertTrue(buf[1].endswith(" "))          # gutter after divider
         self.assertEqual(buf[2], "https://x/y" + " " * 8)  # 18 wide + right gutter
 
+    def test_click_copies_url_via_osc52(self) -> None:
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            stream = io.StringIO()
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=stream, force_styling=True)
+            ui = fairy_tui.UILoop(term, fairy_tui.Model(),
+                                  tui_core.RingBuffer(), Path("."), ["PR"])
+            buf: list = []
+            # pane narrower than the URL: the copy must still be whole
+            ui._blit(buf, tui_core.Rect(10, 0, 16, 4), "br",
+                     ["see https://ffmpeg.org/very/long now"])
+            ui._copy_click("br", 10 + 1 + 6, 1)   # inside the URL, row 0
+            ui._copy_click("br", 10 + 1 + 1, 1)   # on plain text: no-op
+        payload = fairy_tui.base64.b64encode(
+            b"https://ffmpeg.org/very/long").decode()
+        self.assertEqual(stream.getvalue().count("\x1b]52;c;"), 1)
+        self.assertIn(f"\x1b]52;c;{payload}\x07", stream.getvalue())
+
     def test_export_failure_is_logged_not_fatal(self) -> None:
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
             term = blessed.Terminal(

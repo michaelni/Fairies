@@ -50,6 +50,7 @@ any review logic (fairy, issue_fairy).
 from __future__ import annotations
 
 import argparse
+import base64
 import faulthandler
 import logging
 import os
@@ -641,6 +642,9 @@ class UILoop:
         self.drag: str | None = None
         self._last_size: tuple[int, int] | None = None
         self._last_paint = 0.0
+        # pane -> (rect, gutter, unclipped plain rows) as last painted;
+        # click-to-copy resolves the token under the mouse from this.
+        self._shown: dict[str, tuple[tui_core.Rect, int, list[str]]] = {}
         self.styles = _styles(term)
         key = self.styles.get("key") or (lambda s: s)
         label = self.styles.get("label") or (lambda s: s)
@@ -839,9 +843,12 @@ class UILoop:
         # "│" to the pane text (e.g. copying a URL picks up the divider).
         lpad = " " if rect.x > 0 else ""
         w = max(1, rect.w - len(lpad) - (1 if rect.x + rect.w < t.width else 0))
+        shown: list[str] = []
+        self._shown[pane] = (rect, len(lpad), shown)
         for i in range(rect.h - 1):
             buf.append(t.move_xy(rect.x, rect.y + 1 + i) + lpad)
             line = lines[i] if i < len(lines) else ""
+            shown.append(tui_core.sanitize(_plain([line])))
             # sanitize(): forge/LLM text must not inject escape sequences.
             if isinstance(line, str):
                 buf.append(tui_core.sanitize(line)[:w].ljust(rect.w - len(lpad)))
@@ -920,6 +927,7 @@ class UILoop:
                         row = y - 1  # list rows start under the title bar
                         with self.model.lock:
                             self.model.cursor = max(0, self.list_top + row)
+                    self._copy_click(hit, x, y)
             elif name.endswith("_MOTION") and self.drag:
                 before = self.layout.splits(self.term.width, body_h)
                 self.layout.drag(self.drag, x, y, self.term.width, body_h)
@@ -1017,6 +1025,24 @@ class UILoop:
                             len(ws.review.message), len(edited))
         finally:
             tmp.unlink(missing_ok=True)
+
+    def _copy_click(self, pane: str, x: int, y: int) -> None:
+        """Copy the URL / git hash / #number under a left click to the
+        system clipboard via OSC 52 (needs terminal support; tmux wants
+        set-clipboard on). The rows are stored unclipped, so a visually
+        truncated URL still copies whole."""
+        rect, gutter, rows = self._shown.get(pane, (None, 0, []))
+        if rect is None:
+            return
+        row, col = y - rect.y - 1, x - rect.x - gutter
+        if not (0 <= row < len(rows)) or col < 0:
+            return
+        token = tui_core.token_at(rows[row], col)
+        if token is None:
+            return
+        b64 = base64.b64encode(token.encode()).decode()
+        print(f"\x1b]52;c;{b64}\x07", end="", flush=True, file=self.term.stream)
+        logger.info("copied %r to the clipboard", token)
 
     def export(self, full: bool) -> None:
         pane = self.focus

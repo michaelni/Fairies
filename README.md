@@ -64,8 +64,10 @@ changes. Pass each side its full argument string:
 answer the selected item's pending prompt (same letters as `--manual`,
 `q` quits), `f` force-queues the selected item for review, `x` throws it
 out, `e`/`E` export the focused pane (visible/full), arrows and
-PgUp/PgDn scroll, Tab or a mouse click moves focus, and the pane
-dividers are draggable with the mouse. See `fairy-ui-ref.sh` for a
+PgUp/PgDn scroll, Tab or a mouse click moves focus, clicking a URL,
+git hash or `#number` copies it to the clipboard (OSC 52; in tmux turn
+`set-clipboard` on), and the pane dividers are draggable with the
+mouse. See `fairy-ui-ref.sh` for a
 launcher example.
 
 ### Self-hosted Podman container

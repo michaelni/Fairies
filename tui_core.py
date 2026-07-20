@@ -46,7 +46,7 @@ from itertools import islice
 from threading import Lock
 
 __all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "MARKDOWN_STYLES",
-           "render_markdown", "sanitize"]
+           "render_markdown", "sanitize", "token_at"]
 
 # (style, text) segments; the painter treats an unknown style as "text".
 StyledLine = list[tuple[str, str]]
@@ -67,6 +67,25 @@ def sanitize(text: str) -> str:
     forge/LLM-controlled text cannot inject terminal escape sequences
     into a pane."""
     return _CONTROL_RE.sub("", text.replace("\t", " "))
+
+
+# Copyable things, most specific first: URLs, git hashes, #numbers.
+_TOKEN_RES = (
+    re.compile(r"https?://[^\s│()\[\]>\"']+"),
+    re.compile(r"\b[0-9a-f]{7,40}\b"),
+    re.compile(r"#\d+"),
+)
+
+
+def token_at(text: str, col: int) -> str | None:
+    """The URL / git hash / issue-PR number covering column ``col`` of
+    ``text``, else None. ``#123`` yields the bare number, ready for
+    pasting into commands."""
+    for rx in _TOKEN_RES:
+        for m in rx.finditer(text):
+            if m.start() <= col < m.end():
+                return m.group().lstrip("#")
+    return None
 
 
 def _clamp(v: int, lo: int, hi: int) -> int:

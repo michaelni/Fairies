@@ -76,11 +76,11 @@ class RingBufferTests(unittest.TestCase):
     def test_wraparound_and_views(self) -> None:
         rb = RingBuffer(maxlen=5)
         for i in range(8):
-            rb.append(f"l{i}")
+            rb.append(f"l{i}", tag=i)
         self.assertEqual(len(rb), 5)
         self.assertEqual(rb.revision, 8)
-        self.assertEqual(rb.view(0, 2), ["l6", "l7"])
-        self.assertEqual(rb.view(2, 2), ["l4", "l5"])
+        self.assertEqual(rb.view(0, 2), [(6, "l6"), (7, "l7")])
+        self.assertEqual(rb.view(2, 2), [(4, "l4"), (5, "l5")])
         self.assertEqual(rb.view(100, 3), [])
         self.assertEqual(rb.all_text(), "l3\nl4\nl5\nl6\nl7")
 

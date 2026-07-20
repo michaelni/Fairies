@@ -342,9 +342,9 @@ class OutputSink:
         self._lock = Lock()
         self._fh = open(path, "a", encoding="utf-8") if path else None
 
-    def line(self, text: str) -> None:
+    def line(self, text: str, level: int | None = None) -> None:
         for ln in text.splitlines() or [""]:
-            self.ring.append(ln)
+            self.ring.append(ln, level)
             if self._fh is not None:
                 with self._lock:
                     self._fh.write(ln + "\n")
@@ -366,7 +366,7 @@ class RingLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            self.sink.line(self.format(record))
+            self.sink.line(self.format(record), record.levelno)
         except Exception:
             pass  # never let UI logging kill a worker
 
@@ -437,6 +437,9 @@ class UILoop:
             "bullet": t.bold,
             "cursor": t.reverse, "awaiting": t.bold_red, "plain": None,
             "text": None,
+            # debug-pane log levels; palette mirrors common._ColorFormatter
+            "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
+            "log_err": t.bold_red,
         }
 
     # ---- pane content (caller holds model.lock) ----
@@ -529,7 +532,8 @@ class UILoop:
             content: dict[str, list] = {
                 "tl": self._scrolled("tl", self.stats_lines(), rects["tl"].h - 1),
                 "tr": self._list_window(self.list_rows(), rects["tr"].h - 1),
-                "bl": self.ring.view(self.scroll["bl"], rects["bl"].h - 1),
+                "bl": [(self._log_style(tag), text) for tag, text in
+                       self.ring.view(self.scroll["bl"], rects["bl"].h - 1)],
                 "br": self._scrolled("br", self.detail_lines(max(8, rects["br"].w - 1)),
                                      rects["br"].h - 1),
             }
@@ -548,6 +552,13 @@ class UILoop:
             buf.append(t.move_xy(col, row) + divider("+"))
         buf.append(t.move_xy(0, h - 1) + t.reverse(status[:w].ljust(w)))
         print("".join(buf), end="", flush=True, file=t.stream)
+
+    def _log_style(self, level: int | None) -> str:
+        if level is None or logging.INFO <= level < logging.WARNING:
+            return "plain"
+        if level >= logging.ERROR:
+            return "log_err"
+        return "log_warn" if level >= logging.WARNING else "log_debug"
 
     def _scrolled(self, pane: str, lines: list, inner_h: int) -> list:
         self.scroll[pane] = max(0, min(self.scroll[pane], len(lines) - inner_h))
@@ -694,7 +705,8 @@ class UILoop:
         with self.model.lock:
             if pane == "bl":
                 text = (self.ring.all_text() if full
-                        else "\n".join(self.ring.view(self.scroll["bl"], inner_h)))
+                        else "\n".join(t for _, t in
+                                       self.ring.view(self.scroll["bl"], inner_h)))
             elif pane == "tl":
                 lines = self.stats_lines()
                 text = "\n".join(lines if full else self._scrolled("tl", lines, inner_h))

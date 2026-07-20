@@ -86,11 +86,14 @@ class PaintSmokeTests(unittest.TestCase):
             model.finish("PR", decision(1, msg="# Head\n**bold** and `code`"))
             ring = tui_core.RingBuffer()
             ring.append("a debug line")
+            ring.append("a warning line", tag=fairy_tui.logging.WARNING)
             ui = fairy_tui.UILoop(term, model, ring, Path("."), ["PR"])
             ui.paint()
             out = stream.getvalue()
         for expected in ("stats", "debug", "message", "#1", "a debug line", "Head"):
             self.assertIn(expected, out)
+        # WARNING lines keep their (bold-)yellow coloring in the pane
+        self.assertIn("\x1b[33ma warning line", out)
 
     def test_paint_strips_hostile_escape_sequences(self) -> None:
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):

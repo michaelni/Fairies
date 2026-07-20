@@ -105,27 +105,29 @@ class GridLayout:
 
 
 class RingBuffer:
-    """Bounded line scrollback shared between appender threads and a
-    painter; ``revision`` bumps on every append for cheap dirty checks."""
+    """Bounded scrollback of ``(tag, line)`` pairs shared between
+    appender threads and a painter; the caller-chosen tag (e.g. a log
+    level) lets the painter style lines. ``revision`` bumps on every
+    append for cheap dirty checks."""
 
     def __init__(self, maxlen: int = 50_000) -> None:
-        self._lines: deque[str] = deque(maxlen=maxlen)
+        self._lines: deque[tuple[object, str]] = deque(maxlen=maxlen)
         self._lock = Lock()
         self.revision = 0
 
     def __len__(self) -> int:
         return len(self._lines)
 
-    def append(self, line: str) -> None:
+    def append(self, line: str, tag: object = None) -> None:
         with self._lock:
-            self._lines.append(line)
+            self._lines.append((tag, line))
             self.revision += 1
 
-    def view(self, offset_from_end: int, count: int) -> list[str]:
-        """``count`` lines ending ``offset_from_end`` lines above the
-        newest; offsets beyond the start return what exists. Walks from
-        the newest end so the follow-tail case (offset 0) is O(count),
-        not O(buffer) -- this runs on every repaint."""
+    def view(self, offset_from_end: int, count: int) -> list[tuple[object, str]]:
+        """``count`` (tag, line) pairs ending ``offset_from_end`` lines
+        above the newest; offsets beyond the start return what exists.
+        Walks from the newest end so the follow-tail case (offset 0) is
+        O(count), not O(buffer) -- this runs on every repaint."""
         with self._lock:
             n = len(self._lines)
             end = max(0, n - max(0, offset_from_end))
@@ -134,7 +136,7 @@ class RingBuffer:
 
     def all_text(self) -> str:
         with self._lock:
-            return "\n".join(self._lines)
+            return "\n".join(line for _, line in self._lines)
 
 
 _HEADING_RE = re.compile(r"(#{1,6})\s+(.*)")

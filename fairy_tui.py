@@ -256,7 +256,10 @@ class Model:
         if not changed and not removed:
             return
         with self.lock:
-            for kind, number, ws, error in changed:
+            # Deterministic row order for newly discovered items: the
+            # scan iterates a set of paths, which has no stable order.
+            for kind, number, ws, error in sorted(
+                    changed, key=lambda c: (c[0], c[1])):
                 key = (kind, number)
                 item = self.items.get(key)
                 if item is None:

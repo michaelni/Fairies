@@ -138,6 +138,16 @@ _WORKSET_STAGE = {
 }
 
 
+def _ws_actionable(ws: workset.WorkItem) -> bool:
+    """Something to post: a posting classification or label changes.
+    LLM-skip verdicts stay REVIEWED on disk (they carry the skip-backoff
+    memory) but there is nothing for the operator to send."""
+    return ws.review is not None and (
+        ws.review.classification not in ("skip", "error", "-", "")
+        or bool(ws.review.label_changes)
+    )
+
+
 @dataclass
 class Pipeline:
     input_queue: SimpleQueue
@@ -277,7 +287,12 @@ class Model:
                 item.url = item.url or ws.html_url
                 item.stage = _WORKSET_STAGE.get(ws.state, "")
                 if item.status in _IN_PIPELINE:
-                    item.status = _WORKSET_STATUS[ws.state]
+                    status = _WORKSET_STATUS[ws.state]
+                    # A persisted LLM skip is bookkeeping, not work: it
+                    # must not show (or count) as awaiting the operator.
+                    if status is Status.REVIEWED and not _ws_actionable(ws):
+                        status = Status.DONE
+                    item.status = status
             for kind, number in removed:
                 item = self.items.get((kind, number))
                 if item is not None and item.status in _IN_PIPELINE:
@@ -318,6 +333,13 @@ class Model:
             ):
                 logger.info("%s #%s has no reviewed workset file to %s",
                             item.kind, item.number, action)
+                return
+            if action == "apply" and not _ws_actionable(item.ws):
+                logger.info(
+                    "%s #%s has nothing to post (LLM verdict: %s)",
+                    item.kind, item.number,
+                    item.ws.review.classification if item.ws.review else "-",
+                )
                 return
             logger.info("requested %s for %s #%s", action, item.kind, item.number)
             pipe.actions.put((item.number, action))

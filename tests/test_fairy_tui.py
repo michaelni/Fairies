@@ -77,14 +77,18 @@ class WorksetDirCase(unittest.TestCase):
         self.model.workset_dirs["PR"] = self.dir
 
     def _write(self, number: int, state: workset.WorkState,
-               message: str = "m", mtime: float | None = None) -> Path:
+               message: str = "m", classification: str = "reply",
+               labels: list[workset.LabelChange] | None = None,
+               mtime: float | None = None) -> Path:
         path = self.dir / f"pr-{number}.json"
         now = "2026-07-20T00:00:00+00:00"
         workset.save_item(path, workset.WorkItem(
             kind="pr", forge_type="gitea", account="", owner="o", repo="r",
             number=number, state=state, created_at=now, state_changed_at=now,
             title="from disk", html_url="u",
-            review=workset.ReviewResult(classification="reply", message=message)
+            review=workset.ReviewResult(
+                classification=classification, message=message,
+                label_changes=labels or [])
             if state >= workset.WorkState.REVIEWED else None,
         ))
         if mtime is not None:
@@ -134,6 +138,20 @@ class WorksetPollTests(WorksetDirCase):
         with self.model.lock:
             self.assertEqual([it.number for it in self.model.visible()], [9])
 
+    def test_persisted_llm_skip_is_done_not_awaiting(self) -> None:
+        # Regression: at startup every REVIEWED file counted as "awaiting
+        # you", including LLM-skip bookkeeping, and the number shrank as
+        # the gates re-finished them. Skips with nothing to post are done;
+        # a skip carrying label changes still awaits the operator.
+        self._write(5, workset.WorkState.REVIEWED, classification="skip",
+                    message="only rewraps a comment")
+        self._write(6, workset.WorkState.REVIEWED, classification="skip",
+                    labels=[workset.LabelChange(label="needs docs", op="add")])
+        self.model.poll_workset()
+        self.assertIs(self.model.items[("PR", 5)].status, fairy_tui.Status.DONE)
+        self.assertIs(self.model.items[("PR", 6)].status,
+                      fairy_tui.Status.REVIEWED)
+
     def test_deleted_file_cancels_in_pipeline_item(self) -> None:
         path = self._write(5, workset.WorkState.QUEUED)
         self.model.poll_workset()
@@ -182,6 +200,15 @@ class ActTests(WorksetDirCase):
         self.model.add_candidates("PR", [{"number": 5, "title": "t"}])
         self.model.act("apply")
         self.assertEqual(self._actions(), [])
+
+    def test_apply_on_llm_skip_says_nothing_to_post(self) -> None:
+        self._write(5, workset.WorkState.REVIEWED, classification="skip")
+        self.model.poll_workset()
+        self.model.show_all = True
+        with self.assertLogs(fairy_tui.logger, level="INFO") as logs:
+            self.model.act("apply")
+        self.assertEqual(self._actions(), [])
+        self.assertTrue(any("nothing to post" in ln for ln in logs.output))
 
     def test_rerun_refused_while_evaluating(self) -> None:
         self._write(5, workset.WorkState.REVIEW)  # wrapper running

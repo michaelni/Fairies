@@ -95,6 +95,7 @@ class Status(IntEnum):
     SKIPPED = 8    # operator answered skip
     CANCELLED = 9  # operator threw it out (x)
     DONE = 10      # non-actionable decision arrived (gate/LLM skip)
+    INVALID = 11   # workset file failed validation (broken hand-edit)
 
 
 @dataclass
@@ -107,12 +108,12 @@ class Item:
     decision: fairy.Decision | None = None
     url: str = ""
     stage: str = ""  # wrapper sub-stage while IN_LLM: triage/review/combine
+    ws: workset.WorkItem | None = None  # last good parse of the item file
+    ws_error: str = ""                  # why the file currently fails to parse
 
 
-# States a workset-file report may move an item out of; anything the
-# operator already acted on (awaiting/terminal states) stays put.
 _IN_PIPELINE = (Status.PENDING, Status.QUEUED, Status.IN_LLM,
-                Status.REVIEWED, Status.RETRYING)
+                Status.REVIEWED, Status.RETRYING, Status.INVALID)
 _KIND_FILE = {"PR": "pr", "issue": "issue"}  # TUI kind -> workset file kind
 _WORKSET_STATUS = {
     workset.WorkState.QUEUED: Status.QUEUED,
@@ -224,7 +225,7 @@ class Model:
         and wrapper stage transitions, items left behind by a previous or
         killed run, and external edits/deletions by the operator. File IO
         happens outside ``lock``."""
-        changed: list[tuple[str, workset.WorkItem]] = []
+        changed: list[tuple[str, int, workset.WorkItem | None, str]] = []
         removed: list[tuple[str, int]] = []
         for kind, d in self.workset_dirs.items():
             prefix = f"{_KIND_FILE[kind]}-"
@@ -247,19 +248,30 @@ class Model:
                 if self._ws_mtimes.get(path) == mtime:
                     continue
                 self._ws_mtimes[path] = mtime
-                ws = workset.load_item(path)  # invalid files log loudly
+                ws, error = workset.load_item_result(path)
                 if ws is not None:
-                    changed.append((kind, ws))
+                    changed.append((kind, ws.number, ws, ""))
+                elif error is not None:
+                    number = path.stem.removeprefix(prefix)
+                    if number.isdigit():
+                        changed.append((kind, int(number), None, error))
         if not changed and not removed:
             return
         with self.lock:
-            for kind, ws in changed:
-                key = (kind, ws.number)
+            for kind, number, ws, error in changed:
+                key = (kind, number)
                 item = self.items.get(key)
                 if item is None:
-                    item = Item(kind, ws.number, {}, ws.title, url=ws.html_url)
+                    item = Item(kind, number, {}, ws.title if ws else "")
                     self.items[key] = item
                     self.order.append(key)
+                item.ws_error = error
+                if ws is None:
+                    item.stage = ""
+                    if item.status in _IN_PIPELINE:
+                        item.status = Status.INVALID
+                    continue
+                item.ws = ws
                 item.title = item.title or ws.title
                 item.url = item.url or ws.html_url
                 item.stage = _WORKSET_STAGE.get(ws.state, "")
@@ -270,6 +282,7 @@ class Model:
                 if item is not None and item.status in _IN_PIPELINE:
                     item.status = Status.CANCELLED
                     item.stage = ""
+                    item.ws_error = ""
         self.dirty.set()
 
     # ---- UI-thread side ----
@@ -365,7 +378,8 @@ class Model:
         if item.number in self.forced.get(item.kind, ()):
             return True
         if item.status in (Status.QUEUED, Status.IN_LLM, Status.REVIEWED,
-                           Status.AWAITING, Status.RETRYING, Status.DEFERRED):
+                           Status.AWAITING, Status.RETRYING, Status.DEFERRED,
+                           Status.INVALID):
             return True
         d = item.decision
         return d is not None and (
@@ -555,6 +569,7 @@ def _styles(t: blessed.Terminal) -> dict:
             "st_retrying": c(135),            "st_deferred": c(109),
             "st_applied": c(78),              "st_skipped": c(244),
             "st_cancelled": c(167),           "st_done": c(108),
+            "st_invalid": mix(t.bold, c(196)),
             "cursor": t.reverse,
             # debug-pane log levels; palette mirrors common._ColorFormatter
             "log_debug": t.dim_bright_black,  "log_warn": t.bold_yellow,
@@ -582,7 +597,7 @@ def _styles(t: blessed.Terminal) -> dict:
         "st_queued": t.cyan, "st_in_llm": t.bold_cyan, "st_reviewed": t.green,
         "st_retrying": t.magenta, "st_deferred": t.yellow,
         "st_applied": t.green,  "st_skipped": t.bright_black,
-        "st_cancelled": t.red,  "st_done": t.cyan,
+        "st_cancelled": t.red,  "st_done": t.cyan, "st_invalid": t.bold_red,
         "cursor": t.reverse,
         "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
         "log_err": t.bold_red,

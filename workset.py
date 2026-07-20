@@ -64,6 +64,7 @@ __all__ = [
     "repo_dir",
     "item_path_in",
     "item_path",
+    "load_item_result",
     "load_item",
     "save_item",
     "update_item",
@@ -163,27 +164,30 @@ def item_path(
     return item_path_in(d, kind, number)
 
 
-def load_item(path: Path) -> WorkItem | None:
-    """None for a missing file (silent) or an unreadable/invalid one
-    (logged as an error: the file may be a hand-edit gone wrong and must
-    not be silently discarded)."""
+def load_item_result(path: Path) -> tuple[WorkItem | None, str | None]:
+    """(item, None) on success, (None, reason) for an existing-but-invalid
+    file, (None, None) for a missing one. Invalid files are logged as
+    errors: they may be a hand-edit gone wrong and must not be silently
+    discarded."""
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         logger.debug("workset: no file %s", path)
-        return None
+        return None, None
     try:
         item = WorkItem.model_validate_json(text)
     except (ValidationError, ValueError) as exc:
         logger.error("workset: invalid item file %s: %s", path, exc)
-        return None
+        return None, str(exc)
     if item.schema_version != SCHEMA_VERSION:
-        logger.error(
-            "workset: %s has schema_version %d, expected %d; ignoring",
-            path, item.schema_version, SCHEMA_VERSION,
-        )
-        return None
-    return item
+        reason = f"schema_version {item.schema_version}, expected {SCHEMA_VERSION}"
+        logger.error("workset: %s has %s; ignoring", path, reason)
+        return None, reason
+    return item, None
+
+
+def load_item(path: Path) -> WorkItem | None:
+    return load_item_result(path)[0]
 
 
 def save_item(path: Path, item: WorkItem) -> None:

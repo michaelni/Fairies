@@ -77,8 +77,8 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(got.get("choice"), "quit")
 
 
-class WorksetPollTests(unittest.TestCase):
-    """poll_workset drives item state from the on-disk files."""
+class WorksetDirCase(unittest.TestCase):
+    """Base: a Model wired to a temp workset dir, plus a file writer."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -101,6 +101,28 @@ class WorksetPollTests(unittest.TestCase):
         if mtime is not None:
             os.utime(path, (mtime, mtime))
         return path
+
+
+class WorksetPollTests(WorksetDirCase):
+    """poll_workset drives item state from the on-disk files."""
+
+    def test_invalid_file_flags_the_row_and_recovers(self) -> None:
+        path = self._write(5, workset.WorkState.REVIEWED, mtime=100.0)
+        self.model.poll_workset()
+        item = self.model.items[("PR", 5)]
+        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
+        path.write_text("{ broken", encoding="utf-8")
+        os.utime(path, (200.0, 200.0))
+        self.model.poll_workset()
+        self.assertIs(item.status, fairy_tui.Status.INVALID)
+        self.assertTrue(item.ws_error)
+        self.assertEqual(item.ws.review.message, "m")
+        with self.model.lock:
+            self.assertIn(5, [it.number for it in self.model.visible()])
+        self._write(5, workset.WorkState.REVIEWED)  # operator fixed it
+        self.model.poll_workset()
+        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
+        self.assertEqual(item.ws_error, "")
 
     def test_states_map_to_status_and_stage(self) -> None:
         self.model.add_candidates("PR", [{"number": 5, "title": "t"}])

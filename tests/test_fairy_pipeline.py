@@ -11,7 +11,6 @@ from pathlib import Path
 from queue import SimpleQueue
 from unittest import mock
 
-import bot_state
 import fairy
 import workset
 
@@ -21,7 +20,6 @@ def make_args(**overrides: object) -> argparse.Namespace:
         limit=0,
         llm_parallelism=1,
         cache="/nonexistent",
-        fairy_state_cache="/nonexistent",
     )
     for k, v in overrides.items():
         setattr(args, k, v)
@@ -64,7 +62,7 @@ class PipelineDriver:
                 discussion=[], reviewer_username="fairy",
             )
 
-        def default_review(a, p, *, state):
+        def default_review(a, p):
             return fairy.Decision(p.number, p.title, p.author, "-", "comment",
                                   "llm", None, "reply", "m")
 
@@ -73,7 +71,6 @@ class PipelineDriver:
             mock.patch.object(fairy, "safe_apply_llm_review_to_prepared",
                               side_effect=fake_review or default_review),
             mock.patch.object(fairy.gcli_cache, "save_cache"),
-            mock.patch.object(fairy.bot_state, "save"),
         )
 
     def _start(self, args: argparse.Namespace, numbers: list[int],
@@ -85,15 +82,14 @@ class PipelineDriver:
             args, input_queue,
             now=datetime.now(timezone.utc), self_login="fairy",
             wip_re=re.compile("wip"), cache=mock.Mock(),
-            state=bot_state.State(),
             discussion_cache_max_age=timedelta(hours=1),
             cancelled=cancelled,
         )
 
     def _run(self, args: argparse.Namespace, numbers: list[int],
              cancelled: set[int] | None = None, fake_review=None) -> list:
-        p1, p2, p3, p4 = self._patched(fake_review)
-        with p1, p2, p3, p4:
+        p1, p2, p3 = self._patched(fake_review)
+        with p1, p2, p3:
             input_queue, (reviewed_queue, llm_queue) = self._start(
                 args, numbers, cancelled)
             input_queue.put(fairy._PREPARE_DONE)
@@ -117,8 +113,8 @@ class PipelineLimitTests(PipelineDriver, unittest.TestCase):
         self.assertEqual(len(skipped), 3)
 
     def test_candidate_injected_after_start_is_prepared(self) -> None:
-        p1, p2, p3, p4 = self._patched()
-        with p1, p2, p3, p4:
+        p1, p2, p3 = self._patched()
+        with p1, p2, p3:
             input_queue, (reviewed_queue, llm_queue) = self._start(
                 make_args(), [1])
             self.assertEqual(reviewed_queue.get(timeout=10)[1].pr_number, 1)
@@ -129,8 +125,8 @@ class PipelineLimitTests(PipelineDriver, unittest.TestCase):
             llm_queue.put(fairy._LLM_REVIEW_DONE)
 
     def test_cancelled_number_skips_llm_call(self) -> None:
-        p1, p2, p3, p4 = self._patched()
-        with p1, p2 as review_mock, p3, p4:
+        p1, p2, p3 = self._patched()
+        with p1, p2 as review_mock, p3:
             input_queue, (reviewed_queue, llm_queue) = self._start(
                 make_args(), [1, 2], cancelled={2})
             input_queue.put(fairy._PREPARE_DONE)
@@ -168,7 +164,7 @@ class WorksetWriteTests(PipelineDriver, unittest.TestCase):
         self.assertEqual(item.html_url, "https://forge/pr/1")
 
     def test_llm_error_lands_in_error_state(self) -> None:
-        def failing_review(a, p, *, state):
+        def failing_review(a, p):
             return fairy.Decision(p.number, p.title, p.author, "-", "error",
                                   "LLM exploded", None, "error", "")
 
@@ -186,9 +182,7 @@ class WorksetWriteTests(PipelineDriver, unittest.TestCase):
         self.assertEqual(item.state, workset.WorkState.CANCELLED)
 
     def test_operator_deleted_file_stays_deleted(self) -> None:
-        # Deleting the file mid-flight is the operator's veto; the verdict
-        # must not resurrect it.
-        def deleting_review(a, p, *, state):
+        def deleting_review(a, p):
             fairy.workset_path(self.args, "pr", p.number).unlink()
             return fairy.Decision(p.number, p.title, p.author, "-", "comment",
                                   "llm", None, "reply", "m")
@@ -230,7 +224,7 @@ class WorksetReuseTests(unittest.TestCase):
             llm.return_value = fairy.Decision(
                 1, "t", "a", "-", "comment", "llm", None, "reply", "fresh")
             decision = fairy.safe_apply_llm_review_to_prepared(
-                self.args, self.prepared, state=bot_state.State())
+                self.args, self.prepared)
         return decision, llm
 
     def test_guard_match_reuses_without_llm_call(self) -> None:

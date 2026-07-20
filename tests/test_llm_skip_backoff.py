@@ -7,18 +7,20 @@ strict doubling (24h, 48h, 96h, ...) and never permanently caches:
 any push or new discussion activity bypasses it, and any non-skip
 verdict resets the counter.
 
-These tests pin the three pure helpers (``backoff_for_consecutive_skips``,
-``compute_llm_skip_backoff``, ``writeback_llm_skip_backoff``) so the
-gate semantics are readable in one place. Integration with the rest
-of ``prepare_pr`` is covered structurally by the existing prepare-pr
-tests; the gate is a single early-return that depends only on these
-three helpers.
+These tests pin the pure helpers (``backoff_for_consecutive_skips``,
+``compute_llm_skip_backoff``) and the workset-file bookkeeping
+(``workset_record_reviewed`` counting the skip streak,
+``workset_backoff_entry`` exposing it to the gate). Integration with
+the rest of ``prepare_pr`` is covered structurally by the existing
+prepare-pr tests; the gate is a single early-return.
 """
 
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
+from argparse import Namespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -26,8 +28,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import bot_state  # noqa: E402
 import fairy  # noqa: E402
+import workset  # noqa: E402
 
 
 T0 = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -194,23 +196,35 @@ class ComputeLlmSkipBackoffTests(unittest.TestCase):
         self.assertIsNotNone(result)
 
 
-class WritebackLlmSkipBackoffTests(unittest.TestCase):
-    """``writeback_llm_skip_backoff`` is the single funnel after every
-    LLM call. ``"skip"`` increments the counter, anything else resets,
-    transient errors write nothing.
+class WorksetBackoffRecordTests(unittest.TestCase):
+    """``workset_record_reviewed`` is the single funnel after every LLM
+    call. ``"skip"`` increments the persisted counter, anything else
+    resets it; an error verdict leaves no reusable backoff entry.
     """
 
-    KEY = bot_state.Key("o", "r", 42)
-
-    def _writeback(self, state: bot_state.State, classification: str) -> None:
-        fairy.writeback_llm_skip_backoff(
-            state, "o", "r", 42, HEAD, LAST_ACT, classification,
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.args = Namespace(
+            workset_dir=Path(tmp.name), owner="o", repo="r",
+            forge_type="gitea", gcli_account=None,
         )
+        fairy.workset_record_queued(
+            self.args, "pr", number=42, title="t", html_url="")
+
+    def _record(self, classification: str) -> None:
+        decision = fairy.Decision(
+            42, "t", "a", "-", "skip", "r", LAST_ACT, classification, "")
+        fairy.workset_record_reviewed(
+            self.args, "pr", decision,
+            expected_updated_at="U", expected_head_ref=HEAD)
+
+    def _entry(self) -> dict[str, object]:
+        return fairy.workset_backoff_entry(self.args, "pr", 42)
 
     def test_skip_initializes_counter_to_one(self) -> None:
-        state = bot_state.State()
-        self._writeback(state, "skip")
-        entry = state.entries[self.KEY]
+        self._record("skip")
+        entry = self._entry()
         self.assertEqual(entry["last_llm_decision"], "skip")
         self.assertEqual(entry["last_llm_head_sha"], HEAD)
         self.assertEqual(entry["last_llm_last_activity_iso"], LAST_ACT_ISO)
@@ -218,59 +232,33 @@ class WritebackLlmSkipBackoffTests(unittest.TestCase):
         self.assertIsInstance(entry["last_llm_at"], str)
 
     def test_repeated_skip_increments_counter(self) -> None:
-        state = bot_state.State()
-        state.entries[self.KEY] = {"consecutive_skip_count": 3}
-        self._writeback(state, "skip")
-        self.assertEqual(state.entries[self.KEY]["consecutive_skip_count"], 4)
+        self._record("skip")
+        self._record("skip")
+        self.assertEqual(self._entry()["consecutive_skip_count"], 2)
 
     def test_non_skip_resets_counter(self) -> None:
-        state = bot_state.State()
-        state.entries[self.KEY] = {
-            "last_llm_decision": "skip",
-            "consecutive_skip_count": 7,
-        }
-        self._writeback(state, "approve")
-        entry = state.entries[self.KEY]
+        self._record("skip")
+        self._record("approve")
+        entry = self._entry()
         self.assertEqual(entry["last_llm_decision"], "approve")
         self.assertEqual(entry["consecutive_skip_count"], 0)
 
-    def test_error_classification_writes_nothing(self) -> None:
-        # A transient LLM/network error must NOT poison the counter
-        # nor shift the next-eligible timestamp.
-        original: bot_state.Entry = {
-            "last_llm_decision": "skip",
-            "last_llm_at": "2026-04-01T00:00:00+00:00",
-            "last_llm_head_sha": "oldhead",
-            "last_llm_last_activity_iso": "2026-04-01T00:00:00+00:00",
-            "consecutive_skip_count": 2,
-        }
-        state = bot_state.State()
-        state.entries[self.KEY] = dict(original)
-        self._writeback(state, "error")
-        self.assertEqual(state.entries[self.KEY], original)
-
-    def test_placeholder_classification_writes_nothing(self) -> None:
-        # ``Decision`` defaults ``llm_classification`` to "-" when no
-        # LLM verdict is present (e.g. wrapper crash before the call).
-        # That placeholder must also be a no-op.
-        state = bot_state.State()
-        self._writeback(state, "-")
-        self.assertNotIn(self.KEY, state.entries)
+    def test_error_never_suppresses(self) -> None:
+        self._record("skip")
+        self._record("error")
+        self.assertEqual(self._entry(), {})
+        item = workset.load_item(fairy.workset_path(self.args, "pr", 42))
+        self.assertEqual(item.state, workset.WorkState.ERROR)
 
     def test_roundtrip_skip_then_compute_suppresses(self) -> None:
-        # End-to-end: writeback a skip, immediately compute the gate;
-        # the resulting state must suppress within the 24h window.
-        state = bot_state.State()
-        self._writeback(state, "skip")
-        entry = state.entries[self.KEY]
-        # Fast-forward 1h: still within 24h window.
+        self._record("skip")
+        entry = self._entry()
         last_at = fairy.iso_to_dt(entry["last_llm_at"])
         assert last_at is not None
         result = fairy.compute_llm_skip_backoff(
             entry, HEAD, LAST_ACT, last_at + timedelta(hours=1),
         )
         self.assertIsNotNone(result)
-        # Fast-forward 25h: window has elapsed.
         result = fairy.compute_llm_skip_backoff(
             entry, HEAD, LAST_ACT, last_at + timedelta(hours=25),
         )

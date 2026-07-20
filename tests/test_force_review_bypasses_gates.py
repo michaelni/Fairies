@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,9 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import bot_state  # noqa: E402
 import gcli_cache  # noqa: E402
 import fairy  # noqa: E402
+import workset  # noqa: E402
 
 WIP_RE = re.compile(r"\b(WIP|DRAFT)\b", re.IGNORECASE)
 
@@ -40,7 +41,7 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
           force_skip: set[int] = frozenset(),
           force_review_non_open: bool = False,
           force_review_skip: bool = False,
-          state: bot_state.State | None = None,
+          workset_dir: Path | None = None,
           now: datetime | None = None) -> object:
     args = SimpleNamespace(
         force_skip_prs=force_skip,
@@ -49,6 +50,9 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
         force_review_skip=force_review_skip,
         owner="o",
         repo="r",
+        forge_type="gitea",
+        gcli_account=None,
+        workset_dir=workset_dir,
         simulate_past=None,
         verbose=False,
         llm_review_cmd=None,
@@ -56,7 +60,6 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
     return fairy.prepare_pr(
         args, pr, now=now, self_login=None, wip_re=WIP_RE,
         cache=gcli_cache.Cache(),
-        state=state if state is not None else bot_state.State(),
         discussion_cache_max_age=timedelta(hours=1),
     )
 
@@ -163,21 +166,28 @@ class ForceReviewBypassesBackoffGateTests(unittest.TestCase):
             "head": {"sha": self.HEAD},
         }
 
-    def _state_in_window(self) -> bot_state.State:
-        # One prior skip on this exact head with no later activity; the
-        # 24h window (consecutive_skip_count=1) is still open at NOW.
-        state = bot_state.State()
-        state.entries[bot_state.Key("o", "r", self.NUMBER)] = {
-            "last_llm_decision": "skip",
-            "last_llm_at": (self.NOW - timedelta(hours=1)).isoformat(),
-            "last_llm_head_sha": self.HEAD,
-            "last_llm_last_activity_iso": None,
-            "consecutive_skip_count": 1,
-        }
-        return state
+    def _workset_in_window(self) -> Path:
+        # one prior skip on this exact head; the 24h window is still open at NOW
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        now = self.NOW.isoformat()
+        workset.save_item(
+            root / "gitea~default~o~r" / f"pr-{self.NUMBER}.json",
+            workset.WorkItem(
+                kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+                number=self.NUMBER, state=workset.WorkState.REVIEWED,
+                created_at=now, state_changed_at=now,
+                expected_head_ref=self.HEAD, last_activity_iso=None,
+                llm_at=(self.NOW - timedelta(hours=1)).isoformat(),
+                consecutive_skip_count=1,
+                review=workset.ReviewResult(classification="skip", message=""),
+            ))
+        return root
 
     def test_unforced_skips_inside_window(self) -> None:
-        decision = _call(self._pr(), state=self._state_in_window(), now=self.NOW)
+        decision = _call(self._pr(), workset_dir=self._workset_in_window(),
+                         now=self.NOW)
         self.assertEqual(decision.action, "skip")
         self.assertIn("skip-backoff window", decision.reason)
 
@@ -189,7 +199,7 @@ class ForceReviewBypassesBackoffGateTests(unittest.TestCase):
                 _call(
                     self._pr(),
                     force_review={self.NUMBER},
-                    state=self._state_in_window(),
+                    workset_dir=self._workset_in_window(),
                     now=self.NOW,
                 )
 

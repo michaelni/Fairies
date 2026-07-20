@@ -122,7 +122,8 @@ class WorkItem(BaseModel):
     expected_updated_at: str | None = None
     expected_head_ref: str | None = None
     last_activity_iso: str | None = None
-    consecutive_skip_count: int = 0
+    llm_at: str | None = None               # when the persisted verdict was produced
+    consecutive_skip_count: int = 0         # LLM "skip" streak; drives the backoff gate
     triage: dict[str, JsonValue] | None = None
     drafts: list[ReviewResult] = []
     review: ReviewResult | None = None

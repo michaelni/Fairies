@@ -84,7 +84,6 @@ from pathlib import Path
 from typing import Callable, Iterable, NamedTuple, Protocol, TypeAlias
 from urllib.parse import quote, urlencode, urljoin
 
-import bot_state
 import ci_log
 import git_util
 import gcli_cache
@@ -554,15 +553,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=default_cache_path("pr_data_cache.pkl"),
         help="Pickle cache path holding per-PR gcli data "
              "(default: ~/.fairy/pr_data_cache.pkl).",
-    )
-    p.add_argument(
-        "--fairy-state-cache",
-        type=Path,
-        default=default_cache_path("bot_state.pkl"),
-        help="Pickle path for the LLM-skip backoff bookkeeping; "
-             "informational only, lost state costs one extra LLM call "
-             "per previously-suppressed PR "
-             "(default: ~/.fairy/bot_state.pkl).",
     )
     p.add_argument(
         "--workset-dir",
@@ -2297,8 +2287,6 @@ def apply_llm_review_to_prepared(
 # We never permanently cache a skip -- worst case fairy rechecks an
 # "always skip" PR less and less often, but always eventually.
 #
-# Entry schema lives at ``bot_state.Entry``.
-#
 # "Change" is deliberately defined as ``head_sha + last_activity`` only
 # (NOT raw ``pr.updated_at``): label / milestone / assignee tweaks bump
 # ``pr.updated_at`` but neither of those, so they correctly do NOT
@@ -2353,38 +2341,6 @@ def compute_llm_skip_backoff(
     return n, eligible_at
 
 
-def writeback_llm_skip_backoff(
-    state: bot_state.State,
-    owner: str,
-    repo: str,
-    pr_number: int,
-    head_sha: str | None,
-    last_activity: datetime | None,
-    classification: str,
-) -> None:
-    """Persist the LLM verdict for backoff bookkeeping.
-
-    ``"error"`` (and missing / placeholder ``"-"``) writes nothing --
-    a transient LLM failure must not poison the consecutive-skip
-    counter or shift the backoff window. ``"skip"`` increments the
-    counter; any other classification resets it to 0.
-    """
-    if classification in ("", "-", "error"):
-        return
-    entry = state.entries.setdefault(bot_state.Key(owner, repo, pr_number), {})
-    last_act_iso = last_activity.isoformat() if last_activity else None
-    entry["last_llm_decision"] = classification
-    entry["last_llm_at"] = datetime.now(timezone.utc).isoformat()
-    entry["last_llm_head_sha"] = head_sha
-    entry["last_llm_last_activity_iso"] = last_act_iso
-    if classification == "skip":
-        prev_raw = entry.get("consecutive_skip_count", 0)
-        prev = prev_raw if isinstance(prev_raw, int) and prev_raw > 0 else 0
-        entry["consecutive_skip_count"] = prev + 1
-    else:
-        entry["consecutive_skip_count"] = 0
-
-
 def prepare_pr(
     args: argparse.Namespace,
     pr: ApiObject,
@@ -2393,7 +2349,6 @@ def prepare_pr(
     self_login: str | None,
     wip_re: re.Pattern[str],
     cache: gcli_cache.Cache,
-    state: bot_state.State,
     discussion_cache_max_age: timedelta,
 ) -> Decision | PreparedPR:
     number = int(pr["number"])
@@ -2425,7 +2380,7 @@ def prepare_pr(
     if pr.get("state") != "open" and not (is_forced and args.force_review_non_open):
         return Decision(number, title, author, "-", "skip", "not open", pr_last_activity)
 
-    entry = state.entries.setdefault(bot_state.Key(args.owner, args.repo, number), {})
+    entry = workset_backoff_entry(args, "pr", number)
     # Timeline fetches go through ``gcli_cache.get``: it serves a
     # cached copy when ``pr.updated_at`` matches and transparently
     # refetches when it advances, so both consumers (auto-merge
@@ -2986,7 +2941,6 @@ def safe_prepare_pr(
     self_login: str | None,
     wip_re: re.Pattern[str],
     cache: gcli_cache.Cache,
-    state: bot_state.State,
     discussion_cache_max_age: timedelta,
 ) -> PreparedItem:
     try:
@@ -2997,7 +2951,6 @@ def safe_prepare_pr(
             self_login=self_login,
             wip_re=wip_re,
             cache=cache,
-            state=state,
             discussion_cache_max_age=discussion_cache_max_age,
         )
     except Exception as exc:
@@ -3019,8 +2972,6 @@ def safe_prepare_pr(
 def safe_apply_llm_review_to_prepared(
     args: argparse.Namespace,
     prepared: PreparedPR,
-    *,
-    state: bot_state.State,
 ) -> Decision:
     # ``cancelled_ci_contexts`` / ``blocked_ci_contexts`` were computed
     # during ``prepare_pr`` from the raw status list (which is not threaded
@@ -3078,18 +3029,6 @@ def safe_apply_llm_review_to_prepared(
         decision = dataclasses_replace(
             decision, external_approvers=prepared.external_approvers
         )
-    # LLM skip-backoff bookkeeping. This is the single funnel point
-    # for "LLM was actually called", so it's the right place to record
-    # the verdict that drives the next-run gate in ``prepare_pr``.
-    writeback_llm_skip_backoff(
-        state,
-        args.owner,
-        args.repo,
-        prepared.number,
-        get_pr_head_ref(prepared.pr),
-        prepared.last_activity,
-        decision.llm_classification,
-    )
     return decision
 
 
@@ -3183,6 +3122,11 @@ def workset_record_reviewed(
         item.last_activity_iso = (
             decision.last_activity.isoformat() if decision.last_activity else None
         )
+        item.llm_at = now.isoformat()
+        if decision.llm_classification == "skip":
+            item.consecutive_skip_count += 1
+        else:
+            item.consecutive_skip_count = 0
         item.set_state(workset.WorkState.REVIEWED, now)
 
     if workset.update_item(path, record) is None:
@@ -3190,6 +3134,22 @@ def workset_record_reviewed(
             "workset: %s #%d reviewed but %s is gone; verdict not persisted",
             kind, decision.pr_number, path,
         )
+
+
+def workset_backoff_entry(args: argparse.Namespace, kind: str, number: int) -> dict[str, object]:
+    """Skip-backoff view of the item file, in ``compute_llm_skip_backoff``'s
+    entry vocabulary. Empty when no persisted verdict exists."""
+    path = workset_path(args, kind, number)
+    item = workset.load_item(path) if path is not None else None
+    if item is None or item.state is not workset.WorkState.REVIEWED or item.review is None:
+        return {}
+    return {
+        "last_llm_decision": item.review.classification,
+        "last_llm_at": item.llm_at,
+        "last_llm_head_sha": item.expected_head_ref,
+        "last_llm_last_activity_iso": item.last_activity_iso,
+        "consecutive_skip_count": item.consecutive_skip_count,
+    }
 
 
 def workset_reusable_review(
@@ -3514,7 +3474,6 @@ def start_review_pipeline(
     self_login: str | None,
     wip_re: re.Pattern[str],
     cache: gcli_cache.Cache,
-    state: bot_state.State,
     discussion_cache_max_age: timedelta,
     cancelled: set[int] | None = None,
 ) -> tuple[SimpleQueue[tuple[PreparedItem, Decision]], SimpleQueue[PreparedPR | object]]:
@@ -3547,7 +3506,6 @@ def start_review_pipeline(
                     self_login=self_login,
                     wip_re=wip_re,
                     cache=cache,
-                    state=state,
                     discussion_cache_max_age=discussion_cache_max_age,
                 )
                 if isinstance(prepared, Decision):
@@ -3565,7 +3523,6 @@ def start_review_pipeline(
             try:
                 logger.debug("cache save after prepare phase start path=%s", args.cache)
                 gcli_cache.save_cache(args.cache, cache)
-                bot_state.save(args.fairy_state_cache, state)
                 logger.debug("cache save after prepare phase ok path=%s", args.cache)
             except Exception as exc:
                 logger.warning("failed to save cache after prepare phase %s: %s", args.cache, exc)
@@ -3589,7 +3546,7 @@ def start_review_pipeline(
                     prepared.last_activity,
                 )))
                 continue
-            decision = safe_apply_llm_review_to_prepared(args, prepared, state=state)
+            decision = safe_apply_llm_review_to_prepared(args, prepared)
             workset_record_reviewed(
                 args, "pr", decision,
                 expected_updated_at=prepared.pr.get("updated_at"),
@@ -3649,7 +3606,6 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
     wip_prefixes = DEFAULT_WIP_PREFIXES + (args.wip_prefixes or [])
     wip_re = compile_wip_regex(wip_prefixes)
     cache = gcli_cache.load_cache(args.cache)
-    state = bot_state.load(args.fairy_state_cache)
     discussion_cache_max_age = timedelta(hours=args.discussion_cache_max_age_hours)
 
     try:
@@ -3696,7 +3652,6 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
         self_login=self_login,
         wip_re=wip_re,
         cache=cache,
-        state=state,
         discussion_cache_max_age=discussion_cache_max_age,
         cancelled=cancelled,
     )
@@ -3726,7 +3681,6 @@ def run_reviews(args: argparse.Namespace, ui: ReviewUI | None = None) -> int:
             llm_queue.put(_LLM_REVIEW_DONE)
         try:
             gcli_cache.save_cache(args.cache, cache)
-            bot_state.save(args.fairy_state_cache, state)
         except Exception as exc:
             logger.warning("failed to save PR-data cache %s: %s", args.cache, exc)
 
@@ -3858,7 +3812,7 @@ def main() -> int:
     args = parse_args()
     setup_logging(
         logger, args.verbose,
-        forge_gcli.logger, gcli_cache.logger, bot_state.logger, ci_log.logger,
+        forge_gcli.logger, gcli_cache.logger, workset.logger, ci_log.logger,
         color=args.color,
     )
     return run_reviews(args)

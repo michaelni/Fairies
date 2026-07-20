@@ -40,8 +40,8 @@ does NOT belong: PR review orchestration (fairy.py) and prompt/schema
 definitions (llm_prompt.py / llm_review_api.py).
 
 Like fairy.py this runs dry by default; pass --approve to submit or
---manual to confirm each action. Uses its own gcli cache and bot-state
-files so it can run concurrently with fairy.py.
+--manual to confirm each action. Uses its own gcli cache so it can run
+concurrently with fairy.py.
 """
 
 from __future__ import annotations
@@ -55,7 +55,6 @@ from queue import SimpleQueue
 from threading import Thread
 from urllib.parse import urlencode
 
-import bot_state
 import gcli_cache
 from common import add_color_arg, default_cache_path, iso_to_dt, setup_logging
 import forge_gcli
@@ -99,7 +98,6 @@ from fairy import (
     parse_label_csv,
     parse_pr_number_csv,
     post_label_explanations,
-    writeback_llm_skip_backoff,
     _PREPARE_DONE,
 )
 
@@ -262,13 +260,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "corrupt them.",
     )
     p.add_argument(
-        "--fairy-state-cache",
-        type=Path,
-        default=default_cache_path("issue_bot_state.pkl"),
-        help="Pickle path for the LLM-skip backoff bookkeeping "
-             "(default: ~/.fairy/issue_bot_state.pkl).",
-    )
-    p.add_argument(
         "--workset-dir",
         type=Path,
         default=default_cache_path("workset"),
@@ -352,7 +343,6 @@ def prepare_issue(
     now: datetime,
     self_login: str | None,
     cache: gcli_cache.Cache,
-    state: bot_state.State,
     discussion_cache_max_age: timedelta,
 ) -> Decision | PreparedIssue:
     number = int(issue["number"])
@@ -461,7 +451,7 @@ def prepare_issue(
         # Issues have no head SHA; the backoff key degenerates to
         # last_activity alone, which is exactly the "anything new was
         # said" bypass we want.
-        entry = state.entries.get(bot_state.Key(args.owner, args.repo, number), {})
+        entry = fairy.workset_backoff_entry(args, "issue", number)
         backoff_info = compute_llm_skip_backoff(entry, None, last_activity, now)
         if backoff_info is not None:
             consec, eligible_at = backoff_info
@@ -653,7 +643,6 @@ def start_issue_pipeline(
     now: datetime,
     self_login: str | None,
     cache: gcli_cache.Cache,
-    state: bot_state.State,
     discussion_cache_max_age: timedelta,
     cancelled: set[int] | None = None,
 ) -> tuple[
@@ -678,7 +667,6 @@ def start_issue_pipeline(
                     now=now,
                     self_login=self_login,
                     cache=cache,
-                    state=state,
                     discussion_cache_max_age=discussion_cache_max_age,
                 )
             except Exception as exc:
@@ -728,10 +716,6 @@ def start_issue_pipeline(
                 )))
                 continue
             d = evaluate_issue(args, prepared)
-            writeback_llm_skip_backoff(
-                state, args.owner, args.repo, d.pr_number,
-                None, prepared.last_activity, d.llm_classification,
-            )
             fairy.workset_record_reviewed(
                 args, "issue", d,
                 expected_updated_at=prepared.issue.get("updated_at"),
@@ -756,7 +740,6 @@ def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> i
         return 2
     now = datetime.now(timezone.utc)
     cache = gcli_cache.load_cache(args.cache)
-    state = bot_state.load(args.fairy_state_cache)
     discussion_cache_max_age = timedelta(hours=args.discussion_cache_max_age_hours)
 
     try:
@@ -792,7 +775,6 @@ def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> i
         now=now,
         self_login=self_login,
         cache=cache,
-        state=state,
         discussion_cache_max_age=discussion_cache_max_age,
         cancelled=cancelled,
     )
@@ -821,7 +803,6 @@ def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> i
             llm_queue.put(_LLM_DONE)
         try:
             gcli_cache.save_cache(args.cache, cache)
-            bot_state.save(args.fairy_state_cache, state)
         except Exception as exc:
             logger.warning("failed to save issue-data cache %s: %s", args.cache, exc)
 
@@ -847,7 +828,7 @@ def main() -> int:
     args = parse_args()
     setup_logging(
         logger, args.verbose,
-        forge_gcli.logger, gcli_cache.logger, bot_state.logger,
+        forge_gcli.logger, gcli_cache.logger, workset.logger,
         color=args.color,
     )
     return run_reviews(args)

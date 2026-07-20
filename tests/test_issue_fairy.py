@@ -20,7 +20,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import bot_state  # noqa: E402
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 import llm_review_api  # noqa: E402
@@ -129,7 +128,6 @@ def prepare(args: argparse.Namespace, issue: dict[str, object], *,
             now=now,
             self_login=self_login,
             cache=mock.Mock(),
-            state=bot_state.State(),
             discussion_cache_max_age=timedelta(hours=24),
         )
 
@@ -373,7 +371,6 @@ class PipelineTests(unittest.TestCase):
         return (
             mock.patch.object(issue_fairy, "prepare_issue", side_effect=fake_prepare),
             mock.patch.object(issue_fairy, "evaluate_issue", side_effect=fake_evaluate),
-            mock.patch.object(issue_fairy, "writeback_llm_skip_backoff"),
         )
 
     def _start(self, args: argparse.Namespace, numbers: list[int],
@@ -384,14 +381,14 @@ class PipelineTests(unittest.TestCase):
         return input_queue, issue_fairy.start_issue_pipeline(
             args, input_queue,
             now=datetime.now(timezone.utc), self_login="fairy",
-            cache=mock.Mock(), state=bot_state.State(),
+            cache=mock.Mock(),
             discussion_cache_max_age=timedelta(hours=1),
             cancelled=cancelled,
         )
 
     def _run(self, args: argparse.Namespace, numbers: list[int]) -> list:
-        p1, p2, p3 = self._patched()
-        with p1, p2, p3:
+        p1, p2 = self._patched()
+        with p1, p2:
             input_queue, (reviewed_queue, llm_queue) = self._start(args, numbers)
             input_queue.put(issue_fairy._PREPARE_DONE)
             results = [reviewed_queue.get(timeout=10) for _ in numbers]
@@ -445,8 +442,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(item.review.message, "m")
 
     def test_candidate_injected_after_start_is_prepared(self) -> None:
-        p1, p2, p3 = self._patched()
-        with p1, p2, p3:
+        p1, p2 = self._patched()
+        with p1, p2:
             input_queue, (reviewed_queue, llm_queue) = self._start(
                 make_args(llm_parallelism=1, limit=0), [1])
             self.assertEqual(reviewed_queue.get(timeout=10)[1].pr_number, 1)
@@ -457,8 +454,8 @@ class PipelineTests(unittest.TestCase):
             llm_queue.put(issue_fairy._LLM_DONE)
 
     def test_cancelled_number_skips_llm_call(self) -> None:
-        p1, p2, p3 = self._patched()
-        with p1, p2 as evaluate_mock, p3:
+        p1, p2 = self._patched()
+        with p1, p2 as evaluate_mock:
             input_queue, (reviewed_queue, llm_queue) = self._start(
                 make_args(llm_parallelism=1, limit=0), [1, 2], cancelled={2})
             input_queue.put(issue_fairy._PREPARE_DONE)

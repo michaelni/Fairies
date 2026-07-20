@@ -69,7 +69,6 @@ from threading import Event, Lock, Thread
 
 import blessed
 
-import bot_state
 import ci_log
 import fairy
 import forge_gcli
@@ -1050,7 +1049,7 @@ def main() -> int:
     # issue_fairy.logger is fairy.logger, so listing fairy's covers both.
     setup_logging(
         fairy.logger, max(ns.verbose for _, _, ns, _ in sides),
-        forge_gcli.logger, gcli_cache.logger, bot_state.logger, ci_log.logger,
+        forge_gcli.logger, gcli_cache.logger, workset.logger, ci_log.logger,
         logger,
         handlers=[RingLogHandler(sink)],
     )

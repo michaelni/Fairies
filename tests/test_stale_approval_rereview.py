@@ -26,7 +26,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import bot_state  # noqa: E402
 import gcli_cache  # noqa: E402
 import fairy  # noqa: E402
 
@@ -83,7 +82,6 @@ def _call(review: dict, *, min_age_days: float = 30) -> object:
             args, pr, now=NOW, self_login=SELF,
             wip_re=fairy.compile_wip_regex([]),
             cache=gcli_cache.Cache(),
-            state=bot_state.State(),
             discussion_cache_max_age=timedelta(hours=1),
         )
 

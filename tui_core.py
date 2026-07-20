@@ -16,13 +16,18 @@ from dataclasses import dataclass
 from itertools import islice
 from threading import Lock
 
-__all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "render_markdown", "sanitize"]
+__all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "MARKDOWN_STYLES",
+           "render_markdown", "sanitize"]
 
-# One rendered line: (style, text) segments. Styles come from the closed
-# set emitted by render_markdown ("h1" "h2" "h3" "bold" "italic" "code"
-# "codeblock" "quote" "bullet" "text"); the painter maps them to terminal
-# attributes and treats unknown styles as "text".
+# (style, text) segments; the painter treats an unknown style as "text".
 StyledLine = list[tuple[str, str]]
+
+MARKDOWN_STYLES = frozenset({
+    "h1", "h2", "h3", "h4", "bold", "italic", "bold_italic", "strike",
+    "code", "codeblock", "codeblock_lang", "quote", "quote_bar", "bullet",
+    "checkbox_on", "checkbox_off", "link", "url", "hr",
+    "table_border", "th", "text",
+})
 
 
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
@@ -141,7 +146,15 @@ class RingBuffer:
 
 _HEADING_RE = re.compile(r"(#{1,6})\s+(.*)")
 _BULLET_RE = re.compile(r"(\s*)([-*+]|\d+[.)])\s+(.*)")
-_INLINE_RE = re.compile(r"(\*\*.+?\*\*|\*[^*\s][^*]*\*|`[^`]+`)")
+_CHECKBOX_RE = re.compile(r"\[( |x|X)\]\s+(.*)")
+_HR_RE = re.compile(r"\s*([-*_])(\s*\1){2,}\s*$")
+_QUOTE_RE = re.compile(r"\s*(?:>\s?)+(.*)")
+_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+_TABLE_SEP_RE = re.compile(r"\s*\|?[\s:|-]+\|?\s*$")
+_INLINE_RE = re.compile(
+    r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*\s][^*]*\*|~~.+?~~|`[^`]+`"
+    r"|\[[^\]]+\]\([^)\s]+\)|https?://[^\s)\]>]+)"
+)
 
 
 def _inline(text: str, base: str = "text") -> list[tuple[str, str]]:
@@ -149,15 +162,98 @@ def _inline(text: str, base: str = "text") -> list[tuple[str, str]]:
     for part in _INLINE_RE.split(text):
         if not part:
             continue
-        if part.startswith("**") and part.endswith("**") and len(part) > 4:
+        if part.startswith("***") and part.endswith("***") and len(part) > 6:
+            segs.append(("bold_italic", part[3:-3]))
+        elif part.startswith("**") and part.endswith("**") and len(part) > 4:
             segs.append(("bold", part[2:-2]))
+        elif part.startswith("~~") and part.endswith("~~") and len(part) > 4:
+            segs.append(("strike", part[2:-2]))
         elif part.startswith("`") and part.endswith("`") and len(part) > 2:
             segs.append(("code", part[1:-1]))
+        elif (link := _LINK_RE.fullmatch(part)):
+            label, url = link.groups()
+            segs.append(("link", label))
+            if url != label:
+                segs.append(("url", f" ({url})"))
+        elif part.startswith("http"):
+            segs.append(("link", part))
         elif part.startswith("*") and part.endswith("*") and len(part) > 2:
             segs.append(("italic", part[1:-1]))
         else:
             segs.append((base, part))
     return segs
+
+
+def _fit(segs: list[tuple[str, str]], target: int, align: str = "l") -> list[tuple[str, str]]:
+    """Clip/pad styled segments to exactly ``target`` cells."""
+    out: list[tuple[str, str]] = []
+    used = 0
+    for style, txt in segs:
+        if used >= target:
+            break
+        txt = txt[:target - used]
+        out.append((style, txt))
+        used += len(txt)
+    pad = target - used
+    if pad <= 0:
+        return out
+    if align == "r":
+        return [("text", " " * pad), *out]
+    if align == "c":
+        return [("text", " " * (pad // 2)), *out, ("text", " " * (pad - pad // 2))]
+    return [*out, ("text", " " * pad)]
+
+
+def _render_table(rows: list[str], width: int) -> list[StyledLine]:
+    parsed = [[c.strip() for c in r.strip().strip("|").split("|")] for r in rows]
+    aligns: list[str] = []
+    header: list[str] | None = None
+    body = parsed
+    if (len(parsed) >= 2 and "-" in rows[1] and _TABLE_SEP_RE.fullmatch(rows[1])):
+        header, body = parsed[0], parsed[2:]
+        aligns = ["c" if c.startswith(":") and c.endswith(":") else
+                  "r" if c.endswith(":") else "l" for c in parsed[1]]
+    ncols = max(len(r) for r in parsed)
+    aligns += ["l"] * (ncols - len(aligns))
+    cells = [
+        [_inline(c, base="th" if r == header else "text")
+         for c in r + [""] * (ncols - len(r))]
+        for r in ([header] if header else []) + body
+    ]
+    widths = [max(sum(len(t) for _, t in row[i]) for row in cells)
+              for i in range(ncols)]
+    while sum(widths) + 3 * (ncols - 1) > width and max(widths) > 3:
+        widths[widths.index(max(widths))] -= 1
+    out: list[StyledLine] = []
+    for r, row in enumerate(cells):
+        line: StyledLine = []
+        for i, cell in enumerate(row):
+            if i:
+                line.append(("table_border", " │ "))
+            line += _fit(cell, widths[i], aligns[i])
+        out.append(line)
+        if header and r == 0:
+            out.append([("table_border", "─┼─".join("─" * w for w in widths))])
+    return out
+
+
+def _atoms(segs: list[tuple[str, str]]) -> list[StyledLine]:
+    """Whitespace-delimited atoms; an atom spans segment boundaries when
+    no space separates them, so ``**bold**,`` keeps its comma attached."""
+    atoms: list[StyledLine] = []
+    open_atom = False
+    for style, txt in segs:
+        for part in re.split(r"(\s+)", txt):
+            if not part:
+                continue
+            if part.isspace():
+                open_atom = False
+            elif open_atom:
+                atoms[-1].append((style, part))
+            else:
+                atoms.append([(style, part)])
+                open_atom = True
+    return atoms
 
 
 def _wrap(
@@ -166,30 +262,34 @@ def _wrap(
     initial: tuple[str, str] = ("text", ""),
     subsequent: str = "",
 ) -> list[StyledLine]:
-    """Greedy word wrap of styled segments; ``initial`` is a styled
-    prefix for the first line (e.g. a bullet marker), ``subsequent``
-    the hanging indent for the rest."""
-    words: list[tuple[str, str]] = [
-        (style, word) for style, txt in segs for word in txt.split()
-    ]
-    if not words:
+    """Greedy wrap of styled segments; ``initial`` is a styled prefix
+    for the first line (e.g. a bullet marker), ``subsequent`` the
+    hanging indent for the rest."""
+    atoms = _atoms(segs)
+    if not atoms:
         return []
     lines: list[StyledLine] = []
     prefix: tuple[str, str] = initial
     cur: StyledLine = []
     cur_len = 0
+
     def emit() -> StyledLine:
         return [prefix, *cur] if prefix[1] else list(cur)
 
-    for style, word in words:
-        extra = len(word) + (1 if cur else 0)
+    for atom in atoms:
+        alen = sum(len(t) for _, t in atom)
+        extra = alen + (1 if cur else 0)
         if cur and len(prefix[1]) + cur_len + extra > width:
             lines.append(emit())
             prefix = ("text", subsequent)
-            cur = [(style, word)]
-            cur_len = len(word)
+            cur = list(atom)
+            cur_len = alen
         else:
-            cur.append((style, (" " if cur else "") + word))
+            if cur:
+                # The joining space inherits the next atom's style so
+                # underline/strike runs stay continuous inside a span.
+                cur.append((atom[0][0], " "))
+            cur.extend(atom)
             cur_len += extra
     lines.append(emit())
     return lines
@@ -197,18 +297,29 @@ def _wrap(
 
 def render_markdown(text: str, width: int) -> list[StyledLine]:
     """Render a markdown message to width-bounded styled lines: ATX
-    headings, ``**bold**``/``*italic*``/`` `code` `` spans, fenced blocks
-    (verbatim, clipped not wrapped), ``-``/``*``/``1.`` lists with
-    hanging indent, ``>`` quotes, wrapped paragraphs."""
+    headings, bold/italic/strike/code/link spans, fenced blocks (verbatim,
+    full-width for a background, language tag kept), pipe tables with
+    alignment, ``-``/``*``/``1.`` lists with hanging indent and
+    checkboxes, gutter-barred re-wrapped quotes, horizontal rules and
+    wrapped paragraphs."""
     width = max(8, width)
     out: list[StyledLine] = []
     para: list[str] = []
+    quote: list[str] = []
+    table: list[str] = []
     in_fence = False
 
-    def flush_para() -> None:
+    def flush() -> None:
         if para:
             out.extend(_wrap(_inline(" ".join(para)), width))
             para.clear()
+        if quote:
+            for ln in _wrap(_inline(" ".join(quote), base="quote"), width - 2):
+                out.append([("quote_bar", "▌ "), *ln])
+            quote.clear()
+        if table:
+            out.extend(_render_table(table, width))
+            table.clear()
 
     def blank() -> None:
         if out and out[-1]:
@@ -216,46 +327,68 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
 
     for raw in text.splitlines():
         line = raw.rstrip()
-        if line.lstrip().startswith("```"):
-            flush_para()
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush()
             if not in_fence:
                 blank()
+                if (lang := stripped[3:].strip()):
+                    out.append([("codeblock_lang", f" {lang}"[:width])])
             in_fence = not in_fence
             continue
         if in_fence:
-            out.append([("codeblock", raw[:width])])
+            # Full-width so the painter's background reads as a block.
+            out.append([("codeblock", (" " + raw).ljust(width)[:width])])
             continue
-        if not line.strip():
-            flush_para()
+        if stripped.startswith("|"):
+            if not table:
+                flush()
+            table.append(line)
+            continue
+        if table:
+            flush()
+        if not stripped:
+            flush()
             blank()
             continue
-        heading = _HEADING_RE.match(line)
-        if heading:
-            flush_para()
+        if (heading := _HEADING_RE.match(line)):
+            flush()
             blank()
-            style = f"h{min(len(heading.group(1)), 3)}"
+            style = f"h{min(len(heading.group(1)), 4)}"
             out.extend(_wrap([(style, heading.group(2))], width))
             continue
-        if line.lstrip().startswith(">"):
-            flush_para()
-            quoted = line.lstrip().lstrip(">").strip()
-            out.extend(_wrap(
-                _inline(quoted, base="quote"), width,
-                initial=("quote", "> "), subsequent="> ",
-            ))
+        if _HR_RE.fullmatch(line):
+            flush()
+            out.append([("hr", "─" * width)])
             continue
-        bullet = _BULLET_RE.match(line)
-        if bullet:
-            flush_para()
+        if (quoted := _QUOTE_RE.fullmatch(line)):
+            if para:
+                flush()
+            quote.append(quoted.group(1))
+            continue
+        if quote:
+            flush()
+        if (bullet := _BULLET_RE.match(line)):
+            flush()
             indent, marker, rest = bullet.groups()
+            if (box := _CHECKBOX_RE.match(rest)):
+                done = box.group(1).lower() == "x"
+                out.extend(_wrap(
+                    _inline(box.group(2)), width,
+                    initial=("checkbox_on" if done else "checkbox_off",
+                             f"{indent}{'✔' if done else '☐'} "),
+                    subsequent=" " * (len(indent) + 2),
+                ))
+                continue
+            marker_out = "• " if marker in "-*+" else f"{marker} "
             out.extend(_wrap(
                 _inline(rest), width,
-                initial=("bullet", f"{indent}{marker} "),
-                subsequent=" " * (len(indent) + len(marker) + 1),
+                initial=("bullet", f"{indent}{marker_out}"),
+                subsequent=" " * (len(indent) + len(marker_out)),
             ))
             continue
-        para.append(line.strip())
-    flush_para()
+        para.append(stripped)
+    flush()
     while out and not out[-1]:
         out.pop()
     return out

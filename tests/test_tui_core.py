@@ -122,6 +122,50 @@ class RenderMarkdownTests(unittest.TestCase):
         self.assertIn("verbatim   line", fence[0][1])
         self.assertLessEqual(len(fence[0][1]), 30)
 
+    def test_gfm_extras(self) -> None:
+        lines = render_markdown(
+            "| Name | Qty |\n"
+            "|:-----|----:|\n"
+            "| foo | 1 |\n"
+            "\n"
+            "---\n"
+            "- [x] done thing\n"
+            "- [ ] open thing\n"
+            "~~gone~~ [FFmpeg](https://ffmpeg.org) plain\n",
+            width=40,
+        )
+        got = styles(lines)
+        for s in ("th", "table_border", "hr", "checkbox_on", "checkbox_off",
+                  "strike", "link", "url"):
+            self.assertIn(s, got)
+        texts = [line_text(x) for x in lines]
+        self.assertTrue(all(len(t) <= 40 for t in texts))
+        self.assertTrue(any(set(t) == {"─"} for t in texts))       # rule
+        self.assertRegex(next(t for t in texts if "foo" in t),
+                         r"foo\s* │ \s*1")                          # right-aligned
+        self.assertIn("✔ done thing", texts)
+        self.assertIn("☐ open thing", texts)
+
+    def test_quote_paragraph_merges_and_gets_a_gutter(self) -> None:
+        lines = render_markdown("> first part\n> second part\n", width=20)
+        self.assertTrue(all(line[0] == ("quote_bar", "▌ ") for line in lines))
+        self.assertGreater(len(lines), 1)  # merged text re-wrapped at width
+
+    def test_fence_language_tag_and_block_width(self) -> None:
+        lines = render_markdown("```c\nint x;\n```\n", width=20)
+        self.assertEqual(lines[-1][0][0], "codeblock")
+        self.assertEqual(len(lines[-1][0][1]), 20)  # full-width background
+        self.assertIn([("codeblock_lang", " c")], lines)
+
+    def test_emitted_styles_stay_in_the_documented_set(self) -> None:
+        lines = render_markdown(
+            "# h\n## h\n### h\n#### h\ntext **b** *i* ***bi*** `c` ~~s~~\n"
+            "[l](http://u) http://bare\n> q\n- b\n1. n\n- [ ] t\n---\n"
+            "|a|b|\n|-|-|\n|1|2|\n```py\nx\n```\n",
+            width=40,
+        )
+        self.assertLessEqual(styles(lines), tui_core.MARKDOWN_STYLES)
+
     def test_wrap_width_bound(self) -> None:
         lines = render_markdown("word " * 50, width=24)
         self.assertTrue(all(len(line_text(x)) <= 24 for x in lines))

@@ -29,8 +29,9 @@ Note: Forgejo Fairy is under heavy development and this codebase has not been cl
 
 `fairy.py` walks the open pull requests (gcli + cache), prefilters them with a
 series of checks, and queues the rest for review. LLM workers pass each PR to
-the reviewer subprocess; a UI thread then lets a human defer, accept, skip or
-redo each result, or auto-accept everything, and posts via gcli.
+the reviewer subprocess and persist each verdict as a JSON work file; a human
+accepts, skips or reruns any reviewed item whenever they choose (or
+`--approve` auto-accepts everything), and fairy posts via gcli.
 
 The reviewer (`pr_review_wrapper.py`) receives the PR data and returns one
 structured JSON review. Inside it runs a pipeline: an optional cheap triage
@@ -74,10 +75,12 @@ changes. Pass each side its full argument string:
     ./fairy_tui.py --pr-args '<fairy.py args>' --issue-args '<issue_fairy.py args>' \
         --log-file fairy_tui.log
 
-`a` toggles between all open items and today's relevant set, `y/s/d/r`
-answer the selected item's pending prompt (same letters as `--manual`,
-`q` quits), `f` force-queues the selected item for review, `x` throws it
-out, `e`/`E` export the focused pane (visible/full), arrows and
+The list is a table over the persistent work files: select any row and
+act on it at any time. `a` toggles between all open items and today's
+relevant set, `y` posts the selected reviewed item (guard-checked),
+`s` skips it, `r` reruns the LLM on it, `o` edits its review message in
+`$EDITOR`, `q` quits, `f` force-queues the selected item for review,
+`x` throws it out, `e`/`E` export the focused pane (visible/full), arrows and
 PgUp/PgDn scroll, Tab or a mouse click moves focus, clicking a URL,
 git hash or `#number` copies it to the clipboard (OSC 52; in tmux turn
 `set-clipboard` on), and the pane dividers are draggable with the

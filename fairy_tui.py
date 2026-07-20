@@ -55,6 +55,7 @@ import faulthandler
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -614,6 +615,20 @@ def _styles(t: blessed.Terminal) -> dict:
     }
 
 
+def _clipboard_cmd() -> list[str] | None:
+    """External clipboard helper when a display is reachable. Unlike
+    OSC 52 this works with every terminal (rxvt has no OSC 52), and over
+    ssh -X/-Y the forwarded connection carries the clipboard home."""
+    if os.environ.get("WAYLAND_DISPLAY") and shutil.which("wl-copy"):
+        return ["wl-copy"]
+    if os.environ.get("DISPLAY"):
+        if shutil.which("xclip"):
+            return ["xclip", "-selection", "clipboard"]
+        if shutil.which("xsel"):
+            return ["xsel", "-ib"]
+    return None
+
+
 def _plain(lines: list) -> str:
     """Pane content back to text for exports. Lines are the same three
     shapes _blit paints: plain strings, one (style, text) row, or a
@@ -645,6 +660,7 @@ class UILoop:
         # pane -> (rect, gutter, unclipped plain rows) as last painted;
         # click-to-copy resolves the token under the mouse from this.
         self._shown: dict[str, tuple[tui_core.Rect, int, list[str]]] = {}
+        self._clip_cmd = _clipboard_cmd()
         self.styles = _styles(term)
         key = self.styles.get("key") or (lambda s: s)
         label = self.styles.get("label") or (lambda s: s)
@@ -1040,9 +1056,20 @@ class UILoop:
         token = tui_core.token_at(rows[row], col)
         if token is None:
             return
+        if self._clip_cmd is not None:
+            try:
+                subprocess.run(
+                    self._clip_cmd, input=token.encode(), timeout=2, check=True,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                logger.info("copied %r via %s", token, self._clip_cmd[0])
+                return
+            except Exception as exc:
+                logger.debug("clipboard helper %s failed (%s); trying OSC 52",
+                             self._clip_cmd, exc)
         b64 = base64.b64encode(token.encode()).decode()
         print(f"\x1b]52;c;{b64}\x07", end="", flush=True, file=self.term.stream)
-        logger.info("copied %r to the clipboard", token)
+        logger.info("copied %r to the clipboard (OSC 52)", token)
 
     def export(self, full: bool) -> None:
         pane = self.focus

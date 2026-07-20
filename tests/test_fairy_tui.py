@@ -372,6 +372,7 @@ class PaintSmokeTests(unittest.TestCase):
                 kind="xterm-256color", stream=stream, force_styling=True)
             ui = fairy_tui.UILoop(term, fairy_tui.Model(),
                                   tui_core.RingBuffer(), Path("."), ["PR"])
+            ui._clip_cmd = None  # pin the terminal-escape fallback path
             buf: list = []
             # pane narrower than the URL: the copy must still be whole
             ui._blit(buf, tui_core.Rect(10, 0, 16, 4), "br",
@@ -382,6 +383,23 @@ class PaintSmokeTests(unittest.TestCase):
             b"https://ffmpeg.org/very/long").decode()
         self.assertEqual(stream.getvalue().count("\x1b]52;c;"), 1)
         self.assertIn(f"\x1b]52;c;{payload}\x07", stream.getvalue())
+
+    def test_click_prefers_the_external_clipboard_helper(self) -> None:
+        # xclip/wl-copy work in terminals without OSC 52 support (rxvt).
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            stream = io.StringIO()
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=stream, force_styling=True)
+            ui = fairy_tui.UILoop(term, fairy_tui.Model(),
+                                  tui_core.RingBuffer(), Path("."), ["PR"])
+            ui._clip_cmd = ["xclip", "-selection", "clipboard"]
+            buf: list = []
+            ui._blit(buf, tui_core.Rect(10, 0, 20, 4), "br", ["see 5144acb now"])
+            with mock.patch.object(fairy_tui.subprocess, "run") as run:
+                ui._copy_click("br", 10 + 1 + 5, 1)
+        self.assertEqual(run.call_args.args[0], ["xclip", "-selection", "clipboard"])
+        self.assertEqual(run.call_args.kwargs["input"], b"5144acb")
+        self.assertNotIn("\x1b]52;", stream.getvalue())  # no fallback needed
 
     def test_export_failure_is_logged_not_fatal(self) -> None:
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):

@@ -25,7 +25,7 @@ def styles(lines: list[tui_core.StyledLine]) -> set[str]:
 
 class GridLayoutTests(unittest.TestCase):
     def test_rects_tile_the_area_around_the_dividers(self) -> None:
-        g = GridLayout(fx=0.5, fy=0.4)
+        g = GridLayout(fx_top=0.5, fx_bottom=0.5, fy=0.4)
         r = g.rects(100, 40)
         self.assertEqual(r["tl"], Rect(0, 0, 50, 16))
         self.assertEqual(r["tr"], Rect(51, 0, 49, 16))
@@ -33,31 +33,40 @@ class GridLayoutTests(unittest.TestCase):
         self.assertEqual(r["br"], Rect(51, 17, 49, 23))
 
     def test_hit_distinguishes_panes_and_dividers(self) -> None:
-        g = GridLayout(fx=0.5, fy=0.4)
-        self.assertEqual(g.hit(50, 5, 100, 40), "v")
+        g = GridLayout(fx_top=0.5, fx_bottom=0.7, fy=0.4)
+        self.assertEqual(g.hit(50, 5, 100, 40), "vt")
+        self.assertEqual(g.hit(70, 20, 100, 40), "vb")
         self.assertEqual(g.hit(5, 16, 100, 40), "h")
-        self.assertEqual(g.hit(50, 16, 100, 40), "vh")
+        self.assertEqual(g.hit(50, 16, 100, 40), "h")
         self.assertEqual(g.hit(0, 0, 100, 40), "tl")
         self.assertEqual(g.hit(99, 0, 100, 40), "tr")
         self.assertEqual(g.hit(0, 39, 100, 40), "bl")
+        self.assertEqual(g.hit(60, 39, 100, 40), "bl")
         self.assertEqual(g.hit(99, 39, 100, 40), "br")
 
+    def test_vertical_dividers_move_independently(self) -> None:
+        g = GridLayout()
+        g.drag("vt", 30, 5, 100, 40)
+        g.drag("vb", 80, 30, 100, 40)
+        self.assertEqual(g.splits(100, 40)[:2], (30, 80))
+        r = g.rects(100, 40)
+        self.assertEqual((r["tl"].w, r["bl"].w), (30, 80))
+
     def test_drag_moves_dividers_with_min_size_clamp(self) -> None:
-        g = GridLayout(fx=0.5, fy=0.4)
-        g.drag("v", 2, 0, 100, 40)
+        g = GridLayout()
+        g.drag("vt", 2, 0, 100, 40)
         self.assertEqual(g.splits(100, 40)[0], GridLayout.MIN_W)
+        self.assertEqual(g.splits(100, 40)[1], 50)  # bottom untouched
         g.drag("h", 0, 39, 100, 40)
-        self.assertEqual(g.splits(100, 40)[1], 40 - 1 - GridLayout.MIN_H)
-        g.drag("vh", 70, 20, 100, 40)
-        self.assertEqual(g.splits(100, 40), (70, 20))
+        self.assertEqual(g.splits(100, 40)[2], 40 - 1 - GridLayout.MIN_H)
 
     def test_fractions_survive_resize(self) -> None:
-        g = GridLayout(fx=0.5, fy=0.4)
-        g.drag("v", 70, 0, 100, 40)
+        g = GridLayout()
+        g.drag("vt", 70, 0, 100, 40)
         self.assertEqual(g.splits(200, 40)[0], 140)
 
     def test_tiny_terminal_yields_no_negative_rects(self) -> None:
-        g = GridLayout(fx=0.9, fy=0.9)
+        g = GridLayout(fx_top=0.9, fx_bottom=0.9, fy=0.9)
         for name, rect in g.rects(5, 3).items():
             self.assertGreaterEqual(rect.w, 0, name)
             self.assertGreaterEqual(rect.h, 0, name)

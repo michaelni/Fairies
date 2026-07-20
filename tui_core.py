@@ -48,53 +48,59 @@ class Rect:
 
 
 class GridLayout:
-    """2x2 pane grid: one full-height vertical divider at fraction ``fx``
-    and one full-width horizontal divider at fraction ``fy``. Fractions
-    survive terminal resizes; pixel positions are derived per call."""
+    """2x2 pane grid: one full-width horizontal divider at fraction
+    ``fy`` plus an independent vertical divider per half (``fx_top``,
+    ``fx_bottom``), so the upper and lower column splits move separately.
+    Fractions survive terminal resizes; pixel positions are derived per
+    call."""
 
     MIN_W = 12
     MIN_H = 4
 
-    def __init__(self, fx: float = 0.5, fy: float = 0.4) -> None:
-        self.fx = fx
+    def __init__(self, fx_top: float = 0.5, fx_bottom: float = 0.5,
+                 fy: float = 0.4) -> None:
+        self.fx_top = fx_top
+        self.fx_bottom = fx_bottom
         self.fy = fy
 
-    def splits(self, w: int, h: int) -> tuple[int, int]:
-        """(divider column, divider row), clamped to keep every pane at
-        least MIN_W x MIN_H when the terminal allows it."""
-        col = _clamp(round(w * self.fx), self.MIN_W, max(self.MIN_W, w - 1 - self.MIN_W))
+    def _col(self, fx: float, w: int) -> int:
+        col = _clamp(round(w * fx), self.MIN_W, max(self.MIN_W, w - 1 - self.MIN_W))
+        return min(col, max(1, w - 2))
+
+    def splits(self, w: int, h: int) -> tuple[int, int, int]:
+        """(top divider column, bottom divider column, divider row),
+        clamped to keep every pane at least MIN_W x MIN_H when the
+        terminal allows it."""
         row = _clamp(round(h * self.fy), self.MIN_H, max(self.MIN_H, h - 1 - self.MIN_H))
-        return min(col, max(1, w - 2)), min(row, max(1, h - 2))
+        return self._col(self.fx_top, w), self._col(self.fx_bottom, w), min(row, max(1, h - 2))
 
     def rects(self, w: int, h: int) -> dict[str, Rect]:
         """Pane name ("tl" "tr" "bl" "br") -> Rect; the divider cells
         belong to no pane."""
-        col, row = self.splits(w, h)
-        right_w = max(0, w - col - 1)
+        col_t, col_b, row = self.splits(w, h)
         bottom_h = max(0, h - row - 1)
         return {
-            "tl": Rect(0, 0, col, row),
-            "tr": Rect(col + 1, 0, right_w, row),
-            "bl": Rect(0, row + 1, col, bottom_h),
-            "br": Rect(col + 1, row + 1, right_w, bottom_h),
+            "tl": Rect(0, 0, col_t, row),
+            "tr": Rect(col_t + 1, 0, max(0, w - col_t - 1), row),
+            "bl": Rect(0, row + 1, col_b, bottom_h),
+            "br": Rect(col_b + 1, row + 1, max(0, w - col_b - 1), bottom_h),
         }
 
     def hit(self, x: int, y: int, w: int, h: int) -> str:
-        """Pane name under (x, y), or "v"/"h"/"vh" for a divider cell."""
-        col, row = self.splits(w, h)
-        if x == col and y == row:
-            return "vh"
-        if x == col:
-            return "v"
+        """Pane name under (x, y), or "vt"/"vb"/"h" for a divider cell."""
+        col_t, col_b, row = self.splits(w, h)
         if y == row:
             return "h"
-        return ("t" if y < row else "b") + ("l" if x < col else "r")
+        if y < row:
+            return "vt" if x == col_t else ("tl" if x < col_t else "tr")
+        return "vb" if x == col_b else ("bl" if x < col_b else "br")
 
     def drag(self, grabbed: str, x: int, y: int, w: int, h: int) -> None:
-        """Move the grabbed divider ("v", "h" or "vh") toward (x, y)."""
-        if "v" in grabbed and w > 0:
-            self.fx = _clamp(x, self.MIN_W, max(self.MIN_W, w - 1 - self.MIN_W)) / w
-        if "h" in grabbed and h > 0:
+        """Move the grabbed divider ("vt", "vb" or "h") toward (x, y)."""
+        if w > 0 and grabbed in ("vt", "vb"):
+            fx = _clamp(x, self.MIN_W, max(self.MIN_W, w - 1 - self.MIN_W)) / w
+            setattr(self, "fx_top" if grabbed == "vt" else "fx_bottom", fx)
+        if grabbed == "h" and h > 0:
             self.fy = _clamp(y, self.MIN_H, max(self.MIN_H, h - 1 - self.MIN_H)) / h
 
 

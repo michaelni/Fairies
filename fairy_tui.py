@@ -524,7 +524,7 @@ class UILoop:
         w, h = t.width, t.height
         body_h = max(3, h - 1)
         rects = self.layout.rects(w, body_h)
-        col, row = self.layout.splits(w, body_h)
+        col_t, col_b, row = self.layout.splits(w, body_h)
         with self.model.lock:
             content: dict[str, list] = {
                 "tl": self._scrolled("tl", self.stats_lines(), rects["tl"].h - 1),
@@ -539,10 +539,13 @@ class UILoop:
         for pane, rect in rects.items():
             self._blit(buf, rect, pane, content[pane])
         divider = t.bold if self.drag else (lambda s: s)
-        for y in range(body_h):
-            buf.append(t.move_xy(col, y) + divider("|"))
+        for y in range(row):
+            buf.append(t.move_xy(col_t, y) + divider("|"))
+        for y in range(row + 1, body_h):
+            buf.append(t.move_xy(col_b, y) + divider("|"))
         buf.append(t.move_xy(0, row) + divider("-" * w))
-        buf.append(t.move_xy(col, row) + divider("+"))
+        for col in {col_t, col_b}:
+            buf.append(t.move_xy(col, row) + divider("+"))
         buf.append(t.move_xy(0, h - 1) + t.reverse(status[:w].ljust(w)))
         print("".join(buf), end="", flush=True, file=t.stream)
 
@@ -639,7 +642,7 @@ class UILoop:
                 if hit in PANES:
                     self._scroll_pane(hit, -3 if name.endswith("UP") else 3)
             elif name == "MOUSE_LEFT":
-                if hit in ("v", "h", "vh"):
+                if hit in ("vt", "vb", "h"):
                     self.drag = hit
                 elif hit in PANES:
                     self.focus = hit

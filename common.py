@@ -394,6 +394,17 @@ def default_cache_path(filename: str) -> Path:
     return Path.home() / ".fairy" / filename
 
 
+def attachment_urls(obj: JsonObject) -> list[JsonObject]:
+    """Forgejo/Gitea ``assets`` of an issue or comment; an unlinked
+    attachment appears nowhere in the markdown body. GitHub and GitLab
+    upload as inline body links and have no such field."""
+    return [
+        {"name": a.get("name"), "size": a.get("size"),
+         "url": a.get("browser_download_url")}
+        for a in obj.get("assets") or []
+    ]
+
+
 def iso_to_dt(value: str | None) -> datetime | None:
     """Parse a Forgejo/Gitea ISO-8601 timestamp into a UTC ``datetime``.
 

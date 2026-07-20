@@ -56,7 +56,7 @@ from threading import Thread
 from urllib.parse import urlencode
 
 import gcli_cache
-from common import add_color_arg, default_cache_path, iso_to_dt, setup_logging
+from common import add_color_arg, attachment_urls, default_cache_path, iso_to_dt, setup_logging
 import forge_gcli
 from forge_gcli import (
     KIND_ISSUE,
@@ -76,7 +76,6 @@ from fairy import (
     Decision,
     LLMReview,
     PendingCount,
-    attachment_urls,
     backoff_for_consecutive_skips,
     build_llm_discussion,
     call_llm_with_retries,

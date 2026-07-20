@@ -91,6 +91,7 @@ from common import (
     JsonObject,
     add_color_arg,
     apply_config_file_defaults,
+    attachment_urls,
     default_cache_path,
     iso_to_dt,
     parse_iso_datetime_arg,
@@ -1734,17 +1735,6 @@ def format_llm_classification(classification: str) -> str:
     }
     return mapping.get(classification, classification)
 
-
-
-def attachment_urls(obj: ApiObject) -> list[dict[str, object]]:
-    """Forgejo/Gitea ``assets`` of an issue or comment; an unlinked
-    attachment appears nowhere in the markdown body. GitHub and GitLab
-    upload as inline body links and have no such field."""
-    return [
-        {"name": a.get("name"), "size": a.get("size"),
-         "url": a.get("browser_download_url")}
-        for a in obj.get("assets") or []
-    ]
 
 
 def build_llm_discussion(

@@ -1962,6 +1962,10 @@ def invoke_llm_wrapper(
     cmd += podman_host_cmd_args(args)
     if getattr(args, "simulate_past", None) is not None:
         cmd += [f"--simulate-past-cutoff={args.simulate_past.isoformat()}"]
+    if number is not None:
+        ws_path = workset_path(args, stderr_tag, number)
+        if ws_path is not None:
+            cmd += [f"--workset-file={ws_path}"]
     if extra_cmd_args:
         cmd += list(extra_cmd_args)
     stderr_prefix = f"[wrapper {stderr_tag}=#{number}] " if number is not None else "[wrapper] "

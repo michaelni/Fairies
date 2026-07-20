@@ -287,7 +287,7 @@ class EngageLabelOwnershipTests(unittest.TestCase):
         )
         seen: dict[str, object] = {}
 
-        def stub(ctx: object, reviewers: list, combiner: object) -> Review:
+        def stub(ctx: object, reviewers: list, combiner: object, **kw: object) -> Review:
             seen["reviewers"] = reviewers
             seen["combiner"] = combiner
             return Review(
@@ -355,7 +355,7 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
         def fake_open_review(spec, repo_specs, args, session_commands=()):
             return mock.Mock(name="handle"), mock.Mock(name="session"), ""
 
-        def fake_review_pr(ctx, reviewers, combiner):
+        def fake_review_pr(ctx, reviewers, combiner, **kw):
             session, _ = ctx.open_shell("x86_64")   # opens+registers one
             ctx.report_poisoned(session)            # flag it suspect
             return wrapper.llm_review_api.Review(
@@ -403,7 +403,8 @@ class CodexOnlyNoOpenAIKeyTests(unittest.TestCase):
         load_key = mock.Mock(name="load_api_key", return_value=None)
         upload = mock.Mock(name="upload_text_file")
 
-        def stub_review(_ctx: object, _reviewers: list, _combiner: object) -> Review:
+        def stub_review(_ctx: object, _reviewers: list, _combiner: object,
+                        **_kw: object) -> Review:
             return Review("approve", "looks good", model="codex:gpt-5")
 
         stdout = io.StringIO()

@@ -73,7 +73,7 @@ import re
 import subprocess
 import sys
 import tarfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
@@ -100,6 +100,7 @@ from llm_review_api import (
 )
 import review_pipeline
 from review_pipeline import make_reviewer, review_pr, run_triage
+import workset
 import podman_host
 import podman_repos
 import shell_tool
@@ -620,6 +621,12 @@ def parse_args() -> argparse.Namespace:
         help="Directory where raw Responses API payloads are dumped on extraction/validation failures (default: .openai_debug)",
     )
     p.add_argument(
+        "--workset-file",
+        type=Path,
+        help="Caller's workset item file; stage progress, the triage result "
+             "and reviewer drafts are recorded there as they happen.",
+    )
+    p.add_argument(
         "--openai-timeout-seconds",
         type=float,
         default=DEFAULT_OPENAI_TIMEOUT_SECONDS,
@@ -673,6 +680,48 @@ def parse_args() -> argparse.Namespace:
         args.max_patch_bytes = min(args.max_patch_bytes, CODEX_MAX_PATCH_BYTES)
         args.max_bundle_bytes = min(args.max_bundle_bytes, CODEX_MAX_BUNDLE_BYTES)
     return args
+
+
+def workset_note_stage(args: argparse.Namespace, state: workset.WorkState) -> None:
+    """Record wrapper progress in the caller's workset item file (if any).
+
+    The wrapper owns the file while it runs (the caller blocks on the
+    subprocess); it never writes REVIEWED or ``review`` -- the final
+    verdict travels on stdout and is persisted by the caller."""
+    if args.workset_file:
+        workset.update_item(
+            args.workset_file,
+            lambda it: it.set_state(state, datetime.now(timezone.utc)),
+        )
+
+
+def workset_note_triage(args: argparse.Namespace, triage_result: dict[str, object]) -> None:
+    if args.workset_file:
+        def record(it: workset.WorkItem) -> None:
+            it.triage = triage_result
+        workset.update_item(args.workset_file, record)
+
+
+def workset_note_drafts(args: argparse.Namespace, drafts, *, combining: bool) -> None:
+    """``drafts`` are ``Review``s; state moves to COMBINE when a combiner
+    runs next."""
+    if not args.workset_file:
+        return
+
+    def record(it: workset.WorkItem) -> None:
+        it.drafts = [
+            workset.ReviewResult(
+                classification=d.classification,
+                message=d.message,
+                label_changes=[workset.LabelChange(**c) for c in d.label_changes],
+                model=d.model,
+            )
+            for d in drafts
+        ]
+        if combining:
+            it.set_state(workset.WorkState.COMBINE, datetime.now(timezone.utc))
+
+    workset.update_item(args.workset_file, record)
 
 
 def read_request() -> JsonObject:
@@ -1507,7 +1556,10 @@ def main() -> int:
                 max_output_tokens=args.triage_max_output_tokens,
                 service_tier=args.triage_service_tier,
             )
+            workset_note_stage(args, workset.WorkState.TRIAGE)
             triage_result = run_triage(triager, triage_ctx)
+            if triage_result is not None:
+                workset_note_triage(args, triage_result)
             if triage_result is None:
                 if ci_triage_active and not force_engage:
                     logger.warning(
@@ -1642,8 +1694,13 @@ def main() -> int:
                 "combining with %s", len(model_reviewers), args.model,
             )
             combiner = make_reviewer(args.model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose)
+        workset_note_stage(args, workset.WorkState.REVIEW)
         try:
-            review = review_pr(review_ctx, model_reviewers, combiner)
+            review = review_pr(
+                review_ctx, model_reviewers, combiner,
+                on_drafts=lambda drafts: workset_note_drafts(
+                    args, drafts, combining=combiner is not None),
+            )
         except OpenAIContainerUnhealthy:
             # The outer ``finally`` still releases the lease; mark it
             # unhealthy so the dead container is dropped from the pool.

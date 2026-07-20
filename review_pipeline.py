@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from typing import Callable
 
 from llm_review_api import (
     Z_AI_ANTHROPIC_URL,
@@ -211,13 +212,15 @@ def review_pr(
     ctx: ReviewContext,
     model_reviewers: list[Reviewer],
     combiner: Reviewer | None,
+    on_drafts: Callable[[list[Review]], None] | None = None,
 ) -> Review:
     """Run the model reviewers, then optionally the combiner, over ``ctx``.
 
     One model reviewer runs inline; several run concurrently (each opens its
     own shells via ``ctx.open_shell``) and reviewers that fail are dropped by
     ``run_parallel``. Their drafts accumulate on ``ctx`` so the combiner can
-    verify and merge them. A configured combiner runs even on a single
+    verify and merge them. ``on_drafts`` is told the surviving drafts before
+    the combiner runs. A configured combiner runs even on a single
     (configured or surviving) draft: since its prompt diverged from the
     reviewer's, its verification and grading are no longer redundant.
     Without a combiner exactly one model reviewer is required.
@@ -227,6 +230,8 @@ def review_pr(
     else:
         drafts = run_parallel(model_reviewers, ctx)
     ctx.drafts.extend(drafts)
+    if on_drafts is not None:
+        on_drafts(drafts)
 
     if combiner is None:
         if len(drafts) != 1:

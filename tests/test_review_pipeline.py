@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -33,7 +34,9 @@ if "anthropic" not in sys.modules:
 
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import Review, ReviewContext, Reviewer, Z_AI_ANTHROPIC_URL  # noqa: E402
+import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
+import workset  # noqa: E402
 from openai_reviewer import OpenAIReviewer  # noqa: E402
 from anthropic_reviewer import AnthropicReviewer  # noqa: E402
 
@@ -167,6 +170,18 @@ class ReviewPrTests(unittest.TestCase):
         self.assertEqual([d1, d2], ctx.drafts)
         self.assertEqual([d1, d2], combiner.seen_drafts)
 
+    def test_on_drafts_reports_before_the_combiner(self) -> None:
+        ctx = _ctx()
+        d1 = Review("moderate_issues", "issue1", model="a")
+        merged = Review("major_issues", "merged", model="c")
+        seen: list[list[Review]] = []
+        out = review_pipeline.review_pr(
+            ctx, [_FakeReviewer("a", d1)], _FakeReviewer("c", merged),
+            on_drafts=seen.append,
+        )
+        self.assertEqual(seen, [[d1]])
+        self.assertIs(out, merged)
+
     def test_failed_reviewer_does_not_discard_surviving_draft(self) -> None:
         # Regression: a z.ai quota exhaustion (RateLimitError 1308) used to
         # abort the whole ensemble review; the GPT draft must survive and
@@ -239,6 +254,47 @@ class RunTriageTests(unittest.TestCase):
 
     def test_failure_returns_none(self) -> None:
         self.assertIsNone(review_pipeline.run_triage(self._Triager(fail=True), _ctx()))
+
+
+class WrapperWorksetNoteTests(unittest.TestCase):
+    """The wrapper records stage progress and outputs in the caller's file."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "pr-9.json"
+        now = "2026-07-20T00:00:00+00:00"
+        workset.save_item(self.path, workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=9, state=workset.WorkState.QUEUED,
+            created_at=now, state_changed_at=now,
+        ))
+        self.args = argparse.Namespace(workset_file=self.path)
+
+    def test_stage_and_triage_result_recorded(self) -> None:
+        pr_review_wrapper.workset_note_stage(self.args, workset.WorkState.TRIAGE)
+        pr_review_wrapper.workset_note_triage(
+            self.args, {"route": "engage", "reason": "r"})
+        item = workset.load_item(self.path)
+        self.assertEqual(item.state, workset.WorkState.TRIAGE)
+        self.assertEqual(item.triage, {"route": "engage", "reason": "r"})
+
+    def test_drafts_recorded_and_combine_stage_entered(self) -> None:
+        drafts = [Review(
+            "moderate_issues", "d1",
+            ({"label": "l", "op": "add", "reason": "", "post": False},),
+            model="a",
+        )]
+        pr_review_wrapper.workset_note_drafts(self.args, drafts, combining=True)
+        item = workset.load_item(self.path)
+        self.assertEqual(item.state, workset.WorkState.COMBINE)
+        self.assertEqual(item.drafts[0].message, "d1")
+        self.assertEqual(item.drafts[0].model, "a")
+        self.assertEqual(item.drafts[0].label_changes[0].label, "l")
+
+    def test_no_workset_file_is_a_noop(self) -> None:
+        pr_review_wrapper.workset_note_stage(
+            argparse.Namespace(workset_file=None), workset.WorkState.TRIAGE)
 
 
 if __name__ == "__main__":

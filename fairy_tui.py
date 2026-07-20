@@ -692,13 +692,14 @@ class UILoop:
         rows: list = []
         for i, it in enumerate(vis):
             d = it.decision
-            # While the wrapper runs, its sub-stage takes the llm column.
-            llm = (fairy.format_llm_classification(d.llm_classification) if d
-                   else it.stage or ("llm" if it.status is Status.IN_LLM else ""))
+            if d is not None:
+                llm = fairy.format_llm_classification(d.llm_classification)
+            elif not it.stage and it.ws is not None and it.ws.review is not None:
+                llm = fairy.format_llm_classification(it.ws.review.classification)
+            else:
+                llm = it.stage or ("llm" if it.status is Status.IN_LLM else "")
             mark = "▶" if m._prompt_for((it.kind, it.number)) else " "
             if i == m.cursor:
-                # The cursor row is a single reversed block; per-segment
-                # colors under reverse video read worse than none.
                 rows.append(("cursor",
                              f"{mark}{it.kind:<5} #{it.number:<6} "
                              f"{it.status.name.lower():<9} {llm:<9}  {it.title}"))
@@ -720,30 +721,37 @@ class UILoop:
         if item is None:
             return [[("text", "(no item selected)")]]
         d = item.decision
+        ws = item.ws
+        review = ws.review if ws is not None else None
         head: list[tui_core.StyledLine] = [
             [("h2", f"{item.kind} #{item.number}  {item.title}"[:width])],
         ]
         if item.url:
             head.append([("link", item.url[:width])])
-        if d is None:
-            return head + [[], [("text", f"({item.status.name.lower()}: no decision yet)")]]
-        head += [
-            [("bold", fairy.manual_action_description(d)[:width])],
-            [("text", f"status {item.status.name.lower()}   llm "
-                      f"{fairy.format_llm_classification(d.llm_classification)}   "
-                      f"reason {d.reason}"[:width])],
-            [],
-        ]
+        if item.ws_error:
+            head.append([("log_err", f"file invalid: {item.ws_error}"[:width])])
+        if ws is not None and ws.error:
+            head.append([("log_err", f"error: {ws.error}"[:width])])
+        if d is None and review is None:
+            return head + [[], [("text", f"({item.status.name.lower()}: no review yet)")]]
+        classification = review.classification if review else d.llm_classification
+        message = review.message if review else d.llm_message
+        label_changes = review.label_changes if review else d.label_changes
+        if d is not None:
+            head.append([("bold", fairy.manual_action_description(d)[:width])])
+        status_line = (f"status {item.status.name.lower()}   llm "
+                       f"{fairy.format_llm_classification(classification)}")
+        if d is not None:
+            status_line += f"   reason {d.reason}"
+        head += [[("text", status_line[:width])], []]
         labels = [
             [("bullet", f"label {c.op} {c.label}"),
              ("text", (f" ({c.reason})" if c.reason else "") + (" [posted]" if c.post else ""))]
-            for c in d.label_changes
+            for c in label_changes
         ]
         if labels:
             labels.append([])
-        return head + labels + tui_core.render_markdown(d.llm_message, width)
-
-    # ---- painting ----
+        return head + labels + tui_core.render_markdown(message, width)
 
     def paint(self) -> None:
         self._last_paint = time.monotonic()

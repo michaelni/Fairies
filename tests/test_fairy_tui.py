@@ -163,6 +163,44 @@ class WorksetPollTests(WorksetDirCase):
                       fairy_tui.Status.AWAITING)
 
 
+class DetailFromFileTests(WorksetDirCase):
+    """The detail pane renders review content and error reasons from the
+    workset file, even when no in-memory decision exists."""
+
+    def _detail_text(self) -> str:
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(), Path("."), ["PR"])
+        with self.model.lock:
+            return "\n".join(
+                "".join(seg[1] for seg in line) for line in ui.detail_lines(100))
+
+    def test_orphan_review_renders_message_from_file(self) -> None:
+        self._write(5, workset.WorkState.REVIEWED, message="persisted body")
+        self.model.poll_workset()
+        text = self._detail_text()
+        self.assertIn("persisted body", text)
+        self.assertIn("status reviewed", text)
+
+    def test_error_file_shows_reason(self) -> None:
+        now = "2026-07-20T00:00:00+00:00"
+        workset.save_item(self.dir / "pr-5.json", workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=5, state=workset.WorkState.ERROR,
+            created_at=now, state_changed_at=now, title="t",
+            error="LLM exploded",
+        ))
+        self.model.poll_workset()
+        self.model.show_all = True
+        self.assertIn("error: LLM exploded", self._detail_text())
+
+    def test_invalid_file_shows_reason(self) -> None:
+        (self.dir / "pr-5.json").write_text("{ broken", encoding="utf-8")
+        self.model.poll_workset()
+        self.assertIn("file invalid:", self._detail_text())
+
+
 class EditReviewTests(unittest.TestCase):
     def test_o_key_round_trips_the_message_through_the_editor(self) -> None:
         tmp = tempfile.TemporaryDirectory()

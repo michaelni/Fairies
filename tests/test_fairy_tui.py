@@ -75,6 +75,39 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(got.get("choice"), "quit")
 
 
+class FilterToggleTests(unittest.TestCase):
+    def test_cursor_follows_selection_across_the_a_toggle(self) -> None:
+        class Key(str):
+            name = None
+
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+            model = fairy_tui.Model()
+            model.add_candidates(
+                "PR", [{"number": n, "title": "t"} for n in (1, 2, 3)])
+            model.finish("PR", decision(1, action="skip", msg=""))
+            model.finish("PR", decision(2))                       # actionable
+            model.finish("PR", decision(3, action="skip", msg=""))
+            model.show_all = True
+            ui = fairy_tui.UILoop(
+                term, model, tui_core.RingBuffer(), Path("."), ["PR"])
+
+            model.cursor = 1                 # on #2 in the "all" view
+            ui.dispatch(Key("a"))            # -> relevant view: only #2
+            self.assertEqual(model.cursor, 0)
+            with model.lock:
+                self.assertEqual(model._cursor_key(), ("PR", 2))
+            ui.dispatch(Key("a"))            # back to "all": still on #2
+            with model.lock:
+                self.assertEqual(model._cursor_key(), ("PR", 2))
+
+            model.cursor = 2                 # on filtered-out #3
+            ui.dispatch(Key("a"))            # nearest preceding visible: #2
+            with model.lock:
+                self.assertEqual(model._cursor_key(), ("PR", 2))
+
+
 class PaintSmokeTests(unittest.TestCase):
     def test_paint_one_frame_headless(self) -> None:
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):

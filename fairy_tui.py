@@ -296,10 +296,18 @@ class Model:
         return next((r for r in self.prompts if r.key == key), None)
 
     def _move_cursor_to(self, key: tuple[str, int]) -> None:
+        """Cursor onto ``key``; if the filter hides it, onto the nearest
+        preceding visible item."""
+        order_pos = {k: i for i, k in enumerate(self.order)}
+        pos = order_pos.get(key)
+        if pos is None:
+            return
+        self.cursor = 0
         for i, it in enumerate(self.visible()):
-            if (it.kind, it.number) == key:
+            if order_pos[(it.kind, it.number)] <= pos:
                 self.cursor = i
-                return
+            else:
+                break
 
 
 class SideUI:
@@ -690,9 +698,10 @@ class UILoop:
             self.model.quit_all()
         elif ks == "a":
             with self.model.lock:
+                key = self.model._cursor_key()
                 self.model.show_all = not self.model.show_all
-                self.model.cursor = 0
-                self.list_top = 0
+                if key is not None:
+                    self.model._move_cursor_to(key)
         elif str(ks) in CHOICE_KEYS:
             if not self.model.answer(CHOICE_KEYS[str(ks)]):
                 logger.debug("key %r: no pending prompt under the cursor", str(ks))

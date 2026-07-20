@@ -65,14 +65,12 @@ Responses API file_search for additional retrieval.
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import logging
 import os
 import re
 import subprocess
 import sys
-import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -87,8 +85,6 @@ from common import (
 from patch_util import (
     extract_changed_paths_from_patch,
     extract_commit_shas_from_patch,
-    extract_submodule_changes_from_patch,
-    extract_submodule_paths_from_patch,
 )
 from git_util import git_merge_tree, git_rev_parse, git_show_file
 import concurrency
@@ -122,9 +118,6 @@ from openai_common import (
     JsonObject,
     delete_uploaded_file,
     load_api_key,
-    log_progress,
-    openai_file_exists,
-    upload_local_file,
     upload_text_file,
 )
 from openai_reviewer import (

@@ -89,8 +89,6 @@ import git_util
 import gcli_cache
 from common import (
     JsonObject,
-    JsonPrimitive,
-    JsonValue,
     add_color_arg,
     apply_config_file_defaults,
     default_cache_path,
@@ -105,14 +103,10 @@ from forge_gcli import (
     build_repo_path,
     gcli_api,
     gcli_prefix,
-    list_issue_comments,
     list_issue_timeline,
-    list_pr_review_comments,
-    list_pr_reviews,
     load_json,
     post_issue_comment,
     run_cmd,
-    run_gcli_editor_submission,
 )
 from forgejo_export import labels
 import workset

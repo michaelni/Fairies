@@ -182,6 +182,8 @@ class CodexReviewerRunTests(unittest.TestCase):
             CodexReviewer("m", name="codex:m", role=ROLE, effort="ultra")
 
     def test_codex_home_reaches_subprocess_env(self) -> None:
+        import tempfile
+        home = tempfile.mkdtemp(prefix="codex-home-")
         captured = {}
 
         def fake_run(cmd, **kwargs):
@@ -192,11 +194,11 @@ class CodexReviewerRunTests(unittest.TestCase):
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
         reviewer = CodexReviewer("m", name="codex:m", role=ROLE,
-                                 codex_home="/srv/fairy/codex")
+                                 codex_home=home)
         with mock.patch.object(codex_reviewer.subprocess, "run",
                                side_effect=fake_run):
             reviewer.run(_ctx())
-        self.assertEqual("/srv/fairy/codex", captured["env"]["CODEX_HOME"])
+        self.assertEqual(home, captured["env"]["CODEX_HOME"])
 
     def test_passes_are_serialized(self) -> None:
         # One auth.json must not serve concurrent jobs.

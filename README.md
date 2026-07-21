@@ -150,23 +150,26 @@ machine). A local-GPU backend is TODO -- PRs very welcome.
 
 ### Codex backend
 
-`codex:MODEL[@EFFORT]` (e.g. `codex:gpt-5.6-sol@high`)
-runs the pass through the codex CLI. Install a
-codex version on the wrapper host
-`--codex-home DIR` points the subprocesses at that login's auth.json without
-needing CODEX_HOME in the wrapper's environment.
+`codex:MODEL[@EFFORT]` (e.g. `codex:gpt-5.6-sol@high`; efforts `none`, `low`,
+`medium`, `high`, `xhigh`, `max`, `ultra`) runs the pass through the codex CLI.
+Codex runs in an ephemeral container on `--codex-host` (a podman host, same
+spec syntax as `--shell-host`), never on the wrapper host. A `codex:` spec
+without `--codex-host` is a hard error at startup; there is no local codex.
+Through `fairy.py`, pass `--codex-host` and `--codex-home`; it forwards them
+to the wrapper alongside `--podman-host`/`--shell-host`.
+
 Build the thin codex image once from `containers/Containerfile.codex` (bakes a
 pinned codex binary; `--codex-bin` is its in-container path, `--codex-image`
 its tag) and `codex login` once as the bot's own account. `--codex-home DIR`
-is the wrapper-side login: its `auth.json` is `podman cp`'d into the
-container per run and its `models_cache.json` is used to harden the tool
-catalog.
+is the wrapper-side login: its `auth.json` is `podman cp`'d into the container
+per run and its `models_cache.json` is used to harden the tool catalog.
+
 The security model matches the API backends -- the model can execute only
 inside the review containers, never on the wrapper host: codex runs with
-as much disabled as possible in a seperate container. Codex's own egress
+as much disabled as possible in a separate container. Codex's own egress
 is limited to the OpenAI API + token refresh. There is no direct connection
-between the codex and review containers. there is no local codex. Cap
-concurrent passes with `--concurrency codex:N`
+between the codex and review containers. Cap concurrent passes with
+`--concurrency codex:N`.
 
 ### Static data and vector stores
 

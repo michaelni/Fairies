@@ -103,11 +103,14 @@ class RemoteHost:
     )
     identity: str | None = None
 
+    def ssh_argv(self) -> list[str]:
+        """``ssh`` plus client options, without the destination -- also
+        usable verbatim as ``GIT_SSH_COMMAND``."""
+        return ["ssh", *self.ssh_opts,
+                *(["-i", self.identity] if self.identity else [])]
+
     def argv(self, remote_argv: Sequence[str]) -> list[str]:
-        opts = list(self.ssh_opts)
-        if self.identity:
-            opts += ["-i", self.identity]
-        return ["ssh", *opts, self.ssh_dest, shlex.join(remote_argv)]
+        return [*self.ssh_argv(), self.ssh_dest, shlex.join(remote_argv)]
 
 
 @dataclass(frozen=True)

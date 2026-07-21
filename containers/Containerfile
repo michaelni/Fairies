@@ -16,7 +16,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # NOT install ``gcc-multilib`` because it depends on
 # ``libc6-dev-i386`` which conflicts with ``libc6:i386`` (multiarch).
 # Use ``i686-linux-gnu-gcc`` for explicit 32-bit compilation instead.
-RUN dpkg --add-architecture i386
+# amd64 only: ports.ubuntu.com, which serves every non-x86 arch,
+# carries no i386 (404 on its dists observed 2026-07-22), so adding
+# the architecture fails the next ``apt-get update``.
+RUN [ "$(dpkg --print-architecture)" != amd64 ] || dpkg --add-architecture i386
 
 # Every install layer runs its own ``apt-get update``: layers rebuild
 # independently (podman caches the unchanged ones), and an install
@@ -41,14 +44,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-arm-linux-gnueabihf gcc-arm-linux-gnueabi \
         gcc-mips-linux-gnu gcc-mipsel-linux-gnu \
         gcc-mips64-linux-gnuabi64 gcc-mips64el-linux-gnuabi64 \
-        gcc-powerpc-linux-gnu gcc-powerpc64-linux-gnu gcc-powerpc64le-linux-gnu \
+        gcc-powerpc-linux-gnu gcc-powerpc64le-linux-gnu \
         gcc-riscv64-linux-gnu \
         qemu-user qemu-user-static
 
-# 32-bit (i386) development libraries via dpkg multiarch.  Add more
-# ``:i386`` packages here as concrete reviews require them.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libc6-dev:i386 zlib1g-dev:i386
+# 32-bit (i386) development libraries via dpkg multiarch (amd64 only,
+# see the i386 note above).  Add more ``:i386`` packages here as
+# concrete reviews require them.
+RUN [ "$(dpkg --print-architecture)" != amd64 ] || \
+    ( apt-get update && apt-get install -y --no-install-recommends \
+        libc6-dev:i386 zlib1g-dev:i386 )
 
 # Assemblers, build helpers, binary inspection.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -57,10 +62,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # FFmpeg external libraries.  This is exactly Ubuntu 24.04's ffmpeg
 # source-package Build-Depends set (minus ffmpeg's own libav*-dev and
 # pure build tooling), so every entry is both a library FFmpeg's
-# configure can ``--enable-`` and present in the 24.04 archive.
-# Built on amd64 (matches the cross/qemu toolchain above); a couple of
-# entries are amd64-oriented (libvpl-dev = Intel QSV, libffmpeg-nvenc-dev
-# = NVENC headers) and would need trimming on other architectures.
+# configure can ``--enable-`` and present in the 24.04 archive for
+# both amd64 and arm64 (libvpl-dev, amd64-only, is in the per-arch
+# layer below; libffmpeg-nvenc-dev is header-only, arch all).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         zlib1g-dev libbz2-dev liblzma-dev \
         libx264-dev libx265-dev libvpx-dev libaom-dev libdav1d-dev \
@@ -82,9 +86,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxcb-shape0-dev libxcb-shm0-dev libxcb-xfixes0-dev libxv-dev \
         libgl-dev \
         libva-dev libvdpau-dev libdrm-dev libvulkan-dev libplacebo-dev \
-        libvpl-dev libffmpeg-nvenc-dev ocl-icd-opencl-dev \
+        libffmpeg-nvenc-dev ocl-icd-opencl-dev \
         libvidstab-dev frei0r-plugins-dev ladspa-sdk liblilv-dev \
         flite1-dev glslang-dev
+
+# Per-arch packages.  noble/arm64 (ports.ubuntu.com, checked
+# 2026-07-22) lacks gcc-powerpc64-linux-gnu (big-endian ppc64 cross)
+# and libvpl-dev (Intel QSV); everything else in this file it carries.
+# Off-amd64 the x86-64 cross fills the same role the aarch64 cross
+# fills on amd64.
+RUN if [ "$(dpkg --print-architecture)" = amd64 ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            gcc-powerpc64-linux-gnu libvpl-dev; \
+    else \
+        apt-get update && apt-get install -y --no-install-recommends \
+            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu; \
+    fi
 
 # CLI utilities and Python. The apt lists are deliberately kept (no
 # ``rm -rf /var/lib/apt/lists``): the model apt-installs extra packages

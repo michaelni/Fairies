@@ -80,6 +80,15 @@ class RemoteHostTests(unittest.TestCase):
             host.argv(["true"]),
         )
 
+    def test_argv_adds_port_when_set(self) -> None:
+        host = lc.RemoteHost("fairy@h", port=17022)
+        self.assertEqual(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=30",
+             "-o", "ServerAliveCountMax=3", "-o", "LogLevel=ERROR",
+             "-p", "17022", "fairy@h", "true"],
+            host.argv(["true"]),
+        )
+
     def test_run_on_remote_host_captures_result(self) -> None:
         with mock.patch.object(lc.subprocess, "run") as run:
             run.return_value = _completed(0, stdout=b"ok")

@@ -45,6 +45,17 @@ class ParseShellHostTest(unittest.TestCase):
         spec = podman_host.parse_shell_host("fairy@h", identity="/k/id")
         self.assertEqual("/k/id", spec.host.identity)
 
+    def test_port_reaches_remote_host(self) -> None:
+        spec = podman_host.parse_shell_host("fairy@134.0.0.1,port=17022")
+        self.assertEqual(17022, spec.host.port)
+
+    def test_default_port_is_none(self) -> None:
+        self.assertIsNone(podman_host.parse_shell_host("fairy@h").host.port)
+
+    def test_non_numeric_port_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            podman_host.parse_shell_host("fairy@h,port=ssh")
+
 
 if __name__ == "__main__":
     unittest.main()

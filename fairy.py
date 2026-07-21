@@ -331,7 +331,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--podman-host",
         action="append",
         default=[],
-        metavar="[LABEL=]USER@HOST[,cpus=N][,memory=SIZE][,gpu=DEV]",
+        metavar="[LABEL=]USER@HOST[,port=N][,cpus=N][,memory=SIZE][,gpu=DEV]",
         help=(
             "Run LLM shell work (review, triage, ...) in ephemeral "
             "containers on this podman host (passwordless ssh destination); "

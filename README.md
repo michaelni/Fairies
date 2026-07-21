@@ -123,7 +123,10 @@ or via the main tool, which injects `--podman --shell-host` for you:
     ./fairy.py ... --podman-host fairy@HOST
 
 Add `--podman-ssh-identity KEY` if the key is not offered by your ssh agent /
-`~/.ssh/config`. The LLM's shell runs over a single persistent
+`~/.ssh/config`. A non-standard ssh port goes in the host spec, e.g.
+`--podman-host fairy@HOST,port=17022` (same for `--shell-host` and
+`--codex-host`); provision such a host with `provision_remote.py --port`.
+The LLM's shell runs over a single persistent
 `ssh DEST podman exec -i` pipe into an in-container agent
 (`containers/fairy_agent.py`) speaking a small JSON protocol, so there is no
 per-command ssh handshake and no shell-quoting of model output.

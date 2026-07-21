@@ -206,6 +206,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="ssh identity (private key) file; optional, OpenSSH picks a "
              "default key / agent otherwise",
     )
+    p.add_argument("--port", type=int, default=None, help="ssh port of --ssh")
     p.add_argument("--tag", default=DEFAULT_TAG, help="image tag (default: %(default)s)")
     p.add_argument("--context", type=Path, default=CONTEXT_DIR, help="build context")
     p.add_argument("--file", type=Path, default=DOCKERFILE, help="path to Containerfile")
@@ -242,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging(logger, args.verbose, color=args.color)
 
-    host = RemoteHost(args.ssh, identity=args.identity)
+    host = RemoteHost(args.ssh, identity=args.identity, port=args.port)
     dockerfile = args.file if args.file.is_absolute() else (REPO_ROOT / args.file).resolve()
 
     check_reachable(host)

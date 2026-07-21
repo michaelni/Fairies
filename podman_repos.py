@@ -226,6 +226,7 @@ def sync_repo_to_mirror(
     pushing SHAs the winner already placed succeeds as a no-op).
     """
     ssh_command = shlex.join(host.ssh_argv())
+    # scp-style URL admits no port; host.port rides in ssh_command.
     remote_url = f"{host.ssh_dest}:{spec.mirror_path}"
     dest_ref = f"{MIRROR_REF_PREFIX}/{spec.name}"
     refspecs = [f"{spec.head_sha}:{dest_ref}", "refs/*:refs/*"]

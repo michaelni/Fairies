@@ -451,7 +451,7 @@ def parse_args() -> argparse.Namespace:
         "--shell-host",
         action="append",
         default=[],
-        metavar="[LABEL=]USER@HOST[,cpus=N][,memory=SIZE][,gpu=DEV]",
+        metavar="[LABEL=]USER@HOST[,port=N][,cpus=N][,memory=SIZE][,gpu=DEV]",
         help=(
             "Machine running review containers; repeat for more machines. "
             "The first is the default; LABEL (default x86_64) is what the "

@@ -102,12 +102,14 @@ class RemoteHost:
         "-o", "LogLevel=ERROR",
     )
     identity: str | None = None
+    port: int | None = None
 
     def ssh_argv(self) -> list[str]:
         """``ssh`` plus client options, without the destination -- also
         usable verbatim as ``GIT_SSH_COMMAND``."""
         return ["ssh", *self.ssh_opts,
-                *(["-i", self.identity] if self.identity else [])]
+                *(["-i", self.identity] if self.identity else []),
+                *(["-p", str(self.port)] if self.port else [])]
 
     def argv(self, remote_argv: Sequence[str]) -> list[str]:
         return [*self.ssh_argv(), self.ssh_dest, shlex.join(remote_argv)]
@@ -535,7 +537,7 @@ class ShellHostSpec:
 
 
 def parse_shell_host(spec: str, *, identity: str | None = None) -> ShellHostSpec:
-    """Parse ``[LABEL=]SSH_DEST[,cpus=N][,memory=SIZE][,gpu=DEVICE]``.
+    """Parse ``[LABEL=]SSH_DEST[,port=N][,cpus=N][,memory=SIZE][,gpu=DEVICE]``.
 
     A bare ``user@host`` (or ssh alias) gets the label ``x86_64``.
     Raises ValueError on unknown keys; callers turn that into a CLI error.
@@ -548,12 +550,13 @@ def parse_shell_host(spec: str, *, identity: str | None = None) -> ShellHostSpec
     options: dict[str, str] = {}
     for segment in rest:
         key, sep, value = segment.partition("=")
-        if not sep or key not in ("cpus", "memory", "gpu"):
+        if not sep or key not in ("port", "cpus", "memory", "gpu"):
             raise ValueError(f"unknown key {key!r} in shell host spec {spec!r}")
         options[key] = value
     return ShellHostSpec(
         label=label,
-        host=RemoteHost(ssh_dest, identity=identity),
+        host=RemoteHost(ssh_dest, identity=identity,
+                        port=int(options["port"]) if "port" in options else None),
         cpus=options.get("cpus", CONTAINER_CPUS),
         memory=options.get("memory", CONTAINER_MEMORY),
         gpu=options.get("gpu"),

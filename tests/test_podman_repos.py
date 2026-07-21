@@ -129,7 +129,7 @@ class RemoteProvisionTests(unittest.TestCase):
                 lr.ensure_remote_mirror(host, "fairy-mirrors/ffmpeg.git")
 
     def test_sync_pushes_head_ref_and_all_refs_with_ssh_command(self) -> None:
-        host = lc.RemoteHost("fairy@h", identity="/k/id")
+        host = lc.RemoteHost("fairy@h", identity="/k/id", port=17022)
         with mock.patch.object(lr, "git_push_refspecs") as push:
             lr.sync_repo_to_mirror(self._remote_spec(), host)
         args, kwargs = push.call_args
@@ -144,7 +144,7 @@ class RemoteProvisionTests(unittest.TestCase):
         )
         self.assertEqual(
             "ssh -o BatchMode=yes -o ServerAliveInterval=30 "
-            "-o ServerAliveCountMax=3 -o LogLevel=ERROR -i /k/id",
+            "-o ServerAliveCountMax=3 -o LogLevel=ERROR -i /k/id -p 17022",
             kwargs["ssh_command"],
         )
 

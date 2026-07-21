@@ -86,6 +86,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="ssh identity (private key) file; optional, OpenSSH picks a "
              "default key / agent otherwise",
     )
+    p.add_argument("--port", type=int, default=None, help="ssh port of --ssh")
     p.add_argument("--verbose", action="store_true", help="Enable debug logging")
     add_color_arg(p)
     return p.parse_args(argv)
@@ -107,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         dockerfile=dockerfile,
         context_dir=ctx,
         force=args.force,
-        host=RemoteHost(args.ssh, identity=args.identity),
+        host=RemoteHost(args.ssh, identity=args.identity, port=args.port),
         build_timeout_s=7200.0,
     )
     logger.info("image ready tag=%s", args.tag)

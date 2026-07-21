@@ -288,6 +288,27 @@ class MultiSideTests(WorksetDirCase):
         self.assertEqual(pipe2.actions.get_nowait(), (5, "apply"))
         self.assertTrue(pipe1.actions.empty())
 
+    def test_stats_tile_one_block_per_side(self) -> None:
+        self._write(5, workset.WorkState.REVIEWED)
+        self._write(7, workset.WorkState.QUEUED, d=self.dir2)
+        self.model.poll_workset()
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
+                              Path("."), [PR, PR2])
+        with self.model.lock:
+            wide = fairy_tui._plain(ui.stats_lines(120)).split("\n")
+            narrow = fairy_tui._plain(ui.stats_lines(20)).split("\n")
+        # Wide: both side headings land on the same tiled line (short
+        # repo display names, as in the list column).
+        self.assertTrue(any("PRs r " in ln and "PRs r2 " in ln
+                            for ln in wide), wide)
+        # Narrow: the blocks stack, one heading per line.
+        self.assertTrue(any("PRs r " in ln and "r2" not in ln
+                            for ln in narrow), narrow)
+        self.assertTrue(any("PRs r2 " in ln for ln in narrow), narrow)
+
     def _rows_text(self, sides: list[tuple[str, str]]) -> list[str]:
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
             term = blessed.Terminal(
@@ -319,6 +340,30 @@ class MultiSideTests(WorksetDirCase):
                               [("PR", "a/x"), ("PR", "b/x"), ("PR", "c/y")])
         self.assertEqual(ui._repo_disp,
                          {"a/x": "a/x", "b/x": "b/x", "c/y": "y"})
+
+    def test_visible_stats_export_matches_the_painted_pane(self) -> None:
+        # e must export what is on screen: the tiled layout depends on
+        # the pane width, which the draggable divider controls.
+        self._write(5, workset.WorkState.REVIEWED)
+        self._write(7, workset.WorkState.QUEUED, d=self.dir2)
+        self.model.poll_workset()
+        save = tempfile.TemporaryDirectory()
+        self.addCleanup(save.cleanup)
+        with mock.patch.dict(os.environ, {"COLUMNS": "160", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
+                              Path(save.name), [PR, PR2])
+        ui.focus = "tl"
+        ui.layout.fx_top = 0.15  # narrow stats pane: blocks stack on screen
+        rects = ui.layout.rects(term.width, max(3, term.height - 1))
+        with self.model.lock:
+            painted = fairy_tui._plain(
+                ui.stats_lines(ui._text_width(rects["tl"])))
+        ui.export(full=False)
+        out = next(Path(save.name).glob("fairy_tui-stats-*.txt"))
+        expected = painted.split("\n")[:ui._page() + 1]
+        self.assertEqual(out.read_text().rstrip("\n").split("\n"), expected)
 
     def test_pr_and_issue_sides_share_one_dir(self) -> None:
         self.model.workset_dirs[("issue", "o/r")] = self.dir

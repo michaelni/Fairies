@@ -575,6 +575,8 @@ def captured_output(sink: OutputSink):
         sys.stdout, sys.stderr = saved
 
 
+MIN_TEXT_W = 8       # narrowest width a pane renders text at
+EXPORT_FULL_W = 200  # E: full exports reflow at this fixed width
 PANES = {"tl": "stats", "tr": "list", "bl": "debug", "br": "message"}
 PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
@@ -728,24 +730,27 @@ class UILoop:
 
     # ---- pane content (caller holds model.lock) ----
 
-    def stats_lines(self) -> list[tui_core.StyledLine]:
+    def stats_lines(self, width: int) -> list[tui_core.StyledLine]:
+        """Full-width header, then one block per side tiled into as many
+        columns as ``width`` fits."""
         m = self.model
         items = [m.items[k] for k in m.order]
         actionable = sum(1 for it in items if it.status is Status.REVIEWED)
-        lines: list[tui_core.StyledLine] = [[
+        header: tui_core.StyledLine = [
             ("label", "elapsed "),
             ("num", f"{int(time.monotonic() - m.started)}s"),
             ("label", "   reviewed, awaiting you "),
             ("st_reviewed" if actionable else "num", str(actionable)),
-        ]]
+        ]
+        blocks: list[list[tui_core.StyledLine]] = []
         for side in self.sides:
             kind, repo = side
             group = [it for it in items if (it.kind, it.repo) == side]
             by = Counter(it.status for it in group)
             pipe = m.pipelines.get(side)
-            lines += [[], [
+            block: list[tui_core.StyledLine] = [[
                 ("kind_pr" if kind == "PR" else "kind_issue",
-                 f"{kind}s {repo + ' ' if self._repo_w else ''}"),
+                 f"{kind}s {self._repo_disp[repo] + ' ' if self._repo_w else ''}"),
                 ("num", str(len(group))),
                 ("label", " candidates, in flight "),
                 ("num", str(pipe.pending.value) if pipe else "-"),
@@ -756,25 +761,26 @@ class UILoop:
                     if by[s]:
                         row += [(f"st_{s.name.lower()}", f"{s.name.lower()}="),
                                 ("num", str(by[s])), ("text", "  ")]
-                lines.append(row)
+                block.append(row)
             stages = Counter(it.stage or "starting" for it in group
                              if it.status is Status.IN_LLM)
             if stages:
-                lines.append([("text", "  "), ("label", "llm stage: "), ("st_in_llm",
+                block.append([("text", "  "), ("label", "llm stage: "), ("st_in_llm",
                     ", ".join(f"{k}={v}" for k, v in sorted(stages.items())))])
             cls = Counter(
                 fairy.format_llm_classification(it.decision.llm_classification)
                 for it in group if it.decision)
             cls.pop("-", None)
             if cls:
-                lines.append([("text", "  "), ("label", "llm: "), ("llm",
+                block.append([("text", "  "), ("label", "llm: "), ("llm",
                     ", ".join(f"{k}={v}" for k, v in sorted(cls.items())))])
             acts = Counter(it.decision.action for it in group
                            if it.status is Status.APPLIED and it.decision)
             if acts:
-                lines.append([("text", "  "), ("label", "applied: "), ("st_applied",
+                block.append([("text", "  "), ("label", "applied: "), ("st_applied",
                     ", ".join(f"{k}={v}" for k, v in sorted(acts.items())))])
-        return lines
+            blocks.append(block)
+        return [header, []] + tui_core.tile_blocks(blocks, width)
 
     def list_rows(self) -> list:
         m = self.model
@@ -859,11 +865,12 @@ class UILoop:
                                 max(0, len(self.ring) - (rects["bl"].h - 1)))
         with self.model.lock:
             content: dict[str, list] = {
-                "tl": self._scrolled("tl", self.stats_lines(), rects["tl"].h - 1),
+                "tl": self._scrolled("tl", self.stats_lines(self._text_width(rects["tl"])),
+                                     rects["tl"].h - 1),
                 "tr": self._list_window(self.list_rows(), rects["tr"].h - 1),
                 "bl": [(self._log_style(tag), text) for tag, text in
                        self.ring.view(self.scroll["bl"], rects["bl"].h - 1)],
-                "br": self._scrolled("br", self.detail_lines(max(8, rects["br"].w - 1)),
+                "br": self._scrolled("br", self.detail_lines(self._text_width(rects["br"])),
                                      rects["br"].h - 1),
             }
             nact = sum(1 for it in self.model.items.values()
@@ -896,6 +903,10 @@ class UILoop:
         if level >= logging.ERROR:
             return "log_err"
         return "log_warn" if level >= logging.WARNING else "log_debug"
+
+    @staticmethod
+    def _text_width(rect: tui_core.Rect) -> int:
+        return max(MIN_TEXT_W, rect.w - 1)
 
     def _scrolled(self, pane: str, lines: list, inner_h: int) -> list:
         self.scroll[pane] = max(0, min(self.scroll[pane], len(lines) - inner_h))
@@ -1145,13 +1156,18 @@ class UILoop:
     def export(self, full: bool) -> None:
         pane = self.focus
         inner_h = self._page() + 1
+        # The visible export must reproduce the pane as painted: same
+        # divider-dependent width, or the tiling/wrapping (and thus the
+        # scroll window) would differ from the screen.
+        rects = self.layout.rects(self.term.width, max(3, self.term.height - 1))
         with self.model.lock:
             if pane == "bl":
                 text = (self.ring.all_text() if full
                         else "\n".join(t for _, t in
                                        self.ring.view(self.scroll["bl"], inner_h)))
             elif pane == "tl":
-                lines = self.stats_lines()
+                lines = self.stats_lines(
+                    EXPORT_FULL_W if full else self._text_width(rects["tl"]))
                 text = _plain(lines if full else self._scrolled("tl", lines, inner_h))
             elif pane == "tr":
                 rows = self.list_rows()
@@ -1159,7 +1175,8 @@ class UILoop:
                     rows = self._list_window(rows, inner_h)
                 text = _plain(rows)
             else:
-                lines = self.detail_lines(200 if full else max(8, self.term.width // 2))
+                lines = self.detail_lines(
+                    EXPORT_FULL_W if full else self._text_width(rects["br"]))
                 if not full:
                     lines = self._scrolled("br", lines, inner_h)
                 text = _plain(lines)

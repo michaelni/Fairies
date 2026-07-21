@@ -67,12 +67,15 @@ adding, removing or reordering them is an edit, not a restructuring.
 
 ### Interactive TUI
 
-`fairy_tui.py` (requires `pip install blessed`) runs the PR and the issue
-pipeline in one 4-pane terminal UI: statistics, the PR/issue list, the
+`fairy_tui.py` (requires `pip install blessed`) runs PR and issue
+pipelines in one 4-pane terminal UI: statistics, the PR/issue list, the
 captured debug output, and the rendered review message with its label
-changes. Pass each side its full argument string:
+changes. Pass each side its full argument string; repeat the flags to
+run several repositories at once (give each concurrent side its own
+`--cache` and `--debug-response-dir`, as with separate launchers):
 
     ./fairy_tui.py --pr-args '<fairy.py args>' --issue-args '<issue_fairy.py args>' \
+        --pr-args '<fairy.py args for another repo>' \
         --log-file fairy_tui.log
 
 The list is a table over the persistent work files: select any row and

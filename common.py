@@ -117,6 +117,11 @@ def dump_response_debug_artifacts(
 
 
 class _ThreadPrefixFilter(logging.Filter):
+    """Maps thread names to short log prefixes. A ``~tag`` suffix on the
+    thread name (the side's owner/repo when several run in one process)
+    is carried into the prefix, so interleaved pipeline lines stay
+    attributable to their repo."""
+
     _PREFIXES = {
         "MainThread": "M ",
         "pr-prepare": "P ",
@@ -124,7 +129,9 @@ class _ThreadPrefixFilter(logging.Filter):
     }
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.thread_prefix = self._PREFIXES.get(record.threadName, "T ")
+        base, _, tag = record.threadName.partition("~")
+        prefix = self._PREFIXES.get(base, "T ")
+        record.thread_prefix = f"{prefix.rstrip()} {tag} " if tag else prefix
         return True
 
 

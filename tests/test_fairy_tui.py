@@ -22,6 +22,10 @@ import tui_core  # noqa: E402
 import workset  # noqa: E402
 
 
+PR = ("PR", "o/r")
+PR2 = ("PR", "o/r2")
+
+
 def decision(n: int, action: str = "comment", msg: str = "msg") -> fairy.Decision:
     return fairy.Decision(n, "t", "a", "-", action, "llm", None, "reply", msg)
 
@@ -36,19 +40,19 @@ class ModelTests(unittest.TestCase):
         # The controller never blocks: decide records the decision and
         # returns "hold"; acting is the operator's move on the table.
         model = fairy_tui.Model()
-        model.add_candidates("PR", [{"number": 7, "title": "t", "html_url": "u"}])
-        ui = fairy_tui.SideUI("PR", model, set())
+        model.add_candidates(PR, [{"number": 7, "title": "t", "html_url": "u"}])
+        ui = fairy_tui.SideUI(PR, model, set())
         self.assertEqual(ui.decide(None, decision(7), "u"), "hold")
-        item = model.items[("PR", 7)]
+        item = model.items[(*PR, 7)]
         self.assertIsNotNone(item.decision)
         self.assertIs(item.status, fairy_tui.Status.PENDING)  # file drives status
 
     def test_relevant_filter_hides_gate_skips(self) -> None:
         model = fairy_tui.Model()
-        model.add_candidates("PR", [{"number": 1, "title": "a"},
+        model.add_candidates(PR, [{"number": 1, "title": "a"},
                                     {"number": 2, "title": "b"}])
-        model.finish("PR", decision(1))                       # actionable
-        model.finish("PR", decision(2, action="skip", msg=""))  # gate skip
+        model.finish(PR, decision(1))                       # actionable
+        model.finish(PR, decision(2, action="skip", msg=""))  # gate skip
         with model.lock:
             self.assertEqual([it.number for it in model.visible()], [1])
             model.show_all = True
@@ -56,14 +60,14 @@ class ModelTests(unittest.TestCase):
 
     def test_finish_marks_only_non_actionable_done(self) -> None:
         model = fairy_tui.Model()
-        model.add_candidates("PR", [{"number": 1, "title": "a"},
+        model.add_candidates(PR, [{"number": 1, "title": "a"},
                                     {"number": 2, "title": "b"}])
-        model.finish("PR", decision(1, action="skip", msg=""))  # gate skip
-        model.finish("PR", decision(2))                         # actionable
-        self.assertIs(model.items[("PR", 1)].status, fairy_tui.Status.DONE)
+        model.finish(PR, decision(1, action="skip", msg=""))  # gate skip
+        model.finish(PR, decision(2))                         # actionable
+        self.assertIs(model.items[(*PR, 1)].status, fairy_tui.Status.DONE)
         # Actionable items keep their file-driven status so the operator
         # can still act on the row.
-        self.assertIs(model.items[("PR", 2)].status, fairy_tui.Status.PENDING)
+        self.assertIs(model.items[(*PR, 2)].status, fairy_tui.Status.PENDING)
 
 
 class WorksetDirCase(unittest.TestCase):
@@ -74,16 +78,17 @@ class WorksetDirCase(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.dir = Path(self._tmp.name)
         self.model = fairy_tui.Model()
-        self.model.workset_dirs["PR"] = self.dir
+        self.model.workset_dirs[PR] = self.dir
 
     def _write(self, number: int, state: workset.WorkState,
                message: str = "m", classification: str = "reply",
                labels: list[workset.LabelChange] | None = None,
-               mtime: float | None = None) -> Path:
-        path = self.dir / f"pr-{number}.json"
+               mtime: float | None = None, d: Path | None = None,
+               kind: str = "pr") -> Path:
+        path = (d or self.dir) / f"{kind}-{number}.json"
         now = "2026-07-20T00:00:00+00:00"
         workset.save_item(path, workset.WorkItem(
-            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            kind=kind, forge_type="gitea", account="", owner="o", repo="r",
             number=number, state=state, created_at=now, state_changed_at=now,
             title="from disk", html_url="u",
             review=workset.ReviewResult(
@@ -102,7 +107,7 @@ class WorksetPollTests(WorksetDirCase):
     def test_invalid_file_flags_the_row_and_recovers(self) -> None:
         path = self._write(5, workset.WorkState.REVIEWED, mtime=100.0)
         self.model.poll_workset()
-        item = self.model.items[("PR", 5)]
+        item = self.model.items[(*PR, 5)]
         self.assertIs(item.status, fairy_tui.Status.REVIEWED)
         path.write_text("{ broken", encoding="utf-8")
         os.utime(path, (200.0, 200.0))
@@ -118,10 +123,10 @@ class WorksetPollTests(WorksetDirCase):
         self.assertEqual(item.ws_error, "")
 
     def test_states_map_to_status_and_stage(self) -> None:
-        self.model.add_candidates("PR", [{"number": 5, "title": "t"}])
+        self.model.add_candidates(PR, [{"number": 5, "title": "t"}])
         self._write(5, workset.WorkState.REVIEW, mtime=100.0)
         self.model.poll_workset()
-        item = self.model.items[("PR", 5)]
+        item = self.model.items[(*PR, 5)]
         self.assertIs(item.status, fairy_tui.Status.IN_LLM)
         self.assertEqual(item.stage, "review")
         self._write(5, workset.WorkState.REVIEWED)
@@ -132,7 +137,7 @@ class WorksetPollTests(WorksetDirCase):
     def test_unknown_disk_item_is_added_and_relevant(self) -> None:
         self._write(9, workset.WorkState.REVIEWED)
         self.model.poll_workset()
-        item = self.model.items[("PR", 9)]
+        item = self.model.items[(*PR, 9)]
         self.assertEqual(item.title, "from disk")
         self.assertIs(item.status, fairy_tui.Status.REVIEWED)
         with self.model.lock:
@@ -148,27 +153,27 @@ class WorksetPollTests(WorksetDirCase):
         self._write(6, workset.WorkState.REVIEWED, classification="skip",
                     labels=[workset.LabelChange(label="needs docs", op="add")])
         self.model.poll_workset()
-        self.assertIs(self.model.items[("PR", 5)].status, fairy_tui.Status.DONE)
-        self.assertIs(self.model.items[("PR", 6)].status,
+        self.assertIs(self.model.items[(*PR, 5)].status, fairy_tui.Status.DONE)
+        self.assertIs(self.model.items[(*PR, 6)].status,
                       fairy_tui.Status.REVIEWED)
 
     def test_deleted_file_cancels_in_pipeline_item(self) -> None:
         path = self._write(5, workset.WorkState.QUEUED)
         self.model.poll_workset()
-        self.assertIs(self.model.items[("PR", 5)].status, fairy_tui.Status.QUEUED)
+        self.assertIs(self.model.items[(*PR, 5)].status, fairy_tui.Status.QUEUED)
         path.unlink()
         self.model.poll_workset()
-        self.assertIs(self.model.items[("PR", 5)].status,
+        self.assertIs(self.model.items[(*PR, 5)].status,
                       fairy_tui.Status.CANCELLED)
 
     def test_operator_states_are_not_clobbered(self) -> None:
         # APPLIED (just posted this run) must not be downgraded by a poll
         # that still sees the file in REVIEWED for a moment.
-        self.model.add_candidates("PR", [{"number": 5, "title": "t"}])
-        self.model.items[("PR", 5)].status = fairy_tui.Status.APPLIED
+        self.model.add_candidates(PR, [{"number": 5, "title": "t"}])
+        self.model.items[(*PR, 5)].status = fairy_tui.Status.APPLIED
         self._write(5, workset.WorkState.REVIEWED)
         self.model.poll_workset()
-        self.assertIs(self.model.items[("PR", 5)].status,
+        self.assertIs(self.model.items[(*PR, 5)].status,
                       fairy_tui.Status.APPLIED)
 
 
@@ -179,8 +184,8 @@ class ActTests(WorksetDirCase):
         super().setUp()
         self.pipe = make_pipe()
         with self.model.lock:
-            self.model.pipelines["PR"] = self.pipe
-            self.model.forced["PR"] = set()
+            self.model.pipelines[PR] = self.pipe
+            self.model.forced[PR] = set()
 
     def _actions(self) -> list:
         out = []
@@ -197,7 +202,7 @@ class ActTests(WorksetDirCase):
         self.assertEqual(self._actions(), [(5, "apply")])
 
     def test_apply_without_reviewed_file_is_refused(self) -> None:
-        self.model.add_candidates("PR", [{"number": 5, "title": "t"}])
+        self.model.add_candidates(PR, [{"number": 5, "title": "t"}])
         self.model.act("apply")
         self.assertEqual(self._actions(), [])
 
@@ -227,17 +232,17 @@ class ActTests(WorksetDirCase):
         self._write(2, workset.WorkState.REVIEWED)
         self.model.poll_workset()
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), ("PR", 1))
+            self.assertEqual(self.model._cursor_key(), (*PR, 1))
         self.model.act("apply")
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), ("PR", 2))
+            self.assertEqual(self.model._cursor_key(), (*PR, 2))
 
     def test_x_cancels_pending_via_set_and_reviewed_via_action(self) -> None:
-        self.model.add_candidates("PR", [{"number": 1, "title": "t"}])
+        self.model.add_candidates(PR, [{"number": 1, "title": "t"}])
         self.model.show_all = True  # pending rows live in the "all" view
         self.model.cancel()
         self.assertIn(1, self.pipe.cancelled)
-        self.assertIs(self.model.items[("PR", 1)].status,
+        self.assertIs(self.model.items[(*PR, 1)].status,
                       fairy_tui.Status.CANCELLED)
         self._write(5, workset.WorkState.REVIEWED)
         self.model.poll_workset()
@@ -245,6 +250,77 @@ class ActTests(WorksetDirCase):
             self.model.cursor = [it.number for it in self.model.visible()].index(5)
         self.model.cancel()
         self.assertEqual(self._actions(), [(5, "cancel")])
+
+
+class MultiSideTests(WorksetDirCase):
+    """N sides: items are keyed per repo and actions stay side-local."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        tmp2 = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp2.cleanup)
+        self.dir2 = Path(tmp2.name)
+        self.model.workset_dirs[PR2] = self.dir2
+
+    def test_same_number_in_two_repos_is_two_rows(self) -> None:
+        self._write(5, workset.WorkState.REVIEWED)
+        self._write(5, workset.WorkState.QUEUED, d=self.dir2)
+        self.model.poll_workset()
+        self.assertIs(self.model.items[(*PR, 5)].status,
+                      fairy_tui.Status.REVIEWED)
+        self.assertIs(self.model.items[(*PR2, 5)].status,
+                      fairy_tui.Status.QUEUED)
+
+    def test_act_routes_to_the_cursor_rows_side(self) -> None:
+        pipe1, pipe2 = make_pipe(), make_pipe()
+        with self.model.lock:
+            self.model.pipelines[PR] = pipe1
+            self.model.pipelines[PR2] = pipe2
+            self.model.forced[PR] = set()
+            self.model.forced[PR2] = set()
+        self._write(5, workset.WorkState.REVIEWED)
+        self._write(5, workset.WorkState.REVIEWED, d=self.dir2)
+        self.model.poll_workset()
+        with self.model.lock:
+            keys = [(it.kind, it.repo, it.number) for it in self.model.visible()]
+            self.model.cursor = keys.index((*PR2, 5))
+        self.model.act("apply")
+        self.assertEqual(pipe2.actions.get_nowait(), (5, "apply"))
+        self.assertTrue(pipe1.actions.empty())
+
+    def test_pr_and_issue_sides_share_one_dir(self) -> None:
+        self.model.workset_dirs[("issue", "o/r")] = self.dir
+        self._write(5, workset.WorkState.REVIEWED)
+        self._write(5, workset.WorkState.QUEUED, kind="issue")
+        self.model.poll_workset()
+        self.assertIs(self.model.items[(*PR, 5)].status,
+                      fairy_tui.Status.REVIEWED)
+        self.assertIs(self.model.items[("issue", "o/r", 5)].status,
+                      fairy_tui.Status.QUEUED)
+
+
+class SideBuildTests(unittest.TestCase):
+    def test_repeated_side_args_build_one_side_each(self) -> None:
+        args = fairy_tui.parse_args(
+            ["--pr-args", "--owner a --repo x",
+             "--pr-args", "--owner a --repo y",
+             "--issue-args", "--owner a --repo x"])
+        self.assertEqual([s.key for s in fairy_tui.build_sides(args)],
+                         [("PR", "a/x"), ("PR", "a/y"), ("issue", "a/x")])
+
+    def test_duplicate_side_is_rejected(self) -> None:
+        args = fairy_tui.parse_args(["--pr-args", "--owner a --repo x",
+                                     "--pr-args", "--owner a --repo x"])
+        with self.assertRaises(SystemExit):
+            fairy_tui.build_sides(args)
+
+    def test_case_variant_duplicate_side_is_rejected(self) -> None:
+        # The forge routes owner/repo case-insensitively, so a case slip
+        # must not slip past the duplicate check as a "different" repo.
+        args = fairy_tui.parse_args(["--pr-args", "--owner FFmpeg --repo web",
+                                     "--pr-args", "--owner ffmpeg --repo Web"])
+        with self.assertRaises(SystemExit):
+            fairy_tui.build_sides(args)
 
 
 class DetailFromFileTests(WorksetDirCase):
@@ -255,7 +331,7 @@ class DetailFromFileTests(WorksetDirCase):
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
             term = blessed.Terminal(
                 kind="xterm-256color", stream=io.StringIO(), force_styling=True)
-        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(), Path("."), ["PR"])
+        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(), Path("."), [PR])
         with self.model.lock:
             return "\n".join(
                 "".join(seg[1] for seg in line) for line in ui.detail_lines(100))
@@ -298,7 +374,7 @@ class EditReviewTests(unittest.TestCase):
             review=workset.ReviewResult(classification="reply", message="original"),
         ))
         model = fairy_tui.Model()
-        model.workset_dirs["PR"] = d
+        model.workset_dirs[PR] = d
         model.poll_workset()
 
         def fake_call(cmd, **kw):
@@ -309,7 +385,7 @@ class EditReviewTests(unittest.TestCase):
                                           "EDITOR": "myeditor"}):
             term = blessed.Terminal(
                 kind="xterm-256color", stream=io.StringIO(), force_styling=True)
-            ui = fairy_tui.UILoop(term, model, tui_core.RingBuffer(), Path("."), ["PR"])
+            ui = fairy_tui.UILoop(term, model, tui_core.RingBuffer(), Path("."), [PR])
             with mock.patch.object(fairy_tui.subprocess, "call",
                                    side_effect=fake_call) as call:
                 ui.edit_review()
@@ -328,27 +404,27 @@ class FilterToggleTests(unittest.TestCase):
                 kind="xterm-256color", stream=io.StringIO(), force_styling=True)
             model = fairy_tui.Model()
             model.add_candidates(
-                "PR", [{"number": n, "title": "t"} for n in (1, 2, 3)])
-            model.finish("PR", decision(1, action="skip", msg=""))
-            model.finish("PR", decision(2))                       # actionable
-            model.finish("PR", decision(3, action="skip", msg=""))
+                PR, [{"number": n, "title": "t"} for n in (1, 2, 3)])
+            model.finish(PR, decision(1, action="skip", msg=""))
+            model.finish(PR, decision(2))                       # actionable
+            model.finish(PR, decision(3, action="skip", msg=""))
             model.show_all = True
             ui = fairy_tui.UILoop(
-                term, model, tui_core.RingBuffer(), Path("."), ["PR"])
+                term, model, tui_core.RingBuffer(), Path("."), [PR])
 
             model.cursor = 1                 # on #2 in the "all" view
             ui.dispatch(Key("a"))            # -> relevant view: only #2
             self.assertEqual(model.cursor, 0)
             with model.lock:
-                self.assertEqual(model._cursor_key(), ("PR", 2))
+                self.assertEqual(model._cursor_key(), (*PR, 2))
             ui.dispatch(Key("a"))            # back to "all": still on #2
             with model.lock:
-                self.assertEqual(model._cursor_key(), ("PR", 2))
+                self.assertEqual(model._cursor_key(), (*PR, 2))
 
             model.cursor = 2                 # on filtered-out #3
             ui.dispatch(Key("a"))            # nearest preceding visible: #2
             with model.lock:
-                self.assertEqual(model._cursor_key(), ("PR", 2))
+                self.assertEqual(model._cursor_key(), (*PR, 2))
 
 
 class PaintSmokeTests(unittest.TestCase):
@@ -358,12 +434,12 @@ class PaintSmokeTests(unittest.TestCase):
             term = blessed.Terminal(
                 kind="xterm-256color", stream=stream, force_styling=True)
             model = fairy_tui.Model()
-            model.add_candidates("PR", [{"number": 1, "title": "hello title"}])
-            model.finish("PR", decision(1, msg="# Head\n**bold** and `code`"))
+            model.add_candidates(PR, [{"number": 1, "title": "hello title"}])
+            model.finish(PR, decision(1, msg="# Head\n**bold** and `code`"))
             ring = tui_core.RingBuffer()
             ring.append("a debug line")
             ring.append("a warning line", tag=fairy_tui.logging.WARNING)
-            ui = fairy_tui.UILoop(term, model, ring, Path("."), ["PR"])
+            ui = fairy_tui.UILoop(term, model, ring, Path("."), [PR])
             ui.paint()
             out = stream.getvalue()
         for expected in ("stats", "debug", "message", "#1", "a debug line", "Head"):
@@ -385,11 +461,11 @@ class PaintSmokeTests(unittest.TestCase):
                 kind="xterm-256color", stream=stream, force_styling=True)
             model = fairy_tui.Model()
             model.add_candidates(
-                "PR", [{"number": 2, "title": "evil\x1b]0;pwned\x07title"}])
-            model.finish("PR", decision(2, msg="body\x1b]0;pwned\x07text"))
+                PR, [{"number": 2, "title": "evil\x1b]0;pwned\x07title"}])
+            model.finish(PR, decision(2, msg="body\x1b]0;pwned\x07text"))
             ring = tui_core.RingBuffer()
             ring.append("wrapper says \x1b]0;pwned\x07hi")
-            ui = fairy_tui.UILoop(term, model, ring, Path("."), ["PR"])
+            ui = fairy_tui.UILoop(term, model, ring, Path("."), [PR])
             ui.paint()
             out = stream.getvalue()
         self.assertNotIn("\x1b]0;", out)
@@ -404,7 +480,7 @@ class PaintSmokeTests(unittest.TestCase):
             for i in range(5):
                 ring.append(f"line{i}")
             ui = fairy_tui.UILoop(
-                term, fairy_tui.Model(), ring, Path("."), ["PR"])
+                term, fairy_tui.Model(), ring, Path("."), [PR])
             ui.scroll["bl"] = 10_000
             ui.paint()
             out = stream.getvalue()
@@ -419,7 +495,7 @@ class PaintSmokeTests(unittest.TestCase):
             term = blessed.Terminal(
                 kind="xterm-256color", stream=io.StringIO(), force_styling=True)
             ui = fairy_tui.UILoop(term, fairy_tui.Model(),
-                                  tui_core.RingBuffer(), Path("."), ["PR"])
+                                  tui_core.RingBuffer(), Path("."), [PR])
             buf: list = []
             ui._blit(buf, tui_core.Rect(10, 0, 20, 3), "br", ["https://x/y"])
         self.assertTrue(buf[1].endswith(" "))          # gutter after divider
@@ -431,7 +507,7 @@ class PaintSmokeTests(unittest.TestCase):
             term = blessed.Terminal(
                 kind="xterm-256color", stream=stream, force_styling=True)
             ui = fairy_tui.UILoop(term, fairy_tui.Model(),
-                                  tui_core.RingBuffer(), Path("."), ["PR"])
+                                  tui_core.RingBuffer(), Path("."), [PR])
             ui._clip_cmd = None  # pin the terminal-escape fallback path
             buf: list = []
             # pane narrower than the URL: the copy must still be whole
@@ -451,7 +527,7 @@ class PaintSmokeTests(unittest.TestCase):
             term = blessed.Terminal(
                 kind="xterm-256color", stream=stream, force_styling=True)
             ui = fairy_tui.UILoop(term, fairy_tui.Model(),
-                                  tui_core.RingBuffer(), Path("."), ["PR"])
+                                  tui_core.RingBuffer(), Path("."), [PR])
             ui._clip_cmd = ["xclip", "-selection", "primary"]
             buf: list = []
             ui._blit(buf, tui_core.Rect(10, 0, 20, 4), "br", ["see 5144acb now"])
@@ -476,7 +552,7 @@ class PaintSmokeTests(unittest.TestCase):
             model = fairy_tui.Model()
             ui = fairy_tui.UILoop(
                 term, model, tui_core.RingBuffer(),
-                Path("/proc/no-such-dir"), ["PR"])
+                Path("/proc/no-such-dir"), [PR])
             with self.assertLogs(fairy_tui.logger, level="ERROR") as logs:
                 ui.export(full=True)  # must not raise
         self.assertIn("export", logs.output[0])

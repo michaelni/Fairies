@@ -181,5 +181,23 @@ class CustomHandlersTests(unittest.TestCase):
         self.assertEqual(records[0].thread_prefix, "M ")
 
 
+class ThreadPrefixTests(unittest.TestCase):
+    def test_side_tag_lands_in_the_prefix(self) -> None:
+        # N sides in one process spawn identically named workers; the
+        # ~owner/repo tag is what keeps their log lines attributable.
+        f = common._ThreadPrefixFilter()
+        rec = logging.LogRecord("x", logging.INFO, "f", 1, "m", (), None)
+        for name, expected in (
+            ("MainThread", "M "),
+            ("pr-prepare", "P "),
+            ("pr-prepare~FFmpeg/web", "P FFmpeg/web "),
+            ("pr-llm~michaelni/Fairies", "L michaelni/Fairies "),
+            ("PR-controller~FFmpeg/web", "T FFmpeg/web "),
+        ):
+            rec.threadName = name
+            f.filter(rec)
+            self.assertEqual(rec.thread_prefix, expected, name)
+
+
 if __name__ == "__main__":
     unittest.main()

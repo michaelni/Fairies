@@ -17,6 +17,8 @@ import workset
 
 def make_args(**overrides: object) -> argparse.Namespace:
     args = argparse.Namespace(
+        owner="o",
+        repo="r",
         limit=0,
         llm_parallelism=1,
         cache="/nonexistent",

@@ -30,10 +30,11 @@
 
 Blessed 4-pane operator UI over the fairy PR and issue pipelines.
 
-One tool for both sides: ``--pr-args``/``--issue-args`` each take the
-full argument string of fairy.py / issue_fairy.py; each enabled side
-runs run_reviews() on its own controller thread and talks to the screen
-through a fairy.ReviewUI adapter. Panes: stats (top left), PR/issue
+One tool for all sides: ``--pr-args``/``--issue-args`` each take the
+full argument string of fairy.py / issue_fairy.py and repeat for
+additional repos; every side runs run_reviews() on its own controller
+thread and talks to the screen through a fairy.ReviewUI adapter.
+Panes: stats (top left), PR/issue
 list (top right), captured debug output (bottom left), rendered
 review message + label changes (bottom right). Dividers move with the
 mouse.
@@ -106,6 +107,7 @@ class Status(IntEnum):
 @dataclass
 class Item:
     kind: str            # "PR" | "issue"
+    repo: str            # side repo label, "owner/repo"
     number: int
     api: dict            # forge ApiObject from the candidate listing
     title: str
@@ -159,16 +161,19 @@ class Pipeline:
 class Model:
     """Shared state between the controller threads (via SideUI) and the
     UI loop. Every mutation happens under ``lock``; ``dirty`` wakes the
-    painter."""
+    painter.
+
+    A side is ``(kind, "owner/repo")``; items are keyed by
+    ``(kind, repo, number)`` -- two repos can share a PR number."""
 
     def __init__(self) -> None:
         self.lock = Lock()
         self.dirty = Event()
-        self.items: dict[tuple[str, int], Item] = {}
-        self.order: list[tuple[str, int]] = []
-        self.pipelines: dict[str, Pipeline] = {}
-        self.forced: dict[str, set[int]] = {}
-        self.workset_dirs: dict[str, Path] = {}  # kind -> per-repo dir
+        self.items: dict[tuple[str, str, int], Item] = {}
+        self.order: list[tuple[str, str, int]] = []
+        self.pipelines: dict[tuple[str, str], Pipeline] = {}
+        self.forced: dict[tuple[str, str], set[int]] = {}
+        self.workset_dirs: dict[tuple[str, str], Path] = {}  # side -> per-repo dir
         self._ws_mtimes: dict[Path, float] = {}  # poll_workset change detection
         self.show_all = False
         self.cursor = 0
@@ -177,42 +182,45 @@ class Model:
 
     # ---- controller-thread side (called through SideUI) ----
 
-    def add_candidates(self, kind: str, apis: list[dict]) -> None:
+    def add_candidates(self, side: tuple[str, str], apis: list[dict]) -> None:
+        kind, repo = side
         with self.lock:
             for api in apis:
                 number = api.get("number")
                 if not str(number).isdigit():
                     continue
-                key = (kind, int(number))
+                key = (kind, repo, int(number))
                 if key in self.items:
                     continue
                 url = api.get("html_url")
                 self.items[key] = Item(
-                    kind, int(number), api, str(api.get("title") or ""),
+                    kind, repo, int(number), api, str(api.get("title") or ""),
                     url=url if isinstance(url, str) else "",
                 )
                 self.order.append(key)
         self.dirty.set()
 
-    def attach_pipeline(self, kind: str, pipe: Pipeline, forced: set[int]) -> None:
+    def attach_pipeline(self, side: tuple[str, str], pipe: Pipeline,
+                        forced: set[int]) -> None:
         with self.lock:
-            self.pipelines[kind] = pipe
-            self.forced[kind] = forced
+            self.pipelines[side] = pipe
+            self.forced[side] = forced
         self.dirty.set()
 
-    def note_reviewed(self, kind: str, decision: fairy.Decision, url: str) -> None:
+    def note_reviewed(self, side: tuple[str, str], decision: fairy.Decision,
+                      url: str) -> None:
         """A decision arrived; record it for the detail pane. The row's
         status comes from the workset file (poll), the operator acts on
         it whenever they choose."""
         with self.lock:
-            item = self._ensure(kind, decision)
+            item = self._ensure(side, decision)
             item.decision = decision
             item.url = url or item.url
         self.dirty.set()
 
-    def finish(self, kind: str, decision: fairy.Decision) -> None:
+    def finish(self, side: tuple[str, str], decision: fairy.Decision) -> None:
         with self.lock:
-            item = self._ensure(kind, decision)
+            item = self._ensure(side, decision)
             item.decision = decision
             actionable = (decision.action in fairy.ACTIONABLE_DECISIONS
                           or bool(decision.label_changes))
@@ -222,9 +230,10 @@ class Model:
                 item.status = Status.DONE
         self.dirty.set()
 
-    def workset_file(self, kind: str, number: int) -> Path | None:
-        d = self.workset_dirs.get(kind)
-        return workset.item_path_in(d, _KIND_FILE[kind], number) if d else None
+    def workset_file(self, item: Item) -> Path | None:
+        d = self.workset_dirs.get((item.kind, item.repo))
+        return (workset.item_path_in(d, _KIND_FILE[item.kind], item.number)
+                if d else None)
 
     def poll_workset(self) -> None:
         """Refresh item state from the on-disk work files (1 Hz, UI loop).
@@ -233,9 +242,9 @@ class Model:
         and wrapper stage transitions, items left behind by a previous or
         killed run, and external edits/deletions by the operator. File IO
         happens outside ``lock``."""
-        changed: list[tuple[str, int, workset.WorkItem | None, str]] = []
-        removed: list[tuple[str, int]] = []
-        for kind, d in self.workset_dirs.items():
+        changed: list[tuple[str, str, int, workset.WorkItem | None, str]] = []
+        removed: list[tuple[str, str, int]] = []
+        for (kind, repo), d in self.workset_dirs.items():
             prefix = f"{_KIND_FILE[kind]}-"
             try:
                 paths = set(d.glob(prefix + "*.json"))
@@ -247,7 +256,7 @@ class Model:
                 del self._ws_mtimes[path]
                 number = path.stem.removeprefix(prefix)
                 if number.isdigit():
-                    removed.append((kind, int(number)))
+                    removed.append((kind, repo, int(number)))
             for path in paths:
                 try:
                     mtime = path.stat().st_mtime
@@ -258,22 +267,22 @@ class Model:
                 self._ws_mtimes[path] = mtime
                 ws, error = workset.load_item_result(path)
                 if ws is not None:
-                    changed.append((kind, ws.number, ws, ""))
+                    changed.append((kind, repo, ws.number, ws, ""))
                 elif error is not None:
                     number = path.stem.removeprefix(prefix)
                     if number.isdigit():
-                        changed.append((kind, int(number), None, error))
+                        changed.append((kind, repo, int(number), None, error))
         if not changed and not removed:
             return
         with self.lock:
             # Deterministic row order for newly discovered items: the
             # scan iterates a set of paths, which has no stable order.
-            for kind, number, ws, error in sorted(
-                    changed, key=lambda c: (c[0], c[1])):
-                key = (kind, number)
+            for kind, repo, number, ws, error in sorted(
+                    changed, key=lambda c: (c[0], c[1], c[2])):
+                key = (kind, repo, number)
                 item = self.items.get(key)
                 if item is None:
-                    item = Item(kind, number, {}, ws.title if ws else "")
+                    item = Item(kind, repo, number, {}, ws.title if ws else "")
                     self.items[key] = item
                     self.order.append(key)
                 item.ws_error = error
@@ -293,8 +302,8 @@ class Model:
                     if status is Status.REVIEWED and not _ws_actionable(ws):
                         status = Status.DONE
                     item.status = status
-            for kind, number in removed:
-                item = self.items.get((kind, number))
+            for key in removed:
+                item = self.items.get(key)
                 if item is not None and item.status in _IN_PIPELINE:
                     item.status = Status.CANCELLED
                     item.stage = ""
@@ -319,36 +328,38 @@ class Model:
         with self.lock:
             key = self._cursor_key()
             item = self.items.get(key) if key else None
-            pipe = self.pipelines.get(item.kind) if item else None
+            pipe = self.pipelines.get((item.kind, item.repo)) if item else None
             if item is None or pipe is None:
                 return
             if action == "rerun" and item.status in (Status.PENDING, Status.QUEUED,
                                                      Status.IN_LLM):
-                logger.info("%s #%s is already being evaluated", item.kind, item.number)
+                logger.info("%s %s#%s is already being evaluated",
+                            item.kind, item.repo, item.number)
                 return
             if action in ("apply", "skip", "cancel") and (
                 item.ws is None
                 or item.ws.state not in (workset.WorkState.REVIEWED,
                                          workset.WorkState.ERROR)
             ):
-                logger.info("%s #%s has no reviewed workset file to %s",
-                            item.kind, item.number, action)
+                logger.info("%s %s#%s has no reviewed workset file to %s",
+                            item.kind, item.repo, item.number, action)
                 return
             if action == "apply" and not _ws_actionable(item.ws):
                 logger.info(
-                    "%s #%s has nothing to post (LLM verdict: %s)",
-                    item.kind, item.number,
+                    "%s %s#%s has nothing to post (LLM verdict: %s)",
+                    item.kind, item.repo, item.number,
                     item.ws.review.classification if item.ws.review else "-",
                 )
                 return
-            logger.info("requested %s for %s #%s", action, item.kind, item.number)
+            logger.info("requested %s for %s %s#%s",
+                        action, item.kind, item.repo, item.number)
             pipe.actions.put((item.number, action))
             # Jump to the next reviewed row waiting for the operator: the
             # first at/after the cursor, wrapping to the first overall.
-            remaining = {(it.kind, it.number) for it in self.visible()
+            remaining = {(it.kind, it.repo, it.number) for it in self.visible()
                          if it.status is Status.REVIEWED} - {key}
             if remaining:
-                keys = [(it.kind, it.number) for it in self.visible()]
+                keys = [(it.kind, it.repo, it.number) for it in self.visible()]
                 nxt = next((k for k in keys[self.cursor:] if k in remaining),
                            next((k for k in keys if k in remaining), None))
                 if nxt is not None:
@@ -360,21 +371,24 @@ class Model:
         with self.lock:
             key = self._cursor_key()
             item = self.items.get(key) if key else None
-            pipe = self.pipelines.get(item.kind) if item else None
+            pipe = self.pipelines.get((item.kind, item.repo)) if item else None
             if item is None or pipe is None:
                 return
             if item.status in (Status.PENDING, Status.QUEUED, Status.IN_LLM):
-                logger.info("%s #%s is already in flight", item.kind, item.number)
+                logger.info("%s %s#%s is already in flight",
+                            item.kind, item.repo, item.number)
                 return
             if not item.api:
-                logger.info("%s #%s has no fetched data to re-queue", item.kind, item.number)
+                logger.info("%s %s#%s has no fetched data to re-queue",
+                            item.kind, item.repo, item.number)
                 return
-            self.forced[item.kind].add(item.number)
+            self.forced[(item.kind, item.repo)].add(item.number)
             pipe.cancelled.discard(item.number)
             item.status = Status.PENDING
             pipe.pending.add(1)
             pipe.input_queue.put(item.api)
-            logger.info("force-queued %s #%s for review", item.kind, item.number)
+            logger.info("force-queued %s %s#%s for review",
+                        item.kind, item.repo, item.number)
         self.dirty.set()
 
     def cancel(self) -> None:
@@ -383,13 +397,13 @@ class Model:
         with self.lock:
             key = self._cursor_key()
             item = self.items.get(key) if key else None
-            pipe = self.pipelines.get(item.kind) if item else None
+            pipe = self.pipelines.get((item.kind, item.repo)) if item else None
             if item is None or pipe is None:
                 return
             if item.status in (Status.PENDING, Status.QUEUED):
                 pipe.cancelled.add(item.number)
                 item.status = Status.CANCELLED
-                logger.info("cancelled %s #%s", item.kind, item.number)
+                logger.info("cancelled %s %s#%s", item.kind, item.repo, item.number)
                 self.dirty.set()
                 return
         self.act("cancel")
@@ -404,18 +418,19 @@ class Model:
 
     # ---- internals (caller holds ``lock``) ----
 
-    def _ensure(self, kind: str, decision: fairy.Decision) -> Item:
+    def _ensure(self, side: tuple[str, str], decision: fairy.Decision) -> Item:
         # Forced items can have numbers absent from the candidate listing.
-        key = (kind, decision.pr_number)
+        kind, repo = side
+        key = (kind, repo, decision.pr_number)
         item = self.items.get(key)
         if item is None:
-            item = Item(kind, decision.pr_number, {}, decision.title)
+            item = Item(kind, repo, decision.pr_number, {}, decision.title)
             self.items[key] = item
             self.order.append(key)
         return item
 
     def _relevant(self, item: Item) -> bool:
-        if item.number in self.forced.get(item.kind, ()):
+        if item.number in self.forced.get((item.kind, item.repo), ()):
             return True
         if item.status in (Status.QUEUED, Status.IN_LLM, Status.REVIEWED,
                            Status.INVALID):
@@ -425,15 +440,15 @@ class Model:
             d.action in fairy.ACTIONABLE_DECISIONS or bool(d.label_changes)
         )
 
-    def _cursor_key(self) -> tuple[str, int] | None:
+    def _cursor_key(self) -> tuple[str, str, int] | None:
         vis = self.visible()
         if not vis:
             return None
         self.cursor = max(0, min(self.cursor, len(vis) - 1))
         it = vis[self.cursor]
-        return (it.kind, it.number)
+        return (it.kind, it.repo, it.number)
 
-    def _move_cursor_to(self, key: tuple[str, int]) -> None:
+    def _move_cursor_to(self, key: tuple[str, str, int]) -> None:
         """Cursor onto ``key``; if the filter hides it, onto the nearest
         preceding visible item."""
         order_pos = {k: i for i, k in enumerate(self.order)}
@@ -442,37 +457,37 @@ class Model:
             return
         self.cursor = 0
         for i, it in enumerate(self.visible()):
-            if order_pos[(it.kind, it.number)] <= pos:
+            if order_pos[(it.kind, it.repo, it.number)] <= pos:
                 self.cursor = i
             else:
                 break
 
 
 class SideUI:
-    """fairy.ReviewUI adapter for one side ("PR" or "issue")."""
+    """fairy.ReviewUI adapter for one side (a kind + repo pair)."""
 
-    def __init__(self, kind: str, model: Model, forced: set[int]) -> None:
-        self.kind = kind
+    def __init__(self, side: tuple[str, str], model: Model, forced: set[int]) -> None:
+        self.side = side
         self.model = model
         self.forced = forced
 
     def candidates(self, items: list[dict]) -> None:
-        self.model.add_candidates(self.kind, items)
+        self.model.add_candidates(self.side, items)
 
     def pipeline(self, input_queue, pending, cancelled, actions) -> None:
         self.model.attach_pipeline(
-            self.kind, Pipeline(input_queue, pending, cancelled, actions),
+            self.side, Pipeline(input_queue, pending, cancelled, actions),
             self.forced,
         )
 
     def decide(self, prepared, decision, url) -> str:
         # Table model: never block the controller; the operator acts on
         # the row (y/s/x/r) whenever they choose.
-        self.model.note_reviewed(self.kind, decision, url)
+        self.model.note_reviewed(self.side, decision, url)
         return "hold"
 
     def item_done(self, prepared, decision) -> None:
-        self.model.finish(self.kind, decision)
+        self.model.finish(self.side, decision)
 
     def keep_open(self) -> bool:
         return not self.model.quit_flag
@@ -675,12 +690,15 @@ def _plain(lines: list) -> str:
 
 class UILoop:
     def __init__(self, term: blessed.Terminal, model: Model, ring: tui_core.RingBuffer,
-                 save_dir: Path, kinds: list[str]) -> None:
+                 save_dir: Path, sides: list[tuple[str, str]]) -> None:
         self.term = term
         self.model = model
         self.ring = ring
         self.save_dir = save_dir
-        self.kinds = kinds
+        self.sides = sides
+        # Single-repo runs render exactly as before; repo labels appear
+        # only when the sides span more than one repo.
+        self.multi_repo = len({repo for _, repo in sides}) > 1
         self.layout = tui_core.GridLayout()
         self.focus = "tr"
         self.scroll = {"tl": 0, "bl": 0, "br": 0}
@@ -710,12 +728,14 @@ class UILoop:
             ("label", "   reviewed, awaiting you "),
             ("st_reviewed" if actionable else "num", str(actionable)),
         ]]
-        for kind in self.kinds:
-            group = [it for it in items if it.kind == kind]
+        for side in self.sides:
+            kind, repo = side
+            group = [it for it in items if (it.kind, it.repo) == side]
             by = Counter(it.status for it in group)
-            pipe = m.pipelines.get(kind)
+            pipe = m.pipelines.get(side)
             lines += [[], [
-                ("kind_pr" if kind == "PR" else "kind_issue", f"{kind}s "),
+                ("kind_pr" if kind == "PR" else "kind_issue",
+                 f"{kind}s {repo + ' ' if self.multi_repo else ''}"),
                 ("num", str(len(group))),
                 ("label", " candidates, in flight "),
                 ("num", str(pipe.pending.value) if pipe else "-"),
@@ -784,8 +804,9 @@ class UILoop:
         d = item.decision
         ws = item.ws
         review = ws.review if ws is not None else None
+        where = f"{item.repo}#{item.number}" if self.multi_repo else f"#{item.number}"
         head: list[tui_core.StyledLine] = [
-            [("h2", f"{item.kind} #{item.number}  {item.title}"[:width])],
+            [("h2", f"{item.kind} {where}  {item.title}"[:width])],
         ]
         if item.url:
             head.append([("link", item.url[:width])])
@@ -1029,11 +1050,11 @@ class UILoop:
             item = self.model.items.get(key) if key else None
         if item is None:
             return
-        path = self.model.workset_file(item.kind, item.number)
+        path = self.model.workset_file(item)
         ws = workset.load_item(path) if path is not None else None
         if ws is None or ws.review is None:
-            logger.info("%s #%s has no persisted review to edit",
-                        item.kind, item.number)
+            logger.info("%s %s#%s has no persisted review to edit",
+                        item.kind, item.repo, item.number)
             return
         editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
         fd, tmp_name = tempfile.mkstemp(
@@ -1060,7 +1081,8 @@ class UILoop:
                 return
             edited = tmp.read_text(encoding="utf-8")
             if edited == ws.review.message:
-                logger.info("%s #%s review unchanged", item.kind, item.number)
+                logger.info("%s %s#%s review unchanged",
+                            item.kind, item.repo, item.number)
                 return
 
             def record(it: workset.WorkItem) -> None:
@@ -1068,8 +1090,8 @@ class UILoop:
                     it.review.message = edited
 
             if workset.update_item(path, record) is not None:
-                logger.info("%s #%s review message updated (%d -> %d chars)",
-                            item.kind, item.number,
+                logger.info("%s %s#%s review message updated (%d -> %d chars)",
+                            item.kind, item.repo, item.number,
                             len(ws.review.message), len(edited))
         finally:
             tmp.unlink(missing_ok=True)
@@ -1144,10 +1166,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Blessed 4-pane operator UI over the fairy PR and issue pipelines.",
     )
-    p.add_argument("--pr-args", metavar="ARGS",
-                   help="fairy.py argument string; enables the PR side")
-    p.add_argument("--issue-args", metavar="ARGS",
-                   help="issue_fairy.py argument string; enables the issue side")
+    p.add_argument("--pr-args", metavar="ARGS", action="append",
+                   help="fairy.py argument string; one PR side per use")
+    p.add_argument("--issue-args", metavar="ARGS", action="append",
+                   help="issue_fairy.py argument string; one issue side per use")
     p.add_argument("--log-file", type=Path,
                    help="tee every captured log/output line to this file")
     p.add_argument("--save-dir", type=Path, default=Path("."),
@@ -1158,53 +1180,78 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+@dataclass
+class Side:
+    key: tuple[str, str]  # (kind, "owner/repo")
+    run: object           # fairy.run_reviews / issue_fairy.run_reviews
+    ns: argparse.Namespace
+    forced: set[int]
+
+
+def build_sides(args: argparse.Namespace) -> list[Side]:
+    sides: list[Side] = []
+    for kind, run, parse, forced, arg_strs in (
+        ("PR", fairy.run_reviews, fairy.parse_args,
+         lambda ns: ns.force_review_prs, args.pr_args),
+        ("issue", issue_fairy.run_reviews, issue_fairy.parse_args,
+         lambda ns: ns.force_review_issues, args.issue_args),
+    ):
+        for arg_str in arg_strs or []:
+            ns = parse(shlex.split(arg_str))
+            key = (kind, f"{ns.owner}/{ns.repo}")
+            # Forgejo routes owner/repo case-insensitively: a case
+            # variant is the same forge repo and would silently run a
+            # second pipeline over it, double-reviewing and double-posting.
+            if any(s.key[0] == kind and s.key[1].casefold() == key[1].casefold()
+                   for s in sides):
+                raise SystemExit(f"duplicate {kind} side for {key[1]}")
+            sides.append(Side(key, run, ns, forced(ns)))
+    return sides
+
+
 def main() -> int:
     args = parse_args()
     ring = tui_core.RingBuffer()
     model = Model()
     sink = OutputSink(ring, model.dirty, args.log_file)
-
-    sides = []
-    if args.pr_args:
-        ns = fairy.parse_args(shlex.split(args.pr_args))
-        sides.append(("PR", fairy.run_reviews, ns, ns.force_review_prs))
-    if args.issue_args:
-        ns = issue_fairy.parse_args(shlex.split(args.issue_args))
-        sides.append(("issue", issue_fairy.run_reviews, ns, ns.force_review_issues))
+    sides = build_sides(args)
 
     # issue_fairy.logger is fairy.logger, so listing fairy's covers both.
     setup_logging(
-        fairy.logger, max(ns.verbose for _, _, ns, _ in sides),
+        fairy.logger, max(s.ns.verbose for s in sides),
         forge_gcli.logger, gcli_cache.logger, workset.logger, ci_log.logger,
         logger,
         handlers=[RingLogHandler(sink)],
     )
-    for kind, _, ns, _forced in sides:
-        if ns.approve:
-            ns.approve = False
-            logger.warning("--approve on the %s side is ignored: the TUI always "
-                           "asks per decision", kind)
-        logger.info("%s side enabled: %s/%s", kind, ns.owner, ns.repo)
-        ws_dir = fairy.workset_repo_dir(ns)
+    for side in sides:
+        kind, repo = side.key
+        if side.ns.approve:
+            side.ns.approve = False
+            logger.warning("--approve on the %s %s side is ignored: the TUI "
+                           "always asks per decision", kind, repo)
+        logger.info("%s side enabled: %s", kind, repo)
+        ws_dir = fairy.workset_repo_dir(side.ns)
         if ws_dir is not None:
-            model.workset_dirs[kind] = ws_dir
-            logger.info("%s workset dir: %s", kind, ws_dir)
+            model.workset_dirs[side.key] = ws_dir
+            logger.info("%s %s workset dir: %s", kind, repo, ws_dir)
     if args.log_file:
         logger.info("teeing captured output to %s", args.log_file)
 
     term = blessed.Terminal(stream=sys.__stdout__)
     faulthandler.enable(file=sys.__stderr__)
     threads = []
-    for kind, run, ns, forced in sides:
-        def run_side(run=run, ns=ns, kind=kind, forced=forced) -> None:
+    for side in sides:
+        def run_side(side=side) -> None:
             try:
-                logger.info("%s side finished rc=%s",
-                            kind, run(ns, SideUI(kind, model, forced)))
+                logger.info("%s %s side finished rc=%s", *side.key,
+                            side.run(side.ns, SideUI(side.key, model, side.forced)))
             except Exception:
-                logger.exception("%s side crashed", kind)
-        threads.append(Thread(target=run_side, name=f"{kind}-controller", daemon=True))
+                logger.exception("%s %s side crashed", *side.key)
+        threads.append(Thread(target=run_side,
+                              name=f"{side.key[0]}-controller~{side.key[1]}",
+                              daemon=True))
 
-    ui = UILoop(term, model, ring, args.save_dir, [k for k, *_ in sides])
+    ui = UILoop(term, model, ring, args.save_dir, [s.key for s in sides])
     with term.fullscreen(), term.cbreak(), term.hidden_cursor(), \
             term.mouse_enabled(report_drag=True, timeout=0.2), \
             captured_output(sink):

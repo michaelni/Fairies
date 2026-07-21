@@ -3685,10 +3685,12 @@ def start_review_pipeline(
     llm_parallelism = max(1, int(getattr(args, "llm_parallelism", 1) or 1))
     logger.debug("starting review pipeline llm_parallelism=%d", llm_parallelism)
 
-    Thread(target=prepare_worker, name="pr-prepare", daemon=True).start()
+    # ~owner/repo tags the log prefix per side (common._ThreadPrefixFilter)
+    tag = f"~{args.owner}/{args.repo}"
+    Thread(target=prepare_worker, name=f"pr-prepare{tag}", daemon=True).start()
     for i in range(llm_parallelism):
         name = "pr-llm" if llm_parallelism == 1 else f"pr-llm-{i + 1}"
-        Thread(target=llm_worker, name=name, daemon=True).start()
+        Thread(target=llm_worker, name=name + tag, daemon=True).start()
     return reviewed_queue, llm_queue
 
 

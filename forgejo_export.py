@@ -315,7 +315,7 @@ def norm_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "updated_at": utc_str(issue.get("updated_at")),
         "closed_at": utc_str(issue.get("closed_at")),
         "url": issue.get("html_url"),
-        "attachment_urls": attachment_urls(issue),
+        **({"attachment_urls": urls} if (urls := attachment_urls(issue)) else {}),
         "body": issue.get("body") or "",
     }
 
@@ -327,7 +327,7 @@ def norm_comment(comment: dict[str, Any]) -> dict[str, Any]:
         "created_at": utc_str(comment.get("created_at")),
         "updated_at": utc_str(comment.get("updated_at")),
         "url": comment.get("html_url"),
-        "attachment_urls": attachment_urls(comment),
+        **({"attachment_urls": urls} if (urls := attachment_urls(comment)) else {}),
         "body": comment.get("body") or "",
     }
 

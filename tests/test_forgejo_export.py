@@ -64,6 +64,14 @@ class AttachmentExportTests(unittest.TestCase):
             self._render([]),
         )
 
+    def test_no_assets_omits_attachment_urls(self) -> None:
+        # An always-present empty list rewrote every attachment-free
+        # export file, forcing a full vector-store resync.
+        self.assertNotIn("attachment_urls",
+                         forgejo_export.norm_issue({**self.issue, "assets": []}))
+        self.assertNotIn("attachment_urls",
+                         forgejo_export.norm_comment({"id": 1, "body": "hi"}))
+
     def test_comment_attachment_renders(self) -> None:
         zip_asset = self.issue["assets"][3]
         comment = forgejo_export.norm_comment(

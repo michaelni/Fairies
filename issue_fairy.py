@@ -499,7 +499,7 @@ def run_llm_issue(
             "number": prepared.number,
             "title": prepared.title,
             "body": issue.get("body") or "",
-            "attachment_urls": attachment_urls(issue),
+            **({"attachment_urls": urls} if (urls := attachment_urls(issue)) else {}),
             "author": prepared.author,
             "html_url": issue.get("html_url") or "",
             "created_at": issue.get("created_at") or "",

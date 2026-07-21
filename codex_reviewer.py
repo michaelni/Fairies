@@ -39,7 +39,7 @@ over a ``podman exec -i`` channel (no host-crossing socket).
 ``usage_limit_reached`` raises ``CodexUsageLimit`` immediately and
 run_parallel drops the pass, keeping surviving drafts.
 
-Passes are serialized on ``_CODEX_RUN_LOCK``.
+``--concurrency codex:N`` caps how many passes run at once.
 """
 
 from __future__ import annotations
@@ -53,7 +53,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 
 from codex_container import (
@@ -63,6 +62,7 @@ from codex_container import (
     CodexContainer,
     CodexShellRelay,
 )
+import concurrency
 from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import BadModelOutput, ReviewContext, Reviewer, RoleSpec
@@ -118,10 +118,6 @@ _RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
 def _resolve_codex_home(codex_home: str | None) -> str:
     return codex_home or os.environ.get("CODEX_HOME") \
         or os.path.expanduser("~/.codex")
-
-# queue here while other providers run in parallel around them.
-_CODEX_RUN_LOCK = threading.Lock()
-
 
 class CodexUsageLimit(RuntimeError):
     """The usage window is exhausted; do not retry."""
@@ -487,10 +483,7 @@ class CodexReviewer(Reviewer):
                 bridge_path=f"{CONTAINER_RUN_DIR}/codex_bridge.py",
             )
 
-            # Serialize the codex exec + auth write-back: concurrent passes
-            # sharing this host auth.json could race its token refresh.
-            # Container setup is isolated, so only this needs the lock.
-            with _CODEX_RUN_LOCK:
+            with concurrency.slot("codex"):
                 logger.info(
                     "codex exec start role=%s model=%s effort=%s shell=%s host=%s",
                     self.role.name, self.model, self.effort or "-", use_shell,
@@ -512,12 +505,8 @@ class CodexReviewer(Reviewer):
                         f"--codex-timeout-seconds ({self.run_timeout_s:.0f}s)"
                     )
                 elapsed = time.monotonic() - started
-                # codex may have rotated the OAuth tokens mid-run; the
-                # container copy is about to be discarded with --rm, so
-                # persist it back to the host auth.json under the same lock
-                # that serializes the credential -- otherwise the next run
-                # presents a stale (and, under refresh-token rotation, soon
-                # invalid) token. Still holding the flock here.
+                # Codex may have rotated the OAuth tokens mid-run, and --rm is
+                # about to discard the container's copy.
                 self._persist_refreshed_auth(container, auth_local)
 
             usage, error_text = summarize_codex_events(proc.stdout)
@@ -576,11 +565,11 @@ class CodexReviewer(Reviewer):
     ) -> None:
         """Copy a mid-run token refresh back to the host auth.json.
 
-        Best-effort and called under the auth flock: reads the container's
-        copy, and if it is valid JSON that differs from the host file,
-        atomically replaces the host file (0600). A read/parse failure just
-        logs -- the run already succeeded, so a stale host token surfaces
-        as an auth error on a later run rather than failing this one.
+        Best-effort: reads the container's copy, and if it is valid JSON
+        that differs from the host file, atomically replaces it (0600).
+        A read/parse failure just logs -- the run already succeeded, so a
+        stale host token surfaces as an auth error on a later run rather
+        than failing this one.
         """
         try:
             refreshed = container.read_file(

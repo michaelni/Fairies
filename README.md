@@ -114,8 +114,9 @@ per-command ssh handshake and no shell-quoting of model output.
 `--combine-model PROVIDER:MODEL` (required once there is more than one
 reviewer). Provider prefixes: `openai:`, `anthropic:`,
 `zai:`, `codex:`. Each reviewer gets its own isolated container shell; the
-model reviewers run concurrently (codex passes queue on one lock, see
-below). A local-GPU backend is TODO -- PRs very welcome.
+model reviewers run concurrently (`--concurrency PROVIDER:COUNT` caps how
+many calls one provider gets at a time, across every fairy process on the
+machine). A local-GPU backend is TODO -- PRs very welcome.
 
     ./pr_review_wrapper.py \
         --podman --shell-host fairy@HOST \
@@ -139,12 +140,12 @@ its tag) and `codex login` once as the bot's own account. `--codex-home DIR`
 is the wrapper-side login: its `auth.json` is `podman cp`'d into the
 container per run and its `models_cache.json` is used to harden the tool
 catalog.
-
 The security model matches the API backends -- the model can execute only
 inside the review containers, never on the wrapper host: codex runs with
 as much disabled as possible in a seperate container. Codex's own egress
 is limited to the OpenAI API + token refresh. There is no direct connection
-between the codex and review containers.
+between the codex and review containers. there is no local codex. Cap
+concurrent passes with `--concurrency codex:N`
 
 ### Static data and vector stores
 

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import codex_container
 import codex_reviewer
+import concurrency
 import podman_host
 import review_pipeline
 from codex_reviewer import (
@@ -45,7 +46,7 @@ def _codex_home_with_auth(**files) -> str:
 class _FakeCodexContainer:
     """Stand-in for CodexContainer: records podman-cp'd files and the codex
     argv, returns canned run output / last message. ``on_run`` fires inside
-    run() (while the auth flock is held) for lock tests."""
+    run() for concurrency-slot tests."""
 
     def __init__(self, run_result, last_message, on_run=None,
                  refreshed_auth=None):
@@ -473,33 +474,45 @@ class CodexReviewerRunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CodexReviewer("m", name="codex:m", role=ROLE, effort="minimal")
 
-    def test_passes_are_serialized(self) -> None:
-        # One auth.json must not serve concurrent jobs.
+    def test_codex_exec_takes_a_concurrency_slot(self) -> None:
+        # an assert in a worker never fails the test -- assert peak on the main thread
         import threading
         import time
-        active = []
         reviewer = self._reviewer(codex_home=_codex_home_with_auth())
+        peak, active = [], 0
+        counter_lock = threading.Lock()
+
+        def busy():
+            nonlocal active
+            with counter_lock:
+                active += 1
+                peak.append(active)
+            time.sleep(0.02)
+            with counter_lock:
+                active -= 1
 
         def make_fake(*a, **k):
-            def busy():
-                active.append(1)
-                self.assertEqual(1, len(active))
-                time.sleep(0.02)
-                active.pop()
             return _FakeCodexContainer(
                 subprocess.CompletedProcess([], 0, stdout="", stderr=""),
                 '{"classification": "approve", "message": "ok"}', on_run=busy)
 
-        with mock.patch.object(codex_reviewer, "CodexContainer",
-                               side_effect=make_fake), \
-                mock.patch.object(codex_reviewer, "CodexShellRelay") as relay:
-            relay.return_value.start.return_value = relay.return_value
-            threads = [threading.Thread(target=reviewer.run, args=(_ctx(),))
-                       for _ in range(3)]
-            for t in threads:
-                t.start()
-            for t in threads:
-                t.join()
+        with tempfile.TemporaryDirectory() as lock_root:
+            with mock.patch.object(concurrency, "default_cache_path",
+                                   lambda name: Path(lock_root) / name):
+                concurrency.configure([("codex", 1)])
+                self.addCleanup(concurrency.configure, [])
+                with mock.patch.object(codex_reviewer, "CodexContainer",
+                                       side_effect=make_fake), \
+                        mock.patch.object(codex_reviewer, "CodexShellRelay") as relay:
+                    relay.return_value.start.return_value = relay.return_value
+                    threads = [threading.Thread(target=reviewer.run, args=(_ctx(),))
+                               for _ in range(3)]
+                    for t in threads:
+                        t.start()
+                    for t in threads:
+                        t.join()
+
+        self.assertEqual(max(peak), 1)
 
 
 class FactoryTests(unittest.TestCase):

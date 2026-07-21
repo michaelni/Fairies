@@ -30,6 +30,11 @@ def decision(n: int, action: str = "comment", msg: str = "msg") -> fairy.Decisio
     return fairy.Decision(n, "t", "a", "-", action, "llm", None, "reply", msg)
 
 
+class Key(str):
+    """Keystroke stand-in: dispatch() reads the str value and .name."""
+    name = None
+
+
 def make_pipe() -> fairy_tui.Pipeline:
     return fairy_tui.Pipeline(SimpleQueue(), fairy.PendingCount(0), set(),
                               SimpleQueue())
@@ -400,6 +405,97 @@ class SideBuildTests(unittest.TestCase):
             fairy_tui.build_sides(args)
 
 
+class SortTests(WorksetDirCase):
+    """t cycles the visible-list sort; sorts are stable over arrival."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        tmp2 = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp2.cleanup)
+        self.dir2 = Path(tmp2.name)
+        self.model.workset_dirs[PR2] = self.dir2
+        self.model.show_all = True
+
+    def _numbers(self) -> list[tuple[str, int]]:
+        with self.model.lock:
+            return [(it.repo, it.number) for it in self.model.visible()]
+
+    def test_status_sort_bubbles_actionable_rows_stably(self) -> None:
+        for n, state in ((1, workset.WorkState.QUEUED),
+                         (2, workset.WorkState.REVIEWED),
+                         (3, workset.WorkState.QUEUED),
+                         (4, workset.WorkState.REVIEWED)):
+            self._write(n, state)
+        self.model.poll_workset()
+        self.assertEqual([n for _, n in self._numbers()], [1, 2, 3, 4])
+        self.assertEqual(self.model.cycle_sort(), "status")
+        # REVIEWED first; arrival order preserved within equal status.
+        self.assertEqual([n for _, n in self._numbers()], [2, 4, 1, 3])
+
+    def test_repo_and_number_modes(self) -> None:
+        # "z/AA" sorts last by raw owner/repo but its displayed short
+        # name "AA" sorts first: repo mode must follow the column.
+        tmp3 = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp3.cleanup)
+        self.model.workset_dirs[("PR", "z/AA")] = Path(tmp3.name)
+        self._write(5, workset.WorkState.QUEUED)
+        self._write(9, workset.WorkState.QUEUED)
+        self._write(7, workset.WorkState.QUEUED, d=self.dir2)
+        self._write(3, workset.WorkState.QUEUED, d=Path(tmp3.name))
+        self.model.poll_workset()
+        self.model.sort_mode = "repo"
+        self.assertEqual(self._numbers(),
+                         [("z/AA", 3), ("o/r", 5), ("o/r", 9), ("o/r2", 7)])
+        self.model.sort_mode = "number"
+        self.assertEqual([n for _, n in self._numbers()], [3, 5, 7, 9])
+
+    def test_cursor_follows_its_item_when_a_poll_reorders(self) -> None:
+        # A status flip elsewhere must not move the operator's selection:
+        # y/s/x/r act on whatever the cursor points at, so a reorder
+        # under a stationary index would hit a different row.
+        self._write(1, workset.WorkState.QUEUED)
+        self._write(2, workset.WorkState.REVIEWED)
+        self.model.poll_workset()
+        self.model.sort_mode = "status"
+        with self.model.lock:
+            self.model._move_cursor_to((*PR, 2))
+            self.assertEqual(self.model._cursor_key(), (*PR, 2))
+        self._write(1, workset.WorkState.REVIEWED)  # bubbles above #2
+        self.model.poll_workset()
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (*PR, 2))
+            self.assertEqual(self.model.cursor, 1)
+
+    def test_cycle_wraps_back_to_arrival(self) -> None:
+        for expected in ("status", "repo", "number", "arrival"):
+            self.assertEqual(self.model.cycle_sort(), expected)
+
+    def test_every_status_has_a_sort_priority(self) -> None:
+        # A Status member missing from _SORT_STATUS would KeyError on
+        # the UI thread the first time t reaches status mode.
+        self.assertEqual(set(fairy_tui._SORT_STATUS), set(fairy_tui.Status))
+
+    def test_t_key_keeps_the_cursor_on_its_row_and_labels_the_bar(self) -> None:
+
+        self._write(1, workset.WorkState.QUEUED)
+        self._write(2, workset.WorkState.REVIEWED)
+        self.model.poll_workset()
+        with mock.patch.dict(os.environ, {"COLUMNS": "160", "LINES": "40"}):
+            stream = io.StringIO()
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=stream, force_styling=True)
+            ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
+                                  Path("."), [PR, PR2])
+            self.model.cursor = 1            # on #2 in arrival order
+            ui.dispatch(Key("t"))            # -> status sort: #2 is first
+            self.assertEqual(self.model.sort_mode, "status")
+            with self.model.lock:
+                self.assertEqual(self.model._cursor_key(), (*PR, 2))
+            self.assertEqual(self.model.cursor, 0)
+            ui.paint()
+        self.assertIn("sort:status", stream.getvalue())
+
+
 class DetailFromFileTests(WorksetDirCase):
     """The detail pane renders review content and error reasons from the
     workset file, even when no in-memory decision exists."""
@@ -473,8 +569,6 @@ class EditReviewTests(unittest.TestCase):
 
 class FilterToggleTests(unittest.TestCase):
     def test_cursor_follows_selection_across_the_a_toggle(self) -> None:
-        class Key(str):
-            name = None
 
         with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
             term = blessed.Terminal(

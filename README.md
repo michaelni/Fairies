@@ -82,7 +82,8 @@ The list is a table over the persistent work files: select any row and
 act on it at any time. `a` toggles between all open items and today's
 relevant set, `y` posts the selected reviewed item (guard-checked),
 `s` skips it, `r` reruns the LLM on it, `o` edits its review message in
-`$EDITOR`, `q` quits, `f` force-queues the selected item for review,
+`$EDITOR`, `t` cycles the list sort (arrival/status/repo/number),
+`q` quits, `f` force-queues the selected item for review,
 `x` throws it out, `e`/`E` export the focused pane (visible/full), arrows and
 PgUp/PgDn scroll, Tab or a mouse click moves focus, clicking a URL,
 git hash or `#number` copies it to the primary selection for

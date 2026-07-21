@@ -145,6 +145,23 @@ def _repo_short(repo: str) -> str:
     return repo.rsplit("/", 1)[-1]
 
 
+SORT_MODES = ("arrival", "status", "repo", "number")
+# status mode: operator-actionable rows first, then the live pipeline
+# states, then the settled ones
+_SORT_STATUS = {s: i for i, s in enumerate((
+    Status.REVIEWED, Status.INVALID, Status.IN_LLM, Status.QUEUED,
+    Status.PENDING, Status.APPLIED, Status.DONE, Status.SKIPPED,
+    Status.CANCELLED))}
+assert set(_SORT_STATUS) == set(Status), "every Status needs a sort priority"
+_SORT_KEYS = {
+    "status": lambda it: _SORT_STATUS[it.status],
+    # repo mode orders by the short name the list column displays, or
+    # rows would look unsorted whenever owners differ.
+    "repo": lambda it: (_repo_short(it.repo).casefold(), it.repo, it.kind),
+    "number": lambda it: it.number,
+}
+
+
 def _ws_actionable(ws: workset.WorkItem) -> bool:
     """Something to post: a posting classification or label changes.
     LLM-skip verdicts stay REVIEWED on disk (they carry the skip-backoff
@@ -181,6 +198,7 @@ class Model:
         self.workset_dirs: dict[tuple[str, str], Path] = {}  # side -> per-repo dir
         self._ws_mtimes: dict[Path, float] = {}  # poll_workset change detection
         self.show_all = False
+        self.sort_mode = SORT_MODES[0]
         self.cursor = 0
         self.quit_flag = False
         self.started = time.monotonic()
@@ -189,7 +207,7 @@ class Model:
 
     def add_candidates(self, side: tuple[str, str], apis: list[dict]) -> None:
         kind, repo = side
-        with self.lock:
+        with self.lock, self._cursor_anchored():
             for api in apis:
                 number = api.get("number")
                 if not str(number).isdigit():
@@ -217,14 +235,14 @@ class Model:
         """A decision arrived; record it for the detail pane. The row's
         status comes from the workset file (poll), the operator acts on
         it whenever they choose."""
-        with self.lock:
+        with self.lock, self._cursor_anchored():
             item = self._ensure(side, decision)
             item.decision = decision
             item.url = url or item.url
         self.dirty.set()
 
     def finish(self, side: tuple[str, str], decision: fairy.Decision) -> None:
-        with self.lock:
+        with self.lock, self._cursor_anchored():
             item = self._ensure(side, decision)
             item.decision = decision
             actionable = (decision.action in fairy.ACTIONABLE_DECISIONS
@@ -279,7 +297,7 @@ class Model:
                         changed.append((kind, repo, int(number), None, error))
         if not changed and not removed:
             return
-        with self.lock:
+        with self.lock, self._cursor_anchored():
             # Deterministic row order for newly discovered items: the
             # scan iterates a set of paths, which has no stable order.
             for kind, repo, number, ws, error in sorted(
@@ -318,12 +336,20 @@ class Model:
     # ---- UI-thread side ----
 
     def visible(self) -> list[Item]:
-        """Items for the list pane, honoring the all/relevant filter.
-        Caller holds ``lock``."""
+        """Items for the list pane, honoring the all/relevant filter and
+        the sort mode (stable, so arrival order breaks ties). Caller
+        holds ``lock``."""
         items = [self.items[k] for k in self.order]
-        if self.show_all:
-            return items
-        return [it for it in items if self._relevant(it)]
+        if not self.show_all:
+            items = [it for it in items if self._relevant(it)]
+        if self.sort_mode != "arrival":
+            items.sort(key=_SORT_KEYS[self.sort_mode])
+        return items
+
+    def cycle_sort(self) -> str:
+        self.sort_mode = SORT_MODES[
+            (SORT_MODES.index(self.sort_mode) + 1) % len(SORT_MODES)]
+        return self.sort_mode
 
     def act(self, action: str) -> None:
         """Route a table action ("apply"/"skip"/"cancel"/"rerun") on the
@@ -373,7 +399,7 @@ class Model:
 
     def force(self) -> None:
         """Force-queue the cursor item for (re-)review, bypassing gates."""
-        with self.lock:
+        with self.lock, self._cursor_anchored():
             key = self._cursor_key()
             item = self.items.get(key) if key else None
             pipe = self.pipelines.get((item.kind, item.repo)) if item else None
@@ -399,7 +425,7 @@ class Model:
     def cancel(self) -> None:
         """x: throw the cursor item out -- stop an upcoming evaluation,
         or cancel a persisted review via the controller."""
-        with self.lock:
+        with self.lock, self._cursor_anchored():
             key = self._cursor_key()
             item = self.items.get(key) if key else None
             pipe = self.pipelines.get((item.kind, item.repo)) if item else None
@@ -454,18 +480,32 @@ class Model:
         return (it.kind, it.repo, it.number)
 
     def _move_cursor_to(self, key: tuple[str, str, int]) -> None:
-        """Cursor onto ``key``; if the filter hides it, onto the nearest
-        preceding visible item."""
+        """Cursor onto ``key``; if the filter hides it, onto the visible
+        item nearest before it in arrival order."""
+        keys = [(it.kind, it.repo, it.number) for it in self.visible()]
         order_pos = {k: i for i, k in enumerate(self.order)}
         pos = order_pos.get(key)
         if pos is None:
             return
         self.cursor = 0
-        for i, it in enumerate(self.visible()):
-            if order_pos[(it.kind, it.repo, it.number)] <= pos:
+        best = -1
+        for i, k in enumerate(keys):
+            if best < order_pos[k] <= pos:
+                best = order_pos[k]
                 self.cursor = i
-            else:
-                break
+
+    @contextmanager
+    def _cursor_anchored(self):
+        """Keep the cursor on its item across a mutation: any status or
+        membership change can reorder the sorted visible list, and a
+        bare index would silently land on a different row. Caller holds
+        ``lock``."""
+        key = self._cursor_key()
+        try:
+            yield
+        finally:
+            if key is not None:
+                self._move_cursor_to(key)
 
 
 class SideUI:
@@ -583,7 +623,7 @@ FOCUS_ORDER = ("tl", "tr", "bl", "br")
 ACTION_KEYS = {"y": "apply", "s": "skip", "r": "rerun"}
 KEYMAP = (("q", "quit"), ("y", "apply"), ("s", "skip"), ("r", "rerun"),
           ("f", "force"), ("x", "drop"), ("o", "edit msg"),
-          ("a", "all/relevant"), ("e/E", "export"),
+          ("a", "all/relevant"), ("t", "sort"), ("e/E", "export"),
           ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
 
 
@@ -723,10 +763,18 @@ class UILoop:
         self._shown: dict[str, tuple[tui_core.Rect, int, list[str]]] = {}
         self._clip_cmd = _clipboard_cmd()
         self.styles = _styles(term)
+        self._build_status()
+
+    def _build_status(self) -> None:
+        """(Re)build the bottom-bar legend; the ``t`` entry names the
+        current sort mode."""
         key = self.styles.get("key") or (lambda s: s)
         label = self.styles.get("label") or (lambda s: s)
-        self._status_plain = "  ".join(f"{k} {d}" for k, d in KEYMAP)
-        self._status_styled = "  ".join(f"{key(k)} {label(d)}" for k, d in KEYMAP)
+        self._status_mode = self.model.sort_mode
+        pairs = [(k, f"sort:{self._status_mode}" if k == "t" else d)
+                 for k, d in KEYMAP]
+        self._status_plain = "  ".join(f"{k} {d}" for k, d in pairs)
+        self._status_styled = "  ".join(f"{key(k)} {label(d)}" for k, d in pairs)
 
     # ---- pane content (caller holds model.lock) ----
 
@@ -887,6 +935,8 @@ class UILoop:
         buf.append(t.move_xy(0, row) + divider("─" * w))
         for col in {col_t, col_b}:
             buf.append(t.move_xy(col, row) + divider("┼"))
+        if self._status_mode != self.model.sort_mode:
+            self._build_status()
         note = f" ▶ {nact} reviewed  " if nact else " "
         if len(note) + len(self._status_plain) > w:
             status = (note + self._status_plain)[:w].ljust(w)
@@ -1049,6 +1099,13 @@ class UILoop:
                 self.model.show_all = not self.model.show_all
                 if key is not None:
                     self.model._move_cursor_to(key)
+        elif ks == "t":
+            with self.model.lock:
+                key = self.model._cursor_key()
+                mode = self.model.cycle_sort()
+                if key is not None:
+                    self.model._move_cursor_to(key)
+            logger.info("list sort: %s", mode)
         elif str(ks) in ACTION_KEYS:
             self.model.act(ACTION_KEYS[str(ks)])
         elif ks == "f":

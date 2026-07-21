@@ -1,4 +1,4 @@
-"""tui_core: grid layout math, ring buffer, markdown renderer."""
+"""tui_core: grid layout math, block tiler, ring buffer, markdown renderer."""
 
 from __future__ import annotations
 
@@ -194,6 +194,36 @@ class RenderMarkdownTests(unittest.TestCase):
         self.assertIn("quote", got)
         segments = [seg for line in lines for seg in line]
         self.assertTrue(all("`" not in t for s, t in segments if s == "code"))
+
+
+class TileBlocksTests(unittest.TestCase):
+    A = [[("text", "aaaa")], [("text", "a2")]]
+    B = [[("text", "bb")]]
+    C = [[("text", "cccc")], [("text", "c2")], [("text", "c3")]]
+
+    @staticmethod
+    def text(lines):
+        return [line_text(line) for line in lines]
+
+    def test_blocks_share_a_row_when_wide(self) -> None:
+        # columns 4 and 2 wide plus the gap fit width 10; C wraps.
+        got = self.text(tui_core.tile_blocks([self.A, self.B, self.C], 10))
+        self.assertEqual(got, ["aaaa  bb", "a2    ", "", "cccc", "c2", "c3"])
+
+    def test_stacks_when_narrow(self) -> None:
+        got = self.text(tui_core.tile_blocks([self.A, self.B], 5))
+        self.assertEqual(got, ["aaaa", "a2", "", "bb"])
+
+    def test_each_column_is_as_wide_as_its_own_blocks(self) -> None:
+        # A wide block must not widen the other columns: B's column
+        # stays 2 cells, so both blocks fit width 12 side by side.
+        wide = [[("text", "xxxxxxxx")]]
+        got = self.text(tui_core.tile_blocks([self.B, wide], 12))
+        self.assertEqual(got, ["bb  xxxxxxxx"])
+
+    def test_empty_input(self) -> None:
+        self.assertEqual(tui_core.tile_blocks([], 80), [])
+        self.assertEqual(tui_core.tile_blocks([[]], 80), [])
 
 
 if __name__ == "__main__":

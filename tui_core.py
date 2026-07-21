@@ -30,8 +30,9 @@
 Terminal-UI building blocks with no terminal dependency.
 
 What belongs here: pure data/logic for fairy_tui.py -- the 2x2 grid
-layout math, the scrollback ring buffer and the markdown-to-styled-lines
-renderer. Everything is unit-testable without a tty.
+layout math, the block tiler, the scrollback ring buffer and the
+markdown-to-styled-lines renderer. Everything is unit-testable
+without a tty.
 
 What does NOT belong: anything importing blessed or touching the
 terminal, and anything review-specific (decisions, pipelines, forges).
@@ -46,7 +47,7 @@ from itertools import islice
 from threading import Lock
 
 __all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "MARKDOWN_STYLES",
-           "render_markdown", "sanitize", "token_at"]
+           "render_markdown", "sanitize", "tile_blocks", "token_at"]
 
 # (style, text) segments; the painter treats an unknown style as "text".
 StyledLine = list[tuple[str, str]]
@@ -155,6 +156,37 @@ class GridLayout:
             setattr(self, "fx_top" if grabbed == "vt" else "fx_bottom", fx)
         if grabbed == "h" and h > 0:
             self.fy = _clamp(y, self.MIN_H, max(self.MIN_H, h - 1 - self.MIN_H)) / h
+
+
+def tile_blocks(blocks: list[list[StyledLine]], width: int,
+                gap: int = 2) -> list[StyledLine]:
+    """Lay line blocks out side by side, as many columns as fit
+    ``width``; block rows are separated by a blank line. Blocks fill
+    rows left to right and each column is as wide as its own widest
+    block, so one wide block does not stack everything."""
+    blocks = [b for b in blocks if b]
+    if not blocks:
+        return []
+    widths = [max(sum(len(t) for _, t in line) for line in b) or 1
+              for b in blocks]
+    for ncols in range(len(blocks), 0, -1):
+        col_w = [max(widths[c::ncols]) for c in range(ncols)]
+        if ncols == 1 or sum(col_w) + gap * (len(col_w) - 1) <= width:
+            break
+    out: list[StyledLine] = []
+    for start in range(0, len(blocks), ncols):
+        row = blocks[start:start + ncols]
+        if out:
+            out.append([])
+        for y in range(max(len(b) for b in row)):
+            line: StyledLine = []
+            for i, b in enumerate(row):
+                cell = b[y] if y < len(b) else []
+                # the last column keeps its natural width (no pad/clip)
+                line += (cell if i == len(row) - 1
+                         else _fit(cell, col_w[i]) + [("text", " " * gap)])
+            out.append(line)
+    return out
 
 
 class RingBuffer:

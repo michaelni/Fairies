@@ -140,6 +140,11 @@ _WORKSET_STAGE = {
 }
 
 
+def _repo_short(repo: str) -> str:
+    """Display name for an "owner/repo" side label."""
+    return repo.rsplit("/", 1)[-1]
+
+
 def _ws_actionable(ws: workset.WorkItem) -> bool:
     """Something to post: a posting classification or label changes.
     LLM-skip verdicts stay REVIEWED on disk (they carry the skip-backoff
@@ -696,9 +701,14 @@ class UILoop:
         self.ring = ring
         self.save_dir = save_dir
         self.sides = sides
-        # Single-repo runs render exactly as before; repo labels appear
-        # only when the sides span more than one repo.
-        self.multi_repo = len({repo for _, repo in sides}) > 1
+        repos = list(dict.fromkeys(repo for _, repo in sides))
+        short = [_repo_short(r) for r in repos]
+        self._repo_disp = {r: (s if short.count(s) == 1 else r)
+                           for r, s in zip(repos, short)}
+        # 0 hides every repo label: labels only disambiguate when the
+        # sides span more than one repo.
+        self._repo_w = (max(len(d) for d in self._repo_disp.values())
+                        if len(repos) > 1 else 0)
         self.layout = tui_core.GridLayout()
         self.focus = "tr"
         self.scroll = {"tl": 0, "bl": 0, "br": 0}
@@ -735,7 +745,7 @@ class UILoop:
             pipe = m.pipelines.get(side)
             lines += [[], [
                 ("kind_pr" if kind == "PR" else "kind_issue",
-                 f"{kind}s {repo + ' ' if self.multi_repo else ''}"),
+                 f"{kind}s {repo + ' ' if self._repo_w else ''}"),
                 ("num", str(len(group))),
                 ("label", " candidates, in flight "),
                 ("num", str(pipe.pending.value) if pipe else "-"),
@@ -780,14 +790,17 @@ class UILoop:
             else:
                 llm = it.stage or ("llm" if it.status is Status.IN_LLM else "")
             mark = "▶" if it.status is Status.REVIEWED else " "
+            repo_col = (f"{self._repo_disp[it.repo]:<{self._repo_w}} "
+                        if self._repo_w else "")
             if i == m.cursor:
                 rows.append(("cursor",
-                             f"{mark}{it.kind:<5} #{it.number:<6} "
+                             f"{mark}{it.kind:<5} {repo_col}#{it.number:<6} "
                              f"{it.status.name.lower():<9} {llm:<9}  {it.title}"))
                 continue
             rows.append([
                 ("mark", mark),
                 ("kind_pr" if it.kind == "PR" else "kind_issue", f"{it.kind:<5} "),
+                ("label", repo_col),
                 ("num", f"#{it.number:<6} "),
                 (f"st_{it.status.name.lower()}", f"{it.status.name.lower():<9} "),
                 ("llm", f"{llm:<9}  "),
@@ -804,7 +817,7 @@ class UILoop:
         d = item.decision
         ws = item.ws
         review = ws.review if ws is not None else None
-        where = f"{item.repo}#{item.number}" if self.multi_repo else f"#{item.number}"
+        where = f"{item.repo}#{item.number}" if self._repo_w else f"#{item.number}"
         head: list[tui_core.StyledLine] = [
             [("h2", f"{item.kind} {where}  {item.title}"[:width])],
         ]

@@ -288,6 +288,38 @@ class MultiSideTests(WorksetDirCase):
         self.assertEqual(pipe2.actions.get_nowait(), (5, "apply"))
         self.assertTrue(pipe1.actions.empty())
 
+    def _rows_text(self, sides: list[tuple[str, str]]) -> list[str]:
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
+                              Path("."), sides)
+        with self.model.lock:
+            rows = ui.list_rows()
+        return fairy_tui._plain(rows).split("\n")
+
+    def test_repo_column_only_when_sides_span_repos(self) -> None:
+        self._write(5, workset.WorkState.REVIEWED)
+        self._write(5, workset.WorkState.REVIEWED, d=self.dir2)
+        self.model.poll_workset()
+        single = fairy_tui.Model()
+        single.workset_dirs[PR] = self.dir
+        single.poll_workset()
+        rows = self._rows_text([PR, PR2])
+        self.assertIn("PR    r  #5", rows[0])   # short name, padded to "r2"
+        self.assertIn("PR    r2 #5", rows[1])
+        self.model, single = single, self.model
+        self.assertIn("PR    #5", self._rows_text([PR])[0])
+
+    def test_colliding_short_names_fall_back_to_owner_repo(self) -> None:
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(), Path("."),
+                              [("PR", "a/x"), ("PR", "b/x"), ("PR", "c/y")])
+        self.assertEqual(ui._repo_disp,
+                         {"a/x": "a/x", "b/x": "b/x", "c/y": "y"})
+
     def test_pr_and_issue_sides_share_one_dir(self) -> None:
         self.model.workset_dirs[("issue", "o/r")] = self.dir
         self._write(5, workset.WorkState.REVIEWED)

@@ -35,6 +35,14 @@ class Key(str):
     name = None
 
 
+def make_term(stream: io.StringIO | None = None, cols: int = 100) -> blessed.Terminal:
+    """Headless terminal fixture. blessed re-reads COLUMNS/LINES on
+    every width query, so they are set for good rather than patched."""
+    os.environ.update({"COLUMNS": str(cols), "LINES": "40"})
+    return blessed.Terminal(kind="xterm-256color", stream=stream or io.StringIO(),
+                            force_styling=True)
+
+
 def make_pipe() -> fairy_tui.Pipeline:
     return fairy_tui.Pipeline(SimpleQueue(), fairy.PendingCount(0), set(),
                               SimpleQueue())
@@ -297,9 +305,7 @@ class MultiSideTests(WorksetDirCase):
         self._write(5, workset.WorkState.REVIEWED)
         self._write(7, workset.WorkState.QUEUED, d=self.dir2)
         self.model.poll_workset()
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        term = make_term()
         ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
                               Path("."), [PR, PR2])
         with self.model.lock:
@@ -315,9 +321,7 @@ class MultiSideTests(WorksetDirCase):
         self.assertTrue(any("PRs r2 " in ln for ln in narrow), narrow)
 
     def _rows_text(self, sides: list[tuple[str, str]]) -> list[str]:
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        term = make_term()
         ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
                               Path("."), sides)
         with self.model.lock:
@@ -338,9 +342,7 @@ class MultiSideTests(WorksetDirCase):
         self.assertIn("PR    #5", self._rows_text([PR])[0])
 
     def test_colliding_short_names_fall_back_to_owner_repo(self) -> None:
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        term = make_term()
         ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(), Path("."),
                               [("PR", "a/x"), ("PR", "b/x"), ("PR", "c/y")])
         self.assertEqual(ui._repo_disp,
@@ -354,9 +356,7 @@ class MultiSideTests(WorksetDirCase):
         self.model.poll_workset()
         save = tempfile.TemporaryDirectory()
         self.addCleanup(save.cleanup)
-        with mock.patch.dict(os.environ, {"COLUMNS": "160", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        term = make_term(cols=160)
         ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
                               Path(save.name), [PR, PR2])
         ui.focus = "tl"
@@ -480,19 +480,17 @@ class SortTests(WorksetDirCase):
         self._write(1, workset.WorkState.QUEUED)
         self._write(2, workset.WorkState.REVIEWED)
         self.model.poll_workset()
-        with mock.patch.dict(os.environ, {"COLUMNS": "160", "LINES": "40"}):
-            stream = io.StringIO()
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=stream, force_styling=True)
-            ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
-                                  Path("."), [PR, PR2])
-            self.model.cursor = 1            # on #2 in arrival order
-            ui.dispatch(Key("t"))            # -> status sort: #2 is first
-            self.assertEqual(self.model.sort_mode, "status")
-            with self.model.lock:
-                self.assertEqual(self.model._cursor_key(), (*PR, 2))
-            self.assertEqual(self.model.cursor, 0)
-            ui.paint()
+        stream = io.StringIO()
+        term = make_term(stream, cols=160)
+        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
+                              Path("."), [PR, PR2])
+        self.model.cursor = 1            # on #2 in arrival order
+        ui.dispatch(Key("t"))            # -> status sort: #2 is first
+        self.assertEqual(self.model.sort_mode, "status")
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (*PR, 2))
+        self.assertEqual(self.model.cursor, 0)
+        ui.paint()
         self.assertIn("sort:status", stream.getvalue())
 
 
@@ -501,9 +499,7 @@ class DetailFromFileTests(WorksetDirCase):
     workset file, even when no in-memory decision exists."""
 
     def _detail_text(self) -> str:
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        term = make_term()
         ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(), Path("."), [PR])
         with self.model.lock:
             return "\n".join(
@@ -554,14 +550,12 @@ class EditReviewTests(unittest.TestCase):
             Path(cmd[-1]).write_text("edited body", encoding="utf-8")
             return 0
 
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40",
-                                          "EDITOR": "myeditor"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
-            ui = fairy_tui.UILoop(term, model, tui_core.RingBuffer(), Path("."), [PR])
-            with mock.patch.object(fairy_tui.subprocess, "call",
-                                   side_effect=fake_call) as call:
-                ui.edit_review()
+        term = make_term()
+        ui = fairy_tui.UILoop(term, model, tui_core.RingBuffer(), Path("."), [PR])
+        with mock.patch.dict(os.environ, {"EDITOR": "myeditor"}), \
+                mock.patch.object(fairy_tui.subprocess, "call",
+                                  side_effect=fake_call) as call:
+            ui.edit_review()
         self.assertEqual(call.call_args.args[0][0], "myeditor")
         item = workset.load_item(d / "pr-5.json")
         self.assertEqual(item.review.message, "edited body")
@@ -570,91 +564,81 @@ class EditReviewTests(unittest.TestCase):
 class FilterToggleTests(unittest.TestCase):
     def test_cursor_follows_selection_across_the_a_toggle(self) -> None:
 
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
-            model = fairy_tui.Model()
-            model.add_candidates(
-                PR, [{"number": n, "title": "t"} for n in (1, 2, 3)])
-            model.finish(PR, decision(1, action="skip", msg=""))
-            model.finish(PR, decision(2))                       # actionable
-            model.finish(PR, decision(3, action="skip", msg=""))
-            model.show_all = True
-            ui = fairy_tui.UILoop(
-                term, model, tui_core.RingBuffer(), Path("."), [PR])
+        term = make_term()
+        model = fairy_tui.Model()
+        model.add_candidates(
+            PR, [{"number": n, "title": "t"} for n in (1, 2, 3)])
+        model.finish(PR, decision(1, action="skip", msg=""))
+        model.finish(PR, decision(2))                       # actionable
+        model.finish(PR, decision(3, action="skip", msg=""))
+        model.show_all = True
+        ui = fairy_tui.UILoop(
+            term, model, tui_core.RingBuffer(), Path("."), [PR])
 
-            model.cursor = 1                 # on #2 in the "all" view
-            ui.dispatch(Key("a"))            # -> relevant view: only #2
-            self.assertEqual(model.cursor, 0)
-            with model.lock:
-                self.assertEqual(model._cursor_key(), (*PR, 2))
-            ui.dispatch(Key("a"))            # back to "all": still on #2
-            with model.lock:
-                self.assertEqual(model._cursor_key(), (*PR, 2))
+        model.cursor = 1                 # on #2 in the "all" view
+        ui.dispatch(Key("a"))            # -> relevant view: only #2
+        self.assertEqual(model.cursor, 0)
+        with model.lock:
+            self.assertEqual(model._cursor_key(), (*PR, 2))
+        ui.dispatch(Key("a"))            # back to "all": still on #2
+        with model.lock:
+            self.assertEqual(model._cursor_key(), (*PR, 2))
 
-            model.cursor = 2                 # on filtered-out #3
-            ui.dispatch(Key("a"))            # nearest preceding visible: #2
-            with model.lock:
-                self.assertEqual(model._cursor_key(), (*PR, 2))
+        model.cursor = 2                 # on filtered-out #3
+        ui.dispatch(Key("a"))            # nearest preceding visible: #2
+        with model.lock:
+            self.assertEqual(model._cursor_key(), (*PR, 2))
 
 
 class PaintSmokeTests(unittest.TestCase):
     def test_paint_one_frame_headless(self) -> None:
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            stream = io.StringIO()
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=stream, force_styling=True)
-            model = fairy_tui.Model()
-            model.add_candidates(PR, [{"number": 1, "title": "hello title"}])
-            model.finish(PR, decision(1, msg="# Head\n**bold** and `code`"))
-            ring = tui_core.RingBuffer()
-            ring.append("a debug line")
-            ring.append("a warning line", tag=fairy_tui.logging.WARNING)
-            ui = fairy_tui.UILoop(term, model, ring, Path("."), [PR])
-            ui.paint()
-            out = stream.getvalue()
+        stream = io.StringIO()
+        term = make_term(stream)
+        model = fairy_tui.Model()
+        model.add_candidates(PR, [{"number": 1, "title": "hello title"}])
+        model.finish(PR, decision(1, msg="# Head\n**bold** and `code`"))
+        ring = tui_core.RingBuffer()
+        ring.append("a debug line")
+        ring.append("a warning line", tag=fairy_tui.logging.WARNING)
+        ui = fairy_tui.UILoop(term, model, ring, Path("."), [PR])
+        ui.paint()
+        out = stream.getvalue()
         for expected in ("stats", "debug", "message", "#1", "a debug line", "Head"):
             self.assertIn(expected, out)
         self.assertIn("\x1b[33ma warning line", out)
 
     def test_palette_covers_every_markdown_style(self) -> None:
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+        term = make_term()
         # "text" deliberately has no entry: it means unstyled.
         self.assertLessEqual(tui_core.MARKDOWN_STYLES - {"text"},
                              set(fairy_tui._styles(term)))
 
     def test_paint_strips_hostile_escape_sequences(self) -> None:
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            stream = io.StringIO()
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=stream, force_styling=True)
-            model = fairy_tui.Model()
-            model.add_candidates(
-                PR, [{"number": 2, "title": "evil\x1b]0;pwned\x07title"}])
-            model.finish(PR, decision(2, msg="body\x1b]0;pwned\x07text"))
-            ring = tui_core.RingBuffer()
-            ring.append("wrapper says \x1b]0;pwned\x07hi")
-            ui = fairy_tui.UILoop(term, model, ring, Path("."), [PR])
-            ui.paint()
-            out = stream.getvalue()
+        stream = io.StringIO()
+        term = make_term(stream)
+        model = fairy_tui.Model()
+        model.add_candidates(
+            PR, [{"number": 2, "title": "evil\x1b]0;pwned\x07title"}])
+        model.finish(PR, decision(2, msg="body\x1b]0;pwned\x07text"))
+        ring = tui_core.RingBuffer()
+        ring.append("wrapper says \x1b]0;pwned\x07hi")
+        ui = fairy_tui.UILoop(term, model, ring, Path("."), [PR])
+        ui.paint()
+        out = stream.getvalue()
         self.assertNotIn("\x1b]0;", out)
         self.assertNotIn("\x07", out)
 
     def test_debug_scrollback_stops_at_the_oldest_line(self) -> None:
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            stream = io.StringIO()
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=stream, force_styling=True)
-            ring = tui_core.RingBuffer()
-            for i in range(5):
-                ring.append(f"line{i}")
-            ui = fairy_tui.UILoop(
-                term, fairy_tui.Model(), ring, Path("."), [PR])
-            ui.scroll["bl"] = 10_000
-            ui.paint()
-            out = stream.getvalue()
+        stream = io.StringIO()
+        term = make_term(stream)
+        ring = tui_core.RingBuffer()
+        for i in range(5):
+            ring.append(f"line{i}")
+        ui = fairy_tui.UILoop(
+            term, fairy_tui.Model(), ring, Path("."), [PR])
+        ui.scroll["bl"] = 10_000
+        ui.paint()
+        out = stream.getvalue()
         self.assertLessEqual(ui.scroll["bl"], 5)
         self.assertIn("line0", out)
 
@@ -662,30 +646,26 @@ class PaintSmokeTests(unittest.TestCase):
         # A URL in a right pane must not sit directly against the "│"
         # divider: the terminal's own shift/double-click selection would
         # copy the divider with it. One blank gutter column separates them.
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
-            ui = fairy_tui.UILoop(term, fairy_tui.Model(),
-                                  tui_core.RingBuffer(), Path("."), [PR])
-            buf: list = []
-            ui._blit(buf, tui_core.Rect(10, 0, 20, 3), "br", ["https://x/y"])
+        term = make_term()
+        ui = fairy_tui.UILoop(term, fairy_tui.Model(),
+                              tui_core.RingBuffer(), Path("."), [PR])
+        buf: list = []
+        ui._blit(buf, tui_core.Rect(10, 0, 20, 3), "br", ["https://x/y"])
         self.assertTrue(buf[1].endswith(" "))          # gutter after divider
         self.assertEqual(buf[2], "https://x/y" + " " * 8)  # 18 wide + right gutter
 
     def test_click_copies_url_via_osc52(self) -> None:
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            stream = io.StringIO()
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=stream, force_styling=True)
-            ui = fairy_tui.UILoop(term, fairy_tui.Model(),
-                                  tui_core.RingBuffer(), Path("."), [PR])
-            ui._clip_cmd = None  # pin the terminal-escape fallback path
-            buf: list = []
-            # pane narrower than the URL: the copy must still be whole
-            ui._blit(buf, tui_core.Rect(10, 0, 16, 4), "br",
-                     ["see https://ffmpeg.org/very/long now"])
-            ui._copy_click("br", 10 + 1 + 6, 1)   # inside the URL, row 0
-            ui._copy_click("br", 10 + 1 + 1, 1)   # on plain text: no-op
+        stream = io.StringIO()
+        term = make_term(stream)
+        ui = fairy_tui.UILoop(term, fairy_tui.Model(),
+                              tui_core.RingBuffer(), Path("."), [PR])
+        ui._clip_cmd = None  # pin the terminal-escape fallback path
+        buf: list = []
+        # pane narrower than the URL: the copy must still be whole
+        ui._blit(buf, tui_core.Rect(10, 0, 16, 4), "br",
+                 ["see https://ffmpeg.org/very/long now"])
+        ui._copy_click("br", 10 + 1 + 6, 1)   # inside the URL, row 0
+        ui._copy_click("br", 10 + 1 + 1, 1)   # on plain text: no-op
         payload = fairy_tui.base64.b64encode(
             b"https://ffmpeg.org/very/long").decode()
         self.assertEqual(stream.getvalue().count("\x1b]52;c;"), 1)
@@ -693,17 +673,15 @@ class PaintSmokeTests(unittest.TestCase):
 
     def test_click_prefers_the_external_clipboard_helper(self) -> None:
         # xclip/wl-copy work in terminals without OSC 52 support (rxvt).
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            stream = io.StringIO()
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=stream, force_styling=True)
-            ui = fairy_tui.UILoop(term, fairy_tui.Model(),
-                                  tui_core.RingBuffer(), Path("."), [PR])
-            ui._clip_cmd = ["xclip", "-selection", "primary"]
-            buf: list = []
-            ui._blit(buf, tui_core.Rect(10, 0, 20, 4), "br", ["see 5144acb now"])
-            with mock.patch.object(fairy_tui.subprocess, "run") as run:
-                ui._copy_click("br", 10 + 1 + 5, 1)
+        stream = io.StringIO()
+        term = make_term(stream)
+        ui = fairy_tui.UILoop(term, fairy_tui.Model(),
+                              tui_core.RingBuffer(), Path("."), [PR])
+        ui._clip_cmd = ["xclip", "-selection", "primary"]
+        buf: list = []
+        ui._blit(buf, tui_core.Rect(10, 0, 20, 4), "br", ["see 5144acb now"])
+        with mock.patch.object(fairy_tui.subprocess, "run") as run:
+            ui._copy_click("br", 10 + 1 + 5, 1)
         self.assertEqual(run.call_args.args[0], ["xclip", "-selection", "primary"])
         self.assertEqual(run.call_args.kwargs["input"], b"5144acb")
         self.assertNotIn("\x1b]52;", stream.getvalue())  # no fallback needed
@@ -717,15 +695,13 @@ class PaintSmokeTests(unittest.TestCase):
                              ["xclip", "-selection", "primary"])
 
     def test_export_failure_is_logged_not_fatal(self) -> None:
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
-            model = fairy_tui.Model()
-            ui = fairy_tui.UILoop(
-                term, model, tui_core.RingBuffer(),
-                Path("/proc/no-such-dir"), [PR])
-            with self.assertLogs(fairy_tui.logger, level="ERROR") as logs:
-                ui.export(full=True)  # must not raise
+        term = make_term()
+        model = fairy_tui.Model()
+        ui = fairy_tui.UILoop(
+            term, model, tui_core.RingBuffer(),
+            Path("/proc/no-such-dir"), [PR])
+        with self.assertLogs(fairy_tui.logger, level="ERROR") as logs:
+            ui.export(full=True)  # must not raise
         self.assertIn("export", logs.output[0])
 
 

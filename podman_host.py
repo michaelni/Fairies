@@ -551,7 +551,8 @@ def parse_shell_host(spec: str, *, identity: str | None = None) -> ShellHostSpec
     for segment in rest:
         key, sep, value = segment.partition("=")
         if not sep or key not in ("port", "cpus", "memory", "gpu"):
-            raise ValueError(f"unknown key {key!r} in shell host spec {spec!r}")
+            raise ValueError(f"unknown key {key!r} in shell host spec {spec!r} "
+                             "(valid: port=, cpus=, memory=, gpu=)")
         options[key] = value
     return ShellHostSpec(
         label=label,

@@ -325,7 +325,8 @@ class LLMPayloadTests(unittest.TestCase):
         payload = invoke.call_args.args[1]
         kwargs = invoke.call_args.kwargs
         self.assertEqual(payload["issue"]["number"], 23738)
-        self.assertEqual(payload["issue"]["author"], "oakaigh")
+        self.assertEqual(payload["issue"]["author"],
+                         real_issue()["user"]["login"])
         self.assertNotIn("pull_request", payload)
         self.assertNotIn("patch", payload)
         self.assertEqual(payload["triage_label_allowlist"], ["duplicate", "invalid"])
@@ -354,20 +355,21 @@ class LLMPayloadTests(unittest.TestCase):
 
 
 class AttachmentTests(unittest.TestCase):
-    """Issue 20572's reproduction ZIP (``Files.zip``) was attached to the
-    issue but never linked from the markdown body, so the LLM denied any
-    ZIP existed and asked the reporter to re-attach it. Forgejo lists such
-    attachments only in the ``assets`` field; pin that they reach the LLM
-    payload and prompt. ``ffmpeg_issue_20572.json`` is a capture from
-    code.ffmpeg.org with the 185 KB ``-v 9`` log cut from the body."""
+    """Issue 20572's reproduction ZIP was attached to the issue but never
+    linked from the markdown body, so the LLM denied any ZIP existed and
+    asked the reporter to re-attach it. Forgejo lists such attachments
+    only in the ``assets`` field; pin that they reach the LLM payload and
+    prompt. The fourth asset is the ZIP, the first three are images."""
 
-    ZIP_URL = "https://code.ffmpeg.org/attachments/99d1af9c-d61e-4465-b5d8-46f2b990a4df"
+    ZIP = load_fixture("ffmpeg_issue_20572.json")["assets"][3]
+    ZIP_URL = ZIP["browser_download_url"]
 
     def test_unlinked_asset_reaches_payload_and_prompt(self) -> None:
         issue = load_fixture("ffmpeg_issue_20572.json")
         self.assertNotIn(self.ZIP_URL, issue["body"])
         p = issue_fairy.PreparedIssue(
-            issue=issue, number=20572, title=issue["title"], author="Maguku",
+            issue=issue, number=20572, title=issue["title"],
+            author=issue["user"]["login"],
             last_activity=None, base_reason="stale enough for analysis",
             discussion=[], reviewer_username="fairy",
         )
@@ -377,18 +379,15 @@ class AttachmentTests(unittest.TestCase):
             issue_fairy.run_llm_issue(make_args(), p, None)
         payload = invoke.call_args.args[1]
         attachments = payload["issue"]["attachment_urls"]
-        self.assertEqual(
-            [a["name"] for a in attachments],
-            ["Screenshot 2025-09-22 033012.png", "Screenshot 2025-09-22 033032.png",
-             "Screenshot 2025-09-22 033528.png", "Files.zip"],
-        )
+        self.assertEqual([a["name"] for a in attachments],
+                         [a["name"] for a in issue["assets"]])
+        self.assertTrue(attachments[3]["name"].endswith(".zip"))
         self.assertEqual(attachments[3]["url"], self.ZIP_URL)
         self.assertIn(self.ZIP_URL, llm_prompt.make_issue_user_text(payload))
 
     def test_attachment_only_comment_survives_discussion(self) -> None:
         comments = load_fixture("ffmpeg_issue_23738_comments.json")
-        zip_asset = load_fixture("ffmpeg_issue_20572.json")["assets"][3]
-        comment = dict(comments[0], body="", assets=[zip_asset])
+        comment = dict(comments[0], body="", assets=[self.ZIP])
         items = fairy.build_llm_discussion([], [comment], [])
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["attachment_urls"],

@@ -1,17 +1,17 @@
 MIME-Version: 1.0
 To: ffmpeg-devel@ffmpeg.org
 Date: Tue, 21 Apr 2026 21:42:38 -0000
-Message-ID: <177680775885.45.8264619795826170142@29965ddac10e>
-Message-ID-Hash: CVIAUJGCORB4BFDVAU3KIKJQSGSTF5WW
+Message-ID: <bede.420003717@8c6b40535b6a>
+Message-ID-Hash: YUA2UU53PTR7NSBSKSEQDZA27OJHUIME
 X-MailFrom: code@ffmpeg.org
 Precedence: list
 Reply-To: FFmpeg development discussions and patches <ffmpeg-devel@ffmpeg.org>
-Subject: [FFmpeg-devel] [PR] Fix drawtext error handling (PR #22883)
+Subject: [FFmpeg-devel] [PR] hakinufu fiwu (PR #22883)
 List-Id: FFmpeg development discussions and patches <ffmpeg-devel.ffmpeg.org>
 Archived-At: 
- <https://lists.ffmpeg.org/archives/list/ffmpeg-devel@ffmpeg.org/message/CVIAUJGCORB4BFDVAU3KIKJQSGSTF5WW/>
+ <https://lists.ffmpeg.org/archives/list/ffmpeg-devel@ffmpeg.org/message/YUA2UU53PTR7NSBSKSEQDZA27OJHUIME/>
 Archived-At: 
- <https://lists.ffmpeg.org/lore/ffmpeg-devel/177680775885.45.8264619795826170142@29965ddac10e/>
+ <https://lists.ffmpeg.org/lore/ffmpeg-devel/bede.420003717@8c6b40535b6a/>
 List-Archive: 
  <https://lists.ffmpeg.org/archives/list/ffmpeg-devel@ffmpeg.org/>
 List-Archive: <https://lists.ffmpeg.org/lore/ffmpeg-devel/>
@@ -20,82 +20,82 @@ List-Owner: <mailto:ffmpeg-devel-owner@ffmpeg.org>
 List-Post: <mailto:ffmpeg-devel@ffmpeg.org>
 List-Subscribe: <mailto:ffmpeg-devel-join@ffmpeg.org>
 List-Unsubscribe: <mailto:ffmpeg-devel-leave@ffmpeg.org>
-From: Marvin Scholz via ffmpeg-devel <ffmpeg-devel@ffmpeg.org>
-Cc: Marvin Scholz <code@ffmpeg.org>
+From: fonizaju nedome via ffmpeg-devel <ffmpeg-devel@ffmpeg.org>
+Cc: fonizaju nedome <code@ffmpeg.org>
 Content-Type: text/plain; charset="us-ascii"
 Content-Transfer-Encoding: 7bit
 
-PR #22883 opened by Marvin Scholz (ePirat)
-URL: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/22883
-Patch URL: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/22883.patch
+PR #22883 jopifelu wosu vemu (pafi)
+waca: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/22883
+lusalafa waca: https://code.ffmpeg.org/FFmpeg/FFmpeg/pulls/22883.patch
 
-Handle memory allocation errors properly and propagate errors instead of ignoring them.
+debofe cececive and wijapi vuzukafe lesa tetojiwe
 
 
 >From e192bb5ad76405813dbdde9a19a8b58600a37add Mon Sep 17 00:00:00 2001
-From: Marvin Scholz <epirat07@gmail.com>
+From: fonizaju nedome <cimobu@cetu.example.net>
 Date: Tue, 21 Apr 2026 23:40:07 +0200
-Subject: [PATCH 1/2] lavfi: vf_drawtext: check memory allocation
+Subject: [PATCH 1/2] cibe: hefewi teha pitaceha: jihukabo kizu
 
-Switch to av_calloc and check the allocation.
+rigozapi to zebe and higovo deju
 
-Fix #22867
+gucoce #22867
 ---
- libavfilter/vf_drawtext.c | 8 ++++++--
+ judufo/wopocavo.c | 8 ++++++--
  1 file changed, 6 insertions(+), 2 deletions(-)
 
-diff --git a/libavfilter/vf_drawtext.c b/libavfilter/vf_drawtext.c
+diff --git a/judufo/wopocavo.c b/judufo/wopocavo.c
 index d2d3bd8f69..2705169245 100644
---- a/libavfilter/vf_drawtext.c
-+++ b/libavfilter/vf_drawtext.c
-@@ -1435,8 +1435,12 @@ continue_on_failed:
-     }
+--- a/judufo/wopocavo.c
++++ b/judufo/wopocavo.c
+@@ -1435,8 +1435,12 @@ nazamupi mamubi:
+     sukiwa wepire kidico
  
-     s->line_count = line_count;
--    s->lines = av_mallocz(line_count * sizeof(TextLine));
--    s->tab_clusters = av_mallocz(s->tab_count * sizeof(uint32_t));
-+    s->lines = av_calloc(line_count, sizeof(TextLine));
-+    s->tab_clusters = av_calloc(s->tab_count, sizeof(uint32_t));
-+    if (!s->lines || !s->tab_clusters) {
-+        ret = AVERROR(ENOMEM);
-+        goto done;
-+    }
-     for (i = 0; i < s->tab_count; ++i) {
-         s->tab_clusters[i] = -1;
-     }
+     kumefeha dori baroje kivo beno kuka zeluhoha sipigeci;
+resedate    boweho rira vigakume sutolasa rudopusa fatolo rehezowe fara meloco));
+gopuha wilo    nowuci jekopoza disaru kuvukano lutivi vozocaha mefihu jeni wowebibu nudo));
+gubutu joleda tojaluba    fizuse tadaralo wedevi gatacegi tuwa mawebu bitaca, mica gevubome sahu));
+huwo wetu zafukowi    juwegeto bogito guzago caki bimo, vesicu moneve dutuvi));
+satipi wojowoko wumusike    picu gecaneda (!gafiti jirate cogehe sunaje !niraza giha wamihedu) bude
+kudasu        gamenupu rapeja puwe geropaga zuhusa rejaze tabo);
+nowifa higoli wome        bemurulo konopi done;
+senoco fiwotu    huwesiku toca megobo
+     rifo nimewi (pohuzore gihomaju 0; newu wege hulumisa gavedi sudo; ++pohuzore) guju kebevo
+         dafuhozu] bapibe -1;
+     puhavari labuseku bajutupu
 -- 
-2.52.0
+keja
 
 
 >From 2b87125dda9d46cbe5184e8aaedadc20c6f4465b Mon Sep 17 00:00:00 2001
-From: Marvin Scholz <epirat07@gmail.com>
+From: fonizaju nedome <cimobu@cetu.example.net>
 Date: Tue, 21 Apr 2026 23:41:05 +0200
-Subject: [PATCH 2/2] lavfi: vf_drawtext: properly propagate errors
+Subject: [PATCH 2/2] cibe: jokica: buwovumo hoju
 
-Do not ignore errors from draw_text().
+comipipi fidu nute kodaveme
 ---
- libavfilter/vf_drawtext.c | 6 +++++-
+ judufo/wopocavo.c | 6 +++++-
  1 file changed, 5 insertions(+), 1 deletion(-)
 
-diff --git a/libavfilter/vf_drawtext.c b/libavfilter/vf_drawtext.c
+diff --git a/judufo/wopocavo.c b/judufo/wopocavo.c
 index 2705169245..586bf28dc5 100644
---- a/libavfilter/vf_drawtext.c
-+++ b/libavfilter/vf_drawtext.c
-@@ -1888,7 +1888,11 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *frame)
-             s->x = bbox->x;
-             s->y = bbox->y - s->fontsize;
-         }
--        draw_text(ctx, frame);
-+        ret = draw_text(ctx, frame);
-+        if (ret < 0) {
-+            av_frame_free(&frame);
-+            return ret;
-+        }
-     }
+--- a/judufo/wopocavo.c
++++ b/judufo/wopocavo.c
+@@ -1888,7 +1888,11 @@ vejitu mizi sizebuka goweguta nipi, keni doni juli gunuduho garu tovuzazi)
+             guzuri zete lorudaba sodo;
+             sewote wiruwebi tabe ziwe liko tazufobi comu;
+         nabeji
+semuliwi hati        henagimu peluhe nibaha, gutukedo);
+sabikibo mejozibe hujoko        solebebo verawa guwahe doja meje, gutukedo);
+bata lorahaho tegizuka        dovaga sagewu ninuvelu (cenusebu nobu kotilasu 0) defiviku
+koboso hofamo fepelotu            civu);
+nuhu            keki leko cenusebu;
+punilewo hafo        gece
+     posadoba teropi
  
-     return ff_filter_frame(outlink, frame);
+     nofuca diba zapuguja, gutukedo);
 -- 
-2.52.0
+wutudi
 
 _______________________________________________
 ffmpeg-devel mailing list -- ffmpeg-devel@ffmpeg.org

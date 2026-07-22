@@ -181,12 +181,14 @@ class RenderMarkdownTests(unittest.TestCase):
         lines = render_markdown("word " * 50, width=24)
         self.assertTrue(all(len(line_text(x)) <= 24 for x in lines))
 
-    def test_real_issue_comment_renders(self) -> None:
-        comments = json.loads(
-            (REPO_ROOT / "tests/fixtures/issue_fairy/ffmpeg_issue_23738_comments.json")
-            .read_text()
+    def test_a_forge_comment_renders(self) -> None:
+        body = (
+            "> The doxy says the index is in stream time base units,\n"
+            "> which is not what the seek path assumes.\n"
+            "\n"
+            "Agreed -- `AVIndexEntry.timestamp` is the one to trust here,\n"
+            "and `av_index_search_timestamp()` already does.\n"
         )
-        body = comments[0]["body"]
         lines = render_markdown(body, width=72)
         self.assertTrue(lines)
         got = styles(lines)

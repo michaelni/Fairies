@@ -29,6 +29,7 @@ and ``read_body`` open the fixture files.
 
 from __future__ import annotations
 
+import re
 import sys
 import time
 import unittest
@@ -42,6 +43,13 @@ if str(REPO_ROOT) not in sys.path:
 import mail_fairy  # noqa: E402
 
 FIX = REPO_ROOT / "tests" / "fixtures" / "mail_fairy"
+
+
+def _header(path, name: str) -> str:
+    """Names and message-ids are drawn by tools/redact.py, so a test reads
+    what it needs out of the fixture rather than naming it."""
+    found = re.search(rf"^{name}:[ \t]*(.*)$", path.read_text(), re.M)
+    return found.group(1).strip() if found else ""
 FORGE_ROOT = FIX / "forge_pr_root.eml"
 HUMAN_REPLY = FIX / "human_reply.eml"
 
@@ -725,7 +733,7 @@ class TestForgejoRootFixture(unittest.TestCase):
         self.assertIsNotNone(h)
         self.assertEqual(
             h.message_id,
-            "177680775885.45.8264619795826170142@29965ddac10e",
+            _header(FORGE_ROOT, "Message-ID").strip("<>"),
         )
         self.assertEqual(h.in_reply_to, "")
         self.assertIn("(PR #22883)", h.subject)
@@ -733,7 +741,7 @@ class TestForgejoRootFixture(unittest.TestCase):
         self.assertEqual(
             h.lore_url,
             "https://lists.ffmpeg.org/lore/ffmpeg-devel/"
-            "177680775885.45.8264619795826170142@29965ddac10e/",
+            + _header(FORGE_ROOT, "Message-ID").strip("<>") + "/",
         )
 
     def test_classify_root_subject(self):

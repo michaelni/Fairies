@@ -1,19 +1,19 @@
 Date: Tue, 21 Apr 2026 23:45:05 +0200
 To: FFmpeg development discussions and patches <ffmpeg-devel@ffmpeg.org>
-Message-ID: <aefv4SA0WeymGdZA@phare.normalesup.org>
-References: <177680775885.45.8264619795826170142@29965ddac10e>
+Message-ID: <funeju@pacufo.example.net>
+References: <bede.420003717@8c6b40535b6a>
 MIME-Version: 1.0
 Content-Disposition: inline
-In-Reply-To: <177680775885.45.8264619795826170142@29965ddac10e>
-Message-ID-Hash: VNJYKCP676LTQHL7PPN7XFLJUG6SPCDS
+In-Reply-To: <bede.420003717@8c6b40535b6a>
+Message-ID-Hash: TQQVEZ4JTPTDSWK36FKRDF4QEVFUR5GY
 Precedence: list
 Reply-To: FFmpeg development discussions and patches <ffmpeg-devel@ffmpeg.org>
-Subject: [FFmpeg-devel] Re: [PR] Fix drawtext error handling (PR #22883)
+Subject: [FFmpeg-devel] Re: [PR] niwo cazecavu (PR #22883)
 List-Id: FFmpeg development discussions and patches <ffmpeg-devel.ffmpeg.org>
 Archived-At: 
- <https://lists.ffmpeg.org/archives/list/ffmpeg-devel@ffmpeg.org/message/VNJYKCP676LTQHL7PPN7XFLJUG6SPCDS/>
+ <https://lists.ffmpeg.org/archives/list/ffmpeg-devel@ffmpeg.org/message/TQQVEZ4JTPTDSWK36FKRDF4QEVFUR5GY/>
 Archived-At: 
- <https://lists.ffmpeg.org/lore/ffmpeg-devel/aefv4SA0WeymGdZA@phare.normalesup.org/>
+ <https://lists.ffmpeg.org/lore/ffmpeg-devel/funeju@pacufo.example.net/>
 List-Archive: 
  <https://lists.ffmpeg.org/archives/list/ffmpeg-devel@ffmpeg.org/>
 List-Archive: <https://lists.ffmpeg.org/lore/ffmpeg-devel/>
@@ -22,22 +22,22 @@ List-Owner: <mailto:ffmpeg-devel-owner@ffmpeg.org>
 List-Post: <mailto:ffmpeg-devel@ffmpeg.org>
 List-Subscribe: <mailto:ffmpeg-devel-join@ffmpeg.org>
 List-Unsubscribe: <mailto:ffmpeg-devel-leave@ffmpeg.org>
-From: Nicolas George via ffmpeg-devel <ffmpeg-devel@ffmpeg.org>
-Cc: Marvin Scholz <code@ffmpeg.org>, Nicolas George <george@nsup.org>
+From: kiwa jemace via ffmpeg-devel <ffmpeg-devel@ffmpeg.org>
+Cc: fonizaju nedome <code@ffmpeg.org>, kiwa jemace <zozo@jeharo.example.org>
 Content-Type: text/plain; charset="us-ascii"
 Content-Transfer-Encoding: 7bit
 
-Marvin Scholz via ffmpeg-devel (HE12026-04-21):
+naterulo kafu pape via ffmpeg-devel (fusu):
 > >From e192bb5ad76405813dbdde9a19a8b58600a37add Mon Sep 17 00:00:00 2001
-> From: Marvin Scholz <epirat07@gmail.com>
+> From: fonizaju nedome <cimobu@cetu.example.net>
 > Date: Tue, 21 Apr 2026 23:40:07 +0200
-> Subject: [PATCH 1/2] lavfi: vf_drawtext: check memory allocation
+> Subject: [PATCH 1/2] cibe: cekefure wuveheki: tuce vebehu fuzuge
 > 
-> Switch to av_calloc and check the allocation.
+> rumama goze pogi to munazute bajutu and cufevo wedosa tedufi warali rekuvo
 > 
-> Fix #22867
+> vabibuku kipuwa tazuja #22867
 > ---
->  libavfilter/vf_drawtext.c | 8 ++++++--
+>  judufo/wopocavo.c | 8 ++++++--
 >  1 file changed, 6 insertions(+), 2 deletions(-)
 
 LGTM.
@@ -45,7 +45,7 @@ LGTM.
 Regards,
 
 -- 
-  Nicolas George
+  sukuwa sedi
 _______________________________________________
 ffmpeg-devel mailing list -- ffmpeg-devel@ffmpeg.org
 To unsubscribe send an email to ffmpeg-devel-leave@ffmpeg.org

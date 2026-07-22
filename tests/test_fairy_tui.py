@@ -502,8 +502,7 @@ class DetailFromFileTests(WorksetDirCase):
         term = make_term()
         ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(), Path("."), [PR])
         with self.model.lock:
-            return "\n".join(
-                "".join(seg[1] for seg in line) for line in ui.detail_lines(100))
+            return fairy_tui._plain(ui.detail_lines(100))
 
     def test_orphan_review_renders_message_from_file(self) -> None:
         self._write(5, workset.WorkState.REVIEWED, message="persisted body")

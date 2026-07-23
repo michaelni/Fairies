@@ -3087,7 +3087,16 @@ def workset_record_queued(
         return
     existing = workset.load_item(path)
     if existing is not None:
-        logger.debug("workset: keeping %s state=%s", path, existing.state.name)
+        # Keep the file's content (review, backoff memory), but return
+        # its state to the pipeline: without the transition a
+        # re-reviewed item keeps showing its stale REVIEWED/POSTED
+        # state (a re-reviewed skip hides as done in the TUI) for the
+        # whole LLM run. Same transition the operator's rerun does.
+        if existing.state is not workset.WorkState.QUEUED:
+            workset.update_item(path, lambda item: item.set_state(
+                workset.WorkState.QUEUED, datetime.now(timezone.utc)))
+            logger.debug("workset: re-queued %s (was %s)",
+                         path, existing.state.name)
         return
     now_iso = datetime.now(timezone.utc).isoformat()
     workset.save_item(path, workset.WorkItem(

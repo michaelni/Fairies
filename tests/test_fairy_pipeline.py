@@ -140,6 +140,29 @@ class PipelineLimitTests(PipelineDriver, unittest.TestCase):
         self.assertEqual([c.args[1].number for c in review_mock.call_args_list], [1])
 
 
+class RequeueTransitionTests(unittest.TestCase):
+    def test_requeued_item_returns_to_queued_keeping_its_review(self) -> None:
+        # A skip-backoff re-review used to leave the file REVIEWED for
+        # the whole LLM run, so the TUI hid the in-flight item as done.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = make_args(workset_dir=Path(tmp.name), owner="o", repo="r",
+                         forge_type="gitea", gcli_account=None)
+        path = fairy.workset_path(args, "pr", 5)
+        now = "2026-07-20T00:00:00+00:00"
+        workset.save_item(path, workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=5, state=workset.WorkState.REVIEWED,
+            created_at=now, state_changed_at=now, title="t",
+            review=workset.ReviewResult(classification="skip", message="m"),
+        ))
+        fairy.workset_record_queued(args, "pr", number=5, title="t", html_url="u")
+        item = workset.load_item(path)
+        assert item is not None
+        self.assertEqual(item.state, workset.WorkState.QUEUED)
+        self.assertEqual(item.review.message, "m")  # backoff memory kept
+
+
 class WorksetWriteTests(PipelineDriver, unittest.TestCase):
     """The pipeline persists one JSON work file per LLM-evaluated PR."""
 

@@ -3652,7 +3652,12 @@ def start_review_pipeline(
                     # downstream, so they must not consume a --limit
                     # slot. A reusable item also keeps its REVIEWED
                     # file: the QUEUED transition would defeat the
-                    # reuse check, which requires that state.
+                    # reuse check, which requires that state (QUEUED
+                    # deliberately disables reuse -- the rerun action
+                    # depends on it). This probe is a compensation for
+                    # the requeue transition in workset_record_queued;
+                    # it can go when the workset storage redesign
+                    # separates row visibility from review reuse.
                     reusable = workset_reusable_review(
                         args, "pr", prepared.number,
                         expected_updated_at=prepared.pr.get("updated_at"),

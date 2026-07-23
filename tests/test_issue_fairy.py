@@ -511,6 +511,22 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(
             [c.args[1].number for c in evaluate_mock.call_args_list], [1])
 
+    def test_cancelled_number_does_not_consume_a_limit_slot(self) -> None:
+        # What never enters the LLM must not count against --limit:
+        # with the first issue cancelled, #2 still gets the only slot.
+        p1, p2 = self._patched()
+        with p1, p2 as evaluate_mock:
+            input_queue, (reviewed_queue, llm_queue) = self._start(
+                make_args(llm_parallelism=1, limit=1), [1, 2], cancelled={1})
+            input_queue.put(issue_fairy._PREPARE_DONE)
+            results = [reviewed_queue.get(timeout=10) for _ in range(2)]
+            llm_queue.put(issue_fairy._LLM_DONE)
+        by_number = {d.pr_number: d for _, d in results}
+        self.assertEqual(by_number[1].reason, "cancelled by operator")
+        self.assertNotIn("--limit", by_number[2].reason)
+        self.assertEqual(
+            [c.args[1].number for c in evaluate_mock.call_args_list], [2])
+
     def test_parallel_workers_evaluate_every_issue(self) -> None:
         results = self._run(make_args(llm_parallelism=3, limit=0), [1, 2, 3, 4, 5])
         self.assertEqual(sorted(d.pr_number for _, d in results), [1, 2, 3, 4, 5])

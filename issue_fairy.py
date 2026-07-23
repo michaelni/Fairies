@@ -712,7 +712,9 @@ def start_issue_pipeline(
                     prepared.last_activity, "-", "",
                 )))
             else:
-                queued += 1
+                # An already-cancelled item never invokes the LLM
+                # downstream, so it must not consume a --limit slot.
+                queued += not (cancelled and prepared.number in cancelled)
                 fairy.workset_record_queued(
                     args, "issue",
                     number=prepared.number,

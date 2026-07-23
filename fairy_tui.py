@@ -121,6 +121,12 @@ class Item:
 
 _IN_PIPELINE = (Status.PENDING, Status.QUEUED, Status.IN_LLM,
                 Status.REVIEWED, Status.INVALID)
+# File states the pipeline actively owns: their appearance reopens a
+# settled row (re-queue after skip backoff or new activity). REVIEWED
+# is not among them, so a just-posted APPLIED row cannot be dragged
+# back by a momentarily stale file read.
+_REQUEUED_STATES = (workset.WorkState.QUEUED, workset.WorkState.TRIAGE,
+                    workset.WorkState.REVIEW, workset.WorkState.COMBINE)
 _KIND_FILE = {"PR": "pr", "issue": "issue"}  # TUI kind -> workset file kind
 _WORKSET_STATUS = {
     workset.WorkState.QUEUED: Status.QUEUED,
@@ -318,7 +324,7 @@ class Model:
                 item.title = item.title or ws.title
                 item.url = item.url or ws.html_url
                 item.stage = _WORKSET_STAGE.get(ws.state, "")
-                if item.status in _IN_PIPELINE:
+                if item.status in _IN_PIPELINE or ws.state in _REQUEUED_STATES:
                     status = _WORKSET_STATUS[ws.state]
                     # A persisted LLM skip is bookkeeping, not work: it
                     # must not show (or count) as awaiting the operator.

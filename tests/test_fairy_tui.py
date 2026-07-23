@@ -179,6 +179,21 @@ class WorksetPollTests(WorksetDirCase):
         self.assertIs(self.model.items[(*PR, 5)].status,
                       fairy_tui.Status.CANCELLED)
 
+    def test_a_requeued_file_reopens_a_settled_row(self) -> None:
+        # A skip-backoff re-review flips the file back to QUEUED; the
+        # row (hidden as done since the first poll) must come back, or
+        # the operator watches the wrapper work on an invisible item.
+        self._write(5, workset.WorkState.REVIEWED, classification="skip",
+                    mtime=100.0)
+        self.model.poll_workset()
+        self.assertIs(self.model.items[(*PR, 5)].status, fairy_tui.Status.DONE)
+        self._write(5, workset.WorkState.QUEUED, mtime=200.0)
+        self.model.poll_workset()
+        self.assertIs(self.model.items[(*PR, 5)].status,
+                      fairy_tui.Status.QUEUED)
+        with self.model.lock:
+            self.assertIn(5, [it.number for it in self.model.visible()])
+
     def test_operator_states_are_not_clobbered(self) -> None:
         # APPLIED (just posted this run) must not be downgraded by a poll
         # that still sees the file in REVIEWED for a moment.

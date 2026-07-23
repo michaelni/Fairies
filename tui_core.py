@@ -158,12 +158,14 @@ class GridLayout:
             self.fy = _clamp(y, self.MIN_H, max(self.MIN_H, h - 1 - self.MIN_H)) / h
 
 
-def tile_blocks(blocks: list[list[StyledLine]], width: int,
-                gap: int = 2) -> list[StyledLine]:
+_TILE_SEP = " │ "
+
+
+def tile_blocks(blocks: list[list[StyledLine]], width: int) -> list[StyledLine]:
     """Lay line blocks out side by side, as many columns as fit
-    ``width``; block rows are separated by a blank line. Blocks fill
-    rows left to right and each column is as wide as its own widest
-    block, so one wide block does not stack everything."""
+    ``width``, divider lines between the columns and between block
+    rows. Blocks fill rows left to right and each column is as wide as
+    its own widest block, so one wide block does not stack everything."""
     blocks = [b for b in blocks if b]
     if not blocks:
         return []
@@ -171,20 +173,21 @@ def tile_blocks(blocks: list[list[StyledLine]], width: int,
               for b in blocks]
     for ncols in range(len(blocks), 0, -1):
         col_w = [max(widths[c::ncols]) for c in range(ncols)]
-        if ncols == 1 or sum(col_w) + gap * (len(col_w) - 1) <= width:
+        if ncols == 1 or sum(col_w) + len(_TILE_SEP) * (ncols - 1) <= width:
             break
+    grid_w = min(width, sum(col_w) + len(_TILE_SEP) * (len(col_w) - 1))
     out: list[StyledLine] = []
     for start in range(0, len(blocks), ncols):
         row = blocks[start:start + ncols]
         if out:
-            out.append([])
+            out.append([("divider", "─" * grid_w)])
         for y in range(max(len(b) for b in row)):
             line: StyledLine = []
             for i, b in enumerate(row):
                 cell = b[y] if y < len(b) else []
                 # the last column keeps its natural width (no pad/clip)
                 line += (cell if i == len(row) - 1
-                         else _fit(cell, col_w[i]) + [("text", " " * gap)])
+                         else _fit(cell, col_w[i]) + [("divider", _TILE_SEP)])
             out.append(line)
     return out
 

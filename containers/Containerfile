@@ -133,6 +133,17 @@ RUN rsync -a rsync://fate-suite.ffmpeg.org/fate-suite/ /opt/fate-suite/
 RUN apt-get update && apt-get install -y --no-install-recommends \
         vim valgrind
 
+# Tools the review models reached for that the layers above lack,
+# counted as "command not found" across openaidebug/ over the weeks to
+# 2026-07-23: xxd (313), bc (220), cmake (63); plus the autotools trio
+# (an external project's ./autogen.sh needs them, e.g. opus) and
+# vulkan-tools, whose vulkaninfo probes the GPU driver injected at
+# runtime on the GPU host. Own layer, after FATE, to keep it cached.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xxd bc cmake \
+        autoconf automake libtool \
+        vulkan-tools
+
 # Full-text search over /work (source, issue/PR exports, spec PDFs).
 # The index is built in the background at review start
 # (pr_review_wrapper) and queried with ``recollq``; antiword and

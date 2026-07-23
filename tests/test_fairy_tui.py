@@ -26,8 +26,11 @@ PR = ("PR", "o/r")
 PR2 = ("PR", "o/r2")
 
 
-def decision(n: int, action: str = "comment", msg: str = "msg") -> fairy.Decision:
-    return fairy.Decision(n, "t", "a", "-", action, "llm", None, "reply", msg)
+def decision(n: int, action: str = "comment", msg: str = "msg",
+             llm: str = "reply") -> fairy.Decision:
+    # llm="-" models a gate skip: the LLM never ran (fairy.Decision's
+    # placeholder default), unlike an LLM skip/error verdict.
+    return fairy.Decision(n, "t", "a", "-", action, "llm", None, llm, msg)
 
 
 class Key(str):
@@ -65,17 +68,31 @@ class ModelTests(unittest.TestCase):
         model.add_candidates(PR, [{"number": 1, "title": "a"},
                                     {"number": 2, "title": "b"}])
         model.finish(PR, decision(1))                       # actionable
-        model.finish(PR, decision(2, action="skip", msg=""))  # gate skip
+        model.finish(PR, decision(2, action="skip", msg="", llm="-"))  # gate skip
         with model.lock:
             self.assertEqual([it.number for it in model.visible()], [1])
             model.show_all = True
             self.assertEqual([it.number for it in model.visible()], [1, 2])
 
+    def test_llm_skip_from_this_session_stays_listed(self) -> None:
+        # The operator watched this item get reviewed and wants to
+        # inspect why it skipped; only startup backlog (no in-memory
+        # decision) and gate skips stay out of the relevant view.
+        model = fairy_tui.Model()
+        model.add_candidates(PR, [{"number": 1, "title": "a"},
+                                  {"number": 2, "title": "b"}])
+        model.finish(PR, decision(1, action="skip", msg="no new activity",
+                                  llm="skip"))
+        model.finish(PR, decision(2, action="skip", msg="", llm="-"))
+        self.assertIs(model.items[(*PR, 1)].status, fairy_tui.Status.DONE)
+        with model.lock:
+            self.assertEqual([it.number for it in model.visible()], [1])
+
     def test_finish_marks_only_non_actionable_done(self) -> None:
         model = fairy_tui.Model()
         model.add_candidates(PR, [{"number": 1, "title": "a"},
                                     {"number": 2, "title": "b"}])
-        model.finish(PR, decision(1, action="skip", msg=""))  # gate skip
+        model.finish(PR, decision(1, action="skip", msg="", llm="-"))  # gate skip
         model.finish(PR, decision(2))                         # actionable
         self.assertIs(model.items[(*PR, 1)].status, fairy_tui.Status.DONE)
         # Actionable items keep their file-driven status so the operator
@@ -582,9 +599,9 @@ class FilterToggleTests(unittest.TestCase):
         model = fairy_tui.Model()
         model.add_candidates(
             PR, [{"number": n, "title": "t"} for n in (1, 2, 3)])
-        model.finish(PR, decision(1, action="skip", msg=""))
+        model.finish(PR, decision(1, action="skip", msg="", llm="-"))
         model.finish(PR, decision(2))                       # actionable
-        model.finish(PR, decision(3, action="skip", msg=""))
+        model.finish(PR, decision(3, action="skip", msg="", llm="-"))
         model.show_all = True
         ui = fairy_tui.UILoop(
             term, model, tui_core.RingBuffer(), Path("."), [PR])

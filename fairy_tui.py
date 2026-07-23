@@ -475,6 +475,12 @@ class Model:
         d = item.decision
         return d is not None and (
             d.action in fairy.ACTIONABLE_DECISIONS or bool(d.label_changes)
+            # An LLM verdict that arrived this session stays listed even
+            # when non-actionable: the operator wants to inspect why an
+            # item skipped or errored. Startup backlog has no in-memory
+            # decision, so stale skips stay hidden. Gate skips carry the
+            # "-" placeholder (no LLM ran) and stay hidden too.
+            or d.llm_classification not in ("-", "")
         )
 
     def _cursor_key(self) -> tuple[str, str, int] | None:

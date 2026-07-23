@@ -179,12 +179,20 @@ def _machines_text(machines: Sequence[ShellHostSpec]) -> str:
     if len(machines) == 1:
         return (f"You have {_machine_line(machines[0])} and tens of GB of "
                 "SSD-backed disk space at your disposal.")
+    # The --shell-host label is the only thing that says what a machine is.
+    arm = next((m.label for m in machines if "arm" in m.label.lower()), "")
+    x86 = next((m.label for m in machines if "x86" in m.label.lower()), "")
     return (
         f"The shell tool runs on the machine named by its ``machine`` "
         f"parameter (default {machines[0].label}). Each machine is a "
         "separate container with its own filesystem and checkouts; state "
         "does not carry over. Machines, each with tens of GB of "
-        "SSD-backed disk:\n"
+        "SSD-backed disk. Set the machine parameter to the one most appropriate "
+        "for the work you want to do!"
+        + f" Choose {arm} if you want to test arm/arm64 or NEON!" * bool(arm)
+        + f" Choose {x86} if you want to test on x86/x86-64, MMX, SSE, AVX,"
+          " or a GPU, Vulkan, CUDA, Nvidia!" * bool(x86)
+        + "\n"
         + "\n".join(f"- {m.label}: {_machine_line(m)}" for m in machines)
     )
 

@@ -70,6 +70,10 @@ class RepoCookbookTests(unittest.TestCase):
         self.assertIn("- x86_64: 8 x86_64 CPU cores, 8g memory", text)
         self.assertIn("- arm64: 12 arm64 CPU cores, 16g memory", text)
         self.assertIn("state does not carry over", text)
+        self.assertIn("Choose arm64 if you want to test arm/arm64 or NEON!", text)
+        self.assertIn("Choose x86_64 if you want to test on x86/x86-64,", text)
+        self.assertNotIn(
+            "Choose", _prompt(["ffmpeg"], [_machine("big"), _machine("small")]))
 
     def test_foreign_deployment_makes_no_ffmpeg_claims(self) -> None:
         text = _prompt(["somerepo"])

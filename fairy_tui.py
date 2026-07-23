@@ -205,6 +205,11 @@ class Model:
         self._ws_mtimes: dict[Path, float] = {}  # poll_workset change detection
         self.show_all = False
         self.sort_mode = SORT_MODES[0]
+        # Rows the operator applied/skipped this session: they stay
+        # listed so the outcome (posted, skipped) is verifiable; without
+        # this, y on a backlog review (no in-memory decision) made the
+        # row vanish the moment the file turned POSTED.
+        self.acted: set[tuple[str, str, int]] = set()
         self.cursor = 0
         self.quit_flag = False
         self.started = time.monotonic()
@@ -390,6 +395,8 @@ class Model:
                 return
             logger.info("requested %s for %s %s#%s",
                         action, item.kind, item.repo, item.number)
+            if action in ("apply", "skip"):
+                self.acted.add(key)
             pipe.actions.put((item.number, action))
             # Jump to the next reviewed row waiting for the operator: the
             # first at/after the cursor, wrapping to the first overall.
@@ -467,6 +474,8 @@ class Model:
         return item
 
     def _relevant(self, item: Item) -> bool:
+        if (item.kind, item.repo, item.number) in self.acted:
+            return True
         if item.number in self.forced.get((item.kind, item.repo), ()):
             return True
         if item.status in (Status.QUEUED, Status.IN_LLM, Status.REVIEWED,

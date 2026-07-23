@@ -282,6 +282,20 @@ class ActTests(WorksetDirCase):
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (*PR, 2))
 
+    def test_applied_backlog_row_stays_listed(self) -> None:
+        # A review from an earlier run has no in-memory decision, so
+        # after y the POSTED file mapped it out of the relevant view --
+        # the operator could not verify the post landed.
+        self._write(5, workset.WorkState.REVIEWED, mtime=100.0)
+        self.model.poll_workset()
+        self.model.act("apply")
+        self._write(5, workset.WorkState.POSTED, mtime=200.0)  # controller posted
+        self.model.poll_workset()
+        item = self.model.items[(*PR, 5)]
+        self.assertIs(item.status, fairy_tui.Status.APPLIED)
+        with self.model.lock:
+            self.assertIn(5, [it.number for it in self.model.visible()])
+
     def test_x_cancels_pending_via_set_and_reviewed_via_action(self) -> None:
         self.model.add_candidates(PR, [{"number": 1, "title": "t"}])
         self.model.show_all = True  # pending rows live in the "all" view

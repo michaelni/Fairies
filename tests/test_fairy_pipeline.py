@@ -22,6 +22,7 @@ def make_args(**overrides: object) -> argparse.Namespace:
         limit=0,
         llm_parallelism=1,
         cache="/nonexistent",
+        force_review_prs=set(),
     )
     for k, v in overrides.items():
         setattr(args, k, v)
@@ -125,6 +126,41 @@ class PipelineLimitTests(PipelineDriver, unittest.TestCase):
             input_queue.put(fairy._PREPARE_DONE)
             self.assertEqual(reviewed_queue.get(timeout=10)[1].pr_number, 2)
             llm_queue.put(fairy._LLM_REVIEW_DONE)
+
+    def test_only_llm_entries_consume_limit_slots(self) -> None:
+        # #1 is reusable (file read, no LLM; its file must also stay
+        # REVIEWED or the reuse check downstream would find it QUEUED
+        # and re-review), #2 is cancelled: with --limit 1 the slot must
+        # still reach the fresh #3.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = make_args(limit=1, workset_dir=Path(tmp.name),
+                         forge_type="gitea", gcli_account=None)
+        now = "2026-07-20T00:00:00+00:00"
+        path = fairy.workset_path(args, "pr", 1)
+        workset.save_item(path, workset.WorkItem(
+            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
+            number=1, state=workset.WorkState.REVIEWED,
+            created_at=now, state_changed_at=now, title="t",
+            expected_updated_at="2026-07-19T10:00:00Z", expected_head_ref="h1",
+            review=workset.ReviewResult(classification="moderate_issues",
+                                        message="m"),
+        ))
+        p1, p2, p3 = self._patched()
+        with p1, p2 as review_mock, p3:
+            input_queue, (reviewed_queue, llm_queue) = self._start(
+                args, [1, 2, 3], cancelled={2})
+            input_queue.put(fairy._PREPARE_DONE)
+            results = [reviewed_queue.get(timeout=10) for _ in range(3)]
+            llm_queue.put(fairy._LLM_REVIEW_DONE)
+        by_number = {d.pr_number: d for _, d in results}
+        self.assertEqual(by_number[2].reason, "cancelled by operator")
+        self.assertNotIn("--limit", by_number[3].reason)
+        self.assertEqual([c.args[1].number for c in review_mock.call_args_list],
+                         [1, 3])
+        item = workset.load_item(path)
+        assert item is not None
+        self.assertIs(item.state, workset.WorkState.REVIEWED)
 
     def test_cancelled_number_skips_llm_call(self) -> None:
         p1, p2, p3 = self._patched()

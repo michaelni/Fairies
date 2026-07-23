@@ -3648,13 +3648,26 @@ def start_review_pipeline(
                 if isinstance(prepared, Decision):
                     reviewed_queue.put((prepared, prepared))
                 else:
-                    queued += 1
-                    workset_record_queued(
-                        args, "pr",
-                        number=prepared.number,
-                        title=prepared.title,
-                        html_url=str(prepared.pr.get("html_url") or ""),
-                    )
+                    # Cancelled and reused items never invoke the LLM
+                    # downstream, so they must not consume a --limit
+                    # slot. A reusable item also keeps its REVIEWED
+                    # file: the QUEUED transition would defeat the
+                    # reuse check, which requires that state.
+                    reusable = workset_reusable_review(
+                        args, "pr", prepared.number,
+                        expected_updated_at=prepared.pr.get("updated_at"),
+                        expected_head_ref=get_pr_head_ref(prepared.pr),
+                        forced=prepared.number in args.force_review_prs,
+                    ) is not None
+                    queued += (not reusable and
+                               not (cancelled and prepared.number in cancelled))
+                    if not reusable:
+                        workset_record_queued(
+                            args, "pr",
+                            number=prepared.number,
+                            title=prepared.title,
+                            html_url=str(prepared.pr.get("html_url") or ""),
+                        )
                     llm_queue.put(prepared)
         finally:
             try:

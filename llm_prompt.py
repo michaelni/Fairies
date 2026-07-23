@@ -159,6 +159,7 @@ R_PROMPT_CODE_REVIEWER_ROLE = """##In your Code Reviewer role
 
 R_PROMPT_DESIGN_REVIEWER_ROLE = """##In your Design Reviewer role
 - review design, maintainability, reviewability, simplicity, performance and license compatibility.
+- benchmark any code intended as an optimization, or changes to speed critical code.
 - check for performance/speed improvements for code where it matters, warn if speed/performance regressions are expected, suggest changes to improve performance/speed
 - check for potential code reuse and suggest factorizations and simplifications if there are any.
 - Check if this project is the right place for any fix/workaround, and if not say so clearly.

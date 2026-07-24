@@ -28,30 +28,26 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Blessed 4-pane operator UI over the fairy PR and issue pipelines.
+Blessed 4-pane operator UI over the filedb ticket directories.
 
-One tool for all sides: ``--pr-args``/``--issue-args`` each take the
-full argument string of fairy.py / issue_fairy.py and repeat for
-additional repos; every side runs run_reviews() on its own controller
-thread and talks to the screen through a fairy.ReviewUI adapter.
-Panes: stats (top left), PR/issue
-list (top right), captured debug output (bottom left), rendered
-review message + label changes (bottom right). Dividers move with the
-mouse.
-
-The list is a table over the workset files, not a queue: the operator
-selects any row and acts on it whenever they choose -- y posts a
-reviewed item (guard-checked), s skips it, x drops it, r reruns the
-LLM, f force-queues a candidate. Actions travel over a per-side channel
-and execute on that side's controller thread; nothing ever waits for a
-prompt.
+A pure view: the rows ARE the ticket files of every side's filedb (a
+row's state is the directory its file sits in) and every operator
+action is a file operation on the same db -- y moves a reviewed
+verdict to outgoing/ for the agent's send pass, s/x move it to
+skipped/cancelled/, r and f write a request the agent answers with a
+fresh gate-bypassing ticket, o edits the persisted review message.
+The agent and LLM workers are separate processes; the UI composes
+with them but none of them needs it running. Panes: stats (top left),
+ticket list (top right), merged tail of the processes' log files
+(bottom left), rendered review message + label changes (bottom
+right). Dividers move with the mouse.
 
 What belongs here: everything terminal-facing -- blessed painting,
-key/mouse dispatch, output capture, the ReviewUI adapters and the
-shared item model.
+key/mouse dispatch, the directory poll and the log tail.
 
-What does NOT belong: layout/scrollback/markdown logic (tui_core) and
-any review logic (fairy, issue_fairy).
+What does NOT belong: layout/scrollback/markdown logic (tui_core),
+file atomicity (filedb), gates/posting policy (agent), review logic
+(fairy, issue_fairy).
 """
 
 from __future__ import annotations
@@ -59,6 +55,7 @@ from __future__ import annotations
 import argparse
 import base64
 import faulthandler
+import json
 import logging
 import os
 import shlex
@@ -69,81 +66,54 @@ import tempfile
 import time
 from collections import Counter
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from enum import IntEnum
 from pathlib import Path
-from queue import SimpleQueue
-from threading import Event, Lock, Thread
+from threading import Event, Lock
 
 import blessed
 
-import ci_log
+import agent
 import fairy
-import forge_gcli
-import gcli_cache
+import filedb
 import issue_fairy
 import tui_core
-import workset
 from common import setup_logging
 
 __all__ = ["main"]
 
 logger = logging.getLogger(__name__)
 
-
-class Status(IntEnum):
-    PENDING = 0    # candidate listed; nothing back from the pipeline yet
-    QUEUED = 1     # passed the gates; waiting for an LLM worker
-    IN_LLM = 2     # LLM evaluation running
-    REVIEWED = 3   # verdict in the file; actionable with y/s/x/r any time
-    APPLIED = 4    # posted to the forge
-    SKIPPED = 5    # operator answered skip
-    CANCELLED = 6  # operator threw it out (x)
-    DONE = 7       # non-actionable decision arrived (gate/LLM skip)
-    INVALID = 8    # workset file failed validation (broken hand-edit)
+# Row states are exactly the filedb directory names, plus "invalid"
+# for a ticket file that no longer parses (broken hand-edit).
+INVALID = "invalid"
+# Being seen in one of these means work is happening on the row; such
+# rows stay listed for the whole session so their outcome (posted,
+# skipped, errored) remains inspectable after they settle.
+LIVE_STATES = ("requests", "queued", "llm", "outgoing")
+# What the relevant filter hides -- unless the row was acted on or
+# seen live this session.
+HIDDEN_SETTLED = ("posted", "skipped", "cancelled")
+_KIND_DISP = {"pr": "PR", "issue": "issue"}
+# status sort: operator-actionable rows first, then the live pipeline
+# states, then attention, then the settled ones
+_SORT_STATES = {s: i for i, s in enumerate((
+    "reviewed", INVALID, "llm", "queued", "outgoing", "requests",
+    "merge-ready", "ci-blocked", "awaiting-approver",
+    "error", "posted", "skipped", "cancelled"))}
+assert set(_SORT_STATES) == set(filedb.STATES) | {INVALID}, \
+    "every filedb state needs a sort priority"
+STATE_W = max(len(s) for s in _SORT_STATES)
 
 
 @dataclass
 class Item:
-    kind: str            # "PR" | "issue"
     repo: str            # side repo label, "owner/repo"
+    kind: str            # filedb kind: "pr" | "issue"
     number: int
-    api: dict            # forge ApiObject from the candidate listing
-    title: str
-    status: Status = Status.PENDING
-    decision: fairy.Decision | None = None
-    url: str = ""
-    stage: str = ""  # wrapper sub-stage while IN_LLM: triage/review/combine
-    ws: workset.WorkItem | None = None  # last good parse of the item file
-    ws_error: str = ""                  # why the file currently fails to parse
-
-
-_IN_PIPELINE = (Status.PENDING, Status.QUEUED, Status.IN_LLM,
-                Status.REVIEWED, Status.INVALID)
-# File states the pipeline actively owns: their appearance reopens a
-# settled row (re-queue after skip backoff or new activity). REVIEWED
-# is not among them, so a just-posted APPLIED row cannot be dragged
-# back by a momentarily stale file read.
-_REQUEUED_STATES = (workset.WorkState.QUEUED, workset.WorkState.TRIAGE,
-                    workset.WorkState.REVIEW, workset.WorkState.COMBINE)
-_KIND_FILE = {"PR": "pr", "issue": "issue"}  # TUI kind -> workset file kind
-_WORKSET_STATUS = {
-    workset.WorkState.QUEUED: Status.QUEUED,
-    workset.WorkState.TRIAGE: Status.IN_LLM,
-    workset.WorkState.REVIEW: Status.IN_LLM,
-    workset.WorkState.COMBINE: Status.IN_LLM,
-    workset.WorkState.REVIEWED: Status.REVIEWED,
-    workset.WorkState.POSTED: Status.APPLIED,
-    workset.WorkState.SKIPPED: Status.SKIPPED,
-    workset.WorkState.CANCELLED: Status.CANCELLED,
-    workset.WorkState.ERROR: Status.DONE,
-}
-_WORKSET_STAGE = {
-    workset.WorkState.TRIAGE: "triage",
-    workset.WorkState.REVIEW: "review",
-    workset.WorkState.COMBINE: "combine",
-}
+    state: str           # filedb directory name, or "invalid"
+    data: dict = field(default_factory=dict)  # last good ticket content
+    error: str = ""      # why the current file fails to parse
 
 
 def _repo_short(repo: str) -> str:
@@ -152,15 +122,8 @@ def _repo_short(repo: str) -> str:
 
 
 SORT_MODES = ("arrival", "status", "repo", "number")
-# status mode: operator-actionable rows first, then the live pipeline
-# states, then the settled ones
-_SORT_STATUS = {s: i for i, s in enumerate((
-    Status.REVIEWED, Status.INVALID, Status.IN_LLM, Status.QUEUED,
-    Status.PENDING, Status.APPLIED, Status.DONE, Status.SKIPPED,
-    Status.CANCELLED))}
-assert set(_SORT_STATUS) == set(Status), "every Status needs a sort priority"
 _SORT_KEYS = {
-    "status": lambda it: _SORT_STATUS[it.status],
+    "status": lambda it: _SORT_STATES[it.state],
     # repo mode orders by the short name the list column displays, or
     # rows would look unsorted whenever owners differ.
     "repo": lambda it: (_repo_short(it.repo).casefold(), it.repo, it.kind),
@@ -168,180 +131,83 @@ _SORT_KEYS = {
 }
 
 
-def _ws_actionable(ws: workset.WorkItem) -> bool:
-    """Something to post: a posting classification or label changes.
-    LLM-skip verdicts stay REVIEWED on disk (they carry the skip-backoff
-    memory) but there is nothing for the operator to send."""
-    return ws.review is not None and (
-        ws.review.classification not in ("skip", "error", "-", "")
-        or bool(ws.review.label_changes)
-    )
-
-
-@dataclass
-class Pipeline:
-    input_queue: SimpleQueue
-    pending: fairy.PendingCount
-    cancelled: set[int]
-    actions: SimpleQueue  # (number, action) tuples for the controller
-
-
 class Model:
-    """Shared state between the controller threads (via SideUI) and the
-    UI loop. Every mutation happens under ``lock``; ``dirty`` wakes the
-    painter.
+    """Shared state between the 1 Hz directory poll and the painter.
+    Every mutation happens under ``lock``; ``dirty`` wakes the painter.
 
-    A side is ``(kind, "owner/repo")``; items are keyed by
-    ``(kind, repo, number)`` -- two repos can share a PR number."""
+    A side is a repo label plus its filedb; items are keyed by
+    ``(repo, kind, number)`` -- two repos can share a PR number."""
 
-    def __init__(self) -> None:
+    def __init__(self, sides: list[tuple[str, filedb.Db]]) -> None:
         self.lock = Lock()
         self.dirty = Event()
+        self.sides = sides
         self.items: dict[tuple[str, str, int], Item] = {}
         self.order: list[tuple[str, str, int]] = []
-        self.pipelines: dict[tuple[str, str], Pipeline] = {}
-        self.forced: dict[tuple[str, str], set[int]] = {}
-        self.workset_dirs: dict[tuple[str, str], Path] = {}  # side -> per-repo dir
-        self._ws_mtimes: dict[Path, float] = {}  # poll_workset change detection
+        self._read: dict[tuple[str, str, int], tuple[Path, float]] = {}
         self.show_all = False
         self.sort_mode = SORT_MODES[0]
-        # Rows the operator applied/skipped this session: they stay
-        # listed so the outcome (posted, skipped) is verifiable; without
-        # this, y on a backlog review (no in-memory decision) made the
-        # row vanish the moment the file turned POSTED.
+        # Rows the operator acted on (y/s/x) and rows seen in a live
+        # state this session: they stay listed after settling so the
+        # outcome is verifiable and "why did this one skip" has an
+        # answer on screen.
         self.acted: set[tuple[str, str, int]] = set()
+        self.seen_live: set[tuple[str, str, int]] = set()
         self.cursor = 0
         self.quit_flag = False
         self.started = time.monotonic()
 
-    # ---- controller-thread side (called through SideUI) ----
+    def db(self, item: Item) -> filedb.Db:
+        return dict(self.sides)[item.repo]
 
-    def add_candidates(self, side: tuple[str, str], apis: list[dict]) -> None:
-        kind, repo = side
-        with self.lock, self._cursor_anchored():
-            for api in apis:
-                number = api.get("number")
-                if not str(number).isdigit():
-                    continue
-                key = (kind, repo, int(number))
-                if key in self.items:
-                    continue
-                url = api.get("html_url")
-                self.items[key] = Item(
-                    kind, repo, int(number), api, str(api.get("title") or ""),
-                    url=url if isinstance(url, str) else "",
-                )
-                self.order.append(key)
-        self.dirty.set()
-
-    def attach_pipeline(self, side: tuple[str, str], pipe: Pipeline,
-                        forced: set[int]) -> None:
-        with self.lock:
-            self.pipelines[side] = pipe
-            self.forced[side] = forced
-        self.dirty.set()
-
-    def note_reviewed(self, side: tuple[str, str], decision: fairy.Decision,
-                      url: str) -> None:
-        """A decision arrived; record it for the detail pane. The row's
-        status comes from the workset file (poll), the operator acts on
-        it whenever they choose."""
-        with self.lock, self._cursor_anchored():
-            item = self._ensure(side, decision)
-            item.decision = decision
-            item.url = url or item.url
-        self.dirty.set()
-
-    def finish(self, side: tuple[str, str], decision: fairy.Decision) -> None:
-        with self.lock, self._cursor_anchored():
-            item = self._ensure(side, decision)
-            item.decision = decision
-            actionable = (decision.action in fairy.ACTIONABLE_DECISIONS
-                          or bool(decision.label_changes))
-            # Actionable items stay at their file state (reviewed) so the
-            # operator can still act on them; everything else is done.
-            if item.status in _IN_PIPELINE and not actionable:
-                item.status = Status.DONE
-        self.dirty.set()
-
-    def workset_file(self, item: Item) -> Path | None:
-        d = self.workset_dirs.get((item.kind, item.repo))
-        return (workset.item_path_in(d, _KIND_FILE[item.kind], item.number)
-                if d else None)
-
-    def poll_workset(self) -> None:
-        """Refresh item state from the on-disk work files (1 Hz, UI loop).
-
-        The files are the durable source of truth: they carry the pipeline
-        and wrapper stage transitions, items left behind by a previous or
-        killed run, and external edits/deletions by the operator. File IO
-        happens outside ``lock``."""
-        changed: list[tuple[str, str, int, workset.WorkItem | None, str]] = []
-        removed: list[tuple[str, str, int]] = []
-        for (kind, repo), d in self.workset_dirs.items():
-            prefix = f"{_KIND_FILE[kind]}-"
+    def poll(self) -> None:
+        """Rescan every side's state directories: the files are the whole
+        truth -- agent, workers and operator hand-edits all land here.
+        File IO happens outside ``lock``."""
+        found: dict[tuple[str, str, int], tuple[str, filedb.Db]] = {}
+        for repo, db in self.sides:
+            for state in filedb.STATES:
+                for kind, number in db.list_state(state):
+                    # later directory wins: crash-remnant precedence
+                    found[(repo, kind, number)] = (state, db)
+        updates: list[tuple[tuple[str, str, int], str, dict | None, str]] = []
+        for key in sorted(found):
+            state, db = found[key]
+            path = db.path(state, key[1], key[2])
             try:
-                paths = set(d.glob(prefix + "*.json"))
+                tag = (path, path.stat().st_mtime)
             except OSError:
+                continue  # racing a rename; the next poll sees the new dir
+            if self._read.get(key) == tag:
                 continue
-            gone = [p for p in self._ws_mtimes
-                    if p.parent == d and p.name.startswith(prefix) and p not in paths]
-            for path in gone:
-                del self._ws_mtimes[path]
-                number = path.stem.removeprefix(prefix)
-                if number.isdigit():
-                    removed.append((kind, repo, int(number)))
-            for path in paths:
-                try:
-                    mtime = path.stat().st_mtime
-                except OSError:
-                    continue
-                if self._ws_mtimes.get(path) == mtime:
-                    continue
-                self._ws_mtimes[path] = mtime
-                ws, error = workset.load_item_result(path)
-                if ws is not None:
-                    changed.append((kind, repo, ws.number, ws, ""))
-                elif error is not None:
-                    number = path.stem.removeprefix(prefix)
-                    if number.isdigit():
-                        changed.append((kind, repo, int(number), None, error))
-        if not changed and not removed:
+            try:
+                updates.append((key, state, json.loads(
+                    path.read_text(encoding="utf-8")), ""))
+            except (FileNotFoundError, IsADirectoryError):
+                continue
+            except (OSError, ValueError) as exc:
+                updates.append((key, state, None, str(exc)))
+            self._read[key] = tag
+        removed = [k for k in self.items if k not in found]
+        if not updates and not removed:
             return
         with self.lock, self._cursor_anchored():
-            # Deterministic row order for newly discovered items: the
-            # scan iterates a set of paths, which has no stable order.
-            for kind, repo, number, ws, error in sorted(
-                    changed, key=lambda c: (c[0], c[1], c[2])):
-                key = (kind, repo, number)
+            for key, state, data, error in updates:
                 item = self.items.get(key)
                 if item is None:
-                    item = Item(kind, repo, number, {}, ws.title if ws else "")
+                    item = Item(*key, state)
                     self.items[key] = item
                     self.order.append(key)
-                item.ws_error = error
-                if ws is None:
-                    item.stage = ""
-                    if item.status in _IN_PIPELINE:
-                        item.status = Status.INVALID
-                    continue
-                item.ws = ws
-                item.title = item.title or ws.title
-                item.url = item.url or ws.html_url
-                item.stage = ws.stage or _WORKSET_STAGE.get(ws.state, "")
-                if item.status in _IN_PIPELINE or ws.state in _REQUEUED_STATES:
-                    status = _WORKSET_STATUS[ws.state]
-                    # A persisted LLM skip is bookkeeping, not work: it
-                    # must not show (or count) as awaiting the operator.
-                    if status is Status.REVIEWED and not _ws_actionable(ws):
-                        status = Status.DONE
-                    item.status = status
-            for key in removed:
-                item = self.items.get(key)
-                if item is not None and item.status in _IN_PIPELINE:
-                    item.status = Status.CANCELLED
-                    item.stage = ""
-                    item.ws_error = ""
+                if error:
+                    item.state, item.error = INVALID, error
+                else:
+                    item.state, item.error, item.data = state, "", data
+                if state in LIVE_STATES:
+                    self.seen_live.add(key)
+            for key in removed:  # pruned, or a consumed request
+                del self.items[key]
+                self.order.remove(key)
+                self._read.pop(key, None)
         self.dirty.set()
 
     # ---- UI-thread side ----
@@ -363,134 +229,83 @@ class Model:
         return self.sort_mode
 
     def act(self, action: str) -> None:
-        """Route a table action ("apply"/"skip"/"cancel"/"rerun") on the
-        cursor row to its side's controller, which executes it with the
-        run's args and caches. Any row is actionable at any time; the
-        controller re-validates against the file before doing anything."""
+        """Execute a table action on the cursor row as a file operation:
+        apply = reviewed -> outgoing (the agent's send pass posts it),
+        skip/cancel = -> skipped/cancelled, rerun/force = a request the
+        agent answers with a fresh gate-bypassing ticket. try_move never
+        blocks: a row a worker holds, or one that changed under the
+        cursor, refuses with a log line instead. No cursor anchor here:
+        after y the cursor jumps to the next reviewed row instead of
+        following the acted one."""
         with self.lock:
             key = self._cursor_key()
             item = self.items.get(key) if key else None
-            pipe = self.pipelines.get((item.kind, item.repo)) if item else None
-            if item is None or pipe is None:
+            if item is None:
                 return
-            if action == "rerun" and item.status in (Status.PENDING, Status.QUEUED,
-                                                     Status.IN_LLM):
-                logger.info("%s %s#%s is already being evaluated",
-                            item.kind, item.repo, item.number)
-                return
-            if action in ("apply", "skip", "cancel") and (
-                item.ws is None
-                or item.ws.state not in (workset.WorkState.REVIEWED,
-                                         workset.WorkState.ERROR)
-            ):
-                logger.info("%s %s#%s has no reviewed workset file to %s",
-                            item.kind, item.repo, item.number, action)
-                return
-            if action == "apply" and not _ws_actionable(item.ws):
-                logger.info(
-                    "%s %s#%s has nothing to post (LLM verdict: %s)",
-                    item.kind, item.repo, item.number,
-                    item.ws.review.classification if item.ws.review else "-",
-                )
-                return
-            logger.info("requested %s for %s %s#%s",
-                        action, item.kind, item.repo, item.number)
-            if action in ("apply", "skip"):
+            db = self.db(item)
+            label = f"{_KIND_DISP[item.kind]} {item.repo}#{item.number}"
+            if action in ("rerun", "force"):
+                if item.state in ("queued", "llm", "outgoing"):
+                    logger.info("%s is already in flight", label)
+                    return
+                db.request(item.kind, item.number, {"action": "rerun"})
+                self.seen_live.add(key)
+                logger.info("requested a fresh review of %s", label)
+            elif action == "apply":
+                if item.state != "reviewed" or not agent.postable(
+                        agent.ticket_decision(item.kind, item.number, item.data)):
+                    logger.info("%s has nothing to post (state %s, llm %s)",
+                                label, item.state,
+                                (item.data.get("review") or {}).get(
+                                    "classification", "-"))
+                    return
+                if not db.try_move("reviewed", "outgoing", item.kind, item.number):
+                    logger.info("%s changed under the cursor; not applied", label)
+                    return
                 self.acted.add(key)
-            pipe.actions.put((item.number, action))
-            # Jump to the next reviewed row waiting for the operator: the
-            # first at/after the cursor, wrapping to the first overall.
-            remaining = {(it.kind, it.repo, it.number) for it in self.visible()
-                         if it.status is Status.REVIEWED} - {key}
-            if remaining:
-                keys = [(it.kind, it.repo, it.number) for it in self.visible()]
-                nxt = next((k for k in keys[self.cursor:] if k in remaining),
-                           next((k for k in keys if k in remaining), None))
-                if nxt is not None:
-                    self._move_cursor_to(nxt)
+                logger.info("%s -> outgoing/ (the agent's send pass posts it)",
+                            label)
+                self._advance_to_reviewed(key)
+            elif action in ("skip", "cancel"):
+                dst = "skipped" if action == "skip" else "cancelled"
+                if item.state in ("llm", INVALID) or item.state in HIDDEN_SETTLED:
+                    logger.info("cannot %s %s in state %s%s", action, label,
+                                item.state,
+                                " (fix or delete the file by hand)"
+                                if item.state == INVALID else "")
+                    return
+                if not db.try_move(item.state, dst, item.kind, item.number,
+                                   mutate=lambda d: d.update(reason="operator " + action)):
+                    logger.info("%s is busy or changed; not %sed", label, action)
+                    return
+                self.acted.add(key)
+                logger.info("%s -> %s/", label, dst)
         self.dirty.set()
-
-    def force(self) -> None:
-        """Force-queue the cursor item for (re-)review, bypassing gates."""
-        with self.lock, self._cursor_anchored():
-            key = self._cursor_key()
-            item = self.items.get(key) if key else None
-            pipe = self.pipelines.get((item.kind, item.repo)) if item else None
-            if item is None or pipe is None:
-                return
-            if item.status in (Status.PENDING, Status.QUEUED, Status.IN_LLM):
-                logger.info("%s %s#%s is already in flight",
-                            item.kind, item.repo, item.number)
-                return
-            if not item.api:
-                logger.info("%s %s#%s has no fetched data to re-queue",
-                            item.kind, item.repo, item.number)
-                return
-            self.forced[(item.kind, item.repo)].add(item.number)
-            pipe.cancelled.discard(item.number)
-            item.status = Status.PENDING
-            pipe.pending.add(1)
-            pipe.input_queue.put(item.api)
-            logger.info("force-queued %s %s#%s for review",
-                        item.kind, item.repo, item.number)
-        self.dirty.set()
-
-    def cancel(self) -> None:
-        """x: throw the cursor item out -- stop an upcoming evaluation,
-        or cancel a persisted review via the controller."""
-        with self.lock, self._cursor_anchored():
-            key = self._cursor_key()
-            item = self.items.get(key) if key else None
-            pipe = self.pipelines.get((item.kind, item.repo)) if item else None
-            if item is None or pipe is None:
-                return
-            if item.status in (Status.PENDING, Status.QUEUED):
-                pipe.cancelled.add(item.number)
-                item.status = Status.CANCELLED
-                logger.info("cancelled %s %s#%s", item.kind, item.repo, item.number)
-                self.dirty.set()
-                return
-        self.act("cancel")
 
     def quit_all(self) -> None:
         with self.lock:
-            if self.quit_flag:
-                return
             self.quit_flag = True
-        logger.info("quit requested; waiting for the pipelines to wind down")
         self.dirty.set()
 
     # ---- internals (caller holds ``lock``) ----
 
-    def _ensure(self, side: tuple[str, str], decision: fairy.Decision) -> Item:
-        # Forced items can have numbers absent from the candidate listing.
-        kind, repo = side
-        key = (kind, repo, decision.pr_number)
-        item = self.items.get(key)
-        if item is None:
-            item = Item(kind, repo, decision.pr_number, {}, decision.title)
-            self.items[key] = item
-            self.order.append(key)
-        return item
+    def _advance_to_reviewed(self, key: tuple[str, str, int]) -> None:
+        """Jump to the next reviewed row waiting for the operator: the
+        first at/after the cursor, wrapping to the first overall."""
+        remaining = {(it.repo, it.kind, it.number) for it in self.visible()
+                     if it.state == "reviewed"} - {key}
+        if not remaining:
+            return
+        keys = [(it.repo, it.kind, it.number) for it in self.visible()]
+        nxt = next((k for k in keys[self.cursor:] if k in remaining),
+                   next((k for k in keys if k in remaining), None))
+        if nxt is not None:
+            self._move_cursor_to(nxt)
 
     def _relevant(self, item: Item) -> bool:
-        if (item.kind, item.repo, item.number) in self.acted:
-            return True
-        if item.number in self.forced.get((item.kind, item.repo), ()):
-            return True
-        if item.status in (Status.QUEUED, Status.IN_LLM, Status.REVIEWED,
-                           Status.INVALID):
-            return True
-        d = item.decision
-        return d is not None and (
-            d.action in fairy.ACTIONABLE_DECISIONS or bool(d.label_changes)
-            # An LLM verdict that arrived this session stays listed even
-            # when non-actionable: the operator wants to inspect why an
-            # item skipped or errored. Startup backlog has no in-memory
-            # decision, so stale skips stay hidden. Gate skips carry the
-            # "-" placeholder (no LLM ran) and stay hidden too.
-            or d.llm_classification not in ("-", "")
-        )
+        key = (item.repo, item.kind, item.number)
+        return (item.state not in HIDDEN_SETTLED
+                or key in self.acted or key in self.seen_live)
 
     def _cursor_key(self) -> tuple[str, str, int] | None:
         vis = self.visible()
@@ -498,12 +313,12 @@ class Model:
             return None
         self.cursor = max(0, min(self.cursor, len(vis) - 1))
         it = vis[self.cursor]
-        return (it.kind, it.repo, it.number)
+        return (it.repo, it.kind, it.number)
 
     def _move_cursor_to(self, key: tuple[str, str, int]) -> None:
         """Cursor onto ``key``; if the filter hides it, onto the visible
         item nearest before it in arrival order."""
-        keys = [(it.kind, it.repo, it.number) for it in self.visible()]
+        keys = [(it.repo, it.kind, it.number) for it in self.visible()]
         order_pos = {k: i for i, k in enumerate(self.order)}
         pos = order_pos.get(key)
         if pos is None:
@@ -527,39 +342,6 @@ class Model:
         finally:
             if key is not None:
                 self._move_cursor_to(key)
-
-
-class SideUI:
-    """fairy.ReviewUI adapter for one side (a kind + repo pair)."""
-
-    def __init__(self, side: tuple[str, str], model: Model, forced: set[int]) -> None:
-        self.side = side
-        self.model = model
-        self.forced = forced
-
-    def candidates(self, items: list[dict]) -> None:
-        self.model.add_candidates(self.side, items)
-
-    def pipeline(self, input_queue, pending, cancelled, actions) -> None:
-        self.model.attach_pipeline(
-            self.side, Pipeline(input_queue, pending, cancelled, actions),
-            self.forced,
-        )
-
-    def decide(self, prepared, decision, url) -> str:
-        # Table model: never block the controller; the operator acts on
-        # the row (y/s/x/r) whenever they choose.
-        self.model.note_reviewed(self.side, decision, url)
-        return "hold"
-
-    def item_done(self, prepared, decision) -> None:
-        self.model.finish(self.side, decision)
-
-    def keep_open(self) -> bool:
-        return not self.model.quit_flag
-
-    def stopped(self) -> bool:
-        return self.model.quit_flag
 
 
 class OutputSink:
@@ -591,20 +373,70 @@ class RingLogHandler(logging.Handler):
         super().__init__()
         self.sink = sink
         self.setFormatter(logging.Formatter(
-            '%(asctime)s %(thread_prefix)s%(message)s', '%Y-%m-%d %H:%M:%S',
+            '%(asctime)s %(message)s', '%Y-%m-%dT%H:%M:%S',
         ))
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
             self.sink.line(self.format(record), record.levelno)
         except Exception:
-            pass  # never let UI logging kill a worker
+            pass  # never let UI logging kill the loop
+
+
+_TAIL_LEVELS = {"D": logging.DEBUG, "I": logging.INFO, "W": logging.WARNING,
+                "E": logging.ERROR, "C": logging.CRITICAL}
+
+
+def _line_level(line: str) -> int | None:
+    """Level of an ``ISO8601 L message`` log line (add_file_log's shape),
+    None for anything else."""
+    parts = line.split(" ", 2)
+    if len(parts) > 2 and len(parts[1]) == 1:
+        return _TAIL_LEVELS.get(parts[1])
+    return None
+
+
+class LogTail:
+    """Merge appended lines of the agent/worker log files into the
+    debug ring; the processes run and log independently, the UI only
+    watches. A file may not exist yet (process not started): retried
+    every poll. Truncation/rotation restarts from the top."""
+
+    TAIL_BYTES = 64 * 1024  # first sight: recent end only, not months of log
+
+    def __init__(self, paths: list[Path], sink: OutputSink) -> None:
+        self.paths = paths
+        self.sink = sink
+        self._pos: dict[Path, int] = {}
+
+    def poll(self) -> None:
+        for path in self.paths:
+            try:
+                size = path.stat().st_size
+                pos = self._pos.get(path)
+                if pos is None:
+                    pos = max(0, size - self.TAIL_BYTES)
+                if size < pos:
+                    pos = 0
+                if size == pos:
+                    continue
+                with open(path, "rb") as fh:
+                    fh.seek(pos)
+                    chunk = fh.read()
+            except OSError:
+                continue
+            cut = chunk.rfind(b"\n")
+            if cut < 0:
+                self._pos[path] = pos  # no complete line yet
+                continue
+            self._pos[path] = pos + cut + 1
+            for ln in chunk[:cut].decode("utf-8", "replace").splitlines():
+                self.sink.line(ln, _line_level(ln))
 
 
 class StreamToRing:
     """File-like stand-in for sys.stdout/sys.stderr while the UI owns the
-    screen; complete lines (wrapper stderr pump, stray prints) go to the
-    sink."""
+    screen; complete lines (stray prints) go to the sink."""
 
     def __init__(self, sink: OutputSink) -> None:
         self.sink = sink
@@ -638,10 +470,11 @@ def captured_output(sink: OutputSink):
 
 MIN_TEXT_W = 8       # narrowest width a pane renders text at
 EXPORT_FULL_W = 200  # E: full exports reflow at this fixed width
-PANES = {"tl": "stats", "tr": "list", "bl": "debug", "br": "message"}
+PANES = {"tl": "stats", "tr": "list", "bl": "logs", "br": "message"}
 PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
-ACTION_KEYS = {"y": "apply", "s": "skip", "r": "rerun"}
+ACTION_KEYS = {"y": "apply", "s": "skip", "r": "rerun", "f": "force",
+               "x": "cancel"}
 KEYMAP = (("q", "quit"), ("y", "apply"), ("s", "skip"), ("r", "rerun"),
           ("f", "force"), ("x", "drop"), ("o", "edit msg"),
           ("a", "all/relevant"), ("t", "sort"), ("e/E", "export"),
@@ -686,14 +519,17 @@ def _styles(t: blessed.Terminal) -> dict:
             "num": t.bold,                    "mark": mix(t.bold, c(203)),
             "kind_pr": c(75),                 "kind_issue": c(176),
             "llm": c(141),                    "title": c(252),
-            "st_pending": c(244),
-            "st_queued": c(117),              "st_in_llm": mix(t.bold, c(45)),
+            "st_requests": c(244),
+            "st_queued": c(117),              "st_llm": mix(t.bold, c(45)),
             "st_reviewed": mix(t.bold, c(214)),
-            "st_applied": c(78),              "st_skipped": c(244),
-            "st_cancelled": c(167),           "st_done": c(108),
+            "st_outgoing": mix(t.bold, c(81)),
+            "st_posted": c(78),               "st_skipped": c(244),
+            "st_cancelled": c(167),           "st_error": mix(t.bold, c(203)),
             "st_invalid": mix(t.bold, c(196)),
+            "st_ci-blocked": c(209),          "st_merge-ready": mix(t.bold, c(78)),
+            "st_awaiting-approver": c(179),
             "cursor": t.reverse,
-            # debug-pane log levels; palette mirrors common._ColorFormatter
+            # log-pane levels; palette mirrors common._ColorFormatter
             "log_debug": t.dim_bright_black,  "log_warn": t.bold_yellow,
             "log_err": t.bold_red,
         }
@@ -715,11 +551,15 @@ def _styles(t: blessed.Terminal) -> dict:
         "num": t.bold,          "mark": t.bold_red,
         "kind_pr": t.cyan,      "kind_issue": t.magenta,
         "llm": t.magenta,       "title": t.white,
-        "st_pending": t.bright_black,
-        "st_queued": t.cyan, "st_in_llm": t.bold_cyan,
+        "st_requests": t.bright_black,
+        "st_queued": t.cyan,    "st_llm": t.bold_cyan,
         "st_reviewed": t.bold_yellow,
-        "st_applied": t.green,  "st_skipped": t.bright_black,
-        "st_cancelled": t.red,  "st_done": t.cyan, "st_invalid": t.bold_red,
+        "st_outgoing": t.bold_cyan,
+        "st_posted": t.green,   "st_skipped": t.bright_black,
+        "st_cancelled": t.red,  "st_error": t.bold_red,
+        "st_invalid": t.bold_red,
+        "st_ci-blocked": t.red, "st_merge-ready": t.bold_green,
+        "st_awaiting-approver": t.yellow,
         "cursor": t.reverse,
         "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
         "log_err": t.bold_red,
@@ -758,13 +598,13 @@ def _plain(lines: list) -> str:
 
 class UILoop:
     def __init__(self, term: blessed.Terminal, model: Model, ring: tui_core.RingBuffer,
-                 save_dir: Path, sides: list[tuple[str, str]]) -> None:
+                 save_dir: Path, tail: LogTail) -> None:
         self.term = term
         self.model = model
         self.ring = ring
         self.save_dir = save_dir
-        self.sides = sides
-        repos = list(dict.fromkeys(repo for _, repo in sides))
+        self.tail = tail
+        repos = [repo for repo, _ in model.sides]
         short = [_repo_short(r) for r in repos]
         self._repo_disp = {r: (s if short.count(s) == 1 else r)
                            for r, s in zip(repos, short)}
@@ -800,11 +640,12 @@ class UILoop:
     # ---- pane content (caller holds model.lock) ----
 
     def stats_lines(self, width: int) -> list[tui_core.StyledLine]:
-        """Full-width header, then one block per side tiled into as many
-        columns as ``width`` fits."""
+        """Full-width header, then one block per repo tiled into as many
+        columns as ``width`` fits. The counts are simply the number of
+        files per state directory."""
         m = self.model
         items = [m.items[k] for k in m.order]
-        actionable = sum(1 for it in items if it.status is Status.REVIEWED)
+        actionable = sum(1 for it in items if it.state == "reviewed")
         header: tui_core.StyledLine = [
             ("label", "elapsed "),
             ("num", f"{int(time.monotonic() - m.started)}s"),
@@ -812,44 +653,59 @@ class UILoop:
             ("st_reviewed" if actionable else "num", str(actionable)),
         ]
         blocks: list[list[tui_core.StyledLine]] = []
-        for side in self.sides:
-            kind, repo = side
-            group = [it for it in items if (it.kind, it.repo) == side]
-            by = Counter(it.status for it in group)
-            pipe = m.pipelines.get(side)
+        for repo, _db in m.sides:
+            group = [it for it in items if it.repo == repo]
+            kinds = Counter(it.kind for it in group)
             block: list[tui_core.StyledLine] = [[
-                ("kind_pr" if kind == "PR" else "kind_issue",
-                 f"{kind}s {self._repo_disp[repo] + ' ' if self._repo_w else ''}"),
-                ("num", str(len(group))),
-                ("label", " candidates, in flight "),
-                ("num", str(pipe.pending.value) if pipe else "-"),
+                ("title", f"{self._repo_disp[repo]}  "),
+                ("kind_pr", f"{kinds['pr']} PRs"),
+                ("text", "  "),
+                ("kind_issue", f"{kinds['issue']} issues"),
             ]]
+            by = Counter(it.state for it in group)
             if by:
                 row: tui_core.StyledLine = [("text", "  ")]
-                for s in Status:
-                    if by[s]:
-                        row += [(f"st_{s.name.lower()}", f"{s.name.lower()}="),
-                                ("num", str(by[s])), ("text", "  ")]
+                used = 2
+                for s in (*filedb.STATES, INVALID):
+                    if not by[s]:
+                        continue
+                    part_len = len(s) + 1 + len(str(by[s])) + 2
+                    if used > 2 and used + part_len > width:
+                        block.append(row)
+                        row = [("text", "  ")]
+                        used = 2
+                    row += [(f"st_{s}", f"{s}="),
+                            ("num", str(by[s])), ("text", "  ")]
+                    used += part_len
                 block.append(row)
-            stages = Counter(it.stage or "starting" for it in group
-                             if it.status is Status.IN_LLM)
+            stages = Counter((it.data.get("stage") or "starting")
+                             for it in group if it.state == "llm")
             if stages:
-                block.append([("text", "  "), ("label", "llm stage: "), ("st_in_llm",
+                block.append([("text", "  "), ("label", "llm stage: "), ("st_llm",
                     ", ".join(f"{k}={v}" for k, v in sorted(stages.items())))])
             cls = Counter(
-                fairy.format_llm_classification(it.decision.llm_classification)
-                for it in group if it.decision)
+                fairy.format_llm_classification(
+                    (it.data.get("review") or {}).get("classification") or "-")
+                for it in group if it.data.get("review"))
             cls.pop("-", None)
             if cls:
                 block.append([("text", "  "), ("label", "llm: "), ("llm",
                     ", ".join(f"{k}={v}" for k, v in sorted(cls.items())))])
-            acts = Counter(it.decision.action for it in group
-                           if it.status is Status.APPLIED and it.decision)
+            acts = Counter(it.data.get("action") for it in group
+                           if it.state == "posted" and it.data.get("action"))
             if acts:
-                block.append([("text", "  "), ("label", "applied: "), ("st_applied",
+                block.append([("text", "  "), ("label", "posted: "), ("st_posted",
                     ", ".join(f"{k}={v}" for k, v in sorted(acts.items())))])
             blocks.append(block)
         return [header, []] + tui_core.tile_blocks(blocks, width)
+
+    def _llm_col(self, it: Item) -> str:
+        if it.state == "llm":
+            return it.data.get("stage") or "llm"
+        review = it.data.get("review") or {}
+        if review.get("classification"):
+            return fairy.format_llm_classification(review["classification"])
+        return ""
 
     def list_rows(self) -> list:
         m = self.model
@@ -857,29 +713,25 @@ class UILoop:
         m.cursor = max(0, min(m.cursor, len(vis) - 1)) if vis else 0
         rows: list = []
         for i, it in enumerate(vis):
-            d = it.decision
-            if d is not None:
-                llm = fairy.format_llm_classification(d.llm_classification)
-            elif not it.stage and it.ws is not None and it.ws.review is not None:
-                llm = fairy.format_llm_classification(it.ws.review.classification)
-            else:
-                llm = it.stage or ("llm" if it.status is Status.IN_LLM else "")
-            mark = "▶" if it.status is Status.REVIEWED else " "
+            llm = self._llm_col(it)
+            mark = "▶" if it.state == "reviewed" else " "
             repo_col = (f"{self._repo_disp[it.repo]:<{self._repo_w}} "
                         if self._repo_w else "")
+            title = it.data.get("title") or ""
             if i == m.cursor:
                 rows.append(("cursor",
-                             f"{mark}{it.kind:<5} {repo_col}#{it.number:<6} "
-                             f"{it.status.name.lower():<9} {llm:<9}  {it.title}"))
+                             f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<6} "
+                             f"{it.state:<{STATE_W}} {llm:<9}  {title}"))
                 continue
             rows.append([
                 ("mark", mark),
-                ("kind_pr" if it.kind == "PR" else "kind_issue", f"{it.kind:<5} "),
+                ("kind_pr" if it.kind == "pr" else "kind_issue",
+                 f"{_KIND_DISP[it.kind]:<5} "),
                 ("label", repo_col),
                 ("num", f"#{it.number:<6} "),
-                (f"st_{it.status.name.lower()}", f"{it.status.name.lower():<9} "),
+                (f"st_{it.state}", f"{it.state:<{STATE_W}} "),
                 ("llm", f"{llm:<9}  "),
-                ("title", it.title),
+                ("title", title),
             ])
         return rows
 
@@ -889,40 +741,49 @@ class UILoop:
         item = m.items.get(key) if key else None
         if item is None:
             return [[("text", "(no item selected)")]]
-        d = item.decision
-        ws = item.ws
-        review = ws.review if ws is not None else None
+        data = item.data
         where = f"{item.repo}#{item.number}" if self._repo_w else f"#{item.number}"
         head: list[tui_core.StyledLine] = [
-            [("h2", f"{item.kind} {where}  {item.title}"[:width])],
+            [("h2", f"{_KIND_DISP[item.kind]} {where}  {data.get('title') or ''}"[:width])],
         ]
-        if item.url:
-            head.append([("link", item.url[:width])])
-        if item.ws_error:
-            head.append([("log_err", f"file invalid: {item.ws_error}"[:width])])
-        if ws is not None and ws.error:
-            head.append([("log_err", f"error: {ws.error}"[:width])])
-        if d is None and review is None:
-            return head + [[], [("text", f"({item.status.name.lower()}: no review yet)")]]
-        classification = review.classification if review else d.llm_classification
-        message = review.message if review else d.llm_message
-        label_changes = review.label_changes if review else d.label_changes
-        if d is not None:
-            head += tui_core.render_markdown(
-                fairy.manual_action_description(d), width)
-        head.append([("text", (f"status {item.status.name.lower()}   llm "
-                     f"{fairy.format_llm_classification(classification)}")[:width])])
-        if d is not None and d.reason:
-            head += tui_core.render_markdown(f"reason: {d.reason}", width)
+        if data.get("html_url"):
+            head.append([("link", str(data["html_url"])[:width])])
+        if item.error:
+            head.append([("log_err", f"file invalid: {item.error}"[:width])])
+        if data.get("error"):
+            head.append([("log_err", f"error: {data['error']}"[:width])])
+        if data.get("send_blocked"):
+            head.append([("log_warn", f"send blocked: {data['send_blocked']}"[:width])])
+        review = data.get("review") or {}
+        decision = agent.ticket_decision(item.kind, item.number, data)
+        if decision is not None:
+            head.append([("bold", fairy.manual_action_description(decision)[:width])])
+        status_line = f"state {item.state}"
+        if review.get("classification"):
+            status_line += ("   llm "
+                            + fairy.format_llm_classification(review["classification"]))
+        if data.get("reason"):
+            status_line += f"   reason {data['reason']}"
+        head += [[("text", status_line[:width])]]
+        for fieldname in ("cancelled_ci_contexts", "blocked_ci_contexts",
+                          "external_approvers"):
+            vals = data.get(fieldname) or []
+            if vals:
+                head.append([("label", fieldname.replace("_", " ") + ": "),
+                             ("text", ", ".join(map(str, vals))[:width])])
         head.append([])
-        labels = tui_core.render_markdown("\n".join(
-            f"- {c.op} **{c.label}**"
-            + (f" — {c.reason}" if c.reason else "")
-            + (" *[posted]*" if c.post else "")
-            for c in label_changes), width)
+        if not review:
+            return head + [[("text", f"({item.state}: no review)")]]
+        labels = [
+            [("bullet", f"label {c.get('op')} {c.get('label')}"),
+             ("text", (f" ({c['reason']})" if c.get("reason") else "")
+                      + (" [posted]" if c.get("post") else ""))]
+            for c in review.get("label_changes") or []
+        ]
         if labels:
             labels.append([])
-        return head + labels + tui_core.render_markdown(message, width)
+        return head + labels + tui_core.render_markdown(
+            review.get("message") or "", width)
 
     def paint(self) -> None:
         self._last_paint = time.monotonic()
@@ -944,7 +805,7 @@ class UILoop:
                                      rects["br"].h - 1),
             }
             nact = sum(1 for it in self.model.items.values()
-                       if it.status is Status.REVIEWED)
+                       if it.state == "reviewed")
         buf = []
         for pane, rect in rects.items():
             self._blit(buf, rect, pane, content[pane])
@@ -1051,7 +912,8 @@ class UILoop:
                     self._last_size = size
                     self.model.dirty.set()
                 if time.monotonic() - self._last_paint >= 1.0:
-                    self.model.poll_workset()
+                    self.model.poll()
+                    self.tail.poll()
                     self.model.dirty.set()
                 if self.model.dirty.is_set():
                     self.model.dirty.clear()
@@ -1130,10 +992,6 @@ class UILoop:
             logger.info("list sort: %s", mode)
         elif str(ks) in ACTION_KEYS:
             self.model.act(ACTION_KEYS[str(ks)])
-        elif ks == "f":
-            self.model.force()
-        elif ks == "x":
-            self.model.cancel()
         elif ks == "o":
             self.edit_review()
         elif ks in ("e", "E"):
@@ -1147,27 +1005,28 @@ class UILoop:
 
         The message round-trips through a temp ``.md`` file (the raw JSON
         stays editable by hand outside the TUI); the result is written
-        back through the flock'd update path."""
+        back in place under the item's lock -- refused (with a log line)
+        when a worker holds the item or it moved on meanwhile."""
         with self.model.lock:
             key = self.model._cursor_key()
             item = self.model.items.get(key) if key else None
         if item is None:
             return
-        path = self.model.workset_file(item)
-        ws = workset.load_item(path) if path is not None else None
-        if ws is None or ws.review is None:
-            logger.info("%s %s#%s has no persisted review to edit",
-                        item.kind, item.repo, item.number)
+        message = (item.data.get("review") or {}).get("message")
+        if message is None:
+            logger.info("%s %s#%s has no review message to edit",
+                        _KIND_DISP[item.kind], item.repo, item.number)
             return
         editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
         fd, tmp_name = tempfile.mkstemp(
-            suffix=".md", prefix=f"fairy-{_KIND_FILE[item.kind]}-{item.number}-")
+            suffix=".md", prefix=f"fairy-{item.kind}-{item.number}-")
         tmp = Path(tmp_name)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(ws.review.message)
+                f.write(message)
             cmd = [*shlex.split(editor), str(tmp)]
-            logger.info("editing %s via: %s", path, shlex.join(cmd))
+            logger.info("editing %s#%s via: %s", item.repo, item.number,
+                        shlex.join(cmd))
             t = self.term
             print(t.exit_fullscreen + t.normal_cursor, end="", flush=True,
                   file=t.stream)
@@ -1183,19 +1042,22 @@ class UILoop:
                 logger.warning("editor exited rc=%d; review unchanged", rc)
                 return
             edited = tmp.read_text(encoding="utf-8")
-            if edited == ws.review.message:
-                logger.info("%s %s#%s review unchanged",
-                            item.kind, item.repo, item.number)
+            if edited == message:
+                logger.info("%s#%s review unchanged", item.repo, item.number)
                 return
 
-            def record(it: workset.WorkItem) -> None:
-                if it.review is not None:
-                    it.review.message = edited
+            def record(d: dict) -> None:
+                d.setdefault("review", {})["message"] = edited
 
-            if workset.update_item(path, record) is not None:
-                logger.info("%s %s#%s review message updated (%d -> %d chars)",
-                            item.kind, item.repo, item.number,
-                            len(ws.review.message), len(edited))
+            db = self.model.db(item)
+            state = db.find(item.kind, item.number)  # it may have moved on
+            if state and db.try_move(state, state, item.kind, item.number,
+                                     mutate=record):
+                logger.info("%s#%s review message updated (%d -> %d chars)",
+                            item.repo, item.number, len(message), len(edited))
+            else:
+                logger.warning("%s#%s is busy or gone; review unchanged",
+                               item.repo, item.number)
         finally:
             tmp.unlink(missing_ok=True)
 
@@ -1273,14 +1135,19 @@ class UILoop:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Blessed 4-pane operator UI over the fairy PR and issue pipelines.",
+        description="Blessed 4-pane operator UI over the filedb ticket directories.",
     )
     p.add_argument("--pr-args", metavar="ARGS", action="append",
-                   help="fairy.py argument string; one PR side per use")
+                   help="fairy.py argument string naming a PR side's repo; "
+                        "one per use")
     p.add_argument("--issue-args", metavar="ARGS", action="append",
-                   help="issue_fairy.py argument string; one issue side per use")
+                   help="issue_fairy.py argument string naming an issue side's "
+                        "repo; one per use")
+    p.add_argument("--tail", metavar="FILE", action="append", type=Path,
+                   help="follow this agent/worker --log-file in the logs pane "
+                        "(repeatable)")
     p.add_argument("--log-file", type=Path,
-                   help="tee every captured log/output line to this file")
+                   help="tee every line shown in the logs pane to this file")
     p.add_argument("--save-dir", type=Path, default=Path("."),
                    help="directory for e/E pane exports (default: cwd)")
     args = p.parse_args(argv)
@@ -1289,95 +1156,44 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-@dataclass
-class Side:
-    key: tuple[str, str]  # (kind, "owner/repo")
-    run: object           # fairy.run_reviews / issue_fairy.run_reviews
-    ns: argparse.Namespace
-    forced: set[int]
-
-
-def build_sides(args: argparse.Namespace) -> list[Side]:
-    sides: list[Side] = []
-    for kind, run, parse, forced, arg_strs in (
-        ("PR", fairy.run_reviews, fairy.parse_args,
-         lambda ns: ns.force_review_prs, args.pr_args),
-        ("issue", issue_fairy.run_reviews, issue_fairy.parse_args,
-         lambda ns: ns.force_review_issues, args.issue_args),
-    ):
+def build_sides(args: argparse.Namespace) -> list[tuple[str, filedb.Db]]:
+    """One (repo label, filedb) side per distinct repo: the PR and issue
+    argument strings of one repo share a db, and Forgejo routes
+    owner/repo case-insensitively, so case variants merge too."""
+    sides: list[tuple[str, filedb.Db]] = []
+    for parse, arg_strs in ((fairy.parse_args, args.pr_args),
+                            (issue_fairy.parse_args, args.issue_args)):
         for arg_str in arg_strs or []:
             ns = parse(shlex.split(arg_str))
-            key = (kind, f"{ns.owner}/{ns.repo}")
-            # Forgejo routes owner/repo case-insensitively: a case
-            # variant is the same forge repo and would silently run a
-            # second pipeline over it, double-reviewing and double-posting.
-            if any(s.key[0] == kind and s.key[1].casefold() == key[1].casefold()
-                   for s in sides):
-                raise SystemExit(f"duplicate {kind} side for {key[1]}")
-            sides.append(Side(key, run, ns, forced(ns)))
+            label = f"{ns.owner}/{ns.repo}"
+            if any(known.casefold() == label.casefold() for known, _ in sides):
+                continue
+            sides.append((label, filedb.Db(agent.db_root_for(ns))))
     return sides
 
 
 def main() -> int:
     args = parse_args()
     ring = tui_core.RingBuffer()
-    model = Model()
-    sink = OutputSink(ring, model.dirty, args.log_file)
     sides = build_sides(args)
-
-    # issue_fairy.logger is fairy.logger, so listing fairy's covers both.
-    setup_logging(
-        fairy.logger, max(s.ns.verbose for s in sides),
-        forge_gcli.logger, gcli_cache.logger, workset.logger, ci_log.logger,
-        logger,
-        handlers=[RingLogHandler(sink)],
-    )
-    for side in sides:
-        kind, repo = side.key
-        if side.ns.approve:
-            side.ns.approve = False
-            logger.warning("--approve on the %s %s side is ignored: the TUI "
-                           "always asks per decision", kind, repo)
-        logger.info("%s side enabled: %s", kind, repo)
-        ws_dir = fairy.workset_repo_dir(side.ns)
-        if ws_dir is not None:
-            model.workset_dirs[side.key] = ws_dir
-            logger.info("%s %s workset dir: %s", kind, repo, ws_dir)
-    if args.log_file:
-        logger.info("teeing captured output to %s", args.log_file)
+    model = Model(sides)
+    sink = OutputSink(ring, model.dirty, args.log_file)
+    setup_logging(logger, False, handlers=[RingLogHandler(sink)])
+    for repo, db in sides:
+        logger.info("side %s: db %s", repo, db.root)
+    for path in args.tail or []:
+        logger.info("tailing %s", path)
 
     term = blessed.Terminal(stream=sys.__stdout__)
     faulthandler.enable(file=sys.__stderr__)
-    threads = []
-    for side in sides:
-        def run_side(side=side) -> None:
-            try:
-                logger.info("%s %s side finished rc=%s", *side.key,
-                            side.run(side.ns, SideUI(side.key, model, side.forced)))
-            except Exception:
-                logger.exception("%s %s side crashed", *side.key)
-        threads.append(Thread(target=run_side,
-                              name=f"{side.key[0]}-controller~{side.key[1]}",
-                              daemon=True))
-
-    ui = UILoop(term, model, ring, args.save_dir, [s.key for s in sides])
+    ui = UILoop(term, model, ring, args.save_dir,
+                LogTail(args.tail or [], sink))
     with term.fullscreen(), term.cbreak(), term.hidden_cursor(), \
             term.mouse_enabled(report_drag=True, timeout=0.2), \
             captured_output(sink):
-        for th in threads:
-            th.start()
+        model.poll()
         ui.run()
-    if any(th.is_alive() for th in threads):
-        print("waiting up to 10s for the pipelines to wind down"
-              + (f" (their logs land in {args.log_file})" if args.log_file else "")
-              + " ...", file=sys.stderr)
-    for th in threads:
-        th.join(timeout=10)
     sink.close()
-    for th in threads:
-        if th.is_alive():
-            print(f"{th.name} still winding down (LLM call in flight?); "
-                  "its cache saves may be incomplete", file=sys.stderr)
     if args.log_file:
         print(f"captured output: {args.log_file}", file=sys.stderr)
     return 0

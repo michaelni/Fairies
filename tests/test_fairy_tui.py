@@ -1,14 +1,15 @@
-"""fairy_tui: headless model round-trips and a one-frame paint smoke."""
+"""fairy_tui: headless model round-trips over a filedb and a paint smoke."""
 
 from __future__ import annotations
 
 import io
+import logging
 import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from queue import SimpleQueue
+from threading import Event
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -16,21 +17,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import blessed  # noqa: E402
-import fairy  # noqa: E402
 import fairy_tui  # noqa: E402
+import filedb  # noqa: E402
 import tui_core  # noqa: E402
-import workset  # noqa: E402
 
-
-PR = ("PR", "o/r")
-PR2 = ("PR", "o/r2")
-
-
-def decision(n: int, action: str = "comment", msg: str = "msg",
-             llm: str = "reply") -> fairy.Decision:
-    # llm="-" models a gate skip: the LLM never ran (fairy.Decision's
-    # placeholder default), unlike an LLM skip/error verdict.
-    return fairy.Decision(n, "t", "a", "-", action, "llm", None, llm, msg)
+R1, R2 = "o/r", "o/r2"
 
 
 class Key(str):
@@ -46,368 +37,258 @@ def make_term(stream: io.StringIO | None = None, cols: int = 100) -> blessed.Ter
                             force_styling=True)
 
 
-def make_pipe() -> fairy_tui.Pipeline:
-    return fairy_tui.Pipeline(SimpleQueue(), fairy.PendingCount(0), set(),
-                              SimpleQueue())
+def verdict(n: int, classification: str = "moderate_issues", msg: str = "m",
+            labels: list | None = None, **fields) -> dict:
+    t = {"title": "from disk", "author": "a", "html_url": "u",
+         "review": {"classification": classification, "message": msg,
+                    "label_changes": labels or []},
+         "expected_updated_at": "2026-07-19T10:00:00Z",
+         "expected_head_ref": f"h{n}", "llm_at": "2026-07-20T00:00:00+00:00"}
+    t.update(fields)
+    return t
 
 
-class ModelTests(unittest.TestCase):
-    def test_decide_holds_and_records(self) -> None:
-        # The controller never blocks: decide records the decision and
-        # returns "hold"; acting is the operator's move on the table.
-        model = fairy_tui.Model()
-        model.add_candidates(PR, [{"number": 7, "title": "t", "html_url": "u"}])
-        ui = fairy_tui.SideUI(PR, model, set())
-        self.assertEqual(ui.decide(None, decision(7), "u"), "hold")
-        item = model.items[(*PR, 7)]
-        self.assertIsNotNone(item.decision)
-        self.assertIs(item.status, fairy_tui.Status.PENDING)  # file drives status
-
-    def test_relevant_filter_hides_gate_skips(self) -> None:
-        model = fairy_tui.Model()
-        model.add_candidates(PR, [{"number": 1, "title": "a"},
-                                    {"number": 2, "title": "b"}])
-        model.finish(PR, decision(1))                       # actionable
-        model.finish(PR, decision(2, action="skip", msg="", llm="-"))  # gate skip
-        with model.lock:
-            self.assertEqual([it.number for it in model.visible()], [1])
-            model.show_all = True
-            self.assertEqual([it.number for it in model.visible()], [1, 2])
-
-    def test_llm_skip_from_this_session_stays_listed(self) -> None:
-        # The operator watched this item get reviewed and wants to
-        # inspect why it skipped; only startup backlog (no in-memory
-        # decision) and gate skips stay out of the relevant view.
-        model = fairy_tui.Model()
-        model.add_candidates(PR, [{"number": 1, "title": "a"},
-                                  {"number": 2, "title": "b"}])
-        model.finish(PR, decision(1, action="skip", msg="no new activity",
-                                  llm="skip"))
-        model.finish(PR, decision(2, action="skip", msg="", llm="-"))
-        self.assertIs(model.items[(*PR, 1)].status, fairy_tui.Status.DONE)
-        with model.lock:
-            self.assertEqual([it.number for it in model.visible()], [1])
-
-    def test_finish_marks_only_non_actionable_done(self) -> None:
-        model = fairy_tui.Model()
-        model.add_candidates(PR, [{"number": 1, "title": "a"},
-                                    {"number": 2, "title": "b"}])
-        model.finish(PR, decision(1, action="skip", msg="", llm="-"))  # gate skip
-        model.finish(PR, decision(2))                         # actionable
-        self.assertIs(model.items[(*PR, 1)].status, fairy_tui.Status.DONE)
-        # Actionable items keep their file-driven status so the operator
-        # can still act on the row.
-        self.assertIs(model.items[(*PR, 2)].status, fairy_tui.Status.PENDING)
+def make_ui(model: fairy_tui.Model, stream: io.StringIO | None = None,
+            cols: int = 100, save_dir: Path = Path(".")) -> fairy_tui.UILoop:
+    ring = tui_core.RingBuffer()
+    sink = fairy_tui.OutputSink(ring, model.dirty, None)
+    return fairy_tui.UILoop(make_term(stream, cols), model, ring, save_dir,
+                            fairy_tui.LogTail([], sink))
 
 
-class WorksetDirCase(unittest.TestCase):
-    """Base: a Model wired to a temp workset dir, plus a file writer."""
+class DbCase(unittest.TestCase):
+    """Base: a Model over two temp filedbs, plus ticket writers."""
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.dir = Path(self._tmp.name)
-        self.model = fairy_tui.Model()
-        self.model.workset_dirs[PR] = self.dir
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.db = filedb.Db(Path(tmp.name) / "r")
+        self.db2 = filedb.Db(Path(tmp.name) / "r2")
+        self.model = fairy_tui.Model([(R1, self.db), (R2, self.db2)])
 
-    def _write(self, number: int, state: workset.WorkState,
-               message: str = "m", classification: str = "reply",
-               labels: list[workset.LabelChange] | None = None,
-               mtime: float | None = None, d: Path | None = None,
-               kind: str = "pr") -> Path:
-        path = (d or self.dir) / f"{kind}-{number}.json"
-        now = "2026-07-20T00:00:00+00:00"
-        workset.save_item(path, workset.WorkItem(
-            kind=kind, forge_type="gitea", account="", owner="o", repo="r",
-            number=number, state=state, created_at=now, state_changed_at=now,
-            title="from disk", html_url="u",
-            review=workset.ReviewResult(
-                classification=classification, message=message,
-                label_changes=labels or [])
-            if state >= workset.WorkState.REVIEWED else None,
-        ))
-        if mtime is not None:
-            os.utime(path, (mtime, mtime))
-        return path
+    def keys(self) -> list:
+        with self.model.lock:
+            return [(it.repo, it.number) for it in self.model.visible()]
 
 
-class WorksetPollTests(WorksetDirCase):
-    """poll_workset drives item state from the on-disk files."""
+class PollTests(DbCase):
+    """poll() drives rows purely from the state directories."""
+
+    def test_rows_are_files_and_state_is_the_directory(self) -> None:
+        self.db.push("queued", "pr", 5, verdict(5))
+        self.model.poll()
+        item = self.model.items[(R1, "pr", 5)]
+        self.assertEqual(item.state, "queued")
+        self.assertEqual(item.data["title"], "from disk")
+        self.db.move("queued", "llm", "pr", 5,
+                     mutate=lambda d: d.update(stage="triage"))
+        self.model.poll()
+        self.assertEqual(item.state, "llm")
+        self.assertEqual(item.data["stage"], "triage")
 
     def test_invalid_file_flags_the_row_and_recovers(self) -> None:
-        path = self._write(5, workset.WorkState.REVIEWED, mtime=100.0)
-        self.model.poll_workset()
-        item = self.model.items[(*PR, 5)]
-        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
+        path = self.db.path("reviewed", "pr", 5)
         path.write_text("{ broken", encoding="utf-8")
         os.utime(path, (200.0, 200.0))
-        self.model.poll_workset()
-        self.assertIs(item.status, fairy_tui.Status.INVALID)
-        self.assertTrue(item.ws_error)
-        self.assertEqual(item.ws.review.message, "m")
+        self.model.poll()
+        item = self.model.items[(R1, "pr", 5)]
+        self.assertEqual(item.state, fairy_tui.INVALID)
+        self.assertTrue(item.error)
+        self.assertEqual(item.data["review"]["message"], "m")  # last good parse
+        self.assertIn((R1, 5), self.keys())
+        self.db.push("reviewed", "pr", 5, verdict(5))  # operator fixed it
+        self.model.poll()
+        self.assertEqual(item.state, "reviewed")
+        self.assertEqual(item.error, "")
+
+    def test_removed_file_drops_the_row(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
+        self.db.pop("reviewed", "pr", 5)
+        self.model.poll()
+        self.assertNotIn((R1, "pr", 5), self.model.items)
+
+    def test_crash_remnant_shows_the_later_state(self) -> None:
+        self.db.push("queued", "pr", 5, verdict(5))
+        self.db.push("posted", "pr", 5, verdict(5))
+        self.model.poll()
+        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "posted")
+
+    def test_relevant_filter_hides_only_unseen_settled_rows(self) -> None:
+        self.db.push("skipped", "pr", 1, verdict(1, "skip"))   # old backlog
+        self.db.push("posted", "pr", 2, verdict(2))            # old backlog
+        self.db.push("ci-blocked", "pr", 3, verdict(3))        # attention
+        self.db.push("reviewed", "pr", 4, verdict(4))
+        self.db.push("error", "pr", 6, {"error": "boom"})
+        self.model.poll()
+        self.assertEqual(self.keys(), [(R1, 3), (R1, 4), (R1, 6)])
         with self.model.lock:
-            self.assertIn(5, [it.number for it in self.model.visible()])
-        self._write(5, workset.WorkState.REVIEWED)  # operator fixed it
-        self.model.poll_workset()
-        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
-        self.assertEqual(item.ws_error, "")
+            self.model.show_all = True
+        self.assertEqual(self.keys(), [(R1, 1), (R1, 2), (R1, 3), (R1, 4), (R1, 6)])
 
-    def test_states_map_to_status_and_stage(self) -> None:
-        self.model.add_candidates(PR, [{"number": 5, "title": "t"}])
-        self._write(5, workset.WorkState.REVIEW, mtime=100.0)
-        self.model.poll_workset()
-        item = self.model.items[(*PR, 5)]
-        self.assertIs(item.status, fairy_tui.Status.IN_LLM)
-        self.assertEqual(item.stage, "review")
-        self._write(5, workset.WorkState.REVIEWED)
-        self.model.poll_workset()
-        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
-        self.assertEqual(item.stage, "")
-
-    def test_unknown_disk_item_is_added_and_relevant(self) -> None:
-        self._write(9, workset.WorkState.REVIEWED)
-        self.model.poll_workset()
-        item = self.model.items[(*PR, 9)]
-        self.assertEqual(item.title, "from disk")
-        self.assertIs(item.status, fairy_tui.Status.REVIEWED)
-        with self.model.lock:
-            self.assertEqual([it.number for it in self.model.visible()], [9])
-
-    def test_persisted_llm_skip_is_done_not_awaiting(self) -> None:
-        # Regression: at startup every REVIEWED file counted as "awaiting
-        # you", including LLM-skip bookkeeping, and the number shrank as
-        # the gates re-finished them. Skips with nothing to post are done;
-        # a skip carrying label changes still awaits the operator.
-        self._write(5, workset.WorkState.REVIEWED, classification="skip",
-                    message="only rewraps a comment")
-        self._write(6, workset.WorkState.REVIEWED, classification="skip",
-                    labels=[workset.LabelChange(label="needs docs", op="add")])
-        self.model.poll_workset()
-        self.assertIs(self.model.items[(*PR, 5)].status, fairy_tui.Status.DONE)
-        self.assertIs(self.model.items[(*PR, 6)].status,
-                      fairy_tui.Status.REVIEWED)
-
-    def test_deleted_file_cancels_in_pipeline_item(self) -> None:
-        path = self._write(5, workset.WorkState.QUEUED)
-        self.model.poll_workset()
-        self.assertIs(self.model.items[(*PR, 5)].status, fairy_tui.Status.QUEUED)
-        path.unlink()
-        self.model.poll_workset()
-        self.assertIs(self.model.items[(*PR, 5)].status,
-                      fairy_tui.Status.CANCELLED)
-
-    def test_a_requeued_file_reopens_a_settled_row(self) -> None:
-        # A skip-backoff re-review flips the file back to QUEUED; the
-        # row (hidden as done since the first poll) must come back, or
-        # the operator watches the wrapper work on an invisible item.
-        self._write(5, workset.WorkState.REVIEWED, classification="skip",
-                    mtime=100.0)
-        self.model.poll_workset()
-        self.assertIs(self.model.items[(*PR, 5)].status, fairy_tui.Status.DONE)
-        self._write(5, workset.WorkState.QUEUED, mtime=200.0)
-        self.model.poll_workset()
-        self.assertIs(self.model.items[(*PR, 5)].status,
-                      fairy_tui.Status.QUEUED)
-        with self.model.lock:
-            self.assertIn(5, [it.number for it in self.model.visible()])
-
-    def test_operator_states_are_not_clobbered(self) -> None:
-        # APPLIED (just posted this run) must not be downgraded by a poll
-        # that still sees the file in REVIEWED for a moment.
-        self.model.add_candidates(PR, [{"number": 5, "title": "t"}])
-        self.model.items[(*PR, 5)].status = fairy_tui.Status.APPLIED
-        self._write(5, workset.WorkState.REVIEWED)
-        self.model.poll_workset()
-        self.assertIs(self.model.items[(*PR, 5)].status,
-                      fairy_tui.Status.APPLIED)
+    def test_a_row_seen_live_stays_listed_after_it_settles(self) -> None:
+        # The operator watched this item head into the LLM and wants to
+        # inspect why it skipped; without the session memory the row
+        # would vanish the moment the verdict lands in skipped/.
+        self.db.push("llm", "pr", 5, verdict(5))
+        self.model.poll()
+        self.db.move("llm", "skipped", "pr", 5)
+        self.model.poll()
+        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "skipped")
+        self.assertIn((R1, 5), self.keys())
 
 
-class ActTests(WorksetDirCase):
-    """y/s/x/r route table actions for the cursor row to the controller."""
+class ActTests(DbCase):
+    """y/s/x/r/f are file operations on the cursor row's db."""
 
-    def setUp(self) -> None:
-        super().setUp()
-        self.pipe = make_pipe()
-        with self.model.lock:
-            self.model.pipelines[PR] = self.pipe
-            self.model.forced[PR] = set()
-
-    def _actions(self) -> list:
-        out = []
-        while True:
-            try:
-                out.append(self.pipe.actions.get_nowait())
-            except Exception:
-                return out
-
-    def test_apply_on_reviewed_row_is_routed(self) -> None:
-        self._write(5, workset.WorkState.REVIEWED)
-        self.model.poll_workset()
+    def test_apply_moves_reviewed_to_outgoing(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
         self.model.act("apply")
-        self.assertEqual(self._actions(), [(5, "apply")])
+        self.assertEqual(self.db.find("pr", 5), "outgoing")
+        self.assertIn((R1, "pr", 5), self.model.acted)
 
-    def test_apply_without_reviewed_file_is_refused(self) -> None:
-        self.model.add_candidates(PR, [{"number": 5, "title": "t"}])
-        self.model.act("apply")
-        self.assertEqual(self._actions(), [])
-
-    def test_apply_on_llm_skip_says_nothing_to_post(self) -> None:
-        self._write(5, workset.WorkState.REVIEWED, classification="skip")
-        self.model.poll_workset()
-        self.model.show_all = True
+    def test_apply_on_a_skip_verdict_says_nothing_to_post(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5, "skip"))
+        self.model.poll()
         with self.assertLogs(fairy_tui.logger, level="INFO") as logs:
             self.model.act("apply")
-        self.assertEqual(self._actions(), [])
+        self.assertEqual(self.db.find("pr", 5), "reviewed")
         self.assertTrue(any("nothing to post" in ln for ln in logs.output))
 
-    def test_rerun_refused_while_evaluating(self) -> None:
-        self._write(5, workset.WorkState.REVIEW)  # wrapper running
-        self.model.poll_workset()
-        self.model.act("rerun")
-        self.assertEqual(self._actions(), [])
+    def test_apply_refused_while_a_worker_holds_the_item(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
+        claim = self.db.claim("reviewed", "reviewed", "pr", 5)
+        try:
+            self.model.act("apply")
+        finally:
+            claim.abort()
+        self.assertEqual(self.db.find("pr", 5), "reviewed")
 
-    def test_rerun_on_reviewed_row_is_routed(self) -> None:
-        self._write(5, workset.WorkState.REVIEWED)
-        self.model.poll_workset()
+    def test_rerun_writes_a_request_and_respects_in_flight(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
         self.model.act("rerun")
-        self.assertEqual(self._actions(), [(5, "rerun")])
+        self.assertEqual(self.db.get("requests", "pr", 5), mock.ANY)
+        self.assertEqual(self.db.get("requests", "pr", 5)["action"], "rerun")
+        self.db.pop("requests", "pr", 5)
+        self.db.move("reviewed", "queued", "pr", 5)
+        self.model.poll()
+        self.model.act("rerun")
+        self.assertIsNone(self.db.get("requests", "pr", 5))
+
+    def test_skip_and_cancel_move_with_a_reason(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("merge-ready", "pr", 6, {"title": "t"})
+        self.model.poll()
+        self.model.act("skip")
+        self.assertEqual(self.db.get("skipped", "pr", 5)["reason"],
+                         "operator skip")
+        self.model.poll()
+        with self.model.lock:
+            keys = [(it.repo, it.kind, it.number) for it in self.model.visible()]
+            self.model.cursor = keys.index((R1, "pr", 6))
+        self.model.act("cancel")
+        self.assertEqual(self.db.get("cancelled", "pr", 6)["reason"],
+                         "operator cancel")
 
     def test_act_advances_to_the_next_reviewed_row(self) -> None:
-        self._write(1, workset.WorkState.REVIEWED)
-        self._write(2, workset.WorkState.REVIEWED)
-        self.model.poll_workset()
+        self.db.push("reviewed", "pr", 1, verdict(1))
+        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.model.poll()
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (*PR, 1))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 1))
         self.model.act("apply")
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (*PR, 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
 
-    def test_applied_backlog_row_stays_listed(self) -> None:
-        # A review from an earlier run has no in-memory decision, so
-        # after y the POSTED file mapped it out of the relevant view --
-        # the operator could not verify the post landed.
-        self._write(5, workset.WorkState.REVIEWED, mtime=100.0)
-        self.model.poll_workset()
+    def test_applied_row_stays_listed_through_posted(self) -> None:
+        # After y the agent moves the file to posted/; the row must not
+        # vanish, or the operator cannot verify the post landed.
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
         self.model.act("apply")
-        self._write(5, workset.WorkState.POSTED, mtime=200.0)  # controller posted
-        self.model.poll_workset()
-        item = self.model.items[(*PR, 5)]
-        self.assertIs(item.status, fairy_tui.Status.APPLIED)
-        with self.model.lock:
-            self.assertIn(5, [it.number for it in self.model.visible()])
-
-    def test_x_cancels_pending_via_set_and_reviewed_via_action(self) -> None:
-        self.model.add_candidates(PR, [{"number": 1, "title": "t"}])
-        self.model.show_all = True  # pending rows live in the "all" view
-        self.model.cancel()
-        self.assertIn(1, self.pipe.cancelled)
-        self.assertIs(self.model.items[(*PR, 1)].status,
-                      fairy_tui.Status.CANCELLED)
-        self._write(5, workset.WorkState.REVIEWED)
-        self.model.poll_workset()
-        with self.model.lock:
-            self.model.cursor = [it.number for it in self.model.visible()].index(5)
-        self.model.cancel()
-        self.assertEqual(self._actions(), [(5, "cancel")])
+        self.db.move("outgoing", "posted", "pr", 5)  # the agent's send pass
+        self.model.poll()
+        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "posted")
+        self.assertIn((R1, 5), self.keys())
 
 
-class MultiSideTests(WorksetDirCase):
-    """N sides: items are keyed per repo and actions stay side-local."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        tmp2 = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp2.cleanup)
-        self.dir2 = Path(tmp2.name)
-        self.model.workset_dirs[PR2] = self.dir2
+class MultiSideTests(DbCase):
+    """N repos: items are keyed per repo and actions stay side-local."""
 
     def test_same_number_in_two_repos_is_two_rows(self) -> None:
-        self._write(5, workset.WorkState.REVIEWED)
-        self._write(5, workset.WorkState.QUEUED, d=self.dir2)
-        self.model.poll_workset()
-        self.assertIs(self.model.items[(*PR, 5)].status,
-                      fairy_tui.Status.REVIEWED)
-        self.assertIs(self.model.items[(*PR2, 5)].status,
-                      fairy_tui.Status.QUEUED)
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db2.push("queued", "pr", 5, verdict(5))
+        self.model.poll()
+        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "reviewed")
+        self.assertEqual(self.model.items[(R2, "pr", 5)].state, "queued")
 
-    def test_act_routes_to_the_cursor_rows_side(self) -> None:
-        pipe1, pipe2 = make_pipe(), make_pipe()
+    def test_act_works_on_the_cursor_rows_db(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db2.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
         with self.model.lock:
-            self.model.pipelines[PR] = pipe1
-            self.model.pipelines[PR2] = pipe2
-            self.model.forced[PR] = set()
-            self.model.forced[PR2] = set()
-        self._write(5, workset.WorkState.REVIEWED)
-        self._write(5, workset.WorkState.REVIEWED, d=self.dir2)
-        self.model.poll_workset()
-        with self.model.lock:
-            keys = [(it.kind, it.repo, it.number) for it in self.model.visible()]
-            self.model.cursor = keys.index((*PR2, 5))
+            keys = [(it.repo, it.kind, it.number) for it in self.model.visible()]
+            self.model.cursor = keys.index((R2, "pr", 5))
         self.model.act("apply")
-        self.assertEqual(pipe2.actions.get_nowait(), (5, "apply"))
-        self.assertTrue(pipe1.actions.empty())
+        self.assertEqual(self.db2.find("pr", 5), "outgoing")
+        self.assertEqual(self.db.find("pr", 5), "reviewed")
 
-    def test_stats_tile_one_block_per_side(self) -> None:
-        self._write(5, workset.WorkState.REVIEWED)
-        self._write(7, workset.WorkState.QUEUED, d=self.dir2)
-        self.model.poll_workset()
-        term = make_term()
-        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
-                              Path("."), [PR, PR2])
+    def test_stats_tile_one_block_per_repo(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db2.push("queued", "issue", 7, verdict(7))
+        self.model.poll()
+        ui = make_ui(self.model)
         with self.model.lock:
             wide = fairy_tui._plain(ui.stats_lines(120)).split("\n")
-            narrow = fairy_tui._plain(ui.stats_lines(20)).split("\n")
-        # Wide: both side headings land on the same tiled line (short
+            narrow = fairy_tui._plain(ui.stats_lines(24)).split("\n")
+        # Wide: both repo headings land on the same tiled line (short
         # repo display names, as in the list column).
-        self.assertTrue(any("PRs r " in ln and "PRs r2 " in ln
-                            for ln in wide), wide)
+        self.assertTrue(any("r " in ln and "r2 " in ln for ln in wide), wide)
         # Narrow: the blocks stack, one heading per line.
-        self.assertTrue(any("PRs r " in ln and "r2" not in ln
-                            for ln in narrow), narrow)
-        self.assertTrue(any("PRs r2 " in ln for ln in narrow), narrow)
+        self.assertTrue(any("r2 " in ln and " r " not in ln for ln in narrow),
+                        narrow)
 
-    def _rows_text(self, sides: list[tuple[str, str]]) -> list[str]:
-        term = make_term()
-        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
-                              Path("."), sides)
-        with self.model.lock:
+    def _rows_text(self, model: fairy_tui.Model) -> list[str]:
+        ui = make_ui(model)
+        with model.lock:
             rows = ui.list_rows()
         return fairy_tui._plain(rows).split("\n")
 
     def test_repo_column_only_when_sides_span_repos(self) -> None:
-        self._write(5, workset.WorkState.REVIEWED)
-        self._write(5, workset.WorkState.REVIEWED, d=self.dir2)
-        self.model.poll_workset()
-        single = fairy_tui.Model()
-        single.workset_dirs[PR] = self.dir
-        single.poll_workset()
-        rows = self._rows_text([PR, PR2])
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db2.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
+        rows = self._rows_text(self.model)
         self.assertIn("PR    r  #5", rows[0])   # short name, padded to "r2"
         self.assertIn("PR    r2 #5", rows[1])
-        self.model, single = single, self.model
-        self.assertIn("PR    #5", self._rows_text([PR])[0])
+        single = fairy_tui.Model([(R1, self.db)])
+        single.poll()
+        self.assertIn("PR    #5", self._rows_text(single)[0])
 
     def test_colliding_short_names_fall_back_to_owner_repo(self) -> None:
-        term = make_term()
-        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(), Path("."),
-                              [("PR", "a/x"), ("PR", "b/x"), ("PR", "c/y")])
+        model = fairy_tui.Model([("a/x", self.db), ("b/x", self.db2),
+                                 ("c/y", self.db)])
+        ui = make_ui(model)
         self.assertEqual(ui._repo_disp,
                          {"a/x": "a/x", "b/x": "b/x", "c/y": "y"})
 
     def test_visible_stats_export_matches_the_painted_pane(self) -> None:
         # e must export what is on screen: the tiled layout depends on
         # the pane width, which the draggable divider controls.
-        self._write(5, workset.WorkState.REVIEWED)
-        self._write(7, workset.WorkState.QUEUED, d=self.dir2)
-        self.model.poll_workset()
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db2.push("queued", "pr", 7, verdict(7))
+        self.model.poll()
         save = tempfile.TemporaryDirectory()
         self.addCleanup(save.cleanup)
-        term = make_term(cols=160)
-        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
-                              Path(save.name), [PR, PR2])
+        ui = make_ui(self.model, cols=160, save_dir=Path(save.name))
         ui.focus = "tl"
         ui.layout.fx_top = 0.15  # narrow stats pane: blocks stack on screen
-        rects = ui.layout.rects(term.width, max(3, term.height - 1))
+        rects = ui.layout.rects(ui.term.width, max(3, ui.term.height - 1))
         with self.model.lock:
             painted = fairy_tui._plain(
                 ui.stats_lines(ui._text_width(rects["tl"])))
@@ -416,239 +297,300 @@ class MultiSideTests(WorksetDirCase):
         expected = painted.split("\n")[:ui._page() + 1]
         self.assertEqual(out.read_text().rstrip("\n").split("\n"), expected)
 
-    def test_pr_and_issue_sides_share_one_dir(self) -> None:
-        self.model.workset_dirs[("issue", "o/r")] = self.dir
-        self._write(5, workset.WorkState.REVIEWED)
-        self._write(5, workset.WorkState.QUEUED, kind="issue")
-        self.model.poll_workset()
-        self.assertIs(self.model.items[(*PR, 5)].status,
-                      fairy_tui.Status.REVIEWED)
-        self.assertIs(self.model.items[("issue", "o/r", 5)].status,
-                      fairy_tui.Status.QUEUED)
+    def test_pr_and_issue_kinds_share_one_db(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("queued", "issue", 5, verdict(5))
+        self.model.poll()
+        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "reviewed")
+        self.assertEqual(self.model.items[(R1, "issue", 5)].state, "queued")
 
 
 class SideBuildTests(unittest.TestCase):
-    def test_repeated_side_args_build_one_side_each(self) -> None:
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher = mock.patch.object(
+            fairy_tui.agent, "db_root_for",
+            side_effect=lambda ns: Path(tmp.name) / f"{ns.owner}~{ns.repo}")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_repeated_side_args_build_one_side_per_repo(self) -> None:
         args = fairy_tui.parse_args(
             ["--pr-args", "--owner a --repo x",
              "--pr-args", "--owner a --repo y",
-             "--issue-args", "--owner a --repo x"])
-        self.assertEqual([s.key for s in fairy_tui.build_sides(args)],
-                         [("PR", "a/x"), ("PR", "a/y"), ("issue", "a/x")])
+             "--issue-args", "--owner a --repo x"])  # shares a/x's db
+        self.assertEqual([label for label, _ in fairy_tui.build_sides(args)],
+                         ["a/x", "a/y"])
 
-    def test_duplicate_side_is_rejected(self) -> None:
-        args = fairy_tui.parse_args(["--pr-args", "--owner a --repo x",
-                                     "--pr-args", "--owner a --repo x"])
-        with self.assertRaises(SystemExit):
-            fairy_tui.build_sides(args)
-
-    def test_case_variant_duplicate_side_is_rejected(self) -> None:
+    def test_case_variant_repos_merge_into_one_side(self) -> None:
         # The forge routes owner/repo case-insensitively, so a case slip
-        # must not slip past the duplicate check as a "different" repo.
+        # must not become a second side over the same repo.
         args = fairy_tui.parse_args(["--pr-args", "--owner FFmpeg --repo web",
                                      "--pr-args", "--owner ffmpeg --repo Web"])
-        with self.assertRaises(SystemExit):
-            fairy_tui.build_sides(args)
+        self.assertEqual([label for label, _ in fairy_tui.build_sides(args)],
+                         ["FFmpeg/web"])
 
 
-class SortTests(WorksetDirCase):
+class SortTests(DbCase):
     """t cycles the visible-list sort; sorts are stable over arrival."""
 
-    def setUp(self) -> None:
-        super().setUp()
-        tmp2 = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp2.cleanup)
-        self.dir2 = Path(tmp2.name)
-        self.model.workset_dirs[PR2] = self.dir2
-        self.model.show_all = True
-
-    def _numbers(self) -> list[tuple[str, int]]:
-        with self.model.lock:
-            return [(it.repo, it.number) for it in self.model.visible()]
+    def _numbers(self) -> list[int]:
+        return [n for _, n in self.keys()]
 
     def test_status_sort_bubbles_actionable_rows_stably(self) -> None:
-        for n, state in ((1, workset.WorkState.QUEUED),
-                         (2, workset.WorkState.REVIEWED),
-                         (3, workset.WorkState.QUEUED),
-                         (4, workset.WorkState.REVIEWED)):
-            self._write(n, state)
-        self.model.poll_workset()
-        self.assertEqual([n for _, n in self._numbers()], [1, 2, 3, 4])
+        for n, state in ((1, "queued"), (2, "reviewed"),
+                         (3, "queued"), (4, "reviewed")):
+            self.db.push(state, "pr", n, verdict(n))
+        self.model.poll()
+        self.assertEqual(self._numbers(), [1, 2, 3, 4])
         self.assertEqual(self.model.cycle_sort(), "status")
-        # REVIEWED first; arrival order preserved within equal status.
-        self.assertEqual([n for _, n in self._numbers()], [2, 4, 1, 3])
+        # reviewed first; arrival order preserved within equal status.
+        self.assertEqual(self._numbers(), [2, 4, 1, 3])
 
     def test_repo_and_number_modes(self) -> None:
         # "z/AA" sorts last by raw owner/repo but its displayed short
         # name "AA" sorts first: repo mode must follow the column.
         tmp3 = tempfile.TemporaryDirectory()
         self.addCleanup(tmp3.cleanup)
-        self.model.workset_dirs[("PR", "z/AA")] = Path(tmp3.name)
-        self._write(5, workset.WorkState.QUEUED)
-        self._write(9, workset.WorkState.QUEUED)
-        self._write(7, workset.WorkState.QUEUED, d=self.dir2)
-        self._write(3, workset.WorkState.QUEUED, d=Path(tmp3.name))
-        self.model.poll_workset()
+        db3 = filedb.Db(Path(tmp3.name))
+        self.model.sides.append(("z/AA", db3))
+        self.db.push("queued", "pr", 5, verdict(5))
+        self.db.push("queued", "pr", 9, verdict(9))
+        self.db2.push("queued", "pr", 7, verdict(7))
+        db3.push("queued", "pr", 3, verdict(3))
+        self.model.poll()
         self.model.sort_mode = "repo"
-        self.assertEqual(self._numbers(),
-                         [("z/AA", 3), ("o/r", 5), ("o/r", 9), ("o/r2", 7)])
+        self.assertEqual(self.keys(),
+                         [("z/AA", 3), (R1, 5), (R1, 9), (R2, 7)])
         self.model.sort_mode = "number"
-        self.assertEqual([n for _, n in self._numbers()], [3, 5, 7, 9])
+        self.assertEqual(self._numbers(), [3, 5, 7, 9])
 
     def test_cursor_follows_its_item_when_a_poll_reorders(self) -> None:
         # A status flip elsewhere must not move the operator's selection:
         # y/s/x/r act on whatever the cursor points at, so a reorder
         # under a stationary index would hit a different row.
-        self._write(1, workset.WorkState.QUEUED)
-        self._write(2, workset.WorkState.REVIEWED)
-        self.model.poll_workset()
+        self.db.push("queued", "pr", 1, verdict(1))
+        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.model.poll()
         self.model.sort_mode = "status"
         with self.model.lock:
-            self.model._move_cursor_to((*PR, 2))
-            self.assertEqual(self.model._cursor_key(), (*PR, 2))
-        self._write(1, workset.WorkState.REVIEWED)  # bubbles above #2
-        self.model.poll_workset()
+            self.model._move_cursor_to((R1, "pr", 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+        self.db.move("queued", "reviewed", "pr", 1)  # bubbles above #2
+        self.model.poll()
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (*PR, 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
             self.assertEqual(self.model.cursor, 1)
 
     def test_cycle_wraps_back_to_arrival(self) -> None:
         for expected in ("status", "repo", "number", "arrival"):
             self.assertEqual(self.model.cycle_sort(), expected)
 
-    def test_every_status_has_a_sort_priority(self) -> None:
-        # A Status member missing from _SORT_STATUS would KeyError on
+    def test_every_state_has_a_sort_priority(self) -> None:
+        # A filedb state missing from _SORT_STATES would KeyError on
         # the UI thread the first time t reaches status mode.
-        self.assertEqual(set(fairy_tui._SORT_STATUS), set(fairy_tui.Status))
+        self.assertEqual(set(fairy_tui._SORT_STATES),
+                         set(filedb.STATES) | {fairy_tui.INVALID})
 
     def test_t_key_keeps_the_cursor_on_its_row_and_labels_the_bar(self) -> None:
-
-        self._write(1, workset.WorkState.QUEUED)
-        self._write(2, workset.WorkState.REVIEWED)
-        self.model.poll_workset()
+        self.db.push("queued", "pr", 1, verdict(1))
+        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.model.poll()
         stream = io.StringIO()
-        term = make_term(stream, cols=160)
-        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(),
-                              Path("."), [PR, PR2])
+        ui = make_ui(self.model, stream, cols=160)
         self.model.cursor = 1            # on #2 in arrival order
         ui.dispatch(Key("t"))            # -> status sort: #2 is first
         self.assertEqual(self.model.sort_mode, "status")
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (*PR, 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
         self.assertEqual(self.model.cursor, 0)
         ui.paint()
         self.assertIn("sort:status", stream.getvalue())
 
 
-class DetailFromFileTests(WorksetDirCase):
-    """The detail pane renders review content and error reasons from the
-    workset file, even when no in-memory decision exists."""
+class DetailTests(DbCase):
+    """The detail pane renders everything from the ticket dict."""
 
     def _detail_text(self) -> str:
-        term = make_term()
-        ui = fairy_tui.UILoop(term, self.model, tui_core.RingBuffer(), Path("."), [PR])
+        ui = make_ui(self.model)
         with self.model.lock:
             return fairy_tui._plain(ui.detail_lines(100))
 
-    def test_orphan_review_renders_message_from_file(self) -> None:
-        self._write(5, workset.WorkState.REVIEWED, message="persisted body")
-        self.model.poll_workset()
+    def test_reviewed_ticket_renders_message_and_action(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5, msg="persisted body"))
+        self.model.poll()
         text = self._detail_text()
         self.assertIn("persisted body", text)
-        self.assertIn("status reviewed", text)
+        self.assertIn("state reviewed", text)
+        self.assertIn("comment", text)  # rebuilt decision's action
 
-    def test_error_file_shows_reason(self) -> None:
-        now = "2026-07-20T00:00:00+00:00"
-        workset.save_item(self.dir / "pr-5.json", workset.WorkItem(
-            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
-            number=5, state=workset.WorkState.ERROR,
-            created_at=now, state_changed_at=now, title="t",
-            error="LLM exploded",
-        ))
-        self.model.poll_workset()
-        self.model.show_all = True
+    def test_error_ticket_shows_reason(self) -> None:
+        self.db.push("error", "pr", 5, {"title": "t", "error": "LLM exploded"})
+        self.model.poll()
         self.assertIn("error: LLM exploded", self._detail_text())
 
+    def test_gate_ticket_shows_attention_context(self) -> None:
+        self.db.push("ci-blocked", "pr", 5, {
+            "title": "t", "reason": "ci red",
+            "cancelled_ci_contexts": ["job1"], "blocked_ci_contexts": []})
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("reason ci red", text)
+        self.assertIn("cancelled ci contexts: job1", text)
+
+    def test_send_blocked_note_is_shown(self) -> None:
+        self.db.push("reviewed", "pr", 5,
+                     verdict(5, send_blocked="PR updated_at changed"))
+        self.model.poll()
+        self.assertIn("send blocked: PR updated_at changed",
+                      self._detail_text())
+
     def test_invalid_file_shows_reason(self) -> None:
-        (self.dir / "pr-5.json").write_text("{ broken", encoding="utf-8")
-        self.model.poll_workset()
+        self.db.path("reviewed", "pr", 5).write_text("{ broken",
+                                                     encoding="utf-8")
+        self.model.poll()
         self.assertIn("file invalid:", self._detail_text())
 
 
-class EditReviewTests(unittest.TestCase):
+class EditReviewTests(DbCase):
     def test_o_key_round_trips_the_message_through_the_editor(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        d = Path(tmp.name)
-        now = "2026-07-20T00:00:00+00:00"
-        workset.save_item(d / "pr-5.json", workset.WorkItem(
-            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
-            number=5, state=workset.WorkState.REVIEWED,
-            created_at=now, state_changed_at=now, title="t",
-            review=workset.ReviewResult(classification="reply", message="original"),
-        ))
-        model = fairy_tui.Model()
-        model.workset_dirs[PR] = d
-        model.poll_workset()
+        self.db.push("reviewed", "pr", 5, verdict(5, msg="original"))
+        self.model.poll()
 
         def fake_call(cmd, **kw):
             Path(cmd[-1]).write_text("edited body", encoding="utf-8")
             return 0
 
-        term = make_term()
-        ui = fairy_tui.UILoop(term, model, tui_core.RingBuffer(), Path("."), [PR])
+        ui = make_ui(self.model)
         with mock.patch.dict(os.environ, {"EDITOR": "myeditor"}), \
                 mock.patch.object(fairy_tui.subprocess, "call",
                                   side_effect=fake_call) as call:
             ui.edit_review()
         self.assertEqual(call.call_args.args[0][0], "myeditor")
-        item = workset.load_item(d / "pr-5.json")
-        self.assertEqual(item.review.message, "edited body")
+        self.assertEqual(self.db.get("reviewed", "pr", 5)["review"]["message"],
+                         "edited body")
+
+    def test_edit_refused_while_a_worker_holds_the_item(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5, msg="original"))
+        self.model.poll()
+
+        def fake_call(cmd, **kw):
+            Path(cmd[-1]).write_text("edited body", encoding="utf-8")
+            return 0
+
+        ui = make_ui(self.model)
+        claim = self.db.claim("reviewed", "reviewed", "pr", 5)
+        try:
+            with mock.patch.dict(os.environ, {"EDITOR": "e"}), \
+                    mock.patch.object(fairy_tui.subprocess, "call",
+                                      side_effect=fake_call):
+                ui.edit_review()
+        finally:
+            claim.abort()
+        self.assertEqual(self.db.get("reviewed", "pr", 5)["review"]["message"],
+                         "original")
 
 
-class FilterToggleTests(unittest.TestCase):
+class FilterToggleTests(DbCase):
     def test_cursor_follows_selection_across_the_a_toggle(self) -> None:
+        self.db.push("skipped", "pr", 1, verdict(1, "skip"))
+        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.db.push("skipped", "pr", 3, verdict(3, "skip"))
+        self.model.poll()
+        self.model.show_all = True
+        ui = make_ui(self.model)
 
-        term = make_term()
-        model = fairy_tui.Model()
-        model.add_candidates(
-            PR, [{"number": n, "title": "t"} for n in (1, 2, 3)])
-        model.finish(PR, decision(1, action="skip", msg="", llm="-"))
-        model.finish(PR, decision(2))                       # actionable
-        model.finish(PR, decision(3, action="skip", msg="", llm="-"))
-        model.show_all = True
-        ui = fairy_tui.UILoop(
-            term, model, tui_core.RingBuffer(), Path("."), [PR])
-
-        model.cursor = 1                 # on #2 in the "all" view
+        self.model.cursor = 1            # on #2 in the "all" view
         ui.dispatch(Key("a"))            # -> relevant view: only #2
-        self.assertEqual(model.cursor, 0)
-        with model.lock:
-            self.assertEqual(model._cursor_key(), (*PR, 2))
+        self.assertEqual(self.model.cursor, 0)
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
         ui.dispatch(Key("a"))            # back to "all": still on #2
-        with model.lock:
-            self.assertEqual(model._cursor_key(), (*PR, 2))
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
 
-        model.cursor = 2                 # on filtered-out #3
+        self.model.cursor = 2            # on filtered-out #3
         ui.dispatch(Key("a"))            # nearest preceding visible: #2
-        with model.lock:
-            self.assertEqual(model._cursor_key(), (*PR, 2))
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
 
 
-class PaintSmokeTests(unittest.TestCase):
+class LogTailTests(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "agent.log"
+        self.ring = tui_core.RingBuffer()
+        self.sink = fairy_tui.OutputSink(self.ring, Event(), None)
+        self.tail = fairy_tui.LogTail([self.path], self.sink)
+
+    def lines(self) -> list:
+        return list(self.ring.view(0, 100))
+
+    def test_appended_lines_arrive_with_parsed_levels(self) -> None:
+        self.tail.poll()  # file does not exist yet: retried, not fatal
+        self.path.write_text("2026-07-24T10:00:00 I hello\n")
+        self.tail.poll()
+        with open(self.path, "a") as fh:
+            fh.write("2026-07-24T10:00:01 W look out\n")
+        self.tail.poll()
+        tags = {text: tag for tag, text in self.lines()}
+        self.assertEqual(tags["2026-07-24T10:00:00 I hello"], logging.INFO)
+        self.assertEqual(tags["2026-07-24T10:00:01 W look out"],
+                         logging.WARNING)
+
+    def test_partial_line_is_withheld_until_complete(self) -> None:
+        self.path.write_text("2026-07-24T10:00:00 I hel")
+        self.tail.poll()
+        self.assertEqual(self.lines(), [])
+        with open(self.path, "a") as fh:
+            fh.write("lo\n")
+        self.tail.poll()
+        self.assertEqual([t for _, t in self.lines()],
+                         ["2026-07-24T10:00:00 I hello"])
+
+    def test_truncation_restarts_from_the_top(self) -> None:
+        self.path.write_text("2026-07-24T10:00:00 I one\n")
+        self.tail.poll()
+        self.path.write_text("2026-07-24T11:00:00 I 2\n")  # rotated, shorter
+        self.tail.poll()
+        self.assertIn("2026-07-24T11:00:00 I 2",
+                      [t for _, t in self.lines()])
+
+
+class StatsWrapTests(DbCase):
+    def test_state_counts_wrap_to_the_pane_width(self) -> None:
+        states = ("ci-blocked", "merge-ready", "awaiting-approver",
+                  "posted", "skipped")
+        for n, state in enumerate(states, 1):
+            self.db.push(state, "pr", n, verdict(n))
+        self.model.poll()
+        with self.model.lock:
+            self.model.filter_mode = "all"
+        ui = make_ui(self.model)
+        texts = ["".join(t for _, t in ln) for ln in ui.stats_lines(30)]
+        for state in states:
+            self.assertTrue(any(f"{state}=1" in t for t in texts), state)
+        count_lines = [t for t in texts if "=1" in t]
+        self.assertGreater(len(count_lines), 1)
+        for t in count_lines:
+            self.assertLessEqual(len(t.rstrip()), 30, t)
+
+
+class PaintSmokeTests(DbCase):
     def test_paint_one_frame_headless(self) -> None:
+        self.db.push("reviewed", "pr", 1,
+                     verdict(1, msg="# Head\n**bold** and `code`",
+                             title="hello title"))
+        self.model.poll()
         stream = io.StringIO()
-        term = make_term(stream)
-        model = fairy_tui.Model()
-        model.add_candidates(PR, [{"number": 1, "title": "hello title"}])
-        model.finish(PR, decision(1, msg="# Head\n**bold** and `code`"))
-        ring = tui_core.RingBuffer()
-        ring.append("a debug line")
-        ring.append("a warning line", tag=fairy_tui.logging.WARNING)
-        ui = fairy_tui.UILoop(term, model, ring, Path("."), [PR])
+        ui = make_ui(self.model, stream)
+        ui.ring.append("a log line")
+        ui.ring.append("a warning line", tag=logging.WARNING)
         ui.paint()
         out = stream.getvalue()
-        for expected in ("stats", "debug", "message", "#1", "a debug line", "Head"):
+        for expected in ("stats", "logs", "message", "#1", "a log line", "Head"):
             self.assertIn(expected, out)
         self.assertIn("\x1b[33ma warning line", out)
 
@@ -659,28 +601,23 @@ class PaintSmokeTests(unittest.TestCase):
                              set(fairy_tui._styles(term)))
 
     def test_paint_strips_hostile_escape_sequences(self) -> None:
+        self.db.push("reviewed", "pr", 2,
+                     verdict(2, msg="body\x1b]0;pwned\x07text",
+                             title="evil\x1b]0;pwned\x07title"))
+        self.model.poll()
         stream = io.StringIO()
-        term = make_term(stream)
-        model = fairy_tui.Model()
-        model.add_candidates(
-            PR, [{"number": 2, "title": "evil\x1b]0;pwned\x07title"}])
-        model.finish(PR, decision(2, msg="body\x1b]0;pwned\x07text"))
-        ring = tui_core.RingBuffer()
-        ring.append("wrapper says \x1b]0;pwned\x07hi")
-        ui = fairy_tui.UILoop(term, model, ring, Path("."), [PR])
+        ui = make_ui(self.model, stream)
+        ui.ring.append("wrapper says \x1b]0;pwned\x07hi")
         ui.paint()
         out = stream.getvalue()
         self.assertNotIn("\x1b]0;", out)
         self.assertNotIn("\x07", out)
 
-    def test_debug_scrollback_stops_at_the_oldest_line(self) -> None:
+    def test_log_scrollback_stops_at_the_oldest_line(self) -> None:
         stream = io.StringIO()
-        term = make_term(stream)
-        ring = tui_core.RingBuffer()
+        ui = make_ui(self.model, stream)
         for i in range(5):
-            ring.append(f"line{i}")
-        ui = fairy_tui.UILoop(
-            term, fairy_tui.Model(), ring, Path("."), [PR])
+            ui.ring.append(f"line{i}")
         ui.scroll["bl"] = 10_000
         ui.paint()
         out = stream.getvalue()
@@ -714,9 +651,7 @@ class PaintSmokeTests(unittest.TestCase):
         # A URL in a right pane must not sit directly against the "│"
         # divider: the terminal's own shift/double-click selection would
         # copy the divider with it. One blank gutter column separates them.
-        term = make_term()
-        ui = fairy_tui.UILoop(term, fairy_tui.Model(),
-                              tui_core.RingBuffer(), Path("."), [PR])
+        ui = make_ui(self.model)
         buf: list = []
         ui._blit(buf, tui_core.Rect(10, 0, 20, 3), "br", ["https://x/y"])
         self.assertTrue(buf[1].endswith(" "))          # gutter after divider
@@ -724,9 +659,7 @@ class PaintSmokeTests(unittest.TestCase):
 
     def test_click_copies_url_via_osc52(self) -> None:
         stream = io.StringIO()
-        term = make_term(stream)
-        ui = fairy_tui.UILoop(term, fairy_tui.Model(),
-                              tui_core.RingBuffer(), Path("."), [PR])
+        ui = make_ui(self.model, stream)
         ui._clip_cmd = None  # pin the terminal-escape fallback path
         buf: list = []
         # pane narrower than the URL: the copy must still be whole
@@ -742,9 +675,7 @@ class PaintSmokeTests(unittest.TestCase):
     def test_click_prefers_the_external_clipboard_helper(self) -> None:
         # xclip/wl-copy work in terminals without OSC 52 support (rxvt).
         stream = io.StringIO()
-        term = make_term(stream)
-        ui = fairy_tui.UILoop(term, fairy_tui.Model(),
-                              tui_core.RingBuffer(), Path("."), [PR])
+        ui = make_ui(self.model, stream)
         ui._clip_cmd = ["xclip", "-selection", "primary"]
         buf: list = []
         ui._blit(buf, tui_core.Rect(10, 0, 20, 4), "br", ["see 5144acb now"])
@@ -763,11 +694,7 @@ class PaintSmokeTests(unittest.TestCase):
                              ["xclip", "-selection", "primary"])
 
     def test_export_failure_is_logged_not_fatal(self) -> None:
-        term = make_term()
-        model = fairy_tui.Model()
-        ui = fairy_tui.UILoop(
-            term, model, tui_core.RingBuffer(),
-            Path("/proc/no-such-dir"), [PR])
+        ui = make_ui(self.model, save_dir=Path("/proc/no-such-dir"))
         with self.assertLogs(fairy_tui.logger, level="ERROR") as logs:
             ui.export(full=True)  # must not raise
         self.assertIn("export", logs.output[0])

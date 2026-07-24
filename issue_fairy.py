@@ -28,35 +28,29 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Issue-investigator orchestrator: run the LLM wrapper (``--task issue``) on open
-issues and apply its verdict (comment + label changes) via gcli.
+The issue side of the repo agent: discovery, gates, the issue LLM
+payload and the submit seams. agent.py drives it for tickets and
+worker.py for reviews; there is no standalone issue pipeline anymore.
 
 What belongs here: issue discovery, gating, the issue LLM payload, and
-decision application. The gates are label-driven -- the issue's forge
+decision submission. The gates are label-driven -- the issue's forge
 labels are the analysis state machine: resolution/* means done,
 repro/* marks a completed analysis pass, "needs info" means waiting on
 a human response; a bot @-mention or force flag bypasses them. What
-does NOT belong: PR review orchestration (fairy.py) and prompt/schema
-definitions (llm_prompt.py / llm_review_api.py).
-
-Like fairy.py this runs dry by default; pass --approve to submit or
---manual to confirm each action. Uses its own gcli cache so it can run
-concurrently with fairy.py.
+does NOT belong: PR review logic (fairy.py), ticket routing (agent.py)
+and prompt/schema definitions (llm_prompt.py / llm_review_api.py).
 """
 
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 from dataclasses import dataclass, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from queue import SimpleQueue
-from threading import Thread
 from urllib.parse import urlencode
 
 import gcli_cache
-from common import add_color_arg, attachment_urls, default_cache_path, iso_to_dt, setup_logging
+from common import add_color_arg, attachment_urls, default_cache_path, iso_to_dt
 import forge_gcli
 from forge_gcli import (
     KIND_ISSUE,
@@ -71,17 +65,12 @@ from llm_review_api import ISSUE_REPORT_CLASSIFICATIONS
 import workset
 import fairy
 from fairy import (
-    ACTIONABLE_DECISIONS,
     ApiObject,
     Decision,
     LLMReview,
-    PendingCount,
-    backoff_for_consecutive_skips,
     build_llm_discussion,
     call_llm_with_retries,
     compile_user_mention_regex,
-    compute_llm_skip_backoff,
-    consume_reviewed,
     decision_has_label_changes,
     first_dt,
     flatten_label_args,
@@ -99,10 +88,9 @@ from fairy import (
     parse_label_csv,
     parse_pr_number_csv,
     post_label_explanations,
-    _PREPARE_DONE,
 )
 
-__all__ = ["main"]
+__all__ = ["parse_args", "prepare_issue", "evaluate_issue"]
 
 logger = fairy.logger
 
@@ -147,7 +135,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--approve",
         action="store_true",
-        help="Actually submit comments/labels. Without this flag the script only reports matches.",
+        help="Auto mode: the agent's send pass posts standing verdicts on its "
+             "own. Without this flag they wait in reviewed/ for the TUI's y "
+             "or --ask.",
     )
     p.add_argument(
         "--manual",
@@ -278,8 +268,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--workset-retention-days",
         type=float,
         default=14.0,
-        help="Days after an item leaves the open listing before its "
-             "finished workset file is deleted (default: 14).",
+        help="Days a settled filedb ticket (posted/skipped/cancelled/"
+             "error) is kept after its last state change; items still "
+             "in the open listing are never pruned (default: 14).",
     )
     p.add_argument(
         "--discussion-cache-max-age-hours",
@@ -463,19 +454,6 @@ def prepare_issue(
             min_age_days = min(min_age_days, fairy.REVIEWED_PR_MIN_AGE_DAYS)
         if last_activity > now - timedelta(days=min_age_days):
             return skip("activity is newer than threshold", last_activity)
-        # Issues have no head SHA; the backoff key degenerates to
-        # last_activity alone, which is exactly the "anything new was
-        # said" bypass we want.
-        entry = fairy.workset_backoff_entry(args, "issue", number)
-        backoff_info = compute_llm_skip_backoff(entry, None, last_activity, now)
-        if backoff_info is not None:
-            consec, eligible_at = backoff_info
-            return skip(
-                f"in LLM skip-backoff window after {consec} consecutive skip(s); "
-                f"window={backoff_for_consecutive_skips(consec)}; "
-                f"next eligible at {eligible_at.isoformat()}",
-                last_activity,
-            )
 
     if not args.llm_review_cmd:
         return skip(
@@ -532,14 +510,6 @@ def run_llm_issue(
 def evaluate_issue(args: argparse.Namespace, prepared: PreparedIssue) -> Decision:
     """LLM verdict -> Decision: ``reply`` posts the message as an issue
     comment, ``skip`` posts nothing; label changes apply either way."""
-    cached = fairy.workset_reusable_review(
-        args, "issue", prepared.number,
-        expected_updated_at=prepared.issue.get("updated_at"),
-        expected_head_ref=None,
-        forced=prepared.number in args.force_review_issues,
-    )
-    if cached is not None:
-        return issue_decision_from_review(prepared, cached)
     try:
         review = call_llm_with_retries(
             args,
@@ -603,41 +573,6 @@ def check_issue_still_unchanged(
     return None
 
 
-def issue_table_decision(args: argparse.Namespace, number: int) -> Decision | None:
-    """Issue twin of fairy.workset_table_decision: a postable Decision
-    rebuilt purely from the item file, guard included."""
-    path = fairy.workset_path(args, "issue", number)
-    item = workset.load_item(path) if path is not None else None
-    if item is None or item.state is not workset.WorkState.REVIEWED or item.review is None:
-        return None
-    return dataclasses_replace(
-        issue_review_decision(
-            fairy.workset_llm_review(item), number=number, title=item.title,
-            author="", reason="persisted review",
-            last_activity=iso_to_dt(item.last_activity_iso)),
-        expected_pr_updated_at=item.expected_updated_at,
-    )
-
-
-def apply_issue_decision(
-    args: argparse.Namespace,
-    decision: Decision,
-    *,
-    cache: gcli_cache.Cache,
-    submitted_counts: dict[str, int],
-) -> None:
-    """Operator-file veto, then post, then record POSTED."""
-    updated = fairy.workset_operator_review(args, "issue", decision)
-    if updated is None:
-        return
-    if not submit_issue_decision(args, updated, cache=cache,
-                                 submitted_counts=submitted_counts):
-        return
-    fairy.workset_transition(
-        args, "issue", updated.pr_number, workset.WorkState.POSTED,
-    )
-
-
 def submit_issue_decision(
     args: argparse.Namespace,
     decision: Decision,
@@ -650,8 +585,8 @@ def submit_issue_decision(
 
     The staleness guard runs once, before the comment, on pristine
     ``updated_at``; the comment itself bumps updated_at so labels are
-    applied without re-checking (same ordering as fairy's
-    ``apply_decision``).
+    applied without re-checking (same ordering as fairy's PR submit
+    path).
     """
     changed_reason = check_issue_still_unchanged(args, decision)
     if changed_reason is not None:
@@ -697,227 +632,3 @@ def submit_issue_decision(
         )
     return True
 
-
-_LLM_DONE = object()
-
-
-def start_issue_pipeline(
-    args: argparse.Namespace,
-    input_queue: SimpleQueue,
-    *,
-    now: datetime,
-    self_login: str | None,
-    cache: gcli_cache.Cache,
-    discussion_cache_max_age: timedelta,
-    cancelled: set[int] | None = None,
-) -> tuple[
-    SimpleQueue[tuple[PreparedIssue | Decision, Decision]],
-    SimpleQueue[PreparedIssue | object],
-]:
-    """One prepare thread feeds ``--llm-parallelism`` LLM workers; every
-    issue ApiObject on ``input_queue`` (until ``_PREPARE_DONE``; a UI may
-    keep injecting force-added issues) yields exactly one
-    ``(prepared, decision)`` on the reviewed queue. ``--limit`` caps how
-    many candidates reach the LLM; ``cancelled`` numbers skip their
-    queued LLM evaluation."""
-    llm_queue: SimpleQueue[PreparedIssue | object] = SimpleQueue()
-    reviewed_queue: SimpleQueue[tuple[PreparedIssue | Decision, Decision]] = SimpleQueue()
-
-    def prepare_worker() -> None:
-        queued = 0
-        while (issue := input_queue.get()) is not _PREPARE_DONE:
-            try:
-                prepared = prepare_issue(
-                    args, issue,
-                    now=now,
-                    self_login=self_login,
-                    cache=cache,
-                    discussion_cache_max_age=discussion_cache_max_age,
-                )
-            except Exception as exc:
-                number = issue.get("number")
-                logger.error("issue #%s: prepare failed: %s", number, exc)
-                prepared = Decision(
-                    int(number) if str(number).isdigit() else -1,
-                    str(issue.get("title") or ""), get_pr_author(issue),
-                    "-", "skip", f"prepare failed: {exc}", None, "error", "",
-                )
-            if isinstance(prepared, Decision):
-                reviewed_queue.put((prepared, prepared))
-            elif args.limit and queued >= args.limit:
-                reviewed_queue.put((prepared, Decision(
-                    prepared.number, prepared.title, prepared.author, "-",
-                    "skip", f"candidate not evaluated; --limit {args.limit} reached",
-                    prepared.last_activity, "-", "",
-                )))
-            else:
-                # An already-cancelled item never invokes the LLM
-                # downstream, so it must not consume a --limit slot.
-                queued += not (cancelled and prepared.number in cancelled)
-                fairy.workset_record_queued(
-                    args, "issue",
-                    number=prepared.number,
-                    title=prepared.title,
-                    html_url=str(prepared.issue.get("html_url") or ""),
-                )
-                llm_queue.put(prepared)
-
-    def llm_worker() -> None:
-        while True:
-            prepared = llm_queue.get()
-            if prepared is _LLM_DONE:
-                return
-            if not isinstance(prepared, PreparedIssue):
-                raise RuntimeError(f"unexpected LLM queue item type: {type(prepared)!r}")
-            if cancelled and prepared.number in cancelled:
-                logger.info(
-                    "issue #%s: skipping queued LLM evaluation: cancelled by operator",
-                    prepared.number,
-                )
-                fairy.workset_transition(
-                    args, "issue", prepared.number, workset.WorkState.CANCELLED,
-                )
-                reviewed_queue.put((prepared, Decision(
-                    prepared.number, prepared.title, prepared.author, "-",
-                    "skip", "cancelled by operator", prepared.last_activity,
-                )))
-                continue
-            d = evaluate_issue(args, prepared)
-            fairy.workset_record_reviewed(
-                args, "issue", d,
-                expected_updated_at=prepared.issue.get("updated_at"),
-                expected_head_ref=None,
-            )
-            reviewed_queue.put((prepared, d))
-
-    llm_parallelism = max(1, args.llm_parallelism)
-    logger.debug("starting issue pipeline llm_parallelism=%d", llm_parallelism)
-    # ~owner/repo tags the log prefix per side (common._ThreadPrefixFilter)
-    tag = f"~{args.owner}/{args.repo}"
-    Thread(target=prepare_worker, name=f"issue-prepare{tag}", daemon=True).start()
-    for i in range(llm_parallelism):
-        name = "issue-llm" if llm_parallelism == 1 else f"issue-llm-{i + 1}"
-        Thread(target=llm_worker, name=name + tag, daemon=True).start()
-    return reviewed_queue, llm_queue
-
-
-def run_reviews(args: argparse.Namespace, ui: fairy.ReviewUI | None = None) -> int:
-    """Issue-side twin of fairy.run_reviews: everything main() does after
-    logging setup, runnable on an embedding UI's controller thread."""
-    if args.forced_only and not args.force_review_issues:
-        logger.error("--forced-only requires at least one --force-review-issue")
-        return 2
-    now = datetime.now(timezone.utc)
-    cache = gcli_cache.load_cache(args.cache)
-    discussion_cache_max_age = timedelta(hours=args.discussion_cache_max_age_hours)
-
-    try:
-        self_login = get_self_login(args)
-        if args.forced_only:
-            issues = [get_issue(args, n) for n in sorted(args.force_review_issues)]
-        else:
-            issues = list_open_issues(args)
-            listed = {issue["number"] for issue in issues}
-            issues += [
-                get_issue(args, n)
-                for n in sorted(args.force_review_issues - listed)
-            ]
-        issues.sort(key=lambda i: (int(i["number"]) not in args.force_review_issues, int(i["number"])))
-    except Exception as exc:
-        logger.error("ERROR: %s", exc)
-        return 2
-
-    submitted_counts = {"comment": 0}
-
-    if ui is not None:
-        ui.candidates(issues)
-    input_queue: SimpleQueue = SimpleQueue()
-    for issue in issues:
-        input_queue.put(issue)
-    if ui is None:
-        input_queue.put(_PREPARE_DONE)
-    cancelled: set[int] | None = set() if ui is not None else None
-    pending = PendingCount(len(issues))
-
-    reviewed_queue, llm_queue = start_issue_pipeline(
-        args, input_queue,
-        now=now,
-        self_login=self_login,
-        cache=cache,
-        discussion_cache_max_age=discussion_cache_max_age,
-        cancelled=cancelled,
-    )
-    poll_actions = None
-    if ui is not None:
-        table_actions: SimpleQueue = SimpleQueue()
-        ui.pipeline(input_queue, pending, cancelled, table_actions)
-        poll_actions = fairy.drain_table_actions(
-            args, "issue", table_actions,
-            build_decision=lambda n: issue_table_decision(args, n),
-            apply_fn=lambda d: apply_issue_decision(
-                args, d, cache=cache, submitted_counts=submitted_counts,
-            ),
-            fetch=lambda n: get_issue(args, n),
-            input_queue=input_queue,
-            pending=pending,
-            forced=args.force_review_issues,
-        )
-    try:
-        decisions, stopped_by_user = consume_reviewed(
-            reviewed_queue, llm_queue, pending,
-            now=now,
-            manual=args.manual,
-            approve=args.approve,
-            kind="issue",
-            apply=lambda prepared, d: apply_issue_decision(
-                args, d, cache=cache, submitted_counts=submitted_counts,
-            ),
-            item_url=lambda prepared: url
-            if isinstance(url := prepared.issue.get("html_url"), str) else "",
-            cancelled=cancelled,
-            ui=ui,
-            on_choice=fairy.workset_on_choice(args, "issue"),
-            poll_actions=poll_actions,
-        )
-    finally:
-        if ui is not None:
-            input_queue.put(_PREPARE_DONE)
-        for _ in range(max(1, args.llm_parallelism)):
-            llm_queue.put(_LLM_DONE)
-        try:
-            gcli_cache.save_cache(args.cache, cache)
-        except Exception as exc:
-            logger.warning("failed to save issue-data cache %s: %s", args.cache, exc)
-
-    fairy.workset_prune(args, "issue", {i["number"] for i in issues})
-
-    actionable_total = sum(1 for d in decisions if d.action in ACTIONABLE_DECISIONS)
-    llm_counts = Counter(d.llm_classification for d in decisions)
-    llm_counts_text = ", ".join(
-        f"{name}={llm_counts[name]}"
-        for name in sorted(llm_counts, key=lambda x: (x == "-", x))
-        if llm_counts[name]
-    )
-    logger.info(
-        f"\nSummary: {len(decisions)} issue(s) checked, actionable={actionable_total}, "
-        f"submitted comment={submitted_counts['comment']}."
-    )
-    if args.llm_review_cmd:
-        logger.info("LLM issue classifications: %s", llm_counts_text)
-    if actionable_total and not args.approve and not args.manual:
-        logger.info("Dry-run only. Re-run with --approve to submit actions.")
-    return 130 if stopped_by_user else 0
-
-
-def main() -> int:
-    args = parse_args()
-    setup_logging(
-        logger, args.verbose,
-        forge_gcli.logger, gcli_cache.logger, workset.logger,
-        color=args.color,
-    )
-    return run_reviews(args)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

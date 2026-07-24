@@ -12,7 +12,6 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-from queue import SimpleQueue
 from unittest import mock
 from pathlib import Path
 
@@ -391,154 +390,9 @@ class AttachmentTests(unittest.TestCase):
         items = fairy.build_llm_discussion([], [comment], [])
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["attachment_urls"],
-                         [{"name": "Files.zip", "size": 77292, "url": self.ZIP_URL}])
+                         [{"name": self.ZIP["name"], "size": self.ZIP["size"],
+                           "url": self.ZIP_URL}])
         self.assertNotIn("attachment_urls", fairy.build_llm_discussion([], [comments[0]], [])[0])
-
-
-class PipelineTests(unittest.TestCase):
-    """start_issue_pipeline yields exactly one (prepared, decision) per
-    issue; candidates beyond --limit are skipped without an LLM call."""
-
-    def _patched(self):
-        def fake_prepare(a, issue, **kw):
-            return issue_fairy.PreparedIssue(
-                issue=issue, number=issue["number"], title="t", author="a",
-                last_activity=None, base_reason="stale", discussion=[],
-                reviewer_username="fairy",
-            )
-
-        def fake_evaluate(a, p):
-            return Decision(p.number, p.title, p.author, "-", "comment",
-                            "llm", None, "reply", "m")
-
-        return (
-            mock.patch.object(issue_fairy, "prepare_issue", side_effect=fake_prepare),
-            mock.patch.object(issue_fairy, "evaluate_issue", side_effect=fake_evaluate),
-        )
-
-    def _start(self, args: argparse.Namespace, numbers: list[int],
-               cancelled: set[int] | None = None):
-        input_queue: SimpleQueue = SimpleQueue()
-        for n in numbers:
-            input_queue.put({"number": n})
-        return input_queue, issue_fairy.start_issue_pipeline(
-            args, input_queue,
-            now=datetime.now(timezone.utc), self_login="fairy",
-            cache=mock.Mock(),
-            discussion_cache_max_age=timedelta(hours=1),
-            cancelled=cancelled,
-        )
-
-    def _run(self, args: argparse.Namespace, numbers: list[int]) -> list:
-        p1, p2 = self._patched()
-        with p1, p2:
-            input_queue, (reviewed_queue, llm_queue) = self._start(args, numbers)
-            input_queue.put(issue_fairy._PREPARE_DONE)
-            results = [reviewed_queue.get(timeout=10) for _ in numbers]
-            for _ in range(max(1, args.llm_parallelism)):
-                llm_queue.put(issue_fairy._LLM_DONE)
-        return results
-
-    def test_persisted_review_reused_without_llm(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        args = make_args(workset_dir=Path(tmp.name))
-        prepared = issue_fairy.PreparedIssue(
-            issue={"number": 5, "updated_at": "U1"}, number=5, title="t",
-            author="a", last_activity=None, base_reason="stale",
-            discussion=[], reviewer_username="fairy",
-        )
-        now = datetime.now(timezone.utc).isoformat()
-        workset.save_item(fairy.workset_path(args, "issue", 5), workset.WorkItem(
-            kind="issue", forge_type=args.forge_type, account="",
-            owner=args.owner, repo=args.repo, number=5,
-            state=workset.WorkState.REVIEWED, created_at=now, state_changed_at=now,
-            expected_updated_at="U1",
-            review=workset.ReviewResult(classification="reply", message="persisted"),
-        ))
-        with mock.patch.object(issue_fairy, "call_llm_with_retries") as llm:
-            d = issue_fairy.evaluate_issue(args, prepared)
-        llm.assert_not_called()
-        self.assertEqual(d.action, "comment")
-        self.assertEqual(d.llm_message, "persisted")
-
-    def test_deleted_workset_file_vetoes_the_post(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        args = make_args(workset_dir=Path(tmp.name))
-        decision = Decision(5, "t", "a", "-", "comment", "llm", None, "reply", "m")
-        with mock.patch.object(issue_fairy, "post_issue_comment") as post:
-            issue_fairy.apply_issue_decision(
-                args, decision, cache=mock.Mock(), submitted_counts={"comment": 0},
-            )
-        post.assert_not_called()
-
-    def test_workset_file_written_reviewed(self) -> None:
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        args = make_args(workset_dir=Path(tmp.name), llm_parallelism=1, limit=0)
-        self._run(args, [5])
-        item = workset.load_item(fairy.workset_path(args, "issue", 5))
-        assert item is not None
-        self.assertEqual(item.kind, "issue")
-        self.assertEqual(item.state, workset.WorkState.REVIEWED)
-        self.assertEqual(item.review.message, "m")
-
-    def test_candidate_injected_after_start_is_prepared(self) -> None:
-        p1, p2 = self._patched()
-        with p1, p2:
-            input_queue, (reviewed_queue, llm_queue) = self._start(
-                make_args(llm_parallelism=1, limit=0), [1])
-            self.assertEqual(reviewed_queue.get(timeout=10)[1].pr_number, 1)
-            # Force-add while the pipeline is already running (TUI "f" key).
-            input_queue.put({"number": 2})
-            input_queue.put(issue_fairy._PREPARE_DONE)
-            self.assertEqual(reviewed_queue.get(timeout=10)[1].pr_number, 2)
-            llm_queue.put(issue_fairy._LLM_DONE)
-
-    def test_cancelled_number_skips_llm_call(self) -> None:
-        p1, p2 = self._patched()
-        with p1, p2 as evaluate_mock:
-            input_queue, (reviewed_queue, llm_queue) = self._start(
-                make_args(llm_parallelism=1, limit=0), [1, 2], cancelled={2})
-            input_queue.put(issue_fairy._PREPARE_DONE)
-            results = [reviewed_queue.get(timeout=10) for _ in range(2)]
-            llm_queue.put(issue_fairy._LLM_DONE)
-        by_number = {d.pr_number: d for _, d in results}
-        self.assertEqual(by_number[2].reason, "cancelled by operator")
-        self.assertEqual(by_number[2].action, "skip")
-        self.assertEqual(
-            [c.args[1].number for c in evaluate_mock.call_args_list], [1])
-
-    def test_cancelled_number_does_not_consume_a_limit_slot(self) -> None:
-        # What never enters the LLM must not count against --limit:
-        # with the first issue cancelled, #2 still gets the only slot.
-        p1, p2 = self._patched()
-        with p1, p2 as evaluate_mock:
-            input_queue, (reviewed_queue, llm_queue) = self._start(
-                make_args(llm_parallelism=1, limit=1), [1, 2], cancelled={1})
-            input_queue.put(issue_fairy._PREPARE_DONE)
-            results = [reviewed_queue.get(timeout=10) for _ in range(2)]
-            llm_queue.put(issue_fairy._LLM_DONE)
-        by_number = {d.pr_number: d for _, d in results}
-        self.assertEqual(by_number[1].reason, "cancelled by operator")
-        self.assertNotIn("--limit", by_number[2].reason)
-        self.assertEqual(
-            [c.args[1].number for c in evaluate_mock.call_args_list], [2])
-
-    def test_parallel_workers_evaluate_every_issue(self) -> None:
-        results = self._run(make_args(llm_parallelism=3, limit=0), [1, 2, 3, 4, 5])
-        self.assertEqual(sorted(d.pr_number for _, d in results), [1, 2, 3, 4, 5])
-        self.assertTrue(all(d.llm_classification == "reply" for _, d in results))
-
-    def test_limit_caps_llm_evaluations(self) -> None:
-        results = self._run(make_args(llm_parallelism=2, limit=2), [1, 2, 3, 4, 5])
-        evaluated = [d for _, d in results if d.llm_classification == "reply"]
-        skipped = [d for _, d in results if "--limit" in d.reason]
-        self.assertEqual(len(evaluated), 2)
-        self.assertEqual(len(skipped), 3)
-
-
 class IssueLabelCommandTests(unittest.TestCase):
     def test_uses_gcli_issues_labels(self) -> None:
         args = make_args()

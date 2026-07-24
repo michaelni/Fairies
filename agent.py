@@ -423,6 +423,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="filedb root for this repo (default: ~/.fairy/db/<forge~account~owner~repo>)")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
                    help="rescan every N seconds (default: one pass, cron style)")
+    p.add_argument("--drain", action="store_true",
+                   help="run the LLM worker inline between scan and send: "
+                        "the whole cycle as one cronjob process")
     p.add_argument("--dry-run", action="store_true",
                    help="log what the send pass would post; post nothing")
     p.add_argument("--log-file", type=Path,
@@ -440,6 +443,19 @@ def db_root_for(ns: argparse.Namespace) -> Path:
         owner=ns.owner, repo=ns.repo)
 
 
+def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
+             issue_ns: argparse.Namespace | None,
+             args: argparse.Namespace) -> None:
+    scan_pass(db, pr_ns, issue_ns)
+    if args.drain:
+        # Imported here: worker imports agent for db_root_for, so a
+        # module-level import back would be circular.
+        import worker
+        worker.drain(db, {k: v for k, v in (("pr", pr_ns), ("issue", issue_ns))
+                          if v is not None})
+    send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
+
+
 def main() -> int:
     args = parse_args()
     pr_ns = fairy.parse_args(shlex.split(args.pr_args)) if args.pr_args else None
@@ -454,8 +470,7 @@ def main() -> int:
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
     while True:
         started = time.monotonic()
-        scan_pass(db, pr_ns, issue_ns)
-        send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
+        one_pass(db, pr_ns, issue_ns, args)
         if not args.loop:
             return 0
         time.sleep(max(0.0, args.loop - (time.monotonic() - started)))

@@ -61,7 +61,7 @@ class AgentCase(unittest.TestCase):
     def age(self, state: str, kind: str, number: int, hours: float) -> None:
         data = self.db.get(state, kind, number)
         data["state_changed_at"] = (NOW - timedelta(hours=hours)).isoformat()
-        self.db._write(self.db._path(state, kind, number), data)
+        self.db._write(self.db.path(state, kind, number), data)
 
 
 class TicketRoutingTests(AgentCase):
@@ -270,6 +270,28 @@ class SendTests(SendCase):
         decision = submit.call_args.args[1]
         self.assertEqual(decision.action, "comment")
         self.assertEqual(self.db.find("issue", 5), "posted")
+
+
+class OnePassTests(unittest.TestCase):
+    def _run(self, argv: list[str]) -> list[str]:
+        import worker
+        calls: list[str] = []
+        args = agent.parse_args(argv)
+        with mock.patch.object(agent, "scan_pass",
+                               side_effect=lambda *a, **k: calls.append("scan")), \
+                mock.patch.object(worker, "drain",
+                                  side_effect=lambda *a, **k: calls.append("drain")), \
+                mock.patch.object(agent, "send_pass",
+                                  side_effect=lambda *a, **k: calls.append("send")):
+            agent.one_pass(mock.Mock(), mock.Mock(), None, args)
+        return calls
+
+    def test_drain_runs_the_worker_between_scan_and_send(self) -> None:
+        self.assertEqual(self._run(["--pr-args", "x", "--drain"]),
+                         ["scan", "drain", "send"])
+
+    def test_without_drain_the_agent_never_reviews(self) -> None:
+        self.assertEqual(self._run(["--pr-args", "x"]), ["scan", "send"])
 
 
 if __name__ == "__main__":

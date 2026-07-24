@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
 import agent  # noqa: E402
 import fairy  # noqa: E402
 import filedb  # noqa: E402
+import issue_fairy  # noqa: E402
 
 NOW = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
 
@@ -170,6 +171,105 @@ class LifecycleTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertIsNotNone(self.db.get("posted", "pr", 1))
         self.assertIsNone(self.db.get("posted", "pr", 99))
+
+
+def verdict_ticket(n: int, classification: str = "moderate_issues",
+                   **fields) -> dict:
+    t = {"title": f"t{n}", "author": "a",
+         "review": {"classification": classification, "message": "m",
+                    "label_changes": []},
+         "expected_updated_at": "2026-07-19T10:00:00Z",
+         "expected_head_ref": f"h{n}", "llm_at": NOW.isoformat()}
+    t.update(fields)
+    return t
+
+
+class SendCase(AgentCase):
+    def send(self, *, pr_ns=None, issue_ns=None, dry_run=False) -> None:
+        with mock.patch.object(agent.gcli_cache, "load_cache",
+                               return_value=mock.Mock()), \
+                mock.patch.object(agent.gcli_cache, "save_cache"):
+            agent.send_pass(self.db, pr_ns, issue_ns, dry_run=dry_run)
+
+
+class SendTests(SendCase):
+    def test_actionable_outgoing_is_posted(self) -> None:
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1))
+        with mock.patch.object(fairy, "check_pr_still_unchanged",
+                               return_value=None), \
+                mock.patch.object(fairy, "submit_decision_action",
+                                  return_value=True) as submit:
+            self.send(pr_ns=self.ns)
+        decision = submit.call_args.args[2]
+        self.assertEqual(decision.action, "comment")
+        # the ticket's guard rides on the rebuilt decision
+        self.assertEqual(decision.expected_pr_updated_at, "2026-07-19T10:00:00Z")
+        self.assertEqual(decision.expected_head_ref, "h1")
+        self.assertTrue(self.db.get("posted", "pr", 1)["posted_at"])
+        self.assertIsNone(self.db.get("outgoing", "pr", 1))
+
+    def test_guard_failure_manual_returns_to_reviewed_with_note(self) -> None:
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1))
+        with mock.patch.object(fairy, "check_pr_still_unchanged",
+                               return_value="PR updated_at changed"), \
+                mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns)
+        submit.assert_not_called()
+        t = self.db.get("reviewed", "pr", 1)
+        self.assertEqual(t["send_blocked"], "PR updated_at changed")
+
+    def test_guard_failure_auto_mode_skips_without_stalling(self) -> None:
+        self.ns.approve = True
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1))
+        with mock.patch.object(fairy, "check_pr_still_unchanged",
+                               return_value="PR head changed"), \
+                mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns)
+        submit.assert_not_called()
+        t = self.db.get("skipped", "pr", 1)
+        self.assertEqual(t["send_blocked"], "PR head changed")
+        self.assertNotIn("llm_at", t)  # next scan re-gates it immediately
+        self.assertEqual(t["skip_backoff_h"], 0)
+
+    def test_approve_promotes_only_actionable_reviewed_verdicts(self) -> None:
+        self.ns.approve = True
+        self.db.push("reviewed", "pr", 1, verdict_ticket(1))
+        self.db.push("reviewed", "pr", 2, verdict_ticket(2, "skip"))
+        with mock.patch.object(fairy, "check_pr_still_unchanged",
+                               return_value=None), \
+                mock.patch.object(fairy, "submit_decision_action",
+                                  return_value=True):
+            self.send(pr_ns=self.ns)
+        self.assertEqual(self.db.find("pr", 1), "posted")
+        self.assertEqual(self.db.find("pr", 2), "reviewed")
+
+    def test_unpostable_outgoing_goes_back_to_reviewed(self) -> None:
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1, "skip"))
+        with mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns)
+        submit.assert_not_called()
+        t = self.db.get("reviewed", "pr", 1)
+        self.assertEqual(t["send_blocked"], "nothing to post")
+
+    def test_dry_run_posts_nothing_and_keeps_outgoing(self) -> None:
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1))
+        with mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns, dry_run=True)
+        submit.assert_not_called()
+        self.assertEqual(self.db.find("pr", 1), "outgoing")
+
+    def test_issue_outgoing_posts_through_the_issue_seam(self) -> None:
+        issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
+        self.db.push("outgoing", "issue", 5, verdict_ticket(
+            5, "reply", expected_head_ref=None))
+        with mock.patch.object(issue_fairy, "check_issue_still_unchanged",
+                               return_value=None), \
+                mock.patch.object(issue_fairy, "submit_issue_decision",
+                                  return_value=True) as submit:
+            self.send(issue_ns=issue_ns)
+        decision = submit.call_args.args[1]
+        self.assertEqual(decision.action, "comment")
+        self.assertEqual(self.db.find("issue", 5), "posted")
 
 
 if __name__ == "__main__":

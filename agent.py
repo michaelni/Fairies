@@ -42,7 +42,16 @@ agent-mediated so the UI never needs forge access; they bypass gates
 and the limit. The agent also reaps dead workers' claims, cancels
 tickets whose item left the open listing, and prunes settled tickets.
 
-What belongs here: the scan pass and the ticket routing policy.
+A send pass follows each scan: every outgoing/ item is re-read under
+its claim lock, guard-checked against the live forge and posted
+through the same submit seams the old pipelines use. A guard failure
+returns the verdict to reviewed/ with a note (manual mode) or, under
+--approve auto mode -- which itself promotes actionable reviewed/
+verdicts to outgoing/ -- re-gates it via skipped/ so a cron run never
+stalls. --dry-run logs what would be posted and posts nothing.
+
+What belongs here: the scan pass, the ticket routing policy and the
+send pass.
 What does NOT belong: file atomicity (filedb), gates and payload
 building (fairy / issue_fairy), LLM work (the worker), the UI
 (fairy_tui).
@@ -54,6 +63,7 @@ import argparse
 import logging
 import shlex
 import time
+from dataclasses import replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -62,9 +72,9 @@ import filedb
 import gcli_cache
 import issue_fairy
 import workset
-from common import default_cache_path, setup_logging
+from common import default_cache_path, iso_to_dt, setup_logging
 
-__all__ = ["main", "scan_pass"]
+__all__ = ["main", "scan_pass", "send_pass"]
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +279,137 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         db.prune(state, before, keep=open_set)
 
 
+def ticket_decision(kind: str, number: int, ticket: dict) -> fairy.Decision | None:
+    """Rebuild a postable Decision purely from a verdict ticket; the
+    ticket's guard rides on the Decision so the staleness checks pin
+    the post to the reviewed state."""
+    review = ticket.get("review") or {}
+    if not review.get("classification"):
+        return None
+    llm = fairy.LLMReview(
+        classification=review["classification"],
+        message=review.get("message", ""),
+        label_changes=tuple(fairy.LabelChange(**c)
+                            for c in review.get("label_changes") or ()))
+    if kind == "pr":
+        decision = fairy.decision_from_review(
+            llm, number=number, title=ticket.get("title", ""),
+            author=ticket.get("author", ""), auto_merge="-",
+            last_activity=iso_to_dt(ticket.get("last_activity_iso")),
+            base_reason="persisted review")
+    else:
+        decision = issue_fairy.issue_review_decision(
+            llm, number=number, title=ticket.get("title", ""),
+            author=ticket.get("author", ""), reason="persisted review",
+            last_activity=iso_to_dt(ticket.get("last_activity_iso")))
+    return dataclasses_replace(
+        decision,
+        expected_pr_updated_at=ticket.get("expected_updated_at"),
+        expected_head_ref=ticket.get("expected_head_ref"))
+
+
+def postable(decision: fairy.Decision | None) -> bool:
+    return decision is not None and (
+        decision.action in fairy.ACTIONABLE_DECISIONS
+        or fairy.decision_has_label_changes(decision))
+
+
+def post_decision(ns: argparse.Namespace, kind: str, decision: fairy.Decision,
+                  *, cache, counts: dict[str, int]) -> bool:
+    """The forge side effects, through the same seams the old pipelines
+    post through; False when the staleness guard blocked the post."""
+    if kind == "issue":
+        return issue_fairy.submit_issue_decision(
+            ns, decision, cache=cache, submitted_counts=counts)
+    if decision.action in fairy.ACTIONABLE_DECISIONS:
+        if not fairy.submit_decision_action(ns, decision, decision, cache=cache):
+            return False
+        counts[decision.action] += 1
+        if fairy.decision_has_label_changes(decision):
+            fairy.apply_triage_labels(ns, decision, decision, skip_guard=True)
+        return True
+    return fairy.apply_triage_labels(ns, decision, decision, skip_guard=False)
+
+
+def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str, number: int, *,
+             cache, counts: dict[str, int], dry_run: bool) -> str | None:
+    """Post one outgoing/ item under its claim lock; returns the state
+    it ended in (None: not claimed, or dry run)."""
+    claim = db.claim("outgoing", "outgoing", kind, number)
+    if claim is None:
+        return None
+    try:
+        ticket = claim.read()  # last-moment read: operator edits count
+        decision = ticket_decision(kind, number, ticket)
+        if not postable(decision):
+            claim.finish("reviewed", dict(ticket, send_blocked="nothing to post"))
+            return "reviewed"
+        if dry_run:
+            logger.info("%s #%d: DRY RUN, would post: %s", kind, number,
+                        fairy.manual_action_description(decision))
+            claim.abort()
+            return None
+        if kind == "pr":
+            reason = fairy.check_pr_still_unchanged(ns, decision, decision)
+        else:
+            reason = issue_fairy.check_issue_still_unchanged(ns, decision)
+        if reason is None:
+            if post_decision(ns, kind, decision, cache=cache, counts=counts):
+                claim.finish("posted", dict(
+                    ticket, posted_at=datetime.now(timezone.utc).isoformat()))
+                logger.info("%s #%d posted: %s", kind, number,
+                            fairy.manual_action_description(decision))
+                return "posted"
+            reason = "item changed during submit"
+        if getattr(ns, "approve", False):
+            # Auto mode must not stall on a stale verdict: without
+            # llm_at the skipped/ ticket is re-gated (and, the item
+            # having changed, freshly re-reviewed) on the next scan.
+            ticket.pop("llm_at", None)
+            ticket["skip_backoff_h"] = 0
+            state = "skipped"
+        else:
+            state = "reviewed"
+        claim.finish(state, dict(ticket, send_blocked=reason))
+        logger.info("%s #%d not posted (%s) -> %s/", kind, number, reason, state)
+        return state
+    except Exception:
+        claim.abort()
+        raise
+
+
+def promote_reviewed(db: filedb.Db, kind: str) -> None:
+    """--approve: standing actionable verdicts go out without an operator."""
+    for k, number in db.list_state("reviewed"):
+        if k == kind and postable(
+                ticket_decision(kind, number, db.get("reviewed", kind, number) or {})):
+            db.move("reviewed", "outgoing", kind, number)
+
+
+def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
+              issue_ns: argparse.Namespace | None, *, dry_run: bool = False) -> None:
+    for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
+        if ns is None:
+            continue
+        if getattr(ns, "approve", False):
+            promote_reviewed(db, kind)
+        outgoing = [n for k, n in db.list_state("outgoing") if k == kind]
+        if not outgoing:
+            continue
+        counts = {action: 0 for action in fairy.ACTIONABLE_DECISIONS}
+        cache = gcli_cache.load_cache(ns.cache)
+        try:
+            for number in outgoing:
+                try:
+                    send_one(db, ns, kind, number, cache=cache,
+                             counts=counts, dry_run=dry_run)
+                except Exception:
+                    logger.exception("%s #%d: send failed; stays in outgoing/",
+                                     kind, number)
+        finally:
+            gcli_cache.save_cache(ns.cache, cache)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Repo agent: scan the forge and maintain the filedb tickets "
@@ -282,6 +423,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="filedb root for this repo (default: ~/.fairy/db/<forge~account~owner~repo>)")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
                    help="rescan every N seconds (default: one pass, cron style)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="log what the send pass would post; post nothing")
     args = p.parse_args(argv)
     if not args.pr_args and not args.issue_args:
         p.error("at least one of --pr-args / --issue-args is required")
@@ -307,6 +450,7 @@ def main() -> int:
     while True:
         started = time.monotonic()
         scan_pass(db, pr_ns, issue_ns)
+        send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
         if not args.loop:
             return 0
         time.sleep(max(0.0, args.loop - (time.monotonic() - started)))

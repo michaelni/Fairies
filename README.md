@@ -27,11 +27,35 @@ The tests are offline: no forge, API keys or podman host needed.
 
 Note: Forgejo Fairy is under heavy development and this codebase has not been cleaned up yet!
 
-`fairy.py` walks the open pull requests (gcli + cache), prefilters them with a
-series of checks, and queues the rest for review. LLM workers pass each PR to
-the reviewer subprocess and persist each verdict as a JSON work file; a human
-accepts, skips or reruns any reviewed item whenever they choose (or
-`--approve` auto-accepts everything), and fairy posts via gcli.
+The state of every PR and issue is one JSON ticket file whose state is
+the *directory* it sits in (`~/.fairy/db/<forge~account~owner~repo>/`:
+`requests/ queued/ llm/ reviewed/ outgoing/ posted/ skipped/ ...` --
+`mv` is a state change, `ls | wc -l` is a statistic; `filedb.py` is the
+thin atomic API). Three independent processes cooperate over these
+directories, each taking the per-side configuration as a `fairy.py` /
+`issue_fairy.py` argument string (`./fairy.py --help` and
+`./issue_fairy.py --help` document the contents; a side's `--log-file`
+is the shared agent+worker log the UI tails). With `pip install
+watchdog` the processes react to new files within 100ms; without it
+they fall back to their poll intervals:
+
+- `agent.py` (one per repository, PRs and issues together, one shared
+  gcli cache): lists the forge, runs the gates, creates tickets in
+  `queued/` (attention outcomes get their own dirs: `ci-blocked/`,
+  `merge-ready/`, `awaiting-approver/`), applies the skip backoff and
+  `--limit`, posts `outgoing/` verdicts (guard-checked), reaps dead
+  workers and prunes. `--loop N` to daemonize, default is one pass
+  (cron style); `--drain` runs the worker inline for a self-contained
+  one-shot; `--dry-run` logs what would be posted.
+- `worker.py`: claims `queued/` tickets (flock + rename; the held lock
+  is its liveness signal), runs the LLM wrapper, writes the verdict to
+  `reviewed/` / `skipped/` / `error/`. Run several for parallelism.
+- `fairy_tui.py` (optional): a pure view; every key is a file
+  operation on the same db.
+
+A human moves any reviewed verdict out whenever they choose (`y` in the
+TUI or `mv reviewed/pr-N.json outgoing/`); with `--approve` in a side's
+argument string the agent promotes actionable verdicts itself.
 
 The reviewer (`pr_review_wrapper.py`) receives the PR data and returns one
 structured JSON review. Inside it runs a pipeline: an optional cheap triage
@@ -67,24 +91,26 @@ adding, removing or reordering them is an edit, not a restructuring.
 
 ### Interactive TUI
 
-`fairy_tui.py` (requires `pip install blessed`) runs PR and issue
-pipelines in one 4-pane terminal UI: statistics, the PR/issue list, the
-captured debug output, and the rendered review message with its label
-changes. Pass each side its full argument string; repeat the flags to
-run several repositories at once (give each concurrent side its own
-`--cache` and `--debug-response-dir`, as with separate launchers):
+`fairy_tui.py` (requires `pip install blessed watchdog`) shows the
+filedb of one or more repositories in a 4-pane terminal UI: statistics
+(the per-state file counts), the ticket list, a merged tail of the
+agent/worker log files, and the rendered review message with its label
+changes. It is a pure view -- start the agent and worker processes
+separately and point the TUI at the same sides (a side's `--log-file`
+is tailed automatically; `--tail FILE` adds extras):
 
     ./fairy_tui.py --pr-args '<fairy.py args>' --issue-args '<issue_fairy.py args>' \
         --pr-args '<fairy.py args for another repo>' \
         --log-file fairy_tui.log
 
-The list is a table over the persistent work files: select any row and
-act on it at any time. `a` toggles between all open items and today's
-relevant set, `y` posts the selected reviewed item (guard-checked),
-`s` skips it, `r` reruns the LLM on it, `o` edits its review message in
-`$EDITOR`, `t` cycles the list sort (arrival/status/repo/number),
-`q` quits, `f` force-queues the selected item for review,
-`x` throws it out, `e`/`E` export the focused pane (visible/full), arrows and
+The list is a table over the ticket files: select any row and act on
+it at any time; every action is a rename or a `requests/` file, so the
+UI can quit and restart freely. `a` toggles between all tickets and the
+relevant set, `y` hands the selected reviewed verdict to the agent's
+send pass (`reviewed/` -> `outgoing/`; the post is guard-checked
+there), `s` skips it, `r`/`f` request a fresh gate-bypassing review,
+`o` edits its review message in `$EDITOR`, `t` cycles the list sort
+(arrival/status/repo/number), `q` quits, `x` throws it out, `e`/`E` export the focused pane (visible/full), arrows and
 PgUp/PgDn scroll, Tab or a mouse click moves focus, clicking a URL,
 git hash or `#number` copies it to the primary selection for
 middle-click paste (falling back to the OSC 52 clipboard without a

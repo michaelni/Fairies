@@ -107,7 +107,7 @@ run_one() {
     # (which still left a partial run.log) is correctly re-run on resume.
     [[ -f "$outdir/.done" ]] && { echo "skip ${label}_${i} (done)"; return; }
     mkdir -p "$outdir/openaidebug"
-    local force=() pr; for pr in "${PRS[@]}"; do force+=(--force-review-pr "$pr"); done
+    local force="" pr; for pr in "${PRS[@]}"; do force+=" --force-review-pr $pr"; done
     local extra=""; [[ -n "$EXTRA_REPO" ]] && extra="--extra-repo-root $EXTRA_REPO"
     # Live output: tee the raw stream to run.log (what the analysis tools
     # read) and to the terminal. When samples run concurrently (PAR>1),
@@ -117,22 +117,24 @@ run_one() {
     # --simulate-past rewinds git but reads live forge state: a replayed PR
     # that has since merged/closed would skip as "not open". Replaying it at
     # the cutoff is the whole point, so force review regardless of live state.
-    if CLICOLOR_FORCE=1 ./fairy.py \
-        --owner FFmpeg --repo FFmpeg --gcli-account ff \
-        --simulate-past "$CUTOFF" \
-        --patch-repo "$PATCH_REPO" \
-        --patch-pr-ref-template "fforge/pr/{number}" \
-        --cache "$outdir/cache.pkl" \
-        --fairy-state-cache "$outdir/bot_state.pkl" \
-        --forced-only --force-review-non-open ${FORCE_ENGAGE:+--force-engage} "${force[@]}" \
-        --llm-parallelism "${#PRS[@]}" \
-        --llm-review-cmd "./pr_review_wrapper.py \
-            --repo-root $PATCH_REPO $extra \
-            $CONTAINER_ARGS $WRAPPER_EXTRA \
-            --model $MODEL $TRIAGE_ARGS \
-            --service-tier $TIER --reasoning-summary detailed \
-            --debug-response-dir $outdir/openaidebug --verbose" \
-        --verbose 2 2>&1 | tee "$outdir/run.log" | sed -u "$pfx"
+    # agent --drain is the one-shot cycle (scan -> inline worker -> send);
+    # each cell gets its own --db-root so samples don't share verdicts.
+    if CLICOLOR_FORCE=1 ./agent.py --drain --db-root "$outdir/db" \
+        --pr-args "--owner FFmpeg --repo FFmpeg --gcli-account ff
+        --simulate-past $CUTOFF
+        --patch-repo $PATCH_REPO
+        --patch-pr-ref-template fforge/pr/{number}
+        --cache $outdir/cache.pkl
+        --fairy-state-cache $outdir/bot_state.pkl
+        --forced-only --force-review-non-open ${FORCE_ENGAGE:+--force-engage} $force
+        --llm-parallelism ${#PRS[@]}
+        --llm-review-cmd \"./pr_review_wrapper.py
+            --repo-root $PATCH_REPO $extra
+            $CONTAINER_ARGS $WRAPPER_EXTRA
+            --model $MODEL $TRIAGE_ARGS
+            --service-tier $TIER --reasoning-summary detailed
+            --debug-response-dir $outdir/openaidebug --verbose\"
+        --verbose 2" 2>&1 | tee "$outdir/run.log" | sed -u "$pfx"
     then
         touch "$outdir/.done"; echo "<<< done ${label}_${i}"
     else

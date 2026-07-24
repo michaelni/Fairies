@@ -10,8 +10,27 @@ git fetch fforge
 git pull --rebase
 cd ..
 
+# One-shot cron cycle: scan -> inline worker -> send. Extra arguments
+# ($*) go to agent.py itself (e.g. --dry-run, --loop 600).
+# ./fairy.py --help documents the --pr-args contents.
 #--include-direct-includes --use-vector-store-search
-./fairy.py --owner FFmpeg --repo FFmpeg  --gcli-account ff --patch-repo ffmpeg --triage-label 'important,enhancement,fix/bug,fix/regression,resolution/invalid,API,API major,needs sample,needs docs,needs testing,resolution/duplicate' --llm-review-cmd './pr_review_wrapper.py --repo-root ffmpeg --model openai:gpt-5.6@high --extra-repo-root all_ffmpeg --use-vector-store-search --verbose --debug-response-dir openaidebug --web-search live --max-tool-calls 100 ' --verbose 2 --min-age-days 56 $*
+./agent.py --drain --pr-args "
+    --owner FFmpeg --repo FFmpeg
+    --gcli-account ff
+    --patch-repo ffmpeg
+    --triage-label 'important,enhancement,fix/bug,fix/regression,resolution/invalid,API,API major,needs sample,needs docs,needs testing,resolution/duplicate'
+    --llm-review-cmd './pr_review_wrapper.py
+        --repo-root ffmpeg
+        --model openai:gpt-5.6@high
+        --extra-repo-root all_ffmpeg
+        --use-vector-store-search
+        --verbose
+        --debug-response-dir openaidebug
+        --web-search live
+        --max-tool-calls 100'
+    --verbose 2
+    --min-age-days 56
+    " $*
 
 #./fairy.py --owner FFmpeg --repo FFmpeg  --gcli-account ff --llm-review-cmd './pr_review_wrapper.py --repo-root ffmpeg --model openai:gpt-5.6@high --extra-repo-root for_ffmpeg --extra-repo-root forgejo_git --extra-repo-root ffmpeg-web --extra-repo-root fateserver --use-vector-store-search --verbose --debug-response-dir openaidebug --web-search live' --verbose --min-age-days 56 $*
 

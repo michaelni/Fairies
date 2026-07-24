@@ -271,13 +271,20 @@ class WrapperWorksetNoteTests(unittest.TestCase):
         ))
         self.args = argparse.Namespace(workset_file=self.path)
 
+    def _raw(self) -> dict:
+        import json
+        return json.loads(self.path.read_text(encoding="utf-8"))
+
     def test_stage_and_triage_result_recorded(self) -> None:
-        pr_review_wrapper.workset_note_stage(self.args, workset.WorkState.TRIAGE)
+        pr_review_wrapper.workset_note_stage(self.args, "triage")
         pr_review_wrapper.workset_note_triage(
             self.args, {"route": "engage", "reason": "r"})
-        item = workset.load_item(self.path)
-        self.assertEqual(item.state, workset.WorkState.TRIAGE)
-        self.assertEqual(item.triage, {"route": "engage", "reason": "r"})
+        data = self._raw()
+        self.assertEqual(data["stage"], "triage")
+        self.assertEqual(data["triage"], {"route": "engage", "reason": "r"})
+        # dict-level notes must not disturb the schema'd fields
+        self.assertEqual(workset.load_item(self.path).state,
+                         workset.WorkState.QUEUED)
 
     def test_drafts_recorded_and_combine_stage_entered(self) -> None:
         drafts = [Review(
@@ -286,15 +293,20 @@ class WrapperWorksetNoteTests(unittest.TestCase):
             model="a",
         )]
         pr_review_wrapper.workset_note_drafts(self.args, drafts, combining=True)
-        item = workset.load_item(self.path)
-        self.assertEqual(item.state, workset.WorkState.COMBINE)
-        self.assertEqual(item.drafts[0].message, "d1")
-        self.assertEqual(item.drafts[0].model, "a")
-        self.assertEqual(item.drafts[0].label_changes[0].label, "l")
+        data = self._raw()
+        self.assertEqual(data["stage"], "combine")
+        self.assertEqual(data["drafts"][0]["message"], "d1")
+        self.assertEqual(data["drafts"][0]["model"], "a")
+        self.assertEqual(data["drafts"][0]["label_changes"][0]["label"], "l")
+
+    def test_notes_work_on_a_stateless_filedb_ticket(self) -> None:
+        self.path.write_text('{"title": "t"}\n', encoding="utf-8")
+        pr_review_wrapper.workset_note_stage(self.args, "review")
+        self.assertEqual(self._raw()["stage"], "review")
 
     def test_no_workset_file_is_a_noop(self) -> None:
         pr_review_wrapper.workset_note_stage(
-            argparse.Namespace(workset_file=None), workset.WorkState.TRIAGE)
+            argparse.Namespace(workset_file=None), "triage")
 
 
 if __name__ == "__main__":

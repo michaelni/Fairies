@@ -1979,7 +1979,10 @@ def invoke_llm_wrapper(
     if getattr(args, "simulate_past", None) is not None:
         cmd += [f"--simulate-past-cutoff={args.simulate_past.isoformat()}"]
     if number is not None:
-        ws_path = workset_path(args, stderr_tag, number)
+        # A filedb worker points the wrapper at its claimed ticket; the
+        # old-layout path is only computed when no override is set.
+        ws_path = getattr(args, "workset_file_override", None) \
+            or workset_path(args, stderr_tag, number)
         if ws_path is not None:
             cmd += [f"--workset-file={ws_path}"]
     if extra_cmd_args:

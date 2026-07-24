@@ -42,6 +42,7 @@ review or queue logic (fairy, issue_fairy, pr_review_wrapper).
 from __future__ import annotations
 
 import fcntl
+import json
 import logging
 import re
 from datetime import datetime
@@ -125,6 +126,7 @@ class WorkItem(BaseModel):
     expected_head_ref: str | None = None
     last_activity_iso: str | None = None
     llm_at: str | None = None               # when the persisted verdict was produced
+    stage: Literal["triage", "review", "combine"] | None = None  # wrapper progress
     consecutive_skip_count: int = 0         # LLM "skip" streak; drives the backoff gate
     triage: dict[str, JsonValue] | None = None
     drafts: list[ReviewResult] = []
@@ -220,6 +222,27 @@ def prune(d: Path, kind: str, open_numbers: set[int], older_than: datetime) -> N
             "workset: pruned %s (state=%s since %s, item closed)",
             path, item.state.name, item.state_changed_at,
         )
+
+
+def update_json(path: Path, mutate: Callable[[dict], None]) -> dict | None:
+    """Schema-free sibling of ``update_item`` for filedb tickets, which
+    carry no ``state`` field and so cannot pass WorkItem validation.
+    Same flock convention; returns the saved dict, or None when the
+    file is missing/unparseable (the mutation is then not applied)."""
+    lock_path = path.with_suffix(".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        mutate(data)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n",
+                       encoding="utf-8")
+        tmp.replace(path)
+        return data
 
 
 def update_item(path: Path, mutate: Callable[[WorkItem], None]) -> WorkItem | None:

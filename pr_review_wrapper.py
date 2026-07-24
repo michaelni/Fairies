@@ -675,46 +675,44 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def workset_note_stage(args: argparse.Namespace, state: workset.WorkState) -> None:
-    """Record wrapper progress in the caller's workset item file (if any).
+def workset_note_stage(args: argparse.Namespace, stage: str) -> None:
+    """Record wrapper progress ("triage" | "review" | "combine") in the
+    caller's work file (if any).
 
     The wrapper owns the file while it runs (the caller blocks on the
-    subprocess); it never writes REVIEWED or ``review`` -- the final
-    verdict travels on stdout and is persisted by the caller."""
+    subprocess); it writes only the ``stage`` progress field -- the
+    final verdict travels on stdout and is persisted by the caller.
+    Dict-level on purpose: filedb tickets carry no ``state`` field and
+    would fail WorkItem validation."""
     if args.workset_file:
-        workset.update_item(
-            args.workset_file,
-            lambda it: it.set_state(state, datetime.now(timezone.utc)),
-        )
+        def record(data: dict) -> None:
+            data["stage"] = stage
+        workset.update_json(args.workset_file, record)
 
 
 def workset_note_triage(args: argparse.Namespace, triage_result: dict[str, object]) -> None:
     if args.workset_file:
-        def record(it: workset.WorkItem) -> None:
-            it.triage = triage_result
-        workset.update_item(args.workset_file, record)
+        def record(data: dict) -> None:
+            data["triage"] = triage_result
+        workset.update_json(args.workset_file, record)
 
 
 def workset_note_drafts(args: argparse.Namespace, drafts, *, combining: bool) -> None:
-    """``drafts`` are ``Review``s; state moves to COMBINE when a combiner
-    runs next."""
+    """``drafts`` are ``Review``s; the stage moves to "combine" when a
+    combiner runs next."""
     if not args.workset_file:
         return
 
-    def record(it: workset.WorkItem) -> None:
-        it.drafts = [
-            workset.ReviewResult(
-                classification=d.classification,
-                message=d.message,
-                label_changes=[workset.LabelChange(**c) for c in d.label_changes],
-                model=d.model,
-            )
+    def record(data: dict) -> None:
+        data["drafts"] = [
+            {"classification": d.classification, "message": d.message,
+             "label_changes": list(d.label_changes), "model": d.model}
             for d in drafts
         ]
         if combining:
-            it.set_state(workset.WorkState.COMBINE, datetime.now(timezone.utc))
+            data["stage"] = "combine"
 
-    workset.update_item(args.workset_file, record)
+    workset.update_json(args.workset_file, record)
 
 
 def read_request() -> JsonObject:
@@ -1549,7 +1547,7 @@ def main() -> int:
                 max_output_tokens=args.triage_max_output_tokens,
                 service_tier=args.triage_service_tier,
             )
-            workset_note_stage(args, workset.WorkState.TRIAGE)
+            workset_note_stage(args, "triage")
             triage_result = run_triage(triager, triage_ctx)
             if triage_result is not None:
                 workset_note_triage(args, triage_result)
@@ -1694,7 +1692,7 @@ def main() -> int:
                 "combining with %s", len(model_reviewers), args.model,
             )
             combiner = make_reviewer(args.model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose)
-        workset_note_stage(args, workset.WorkState.REVIEW)
+        workset_note_stage(args, "review")
         try:
             review = review_pr(
                 review_ctx, model_reviewers, combiner,

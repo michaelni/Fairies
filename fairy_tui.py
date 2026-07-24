@@ -328,7 +328,7 @@ class Model:
                 item.ws = ws
                 item.title = item.title or ws.title
                 item.url = item.url or ws.html_url
-                item.stage = _WORKSET_STAGE.get(ws.state, "")
+                item.stage = ws.stage or _WORKSET_STAGE.get(ws.state, "")
                 if item.status in _IN_PIPELINE or ws.state in _REQUEUED_STATES:
                     status = _WORKSET_STATUS[ws.state]
                     # A persisted LLM skip is bookkeeping, not work: it

@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""
+/*
+ * Copyright (C) 2026 Michael Niedermayer
+ *
+ * This file is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ * This file is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License version 2 for more details.
+ *
+ * Additional permission:
+ *
+ * Michael Niedermayer is permitted to relicense this file, in whole or
+ * in part, under any version of the GNU General Public License, the GNU
+ * Affero General Public License, or the GNU Lesser General Public License
+ * published by the Free Software Foundation.
+ *
+ * This additional permission is personal to Michael Niedermayer.  It is
+ * not transferable and does not grant any other person permission to
+ * relicense this file under a different license.
+ *
+ * This additional permission may be removed from modified copies of this
+ * file.  Removal of this additional permission does not affect the
+ * licensing of the file under the GNU General Public License version 2.
+ */
+
+The LLM worker: claims queued filedb tickets and turns them into
+verdicts. One worker process runs one review at a time; the flock it
+holds on the claim is its liveness signal (run several worker
+processes for parallelism -- a dead one's claim is reaped by the
+agent). The ticket carries the full prepared payload, so the worker
+never talks to the forge; the wrapper's stage notes land in the
+claimed ticket via --workset-file.
+
+Verdict routing: actionable reviews (and skips that still carry label
+changes) go to reviewed/ for the operator; plain LLM skips go to
+skipped/ carrying the ticket's doubled backoff; errors go to error/.
+
+What belongs here: the claim loop, wrapper invocation glue and
+verdict routing. What does NOT belong: gates and ticket creation
+(agent), file atomicity (filedb), posting (the agent's send pass).
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import shlex
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import agent
+import fairy
+import filedb
+import issue_fairy
+import workset
+from common import setup_logging
+
+__all__ = ["main", "review_claim", "drain"]
+
+logger = logging.getLogger(__name__)
+
+
+def verdict_state(decision: fairy.Decision) -> str:
+    if decision.llm_classification == "error":
+        return "error"
+    if decision.llm_classification == "skip" and not decision.label_changes:
+        return "skipped"
+    return "reviewed"
+
+
+def verdict_fields(decision: fairy.Decision, prepared) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    if decision.llm_classification == "error":
+        return {"error": decision.reason, "llm_at": now}
+    item = getattr(prepared, "pr", None) or getattr(prepared, "issue", {})
+    return {
+        "error": None,
+        "review": {
+            "classification": decision.llm_classification,
+            "message": decision.llm_message,
+            "label_changes": [
+                {"label": c.label, "op": c.op, "reason": c.reason, "post": c.post}
+                for c in decision.label_changes
+            ],
+        },
+        "action": decision.action,
+        "reason": decision.reason,
+        "expected_updated_at": item.get("updated_at"),
+        "expected_head_ref": (fairy.get_pr_head_ref(item)
+                              if getattr(prepared, "pr", None) is not None else None),
+        "last_activity_iso": (decision.last_activity.isoformat()
+                              if decision.last_activity else None),
+        "llm_at": now,
+    }
+
+
+def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
+    ticket = claim.read()
+    if claim.kind == "pr":
+        prepared = fairy.prepared_pr_from_dict(ticket["prepared"])
+    else:
+        prepared = issue_fairy.prepared_issue_from_dict(ticket["prepared"])
+    ns.workset_file_override = str(claim.path)
+    try:
+        if claim.kind == "pr":
+            decision = fairy.safe_apply_llm_review_to_prepared(ns, prepared)
+        else:
+            try:
+                decision = issue_fairy.evaluate_issue(ns, prepared)
+            except Exception as exc:
+                decision = fairy.Decision(
+                    claim.number, ticket.get("title", ""), ticket.get("author", ""),
+                    "-", "error", str(exc), None, "error", "")
+    finally:
+        ns.workset_file_override = None
+    ticket = claim.read()  # the wrapper noted stage/triage/drafts meanwhile
+    ticket.pop("prepared", None)
+    ticket.pop("stage", None)
+    ticket.update(verdict_fields(decision, prepared))
+    state = verdict_state(decision)
+    claim.finish(state, ticket)
+    # workset.update_json's sidecar lock next to the claimed file
+    claim.path.with_suffix(".lock").unlink(missing_ok=True)
+    logger.info("%s #%d -> %s (llm %s)", claim.kind, claim.number, state,
+                decision.llm_classification)
+    return state
+
+
+def drain(db: filedb.Db, sides: dict[str, argparse.Namespace]) -> int:
+    """Claim and review every queued ticket of the configured kinds;
+    returns the number reviewed."""
+    done = 0
+    progress = True
+    while progress:
+        progress = False
+        for kind, number in db.list_state("queued"):
+            ns = sides.get(kind)
+            if ns is None:
+                continue
+            claim = db.claim("queued", "llm", kind, number)
+            if claim is None:
+                continue
+            try:
+                review_claim(claim, ns)
+            except Exception as exc:
+                # Aborting back to queued/ would re-claim the same
+                # (sorted-first) ticket on every pass and starve the
+                # worker; a ticket that cannot even be read belongs in
+                # error/ where the agent's retry gate paces it.
+                logger.exception("%s #%d: review failed; ticket -> error/",
+                                 kind, number)
+                try:
+                    ticket = claim.read()
+                except Exception:
+                    ticket = {}
+                ticket.pop("prepared", None)
+                ticket["error"] = f"worker: {exc}"
+                ticket["llm_at"] = datetime.now(timezone.utc).isoformat()
+                claim.finish("error", ticket)
+                progress = True
+                continue
+            done += 1
+            progress = True
+    return done
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="LLM worker: claim queued filedb tickets and review them.",
+    )
+    p.add_argument("--pr-args", metavar="ARGS",
+                   help="fairy.py argument string (models, wrapper, hosts) for PR tickets")
+    p.add_argument("--issue-args", metavar="ARGS",
+                   help="issue_fairy.py argument string for issue tickets")
+    p.add_argument("--db-root", type=Path,
+                   help="filedb root (default: derived from the side's repo)")
+    p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
+                   help="poll for new tickets every N seconds (default: drain and exit)")
+    args = p.parse_args(argv)
+    if not args.pr_args and not args.issue_args:
+        p.error("at least one of --pr-args / --issue-args is required")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    sides: dict[str, argparse.Namespace] = {}
+    if args.pr_args:
+        sides["pr"] = fairy.parse_args(shlex.split(args.pr_args))
+    if args.issue_args:
+        sides["issue"] = issue_fairy.parse_args(shlex.split(args.issue_args))
+    lead = next(iter(sides.values()))
+    setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
+                  logger, workset.logger)
+    db = filedb.Db(args.db_root or agent.db_root_for(lead))
+    logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
+    while True:
+        drain(db, sides)
+        if not args.loop:
+            return 0
+        time.sleep(args.loop)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

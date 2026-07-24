@@ -132,13 +132,17 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
               now: datetime, cache, self_login, forced: set[int]) -> set[tuple[str, int]]:
     """One gate pass over the side's open items; returns the open set."""
     if kind == "pr":
-        items = fairy.list_open_prs(ns)
+        fetch_one, list_open, forced_ns = fairy.get_pr, fairy.list_open_prs, \
+            ns.force_review_prs
         wip_re = fairy.compile_wip_regex(
             fairy.DEFAULT_WIP_PREFIXES + (ns.wip_prefixes or []))
-        forced_ns = ns.force_review_prs
     else:
-        items = issue_fairy.list_open_issues(ns)
-        forced_ns = ns.force_review_issues
+        fetch_one, list_open, forced_ns = issue_fairy.get_issue, \
+            issue_fairy.list_open_issues, ns.force_review_issues
+    if ns.forced_only:  # --forced-only: no open listing, just the named items
+        items = [fetch_one(ns, n) for n in sorted(forced_ns | forced)]
+    else:
+        items = list_open(ns)
     # Request-forced numbers bypass the gates through the same ns set
     # the gates read; the addition is undone after the pass so a
     # request does not force every future scan.

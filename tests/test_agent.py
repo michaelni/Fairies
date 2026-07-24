@@ -272,6 +272,23 @@ class SendTests(SendCase):
         self.assertEqual(self.db.find("issue", 5), "posted")
 
 
+class ForcedOnlyTests(AgentCase):
+    def test_forced_only_fetches_named_items_without_listing(self) -> None:
+        self.ns.forced_only = True
+        self.ns.force_review_prs = {7}
+        with mock.patch.object(fairy, "list_open_prs") as listing, \
+                mock.patch.object(fairy, "get_pr",
+                                  side_effect=lambda ns, n: make_pr(n)), \
+                mock.patch.object(fairy, "safe_prepare_pr", self.prepare), \
+                mock.patch.object(fairy, "get_self_login", return_value="fairy"), \
+                mock.patch.object(agent.gcli_cache, "load_cache",
+                                  return_value=mock.Mock()), \
+                mock.patch.object(agent.gcli_cache, "save_cache"):
+            agent.scan_pass(self.db, self.ns, None, now=NOW)
+        listing.assert_not_called()
+        self.assertEqual(self.db.find("pr", 7), "queued")
+
+
 class OnePassTests(unittest.TestCase):
     def _run(self, argv: list[str]) -> list[str]:
         import worker

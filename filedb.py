@@ -103,13 +103,14 @@ class Claim:
     def finish(self, dst_state: str, data: dict) -> Path:
         """Write ``data`` into ``dst_state`` and drop the claimed file."""
         dst = self._db._write_state(dst_state, self.kind, self.number, data)
-        self.path.unlink(missing_ok=True)
+        if dst != self.path:  # a same-state finish is an in-place update
+            self.path.unlink(missing_ok=True)
         self._release()
         return dst
 
     def abort(self) -> None:
         """Return the ticket to its source state (clean shutdown)."""
-        os.replace(self.path, self._db._path(self.src_state, self.kind, self.number))
+        os.replace(self.path, self._db.path(self.src_state, self.kind, self.number))
         self._release()
 
     def _release(self) -> None:
@@ -126,7 +127,7 @@ class Db:
         for d in (*STATES, _TMP, _LOCKS):
             (self.root / d).mkdir(parents=True, exist_ok=True)
 
-    def _path(self, state: str, kind: str, number: int) -> Path:
+    def path(self, state: str, kind: str, number: int) -> Path:
         if state not in STATES:
             raise ValueError(f"unknown state {state!r}")
         return self.root / state / _name(kind, number)
@@ -145,7 +146,7 @@ class Db:
 
     def _write_state(self, state: str, kind: str, number: int, data: dict) -> Path:
         data["state_changed_at"] = datetime.now(timezone.utc).isoformat()
-        return self._write(self._path(state, kind, number), data)
+        return self._write(self.path(state, kind, number), data)
 
     @contextmanager
     def lock(self, kind: str, number: int):
@@ -174,14 +175,14 @@ class Db:
 
     def get(self, state: str, kind: str, number: int) -> dict | None:
         try:
-            return json.loads(self._path(state, kind, number).read_text(encoding="utf-8"))
+            return json.loads(self.path(state, kind, number).read_text(encoding="utf-8"))
         except FileNotFoundError:
             return None
 
     def pop(self, state: str, kind: str, number: int) -> dict | None:
         """Read and delete; None when absent."""
         with self.lock(kind, number):
-            path = self._path(state, kind, number)
+            path = self.path(state, kind, number)
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except FileNotFoundError:
@@ -194,7 +195,7 @@ class Db:
         """Transition src -> dst, optionally mutating the content; False
         when the item is not in ``src_state`` (lost a race: fine)."""
         with self.lock(kind, number):
-            src = self._path(src_state, kind, number)
+            src = self.path(src_state, kind, number)
             try:
                 data = json.loads(src.read_text(encoding="utf-8"))
             except FileNotFoundError:
@@ -204,6 +205,33 @@ class Db:
             self._write_state(dst_state, kind, number, data)
             src.unlink(missing_ok=True)
             return True
+
+    def try_move(self, src_state: str, dst_state: str, kind: str, number: int,
+                 mutate=None) -> bool:
+        """Non-blocking ``move`` for interactive callers: False when the
+        item is absent from ``src_state`` or its lock is held (a worker
+        owns it -- blocking would stall the caller for the whole
+        review). ``dst_state == src_state`` updates the content in
+        place."""
+        c = self.claim(src_state, src_state, kind, number)
+        if c is None:
+            return False
+        try:
+            data = c.read()
+            if mutate is not None:
+                mutate(data)
+        except BaseException:
+            c.abort()
+            raise
+        c.finish(dst_state, data)
+        return True
+
+    def request(self, kind: str, number: int, data: dict) -> Path:
+        """Create an operator request. Deliberately lock-free: the
+        per-item lock is held for the whole review while the item is
+        claimed, and a request against a busy item must not block the
+        operator (the write itself is atomic)."""
+        return self._write_state("requests", kind, number, data)
 
     def list_state(self, state: str) -> list[tuple[str, int]]:
         out = []
@@ -217,7 +245,7 @@ class Db:
         """The item's state; with crash remnants, the latest one."""
         found = None
         for state in STATES:
-            if self._path(state, kind, number).exists():
+            if self.path(state, kind, number).exists():
                 found = state
         return found
 
@@ -231,8 +259,8 @@ class Db:
             fd = self._lock_fd(kind, number, block=False)
         except OSError:
             return None
-        src = self._path(src_state, kind, number)
-        dst = self._path(dst_state, kind, number)
+        src = self.path(src_state, kind, number)
+        dst = self.path(dst_state, kind, number)
         try:
             os.rename(src, dst)
         except FileNotFoundError:
@@ -251,13 +279,13 @@ class Db:
             except OSError:
                 continue  # live claim
             try:
-                path = self._path(state, kind, number)
+                path = self.path(state, kind, number)
                 later = [s for s in STATES[STATES.index(state) + 1:]
-                         if self._path(s, kind, number).exists()]
+                         if self.path(s, kind, number).exists()]
                 if later:
                     path.unlink(missing_ok=True)
                 elif path.exists():
-                    os.rename(path, self._path(to_state, kind, number))
+                    os.rename(path, self.path(to_state, kind, number))
                     recovered.append((kind, number))
             finally:
                 os.close(fd)
@@ -282,6 +310,6 @@ class Db:
                 continue
             if when < before:
                 with self.lock(kind, number):
-                    self._path(state, kind, number).unlink(missing_ok=True)
+                    self.path(state, kind, number).unlink(missing_ok=True)
                     removed += 1
         return removed

@@ -153,7 +153,7 @@ class PruneTests(DbCase):
         for kind, num, state in (("pr", 1, "posted"), ("pr", 3, "skipped")):
             data = self.db.get(state, kind, num)
             data["state_changed_at"] = old
-            self.db._write(self.db._path(state, kind, num), data)
+            self.db._write(self.db.path(state, kind, num), data)
         cutoff = datetime.now(timezone.utc) - timedelta(days=14)
         self.assertEqual(self.db.prune("posted", cutoff), 1)
         # pr-3 is old but kept: its skip verdict is backoff memory

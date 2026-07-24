@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from queue import SimpleQueue
@@ -556,17 +556,36 @@ def evaluate_issue(args: argparse.Namespace, prepared: PreparedIssue) -> Decisio
     return issue_decision_from_review(prepared, review)
 
 
+def issue_review_decision(
+    review: LLMReview,
+    *,
+    number: int,
+    title: str,
+    author: str,
+    reason: str,
+    last_activity: datetime | None,
+) -> Decision:
+    """The issue classification -> action mapping, shared by the live
+    pipeline, the persisted-review rebuilds and the agent's send pass."""
+    return Decision(
+        number, title, author, "-",
+        "comment" if review.classification == "reply" else "skip",
+        reason, last_activity, review.classification, review.message,
+        label_changes=review.label_changes,
+    )
+
+
 def issue_decision_from_review(prepared: PreparedIssue, review: LLMReview) -> Decision:
-    action = "comment" if review.classification == "reply" else "skip"
     reason = (
         llm_skip_reason(review.message) if review.classification == "skip"
         else f"{prepared.base_reason}; LLM: {review.classification}"
     )
-    return Decision(
-        prepared.number, prepared.title, prepared.author, "-", action, reason,
-        prepared.last_activity, review.classification, review.message,
+    return dataclasses_replace(
+        issue_review_decision(
+            review, number=prepared.number, title=prepared.title,
+            author=prepared.author, reason=reason,
+            last_activity=prepared.last_activity),
         expected_pr_updated_at=prepared.issue.get("updated_at"),
-        label_changes=review.label_changes,
     )
 
 
@@ -591,13 +610,12 @@ def issue_table_decision(args: argparse.Namespace, number: int) -> Decision | No
     item = workset.load_item(path) if path is not None else None
     if item is None or item.state is not workset.WorkState.REVIEWED or item.review is None:
         return None
-    review = fairy.workset_llm_review(item)
-    action = "comment" if review.classification == "reply" else "skip"
-    return Decision(
-        number, item.title, "", "-", action, "persisted review",
-        iso_to_dt(item.last_activity_iso), review.classification, review.message,
+    return dataclasses_replace(
+        issue_review_decision(
+            fairy.workset_llm_review(item), number=number, title=item.title,
+            author="", reason="persisted review",
+            last_activity=iso_to_dt(item.last_activity_iso)),
         expected_pr_updated_at=item.expected_updated_at,
-        label_changes=review.label_changes,
     )
 
 
@@ -608,24 +626,40 @@ def apply_issue_decision(
     cache: gcli_cache.Cache,
     submitted_counts: dict[str, int],
 ) -> None:
-    """Post the comment (if any), then apply label changes.
+    """Operator-file veto, then post, then record POSTED."""
+    updated = fairy.workset_operator_review(args, "issue", decision)
+    if updated is None:
+        return
+    if not submit_issue_decision(args, updated, cache=cache,
+                                 submitted_counts=submitted_counts):
+        return
+    fairy.workset_transition(
+        args, "issue", updated.pr_number, workset.WorkState.POSTED,
+    )
+
+
+def submit_issue_decision(
+    args: argparse.Namespace,
+    decision: Decision,
+    *,
+    cache: gcli_cache.Cache,
+    submitted_counts: dict[str, int],
+) -> bool:
+    """Post the comment (if any), then apply label changes; False when
+    the staleness guard blocked the submit.
 
     The staleness guard runs once, before the comment, on pristine
     ``updated_at``; the comment itself bumps updated_at so labels are
     applied without re-checking (same ordering as fairy's
     ``apply_decision``).
     """
-    updated = fairy.workset_operator_review(args, "issue", decision)
-    if updated is None:
-        return
-    decision = updated
     changed_reason = check_issue_still_unchanged(args, decision)
     if changed_reason is not None:
         logger.info(
             "issue #%s: SKIP            submit skipped because %s",
             decision.pr_number, changed_reason,
         )
-        return
+        return False
     if decision.action == "comment":
         post_issue_comment(
             args, args.owner, args.repo, decision.pr_number,
@@ -661,9 +695,7 @@ def apply_issue_decision(
             args, decision.pr_number, decision.label_changes, current,
             kind=KIND_ISSUE,
         )
-    fairy.workset_transition(
-        args, "issue", decision.pr_number, workset.WorkState.POSTED,
-    )
+    return True
 
 
 _LLM_DONE = object()

@@ -367,6 +367,21 @@ def setup_logging(
             target.addHandler(debug_handler)
 
 
+def add_file_log(path: Path, logger: logging.Logger,
+                 *extra_loggers: logging.Logger) -> None:
+    """Additionally log to ``path`` in the fixed ``ISO8601 L message``
+    shape (single-letter level) that the fairy-ui tail pane parses to
+    color merged agent/worker logs by level."""
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname).1s %(message)s', '%Y-%m-%dT%H:%M:%S'))
+    seen: set[int] = set()
+    for target in (logger, *extra_loggers, logging.getLogger(__name__)):
+        if id(target) not in seen:
+            seen.add(id(target))
+            target.addHandler(handler)
+
+
 _REPO_NAME_INVALID_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 

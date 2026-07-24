@@ -72,7 +72,7 @@ import filedb
 import gcli_cache
 import issue_fairy
 import workset
-from common import default_cache_path, iso_to_dt, setup_logging
+from common import add_file_log, default_cache_path, iso_to_dt, setup_logging
 
 __all__ = ["main", "scan_pass", "send_pass"]
 
@@ -425,6 +425,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="rescan every N seconds (default: one pass, cron style)")
     p.add_argument("--dry-run", action="store_true",
                    help="log what the send pass would post; post nothing")
+    p.add_argument("--log-file", type=Path,
+                   help="also log here, in the shape fairy-ui's tail pane colors")
     args = p.parse_args(argv)
     if not args.pr_args and not args.issue_args:
         p.error("at least one of --pr-args / --issue-args is required")
@@ -445,6 +447,9 @@ def main() -> int:
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   logger, workset.logger, gcli_cache.logger)
+    if args.log_file:
+        add_file_log(args.log_file, fairy.logger, logger, workset.logger,
+                     gcli_cache.logger)
     db = filedb.Db(args.db_root or db_root_for(lead))
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
     while True:

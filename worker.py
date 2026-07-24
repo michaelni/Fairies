@@ -59,7 +59,7 @@ import fairy
 import filedb
 import issue_fairy
 import workset
-from common import setup_logging
+from common import add_file_log, setup_logging
 
 __all__ = ["main", "review_claim", "drain"]
 
@@ -182,6 +182,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="filedb root (default: derived from the side's repo)")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
                    help="poll for new tickets every N seconds (default: drain and exit)")
+    p.add_argument("--log-file", type=Path,
+                   help="also log here, in the shape fairy-ui's tail pane colors")
     args = p.parse_args(argv)
     if not args.pr_args and not args.issue_args:
         p.error("at least one of --pr-args / --issue-args is required")
@@ -198,6 +200,8 @@ def main() -> int:
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
                   logger, workset.logger)
+    if args.log_file:
+        add_file_log(args.log_file, fairy.logger, logger, workset.logger)
     db = filedb.Db(args.db_root or agent.db_root_for(lead))
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
     while True:

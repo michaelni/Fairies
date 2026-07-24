@@ -908,17 +908,18 @@ class UILoop:
         message = review.message if review else d.llm_message
         label_changes = review.label_changes if review else d.label_changes
         if d is not None:
-            head.append([("bold", fairy.manual_action_description(d)[:width])])
-        status_line = (f"status {item.status.name.lower()}   llm "
-                       f"{fairy.format_llm_classification(classification)}")
-        if d is not None:
-            status_line += f"   reason {d.reason}"
-        head += [[("text", status_line[:width])], []]
-        labels = [
-            [("bullet", f"label {c.op} {c.label}"),
-             ("text", (f" ({c.reason})" if c.reason else "") + (" [posted]" if c.post else ""))]
-            for c in label_changes
-        ]
+            head += tui_core.render_markdown(
+                fairy.manual_action_description(d), width)
+        head.append([("text", (f"status {item.status.name.lower()}   llm "
+                     f"{fairy.format_llm_classification(classification)}")[:width])])
+        if d is not None and d.reason:
+            head += tui_core.render_markdown(f"reason: {d.reason}", width)
+        head.append([])
+        labels = tui_core.render_markdown("\n".join(
+            f"- {c.op} **{c.label}**"
+            + (f" — {c.reason}" if c.reason else "")
+            + (" *[posted]*" if c.post else "")
+            for c in label_changes), width)
         if labels:
             labels.append([])
         return head + labels + tui_core.render_markdown(message, width)

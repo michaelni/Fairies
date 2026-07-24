@@ -687,6 +687,29 @@ class PaintSmokeTests(unittest.TestCase):
         self.assertLessEqual(ui.scroll["bl"], 5)
         self.assertIn("line0", out)
 
+    def test_label_explanations_wrap_instead_of_clipping(self) -> None:
+        reason = ("the reproduction requires a sample clip that the reporter "
+                  "has not attached and cannot be synthesized locally")
+        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
+            term = blessed.Terminal(
+                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
+            model = fairy_tui.Model()
+            model.add_candidates("PR", [{"number": 1, "title": "t"}])
+            d = fairy.Decision(
+                1, "t", "a", "-", "comment", "llm", None, "reply", "msg",
+                label_changes=(fairy.LabelChange(
+                    "needs sample", "add", reason, post=True),),
+            )
+            model.finish("PR", d)
+            ui = fairy_tui.UILoop(term, model, tui_core.RingBuffer(),
+                                  Path("."), ["PR"])
+            lines = ui.detail_lines(32)
+        text = " ".join("".join(t for _, t in ln) for ln in lines)
+        for word in ("synthesized", "locally", "[posted]"):
+            self.assertIn(word, text)
+        self.assertTrue(all(
+            sum(len(t) for _, t in ln) <= 32 for ln in lines))
+
     def test_divider_gutter_keeps_selection_clean(self) -> None:
         # A URL in a right pane must not sit directly against the "│"
         # divider: the terminal's own shift/double-click selection would

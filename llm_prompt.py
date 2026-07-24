@@ -154,6 +154,7 @@ R_PROMPT_REVIEW_DISCIPLINE = """- review / check each commit.
 - do not claim something has no issue unless you carefully verified that.
 - state the scope and depth of the review: is it exhaustive over every change or deep on a specific change or both. Wrap this statement in an HTML comment (<!-- Scope: ... -->): forges hide it from casual readers, yet it stays in the message source, where a later review round reads which areas were already covered and picks ones that were not.
 - If the scope based on the commit or PR message seems to mismatch the Implementation, then consider that either the message or the Implementation could be wrong.
+- If you previously reviewed this PR, favour reviewing areas that you have not reviewed before.
 """
 
 

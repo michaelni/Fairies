@@ -176,6 +176,20 @@ class PipelineLimitTests(PipelineDriver, unittest.TestCase):
         self.assertEqual([c.args[1].number for c in review_mock.call_args_list], [1])
 
 
+class PreparedSerializationTests(unittest.TestCase):
+    def test_prepared_pr_roundtrips_through_json_dict(self) -> None:
+        import json
+        prepared = fairy.PreparedPR(
+            pr=make_pr(5), number=5, title="t", author="a", auto_merge="-",
+            last_activity=datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc),
+            base_reason="review", discussion=[{"body": "hi"}],
+            reviewer_username="fairy", ci_triage={"jobs": []},
+            cancelled_ci_contexts=("job1",), external_approvers=("dev",),
+            ignore_triage_skip=True)
+        data = json.loads(json.dumps(fairy.prepared_to_dict(prepared)))
+        self.assertEqual(fairy.prepared_pr_from_dict(data), prepared)
+
+
 class RequeueTransitionTests(unittest.TestCase):
     def test_requeued_item_returns_to_queued_keeping_its_review(self) -> None:
         # A skip-backoff re-review used to leave the file REVIEWED for

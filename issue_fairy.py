@@ -120,6 +120,13 @@ class PreparedIssue:
     reviewer_username: str | None
 
 
+def prepared_issue_from_dict(data: dict) -> PreparedIssue:
+    d = dict(data)
+    if d.get("last_activity"):
+        d["last_activity"] = datetime.fromisoformat(d["last_activity"])
+    return PreparedIssue(**d)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Analyze open Forgejo/Gitea issues via an LLM wrapper and post verdicts.",

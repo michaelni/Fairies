@@ -78,7 +78,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, replace as dataclasses_replace
+from dataclasses import asdict as dataclasses_asdict, dataclass, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, NamedTuple, Protocol, TypeAlias
@@ -228,6 +228,23 @@ ApiObject: TypeAlias = dict[str, object]
 DiscussionItem: TypeAlias = dict[str, object]
 ActivityPredicate: TypeAlias = Callable[[ApiObject], bool]
 PreparedItem: TypeAlias = Decision | PreparedPR
+
+
+def prepared_to_dict(prepared) -> dict:
+    """JSON-safe dict of a PreparedPR/PreparedIssue for a filedb ticket."""
+    data = dataclasses_asdict(prepared)
+    if data.get("last_activity") is not None:
+        data["last_activity"] = prepared.last_activity.isoformat()
+    return data
+
+
+def prepared_pr_from_dict(data: dict) -> PreparedPR:
+    d = dict(data)
+    if d.get("last_activity"):
+        d["last_activity"] = datetime.fromisoformat(d["last_activity"])
+    for key in ("cancelled_ci_contexts", "blocked_ci_contexts", "external_approvers"):
+        d[key] = tuple(d.get(key) or ())
+    return PreparedPR(**d)
 
 _LLM_REVIEW_DONE = object()
 _PREPARE_DONE = object()

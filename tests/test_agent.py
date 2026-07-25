@@ -191,6 +191,22 @@ class ReuseTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", 1), "queued")
 
+    def test_y_press_during_the_slow_prepare_is_not_clobbered(self) -> None:
+        # The IN_FLIGHT check runs before prepare; prepare takes seconds.
+        # An operator y (reviewed -> outgoing) in that window must not be
+        # popped by the requeue routing: the pending send would vanish.
+        self.db.push("reviewed", "pr", 1, {
+            "review": {"classification": "moderate_issues"},
+            "expected_updated_at": "old", "expected_head_ref": "old"})
+
+        def prepare_and_y(ns, pr, **kw):
+            self.db.try_move("reviewed", "outgoing", "pr", pr["number"])
+            return prepared_for(pr)
+
+        self.prepare.side_effect = prepare_and_y
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "outgoing")
+
 
 class LifecycleTests(AgentCase):
     def test_closed_item_is_cancelled(self) -> None:

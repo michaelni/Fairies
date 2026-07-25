@@ -206,6 +206,29 @@ class Db:
             src.unlink(missing_ok=True)
             return True
 
+    def replace(self, state: str, kind: str, number: int, data: dict,
+                *, unless: tuple[str, ...] = ()) -> bool:
+        """Put the item into ``state`` wherever it currently is: dst is
+        written FIRST, then the old file dropped, so a crash leaves a
+        remnant for the precedence rule, never a lost ticket. Non-
+        blocking, and refused (False) when the item is claimed or its
+        current state is in ``unless`` -- it moved while the caller was
+        deciding."""
+        try:
+            fd = self._lock_fd(kind, number, block=False)
+        except OSError:
+            return False
+        try:
+            prior = self.find(kind, number)
+            if prior in unless:
+                return False
+            self._write_state(state, kind, number, data)
+            if prior is not None and prior != state:
+                self.path(prior, kind, number).unlink(missing_ok=True)
+            return True
+        finally:
+            os.close(fd)
+
     def try_move(self, src_state: str, dst_state: str, kind: str, number: int,
                  mutate=None) -> bool:
         """Non-blocking ``move`` for interactive callers: False when the

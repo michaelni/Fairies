@@ -26,6 +26,29 @@ class DbCase(unittest.TestCase):
         self.db = filedb.Db(Path(tmp.name))
 
 
+class ReplaceTests(DbCase):
+    def test_replace_moves_wherever_the_item_currently_is(self) -> None:
+        self.db.push("reviewed", "pr", 5, {"title": "old"})
+        self.assertTrue(self.db.replace("queued", "pr", 5, {"title": "new"}))
+        self.assertEqual(self.db.find("pr", 5), "queued")
+        self.assertIsNone(self.db.get("reviewed", "pr", 5))
+        self.assertEqual(self.db.get("queued", "pr", 5)["title"], "new")
+
+    def test_replace_refuses_unless_states_and_claimed_items(self) -> None:
+        self.db.push("outgoing", "pr", 5, {"title": "pending send"})
+        self.assertFalse(self.db.replace("queued", "pr", 5, {},
+                                         unless=("outgoing",)))
+        self.assertEqual(self.db.get("outgoing", "pr", 5)["title"],
+                         "pending send")
+        self.db.push("reviewed", "pr", 6, {"title": "t"})
+        claim = self.db.claim("reviewed", "reviewed", "pr", 6)
+        try:
+            self.assertFalse(self.db.replace("queued", "pr", 6, {}))
+        finally:
+            claim.abort()
+        self.assertEqual(self.db.find("pr", 6), "reviewed")
+
+
 class BasicOpsTests(DbCase):
     def test_push_get_pop_roundtrip(self) -> None:
         self.db.push("queued", "pr", 5, {"title": "t"})

@@ -589,6 +589,24 @@ class IssueSideScanTests(AgentCase):
         self.assertEqual(self.db.find("issue", 1), "reviewed")
 
 
+class LogSummaryTests(AgentCase):
+    def test_summary_names_appliable_verdicts_and_ci_details(self) -> None:
+        self.db.push("reviewed", "pr", 5, dict(verdict_ticket(5),
+                                               action="approve", title="t5"))
+        self.db.push("merge-ready", "pr", 6, {"title": "t6"})
+        self.db.push("ci-blocked", "pr", 7, {
+            "title": "t7", "cancelled_ci_contexts": ["job1"],
+            "blocked_ci_contexts": ["job2"]})
+        with self.assertLogs(agent.logger, level="INFO") as logs:
+            agent.log_summary(self.db)
+        text = "\n".join(logs.output)
+        self.assertIn("awaiting you: 1", text)
+        self.assertIn("approve", text)
+        self.assertIn("approved, ready to apply", text)
+        self.assertIn("t6", text)
+        self.assertIn("job1, job2", text)
+
+
 class AskPassTests(AgentCase):
     """--ask: the pre-TUI prompt flow over actionable reviewed/ verdicts."""
 
@@ -632,7 +650,8 @@ class OnePassTests(unittest.TestCase):
                 mock.patch.object(worker, "drain",
                                   side_effect=lambda *a, **k: calls.append("drain")), \
                 mock.patch.object(agent, "send_pass",
-                                  side_effect=lambda *a, **k: calls.append("send")):
+                                  side_effect=lambda *a, **k: calls.append("send")), \
+                mock.patch.object(agent, "log_summary"):
             agent.one_pass(mock.Mock(), mock.Mock(), None, args)
         return calls
 

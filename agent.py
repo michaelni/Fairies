@@ -463,6 +463,35 @@ def promote_reviewed(db: filedb.Db, kind: str) -> None:
             db.move("reviewed", "outgoing", kind, number)
 
 
+def log_summary(db: filedb.Db) -> None:
+    """The old end-of-run report, rebuilt from the directories: which
+    verdicts an operator could apply right now, and which items need a
+    human's CI/approval action -- with the details, not just counts."""
+    ready = []
+    for kind, number in db.list_state("reviewed"):
+        t = db.get("reviewed", kind, number) or {}
+        if t.get("action") in fairy.ACTIONABLE_DECISIONS:
+            ready.append((kind, number, t.get("action"), t.get("title", "")))
+    if ready:
+        logger.info("reviewed/ awaiting you: %d", len(ready))
+        for kind, number, action, title in ready:
+            logger.info("  %s #%-6d %-15s %s", kind, number, action, title)
+    for state, label in (("merge-ready", "approved, ready to apply"),
+                         ("ci-blocked", "CI needs a human"),
+                         ("awaiting-approver", "waiting for an approver")):
+        items = db.list_state(state)
+        if not items:
+            continue
+        logger.info("%s/ (%s): %d", state, label, len(items))
+        for kind, number in items:
+            t = db.get(state, kind, number) or {}
+            detail = ", ".join((t.get("cancelled_ci_contexts") or [])
+                               + (t.get("blocked_ci_contexts") or [])
+                               + (t.get("external_approvers") or []))
+            logger.info("  %s #%-6d %s%s", kind, number, t.get("title", ""),
+                        f"  [{detail}]" if detail else "")
+
+
 def ask_pass(db: filedb.Db, kinds: set[str]) -> None:
     """--ask: the pre-TUI prompt flow. Print each actionable reviewed/
     verdict (URL, action, message) and ask; y hands it to the send
@@ -604,6 +633,7 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     if args.ask:
         ask_pass(db, {k for k, v in (("pr", pr_ns), ("issue", issue_ns)) if v})
     send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
+    log_summary(db)
 
 
 def main() -> int:

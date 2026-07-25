@@ -712,6 +712,15 @@ class UILoop:
                             ("num", str(by[s])), ("text", "  ")]
                     used += part_len
                 block.append(row)
+            # what could be applied right now, by action -- distinct
+            # from the review/investigate rows
+            ready = Counter(it.data.get("action") for it in group
+                            if it.state == "reviewed"
+                            and it.data.get("action") in fairy.ACTIONABLE_DECISIONS)
+            if ready:
+                block.append([("text", "  "), ("label", "awaiting you: "),
+                              ("st_reviewed", ", ".join(
+                                  f"{k}={v}" for k, v in sorted(ready.items())))])
             stages = Counter((it.data.get("stage") or "starting")
                              for it in group if it.state == "llm")
             if stages:

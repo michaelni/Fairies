@@ -282,6 +282,16 @@ class MultiSideTests(DbCase):
         self.assertEqual(self.db2.find("pr", 5), "outgoing")
         self.assertEqual(self.db.find("pr", 5), "reviewed")
 
+    def test_stats_show_what_could_be_applied(self) -> None:
+        self.db.push("reviewed", "pr", 5, dict(verdict(5), action="comment"))
+        self.db.push("reviewed", "pr", 6, dict(verdict(6), action="approve"))
+        self.db.push("reviewed", "pr", 7, verdict(7, "skip"))  # not appliable
+        self.model.poll()
+        ui = make_ui(self.model)
+        with self.model.lock:
+            text = fairy_tui._plain(ui.stats_lines(120))
+        self.assertIn("awaiting you: approve=1, comment=1", text)
+
     def test_stats_tile_one_block_per_repo(self) -> None:
         self.db.push("reviewed", "pr", 5, verdict(5))
         self.db2.push("queued", "issue", 7, verdict(7))

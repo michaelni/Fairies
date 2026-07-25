@@ -589,6 +589,39 @@ class IssueSideScanTests(AgentCase):
         self.assertEqual(self.db.find("issue", 1), "reviewed")
 
 
+class AskPassTests(AgentCase):
+    """--ask: the pre-TUI prompt flow over actionable reviewed/ verdicts."""
+
+    def ask(self, answers: list[str]) -> None:
+        with mock.patch("builtins.input", side_effect=answers):
+            agent.ask_pass(self.db, {"pr"})
+
+    def test_answers_route_the_verdicts(self) -> None:
+        for n in (1, 2, 3, 4):
+            self.db.push("reviewed", "pr", n, verdict_ticket(n))
+        self.db.push("reviewed", "pr", 5, verdict_ticket(5, "skip"))  # unpostable: never asked
+        self.ask(["y", "s", "l", "x"])
+        self.assertEqual(self.db.find("pr", 1), "outgoing")
+        self.assertEqual(self.db.get("skipped", "pr", 2)["reason"],
+                         "operator skip")
+        self.assertEqual(self.db.find("pr", 3), "reviewed")  # later
+        self.assertEqual(self.db.find("pr", 4), "cancelled")
+        self.assertEqual(self.db.find("pr", 5), "reviewed")
+
+    def test_quit_and_eof_stop_asking(self) -> None:
+        for n in (1, 2):
+            self.db.push("reviewed", "pr", n, verdict_ticket(n))
+        self.ask(["q"])
+        self.assertEqual(self.db.find("pr", 2), "reviewed")  # never asked
+        self.ask([EOFError, "y"])  # EOF (^D) stops like q
+        self.assertEqual(self.db.find("pr", 1), "reviewed")
+
+    def test_garbage_answer_reprompts(self) -> None:
+        self.db.push("reviewed", "pr", 1, verdict_ticket(1))
+        self.ask(["bogus", "y"])
+        self.assertEqual(self.db.find("pr", 1), "outgoing")
+
+
 class OnePassTests(unittest.TestCase):
     def _run(self, argv: list[str]) -> list[str]:
         import worker

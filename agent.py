@@ -463,6 +463,49 @@ def promote_reviewed(db: filedb.Db, kind: str) -> None:
             db.move("reviewed", "outgoing", kind, number)
 
 
+def ask_pass(db: filedb.Db, kinds: set[str]) -> None:
+    """--ask: the pre-TUI prompt flow. Print each actionable reviewed/
+    verdict (URL, action, message) and ask; y hands it to the send
+    pass via outgoing/, s/x settle it, l(ater)/enter leaves it, q
+    stops asking. Rows a worker holds are simply skipped this round."""
+    for kind, number in db.list_state("reviewed"):
+        if kind not in kinds:
+            continue
+        ticket = db.get("reviewed", kind, number) or {}
+        decision = ticket_decision(kind, number, ticket)
+        if not postable(decision):
+            continue
+        print(f"\n{ticket.get('html_url') or f'{kind} #{number}'}"
+              f"  {ticket.get('title', '')}")
+        print(fairy.manual_action_description(decision))
+        message = (ticket.get("review") or {}).get("message") or ""
+        if message:
+            print(message)
+        while True:
+            try:
+                choice = input(f"{kind} #{number}: post? "
+                               "[y]es/[s]kip/[x] cancel/[l]ater/[q]uit ")
+            except EOFError:
+                return
+            choice = choice.strip().lower()
+            if choice in ("y", "yes"):
+                db.try_move("reviewed", "outgoing", kind, number)
+                break
+            if choice in ("s", "skip"):
+                db.try_move("reviewed", "skipped", kind, number,
+                            mutate=lambda d: d.update(reason="operator skip"))
+                break
+            if choice in ("x", "cancel"):
+                db.try_move("reviewed", "cancelled", kind, number,
+                            mutate=lambda d: d.update(reason="operator cancel"))
+                break
+            if choice in ("", "l", "later"):
+                break
+            if choice in ("q", "quit"):
+                return
+            print("please answer y, s, x, l or q")
+
+
 def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
               issue_ns: argparse.Namespace | None, *, dry_run: bool = False) -> None:
     for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
@@ -509,6 +552,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="run the LLM worker inline between scan and send "
                         "(the whole cycle as one cronjob process), reviewing "
                         "up to N tickets concurrently (bare --drain: 1)")
+    p.add_argument("--ask", action="store_true",
+                   help="prompt per reviewed verdict before the send pass "
+                        "(the pre-TUI manual flow: y posts, s/x settle, "
+                        "l defers, q stops)")
     p.add_argument("--dry-run", action="store_true",
                    help="log what the send pass would post; post nothing")
     args = p.parse_args(argv)
@@ -554,6 +601,8 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         import worker
         worker.drain(db, {k: v for k, v in (("pr", pr_ns), ("issue", issue_ns))
                           if v is not None}, parallel=args.drain)
+    if args.ask:
+        ask_pass(db, {k for k, v in (("pr", pr_ns), ("issue", issue_ns)) if v})
     send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
 
 

@@ -56,7 +56,8 @@ they fall back to their poll intervals:
   operation on the same db.
 
 A human moves any reviewed verdict out whenever they choose (`y` in the
-TUI or `mv reviewed/pr-N.json outgoing/`); with `--approve` in a side's
+TUI, `agent.py --ask` for the classic per-verdict terminal prompt, or
+plain `mv reviewed/pr-N.json outgoing/`); with `--approve` in a side's
 argument string the agent promotes actionable verdicts itself.
 
 The reviewer (`pr_review_wrapper.py`) receives the PR data and returns one

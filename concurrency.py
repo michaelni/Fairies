@@ -32,7 +32,7 @@ Cross-process concurrency limits, one counting semaphore per provider.
 What belongs here: capping how many network calls every fairy process on
 the machine has in flight against one provider at a time.
 
-What does NOT belong: the in-process worker counts (``--llm-parallelism``)
+What does NOT belong: how many worker processes an operator starts
 and any provider-specific knowledge.
 """
 

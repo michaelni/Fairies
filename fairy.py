@@ -321,11 +321,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "or --ask.",
     )
     p.add_argument(
-        "--manual",
-        action="store_true",
-        help="Interactively confirm each matching action.",
-    )
-    p.add_argument(
         "--approve-message",
         default="",
         help="Optional approval message body.",
@@ -392,17 +387,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=3600*5,
         help="Timeout in seconds for the external LLM review command (default: 14400)",
-    )
-    p.add_argument(
-        "--llm-parallelism",
-        type=int,
-        default=1,
-        help=(
-            "Number of LLM review subprocesses to run in parallel (default: 1). "
-            "Requires the underlying review command to be safe for concurrent "
-            "invocation. Higher values shorten wall time on PR batches at the cost "
-            "of proportionally higher OpenAI/API request rates."
-        ),
     )
     p.add_argument(
         "--limit",

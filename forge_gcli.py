@@ -43,7 +43,7 @@ What lives here:
 - ``run_cmd``: ``subprocess.run`` wrapper with timestamped command
   logging via ``logger.debug`` and an optional stderr line-prefix
   pump. The pump is the workaround for a 45 % log-line loss bug we
-  hit when ``--llm-parallelism > 1``: see the in-line note in
+  hit under concurrent wrapper invocations: see the in-line note in
   ``run_cmd`` for the ``communicate()``/``os.pipe()`` race details.
 - ``load_json``: tolerant JSON parser that copes with gcli's habit
   of emitting multiple top-level objects when paginating.
@@ -177,7 +177,7 @@ def run_cmd(
 
     # stderr_line_prefix mode: live-stream the child's stderr to our own
     # stderr with ``stderr_line_prefix`` prepended on every line so that
-    # concurrent wrapper invocations (``--llm-parallelism > 1``) remain
+    # concurrent wrapper invocations (several workers, one log) remain
     # attributable in the combined operator log.
     #
     # Implementation note: we hand the child a raw pipe fd for stderr

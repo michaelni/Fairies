@@ -126,7 +126,6 @@ run_one() {
         --patch-pr-ref-template fforge/pr/{number}
         --cache $outdir/cache.pkl
         --forced-only --force-review-non-open ${FORCE_ENGAGE:+--force-engage} $force
-        --llm-parallelism ${#PRS[@]}
         --llm-review-cmd \"./pr_review_wrapper.py
             --repo-root $PATCH_REPO $extra
             $CONTAINER_ARGS $WRAPPER_EXTRA

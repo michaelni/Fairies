@@ -33,6 +33,5 @@ cd ..
         --debug-response-dir openaidebug
         --web-search live
         --max-tool-calls 100'
-    --llm-parallelism 3
     --verbose 2
     " $*

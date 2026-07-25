@@ -148,11 +148,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "or --ask.",
     )
     p.add_argument(
-        "--manual",
-        action="store_true",
-        help="Interactively confirm each matching action.",
-    )
-    p.add_argument(
         "--llm-review-cmd",
         help=(
             "External command used to analyze candidate issues. It receives JSON "
@@ -177,12 +172,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=3600 * 5,
         help="Timeout in seconds for the external LLM command (default: 18000)",
-    )
-    p.add_argument(
-        "--llm-parallelism",
-        type=int,
-        default=1,
-        help="Number of LLM subprocesses to run in parallel (default: 1).",
     )
     p.add_argument(
         "--llm-max-attempts",

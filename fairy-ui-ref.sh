@@ -64,7 +64,6 @@ FFMPEG_ISSUES="
         --service-tier flex
         --debug-response-dir openaidebug-issues
         $WRAP_TAIL'
-    --llm-parallelism 3
 "
 WEB_PR="
     --owner FFmpeg --repo web $COMMON

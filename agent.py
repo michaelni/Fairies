@@ -91,9 +91,9 @@ def backoff_wait_h(prior_backoff_h: float) -> float:
     return max(MIN_BACKOFF_H, 2.0 * float(prior_backoff_h or 0))
 
 
-def _age_h(data: dict, now: datetime) -> float:
+def _age_h(data: dict, now: datetime, field: str = "state_changed_at") -> float:
     try:
-        changed = datetime.fromisoformat(data["state_changed_at"])
+        changed = datetime.fromisoformat(data[field])
     except (KeyError, TypeError, ValueError):
         return float("inf")
     return (now - changed).total_seconds() / 3600.0
@@ -211,24 +211,29 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 and prior_data.get("expected_updated_at") == item.get("updated_at"):
             continue  # the operator threw it out; only new activity revives it
         backoff_h = 0.0
+        in_backoff_window = False
         if prior == "skipped" and prior_data and prior_data.get("llm_at"):
             # An LLM skip serves its doubling backoff in skipped/; the
             # file is the memory, so it must not be refreshed early.
             # New activity bypasses the wait outright: a push, comment
-            # or @-mention must reach the gates now, not in days (the
-            # old compute_llm_skip_backoff keyed on exactly this).
-            unchanged = (
-                prior_data.get("expected_updated_at") == item.get("updated_at")
-                and (kind != "pr" or prior_data.get("expected_head_ref")
-                     == fairy.get_pr_head_ref(item)))
+            # or @-mention must reach the gates now, not in days. An
+            # unchanged updated_at means nothing at all changed, so the
+            # wait is served without any further fetch; a moved
+            # updated_at is judged after prepare (below), because only
+            # the discussion tells label edits apart from real activity.
             wait = backoff_wait_h(prior_data.get("skip_backoff_h", 0))
-            if unchanged and number not in forced_ns \
-                    and _age_h(prior_data, now) < wait:
+            # the window is measured from the LLM run, so the label-edit
+            # refresh below (which re-stamps state_changed_at) cannot
+            # extend it
+            served = (number not in forced_ns
+                      and _age_h(prior_data, now, "llm_at") < wait)
+            if served and prior_data.get("expected_updated_at") == item.get("updated_at"):
                 continue
+            in_backoff_window = served
             # a changed item re-enters without doubling: the doubling
             # counts served waits, not bypasses
-            backoff_h = wait if unchanged \
-                else float(prior_data.get("skip_backoff_h") or 0)
+            backoff_h = float(prior_data.get("skip_backoff_h") or 0) \
+                if served else wait
         if prior == "error" and prior_data and number not in forced_ns \
                 and _age_h(prior_data, now) < ERROR_RETRY_H:
             continue  # a persistently failing item must not burn spend every cycle
@@ -254,6 +259,21 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                     continue
             _route(db, kind, number, state, gate_ticket(prepared, item))
             continue
+        if in_backoff_window:
+            # updated_at moved during the wait, but only real activity
+            # bypasses it: a label/milestone edit bumps updated_at
+            # without touching head or discussion, and must not burn an
+            # LLM run early (the old compute_llm_skip_backoff keyed on
+            # exactly this head+last_activity pair).
+            last_iso = (prepared.last_activity.isoformat()
+                        if prepared.last_activity else None)
+            if last_iso == prior_data.get("last_activity_iso") \
+                    and (kind != "pr" or prior_data.get("expected_head_ref")
+                         == fairy.get_pr_head_ref(item)):
+                db.try_move("skipped", "skipped", kind, number,
+                            mutate=lambda d: d.update(
+                                expected_updated_at=item.get("updated_at")))
+                continue
         if limit and queued >= limit and number not in forced_ns:
             continue  # nothing written: --limit never persists a skip
         ticket = {

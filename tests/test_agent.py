@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
@@ -61,6 +62,8 @@ class AgentCase(unittest.TestCase):
     def age(self, state: str, kind: str, number: int, hours: float) -> None:
         data = self.db.get(state, kind, number)
         data["state_changed_at"] = (NOW - timedelta(hours=hours)).isoformat()
+        if data.get("llm_at"):  # the backoff window is measured from here
+            data["llm_at"] = data["state_changed_at"]
         self.db._write(self.db.path(state, kind, number), data)
 
 
@@ -105,9 +108,10 @@ class TicketRoutingTests(AgentCase):
 
 
 def llm_skip(backoff: float, updated: str = "2026-07-19T10:00:00Z",
-             head: str = "h1") -> dict:
+             head: str = "h1", last_iso: str | None = None) -> dict:
     return {"llm_at": NOW.isoformat(), "skip_backoff_h": backoff,
-            "expected_updated_at": updated, "expected_head_ref": head}
+            "expected_updated_at": updated, "expected_head_ref": head,
+            "last_activity_iso": last_iso}
 
 
 class BackoffTests(AgentCase):
@@ -127,16 +131,43 @@ class BackoffTests(AgentCase):
         self.assertIsNone(self.db.get("skipped", "pr", 1))
 
     def test_new_activity_bypasses_the_window_without_doubling(self) -> None:
-        # A push or new comment must reach the gates now, not after the
-        # 48h window; the backoff only doubles for waits actually served.
-        self.db.push("skipped", "pr", 1, llm_skip(24, updated="old"))
+        # A new comment must reach the gates now, not after the 48h
+        # window; the backoff only doubles for waits actually served.
+        self.db.push("skipped", "pr", 1,
+                     llm_skip(24, updated="old", last_iso="2026-07-01T00:00:00+00:00"))
         self.age("skipped", "pr", 1, hours=1)
+        self.prepare.side_effect = lambda ns, pr, **kw: dataclasses.replace(
+            prepared_for(pr), last_activity=datetime(2026, 7, 19, tzinfo=timezone.utc))
         self.scan([make_pr(1)])
         self.assertEqual(self.db.get("queued", "pr", 1)["skip_backoff_h"], 24)
 
     def test_new_head_bypasses_the_window_too(self) -> None:
-        self.db.push("skipped", "pr", 1, llm_skip(24, head="old-sha"))
+        self.db.push("skipped", "pr", 1, llm_skip(24, updated="old",
+                                                  head="old-sha"))
         self.age("skipped", "pr", 1, hours=1)
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "queued")
+
+    def test_label_edit_does_not_bypass_the_window(self) -> None:
+        # A label/milestone edit bumps updated_at but neither head nor
+        # discussion: the wait must hold (old compute_llm_skip_backoff
+        # keyed on exactly this), and the refreshed updated_at makes the
+        # next scans cheap again.
+        self.db.push("skipped", "pr", 1, llm_skip(24, updated="old"))
+        self.age("skipped", "pr", 1, hours=1)
+        self.scan([make_pr(1)])  # prepared.last_activity None == stored None
+        self.assertEqual(self.db.find("pr", 1), "skipped")
+        self.assertEqual(self.db.get("skipped", "pr", 1)["expected_updated_at"],
+                         "2026-07-19T10:00:00Z")
+
+    def test_label_refresh_does_not_extend_the_window(self) -> None:
+        # The wait is measured from llm_at: however often labels get
+        # edited (each refresh re-stamps state_changed_at), the item
+        # re-enters the gates once the original window has passed.
+        self.db.push("skipped", "pr", 1, llm_skip(0, updated="old"))
+        data = self.db.get("skipped", "pr", 1)
+        data["llm_at"] = (NOW - timedelta(hours=25)).isoformat()
+        self.db._write(self.db.path("skipped", "pr", 1), data)  # freshly refreshed, old LLM run
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", 1), "queued")
 

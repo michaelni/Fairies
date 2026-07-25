@@ -264,10 +264,17 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     forced = consume_requests(db)
     open_set: set[tuple[str, int]] = set()
     kinds: set[str] = set()
+    # A --forced-only side's open_set is just the named items, not the
+    # open listing: everything else would look closed, so closing and
+    # pruning are skipped for it (the old workset_prune had the same
+    # guard).
+    full_kinds: set[str] = set()
     for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
         if ns is None:
             continue
         kinds.add(kind)
+        if not ns.forced_only:
+            full_kinds.add(kind)
         cache = gcli_cache.load_cache(ns.cache)
         try:
             self_login = fairy.get_self_login(ns)
@@ -276,13 +283,14 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         finally:
             gcli_cache.save_cache(ns.cache, cache)
     finish_requests(db)
-    cancel_closed(db, open_set, kinds)
+    cancel_closed(db, open_set, full_kinds)
     for kind, number in db.reap():
         logger.warning("%s #%d re-queued: its worker died", kind, number)
-    retention_ns = pr_ns or issue_ns
-    before = now - timedelta(days=retention_ns.workset_retention_days)
-    for state in ("posted", "skipped", "cancelled", "error"):
-        db.prune(state, before, keep=open_set)
+    if full_kinds == kinds:  # prune's keep-set is kind-blind
+        retention_ns = pr_ns or issue_ns
+        before = now - timedelta(days=retention_ns.workset_retention_days)
+        for state in ("posted", "skipped", "cancelled", "error"):
+            db.prune(state, before, keep=open_set)
 
 
 def ticket_decision(kind: str, number: int, ticket: dict) -> fairy.Decision | None:

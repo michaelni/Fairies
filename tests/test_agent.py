@@ -273,6 +273,27 @@ class SendTests(SendCase):
 
 
 class ForcedOnlyTests(AgentCase):
+    def test_forced_only_never_cancels_or_prunes_other_tickets(self) -> None:
+        # A forced-only run's candidate list is not the open listing:
+        # every other item would look closed and lose its ticket.
+        self.ns.forced_only = True
+        self.ns.force_review_prs = {7}
+        self.db.push("reviewed", "pr", 1, {"review": {"classification": "reply"}})
+        self.db.push("queued", "pr", 2, {"title": "t"})
+        self.db.push("skipped", "pr", 3, {"llm_at": "x", "skip_backoff_h": 24})
+        self.age("skipped", "pr", 3, hours=24 * 30)  # over retention age
+        with mock.patch.object(fairy, "get_pr",
+                               side_effect=lambda ns, n: make_pr(n)), \
+                mock.patch.object(fairy, "safe_prepare_pr", self.prepare), \
+                mock.patch.object(fairy, "get_self_login", return_value="fairy"), \
+                mock.patch.object(agent.gcli_cache, "load_cache",
+                                  return_value=mock.Mock()), \
+                mock.patch.object(agent.gcli_cache, "save_cache"):
+            agent.scan_pass(self.db, self.ns, None, now=NOW)
+        self.assertEqual(self.db.find("pr", 1), "reviewed")
+        self.assertEqual(self.db.find("pr", 2), "queued")
+        self.assertEqual(self.db.find("pr", 3), "skipped")  # backoff memory kept
+
     def test_forced_only_fetches_named_items_without_listing(self) -> None:
         self.ns.forced_only = True
         self.ns.force_review_prs = {7}

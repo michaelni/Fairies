@@ -111,12 +111,14 @@ def gate_state(decision: fairy.Decision) -> str:
     return "skipped"
 
 
-def gate_ticket(decision: fairy.Decision) -> dict:
+def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
     return {
         "title": decision.title,
         "author": decision.author,
         "action": decision.action,
         "reason": decision.reason,
+        # so an operator x (-> cancelled) sticks until the item changes
+        "expected_updated_at": item.get("updated_at"),
         "cancelled_ci_contexts": list(decision.cancelled_ci_contexts),
         "blocked_ci_contexts": list(decision.blocked_ci_contexts),
         "external_approvers": list(decision.external_approvers),
@@ -177,12 +179,17 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             continue
         prior_data = db.get(prior, kind, number) if prior else None
         if prior == "reviewed" and number not in forced_ns and prior_data:
-            verdict = (prior_data.get("review") or {}).get("classification")
-            if (verdict not in ("skip", "error", "-", "", None)
-                    and prior_data.get("expected_updated_at") == item.get("updated_at")
+            # Any guard-matching verdict stands -- including skips that
+            # carry label changes: they sit in reviewed/ awaiting the
+            # operator, and a re-queue would burn an LLM run and yank
+            # the row out from under the cursor every scan.
+            if (prior_data.get("expected_updated_at") == item.get("updated_at")
                     and (kind != "pr" or prior_data.get("expected_head_ref")
                          == fairy.get_pr_head_ref(item))):
                 continue  # standing verdict; reuse
+        if prior == "cancelled" and number not in forced_ns and prior_data \
+                and prior_data.get("expected_updated_at") == item.get("updated_at"):
+            continue  # the operator threw it out; only new activity revives it
         backoff_h = 0.0
         if prior == "skipped" and prior_data and prior_data.get("llm_at"):
             # An LLM skip serves its doubling backoff in skipped/; the
@@ -214,7 +221,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                                                 "skipped"):
                 if prior != "skipped" or (prior_data or {}).get("llm_at"):
                     continue
-            _route(db, kind, number, state, gate_ticket(prepared))
+            _route(db, kind, number, state, gate_ticket(prepared, item))
             continue
         if limit and queued >= limit and number not in forced_ns:
             continue  # nothing written: --limit never persists a skip

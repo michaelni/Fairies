@@ -133,6 +133,38 @@ class ReuseTests(AgentCase):
         self.prepare.assert_not_called()
         self.assertEqual(self.db.find("pr", 1), "reviewed")
 
+    def test_standing_skip_with_labels_verdict_is_not_rereviewed(self) -> None:
+        # skip+labels sits in reviewed/ awaiting the operator; re-queueing
+        # it would burn one LLM run per scan pass, forever.
+        self.db.push("reviewed", "pr", 1, {
+            "review": {"classification": "skip",
+                       "label_changes": [{"label": "needs docs", "op": "add"}]},
+            "expected_updated_at": "2026-07-19T10:00:00Z",
+            "expected_head_ref": "h1"})
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.find("pr", 1), "reviewed")
+
+    def test_operator_cancel_sticks_until_new_activity(self) -> None:
+        self.db.push("cancelled", "pr", 1, {
+            "review": {"classification": "moderate_issues"},
+            "expected_updated_at": "2026-07-19T10:00:00Z"})
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.find("pr", 1), "cancelled")
+        self.db.try_move("cancelled", "cancelled", "pr", 1,
+                         mutate=lambda d: d.update(
+                             expected_updated_at="2026-07-01T00:00:00Z"))
+        self.scan([make_pr(1)])  # the PR changed since the cancel
+        self.assertEqual(self.db.find("pr", 1), "queued")
+
+    def test_gate_ticket_records_the_change_guard(self) -> None:
+        self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(
+            pr, "ci red", cancelled_ci_contexts=("job1",))
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.get("ci-blocked", "pr", 1)
+                         ["expected_updated_at"], "2026-07-19T10:00:00Z")
+
     def test_stale_reviewed_verdict_is_requeued(self) -> None:
         self.db.push("reviewed", "pr", 1, {
             "review": {"classification": "moderate_issues"},

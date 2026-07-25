@@ -45,11 +45,13 @@ they fall back to their poll intervals:
   `merge-ready/`, `awaiting-approver/`), applies the skip backoff and
   `--limit`, posts `outgoing/` verdicts (guard-checked), reaps dead
   workers and prunes. `--loop N` to daemonize, default is one pass
-  (cron style); `--drain` runs the worker inline for a self-contained
-  one-shot; `--dry-run` logs what would be posted.
+  (cron style); `--drain N` runs the worker inline for a
+  self-contained one-shot, N tickets concurrently; `--dry-run` logs
+  what would be posted.
 - `worker.py`: claims `queued/` tickets (flock + rename; the held lock
   is its liveness signal), runs the LLM wrapper, writes the verdict to
-  `reviewed/` / `skipped/` / `error/`. Run several for parallelism.
+  `reviewed/` / `skipped/` / `error/`. `--parallel N` reviews N
+  tickets concurrently; running several workers composes too.
 - `fairy_tui.py` (optional): a pure view; every key is a file
   operation on the same db.
 
@@ -86,8 +88,8 @@ adding, removing or reordering them is an edit, not a restructuring.
 6. Copy `fairy-ref.sh` to your own launcher and adjust `--owner`, `--repo`,
    `--gcli-account`, `--patch-repo`, the models, and your forge's labels
    (`--triage-label`, repeatable). To run fairies for several repositories
-   concurrently, give each launcher its own `--cache`, `--fairy-state-cache`
-   and `--debug-response-dir`.
+   concurrently, give each launcher its own `--cache` and
+   `--debug-response-dir`.
 
 ### Interactive TUI
 

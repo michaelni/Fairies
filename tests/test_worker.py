@@ -114,6 +114,28 @@ class DrainTests(WorkerCase):
         self.assertEqual(self.db.list_state("reviewed"), [("pr", 1), ("pr", 2)])
         self.assertEqual(self.db.list_state("queued"), [("issue", 3)])
 
+    def test_parallel_drain_reviews_concurrently_with_isolated_ns(self) -> None:
+        # Three tickets, three threads: each review must see its OWN
+        # workset_file_override -- a shared namespace would send one
+        # ticket's wrapper notes into another ticket's file.
+        import threading
+        for n in (1, 2, 3):
+            self.db.push("queued", "pr", n, queued_ticket(n))
+        gate = threading.Barrier(3, timeout=10)
+
+        def fake_llm(ns, prepared):
+            gate.wait()  # proves all three reviews really overlap
+            workset.update_json(Path(ns.workset_file_override),
+                                lambda d: d.__setitem__("seen", prepared.number))
+            return decision(prepared.number)
+
+        with mock.patch.object(fairy, "safe_apply_llm_review_to_prepared",
+                               side_effect=fake_llm):
+            done = worker.drain(self.db, {"pr": self.ns}, parallel=3)
+        self.assertEqual(done, 3)
+        for n in (1, 2, 3):
+            self.assertEqual(self.db.get("reviewed", "pr", n)["seen"], n)
+
     def test_broken_ticket_lands_in_error_and_does_not_starve(self) -> None:
         # A ticket the worker cannot even read must not return to
         # queued/: sorted first, it would be re-claimed on every pass

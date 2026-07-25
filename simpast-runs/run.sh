@@ -119,7 +119,9 @@ run_one() {
     # the cutoff is the whole point, so force review regardless of live state.
     # agent --drain is the one-shot cycle (scan -> inline worker -> send);
     # each cell gets its own --db-root so samples don't share verdicts.
-    if CLICOLOR_FORCE=1 ./agent.py --drain --db-root "$outdir/db" \
+    # --drain N reviews the cell's PRs concurrently, like the old
+    # --llm-parallelism did
+    if CLICOLOR_FORCE=1 ./agent.py --drain "${#PRS[@]}" --db-root "$outdir/db" \
         --pr-args "--owner FFmpeg --repo FFmpeg --gcli-account ff
         --simulate-past $CUTOFF
         --patch-repo $PATCH_REPO

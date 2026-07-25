@@ -484,9 +484,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="rescan every N seconds; operator files (requests/, "
                         "outgoing/) wake the loop instantly via watchdog "
                         "(default: one pass, cron style)")
-    p.add_argument("--drain", action="store_true",
-                   help="run the LLM worker inline between scan and send: "
-                        "the whole cycle as one cronjob process")
+    p.add_argument("--drain", type=int, nargs="?", const=1, default=0,
+                   metavar="N",
+                   help="run the LLM worker inline between scan and send "
+                        "(the whole cycle as one cronjob process), reviewing "
+                        "up to N tickets concurrently (bare --drain: 1)")
     p.add_argument("--dry-run", action="store_true",
                    help="log what the send pass would post; post nothing")
     args = p.parse_args(argv)
@@ -511,7 +513,7 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         # module-level import back would be circular.
         import worker
         worker.drain(db, {k: v for k, v in (("pr", pr_ns), ("issue", issue_ns))
-                          if v is not None})
+                          if v is not None}, parallel=args.drain)
     send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
 
 

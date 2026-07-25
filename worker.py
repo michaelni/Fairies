@@ -29,12 +29,14 @@
  */
 
 The LLM worker: claims queued filedb tickets and turns them into
-verdicts. One worker process runs one review at a time; the flock it
-holds on the claim is its liveness signal (run several worker
-processes for parallelism -- a dead one's claim is reaped by the
-agent). The ticket carries the full prepared payload, so the worker
-never talks to the forge; the wrapper's stage notes land in the
-claimed ticket via --workset-file.
+verdicts. The flock held on each claim is its liveness signal (a
+dead worker's claims are reaped by the agent). Parallelism composes
+both ways: --parallel N
+reviews N tickets concurrently in one process, and several worker
+processes arbitrate through the same claim protocol. The ticket
+carries the full prepared payload, so the worker never talks to the
+forge; the wrapper's stage notes land in the claimed ticket via
+--workset-file.
 
 Verdict routing: actionable reviews (and skips that still carry label
 changes) go to reviewed/ for the operator; plain LLM skips go to
@@ -50,6 +52,7 @@ from __future__ import annotations
 import argparse
 import logging
 import shlex
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from datetime import datetime, timezone
 from pathlib import Path
@@ -132,42 +135,55 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
     return state
 
 
-def drain(db: filedb.Db, sides: dict[str, argparse.Namespace]) -> int:
-    """Claim and review every queued ticket of the configured kinds;
-    returns the number reviewed."""
+def _drain_one(db: filedb.Db, sides: dict[str, argparse.Namespace],
+               kind: str, number: int) -> bool | None:
+    """Claim and review one ticket: True reviewed, False routed to
+    error/, None when the claim was lost to another worker."""
+    claim = db.claim("queued", "llm", kind, number)
+    if claim is None:
+        return None
+    # a shallow copy per review: workset_file_override is per-ticket
+    # state and the namespace is shared across drain threads
+    ns = argparse.Namespace(**vars(sides[kind]))
+    try:
+        review_claim(claim, ns)
+        return True
+    except Exception as exc:
+        # Aborting back to queued/ would re-claim the same
+        # (sorted-first) ticket on every pass and starve the
+        # worker; a ticket that cannot even be read belongs in
+        # error/ where the agent's retry gate paces it.
+        logger.exception("%s #%d: review failed; ticket -> error/",
+                         kind, number)
+        try:
+            ticket = claim.read()
+        except Exception:
+            ticket = {}
+        ticket.pop("prepared", None)
+        ticket["error"] = f"worker: {exc}"
+        ticket["llm_at"] = datetime.now(timezone.utc).isoformat()
+        claim.finish("error", ticket)
+        return False
+
+
+def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
+          parallel: int = 1) -> int:
+    """Claim and review every queued ticket of the configured kinds, up
+    to ``parallel`` at a time; returns the number reviewed. The claim
+    protocol already arbitrates, so threads and other worker processes
+    compose freely."""
     done = 0
-    progress = True
-    while progress:
-        progress = False
-        for kind, number in db.list_state("queued"):
-            ns = sides.get(kind)
-            if ns is None:
-                continue
-            claim = db.claim("queued", "llm", kind, number)
-            if claim is None:
-                continue
-            try:
-                review_claim(claim, ns)
-            except Exception as exc:
-                # Aborting back to queued/ would re-claim the same
-                # (sorted-first) ticket on every pass and starve the
-                # worker; a ticket that cannot even be read belongs in
-                # error/ where the agent's retry gate paces it.
-                logger.exception("%s #%d: review failed; ticket -> error/",
-                                 kind, number)
-                try:
-                    ticket = claim.read()
-                except Exception:
-                    ticket = {}
-                ticket.pop("prepared", None)
-                ticket["error"] = f"worker: {exc}"
-                ticket["llm_at"] = datetime.now(timezone.utc).isoformat()
-                claim.finish("error", ticket)
-                progress = True
-                continue
-            done += 1
-            progress = True
-    return done
+    with ThreadPoolExecutor(max_workers=max(1, int(parallel or 1))) as pool:
+        while True:
+            queued = [(k, n) for k, n in db.list_state("queued")
+                      if k in sides]
+            if not queued:
+                return done
+            outcomes = list(pool.map(
+                lambda kn: _drain_one(db, sides, *kn), queued))
+            done += outcomes.count(True)
+            if all(o is None for o in outcomes):
+                return done  # every claim lost: other workers own them
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -182,6 +198,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "--help documents its contents")
     p.add_argument("--db-root", type=Path,
                    help="filedb root (default: derived from the side's repo)")
+    p.add_argument("--parallel", type=int, default=1, metavar="N",
+                   help="review up to N tickets concurrently (default: 1; "
+                        "running several worker processes composes too)")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
                    help="keep waiting for tickets, rechecking every N seconds; "
                         "new queued/ files wake the worker instantly via "
@@ -210,7 +229,7 @@ def main() -> int:
     wake = Event()
     watch_paths([db.root / "queued"], wake.set)
     while True:
-        drain(db, sides)
+        drain(db, sides, parallel=args.parallel)
         if not args.loop:
             return 0
         wake.wait(args.loop)

@@ -186,8 +186,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="keep waiting for tickets, rechecking every N seconds; "
                         "new queued/ files wake the worker instantly via "
                         "watchdog (default: drain and exit)")
-    p.add_argument("--log-file", type=Path,
-                   help="also log here, in the shape fairy-ui's tail pane colors")
     args = p.parse_args(argv)
     if not args.pr_args and not args.issue_args:
         p.error("at least one of --pr-args / --issue-args is required")
@@ -204,8 +202,8 @@ def main() -> int:
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
                   logger, workset.logger)
-    if args.log_file:
-        add_file_log(args.log_file, fairy.logger, logger, workset.logger)
+    for log_file in {ns.log_file for ns in sides.values() if ns.log_file}:
+        add_file_log(log_file, fairy.logger, logger, workset.logger)
     db = filedb.Db(args.db_root or agent.db_root_for(lead))
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
     wake = Event()

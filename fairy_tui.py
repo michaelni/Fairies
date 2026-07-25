@@ -1167,43 +1167,50 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def build_sides(args: argparse.Namespace) -> list[tuple[str, filedb.Db]]:
+def build_sides(
+    args: argparse.Namespace,
+) -> tuple[list[tuple[str, filedb.Db]], list[Path]]:
     """One (repo label, filedb) side per distinct repo: the PR and issue
     argument strings of one repo share a db, and Forgejo routes
-    owner/repo case-insensitively, so case variants merge too."""
+    owner/repo case-insensitively, so case variants merge too. Every
+    side's --log-file is collected for the logs pane, so the agent and
+    worker logs arrive without separate --tail flags."""
     sides: list[tuple[str, filedb.Db]] = []
+    tails: list[Path] = []
     for parse, arg_strs in ((fairy.parse_args, args.pr_args),
                             (issue_fairy.parse_args, args.issue_args)):
         for arg_str in arg_strs or []:
             ns = parse(shlex.split(arg_str))
+            if ns.log_file and ns.log_file not in tails:
+                tails.append(ns.log_file)
             label = f"{ns.owner}/{ns.repo}"
             if any(known.casefold() == label.casefold() for known, _ in sides):
                 continue
             sides.append((label, filedb.Db(agent.db_root_for(ns))))
-    return sides
+    tails += [t for t in args.tail or [] if t not in tails]
+    return sides, tails
 
 
 def main() -> int:
     args = parse_args()
     ring = tui_core.RingBuffer()
-    sides = build_sides(args)
+    sides, tails = build_sides(args)
     model = Model(sides)
     sink = OutputSink(ring, model.dirty, args.log_file)
     setup_logging(logger, False, handlers=[RingLogHandler(sink)])
     for repo, db in sides:
         logger.info("side %s: db %s", repo, db.root)
-    for path in args.tail or []:
+    for path in tails:
         logger.info("tailing %s", path)
 
     term = blessed.Terminal(stream=sys.__stdout__)
     faulthandler.enable(file=sys.__stderr__)
-    ui = UILoop(term, model, ring, args.save_dir,
-                LogTail(args.tail or [], sink))
+    ui = UILoop(term, model, ring, args.save_dir, LogTail(tails, sink))
     # File changes repaint within one 100ms input tick instead of the
     # 1s fallback rescan; without watchdog only the fallback remains.
     watch_paths(
         [db.root / state for _, db in sides for state in filedb.STATES]
-        + sorted({t.parent for t in args.tail or []}),
+        + sorted({t.parent for t in tails}),
         ui.needs_poll.set)
     with term.fullscreen(), term.cbreak(), term.hidden_cursor(), \
             term.mouse_enabled(report_drag=True, timeout=0.2), \

@@ -320,16 +320,28 @@ class SideBuildTests(unittest.TestCase):
             ["--pr-args", "--owner a --repo x",
              "--pr-args", "--owner a --repo y",
              "--issue-args", "--owner a --repo x"])  # shares a/x's db
-        self.assertEqual([label for label, _ in fairy_tui.build_sides(args)],
-                         ["a/x", "a/y"])
+        sides, _ = fairy_tui.build_sides(args)
+        self.assertEqual([label for label, _ in sides], ["a/x", "a/y"])
 
     def test_case_variant_repos_merge_into_one_side(self) -> None:
         # The forge routes owner/repo case-insensitively, so a case slip
         # must not become a second side over the same repo.
         args = fairy_tui.parse_args(["--pr-args", "--owner FFmpeg --repo web",
                                      "--pr-args", "--owner ffmpeg --repo Web"])
-        self.assertEqual([label for label, _ in fairy_tui.build_sides(args)],
-                         ["FFmpeg/web"])
+        sides, _ = fairy_tui.build_sides(args)
+        self.assertEqual([label for label, _ in sides], ["FFmpeg/web"])
+
+    def test_side_log_files_become_tails(self) -> None:
+        # A side's --log-file is where its agent and worker write; the
+        # UI tails it without a separate --tail flag.
+        args = fairy_tui.parse_args(
+            ["--pr-args", "--owner a --repo x --log-file logs/x.log",
+             "--issue-args", "--owner a --repo x --log-file logs/x.log",
+             "--pr-args", "--owner a --repo y --log-file logs/y.log",
+             "--tail", "extra.log"])
+        _, tails = fairy_tui.build_sides(args)
+        self.assertEqual(tails, [Path("logs/x.log"), Path("logs/y.log"),
+                                 Path("extra.log")])
 
 
 class SortTests(DbCase):

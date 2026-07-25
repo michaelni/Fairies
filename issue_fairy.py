@@ -123,6 +123,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     add_forge_repo_args(p)
     p.add_argument(
+        "--log-file",
+        type=Path,
+        help="agent and worker additionally log to this file; fairy-ui "
+             "tails it into its logs pane (level-tagged line format)",
+    )
+    p.add_argument(
         "--min-age-days",
         type=float,
         default=14.0,

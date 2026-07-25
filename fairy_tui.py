@@ -78,7 +78,7 @@ import fairy
 import filedb
 import issue_fairy
 import tui_core
-from common import setup_logging
+from common import setup_logging, watch_paths
 
 __all__ = ["main"]
 
@@ -624,6 +624,8 @@ class UILoop:
         self._shown: dict[str, tuple[tui_core.Rect, int, list[str]]] = {}
         self._clip_cmd = _clipboard_cmd()
         self.styles = _styles(term)
+        self.needs_poll = Event()  # set by the filesystem watcher
+        self._last_poll = 0.0
         self._build_status()
 
     def _build_status(self) -> None:
@@ -900,6 +902,18 @@ class UILoop:
             used += len(text)
         return "".join(out) + " " * ((pad_to or width) - used)
 
+    def _maybe_poll(self) -> None:
+        """Refresh from disk when the filesystem watcher fired (within
+        one input tick, <=100ms) or on the 1s fallback interval."""
+        if not self.needs_poll.is_set() \
+                and time.monotonic() - self._last_poll < 1.0:
+            return
+        self.needs_poll.clear()
+        self._last_poll = time.monotonic()
+        self.model.poll()
+        self.tail.poll()
+        self.model.dirty.set()
+
     def run(self) -> None:
         try:
             while not self.model.quit_flag:
@@ -911,10 +925,7 @@ class UILoop:
                 if size != self._last_size:
                     self._last_size = size
                     self.model.dirty.set()
-                if time.monotonic() - self._last_paint >= 1.0:
-                    self.model.poll()
-                    self.tail.poll()
-                    self.model.dirty.set()
+                self._maybe_poll()
                 if self.model.dirty.is_set():
                     self.model.dirty.clear()
                     self.paint()
@@ -1188,6 +1199,12 @@ def main() -> int:
     faulthandler.enable(file=sys.__stderr__)
     ui = UILoop(term, model, ring, args.save_dir,
                 LogTail(args.tail or [], sink))
+    # File changes repaint within one 100ms input tick instead of the
+    # 1s fallback rescan; without watchdog only the fallback remains.
+    watch_paths(
+        [db.root / state for _, db in sides for state in filedb.STATES]
+        + sorted({t.parent for t in args.tail or []}),
+        ui.needs_poll.set)
     with term.fullscreen(), term.cbreak(), term.hidden_cursor(), \
             term.mouse_enabled(report_drag=True, timeout=0.2), \
             captured_output(sink):

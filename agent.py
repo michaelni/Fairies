@@ -63,6 +63,7 @@ import argparse
 import logging
 import shlex
 import time
+from threading import Event
 from dataclasses import replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -72,7 +73,8 @@ import filedb
 import gcli_cache
 import issue_fairy
 import workset
-from common import add_file_log, default_cache_path, iso_to_dt, setup_logging
+from common import (add_file_log, default_cache_path, iso_to_dt,
+                    setup_logging, watch_paths)
 
 __all__ = ["main", "scan_pass", "send_pass"]
 
@@ -426,7 +428,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--db-root", type=Path,
                    help="filedb root for this repo (default: ~/.fairy/db/<forge~account~owner~repo>)")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
-                   help="rescan every N seconds (default: one pass, cron style)")
+                   help="rescan every N seconds; operator files (requests/, "
+                        "outgoing/) wake the loop instantly via watchdog "
+                        "(default: one pass, cron style)")
     p.add_argument("--drain", action="store_true",
                    help="run the LLM worker inline between scan and send: "
                         "the whole cycle as one cronjob process")
@@ -472,12 +476,23 @@ def main() -> int:
                      gcli_cache.logger)
     db = filedb.Db(args.db_root or db_root_for(lead))
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
+    # The forge rescan stays on the --loop interval, but operator files
+    # must not wait for it: a request or a y-press (outgoing/) wakes the
+    # loop within milliseconds; a wake without a request only needs the
+    # send pass, not a full forge scan.
+    wake = Event()
+    watch_paths([db.root / "requests", db.root / "outgoing"], wake.set)
+    next_scan = 0.0
     while True:
-        started = time.monotonic()
-        one_pass(db, pr_ns, issue_ns, args)
+        if time.monotonic() >= next_scan or db.list_state("requests"):
+            one_pass(db, pr_ns, issue_ns, args)
+            next_scan = time.monotonic() + args.loop
+        else:
+            send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
         if not args.loop:
             return 0
-        time.sleep(max(0.0, args.loop - (time.monotonic() - started)))
+        wake.wait(max(0.0, next_scan - time.monotonic()))
+        wake.clear()
 
 
 if __name__ == "__main__":

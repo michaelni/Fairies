@@ -516,6 +516,32 @@ class FilterToggleTests(DbCase):
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
 
 
+class FsWatchTests(DbCase):
+    def test_watch_paths_fires_on_new_files(self) -> None:
+        import common
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        fired = Event()
+        observer = common.watch_paths([Path(tmp.name)], fired.set)
+        if observer is None:
+            self.skipTest("watchdog not installed")
+        self.addCleanup(observer.stop)
+        (Path(tmp.name) / "pr-1.json").write_text("{}", encoding="utf-8")
+        self.assertTrue(fired.wait(2.0), "no event within 2s")
+
+    def test_needs_poll_triggers_an_immediate_refresh(self) -> None:
+        import time
+        ui = make_ui(self.model)
+        ui._last_poll = time.monotonic()  # the 1s fallback is not due
+        with mock.patch.object(self.model, "poll") as poll:
+            ui._maybe_poll()
+            poll.assert_not_called()
+            ui.needs_poll.set()
+            ui._maybe_poll()
+            poll.assert_called_once()
+        self.assertFalse(ui.needs_poll.is_set())
+
+
 class LogTailTests(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()

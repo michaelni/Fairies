@@ -367,6 +367,34 @@ def setup_logging(
             target.addHandler(debug_handler)
 
 
+def watch_paths(paths: list[Path], callback) -> object | None:
+    """Fire ``callback()`` (from the observer thread; keep it to setting
+    an Event) on any change under the given directories. Returns the
+    started watchdog observer, or None when the watchdog package is not
+    installed or a path cannot be watched -- callers keep their
+    interval fallback and merely react slower."""
+    try:
+        from watchdog.events import FileSystemEventHandler
+        from watchdog.observers import Observer
+    except ImportError:
+        return None
+
+    class _Handler(FileSystemEventHandler):
+        def on_any_event(self, event) -> None:
+            callback()
+
+    observer = Observer()
+    observer.daemon = True
+    handler = _Handler()
+    for path in paths:
+        try:
+            observer.schedule(handler, str(path))
+        except OSError as exc:
+            logging.getLogger(__name__).debug("cannot watch %s: %s", path, exc)
+    observer.start()
+    return observer
+
+
 def add_file_log(path: Path, logger: logging.Logger,
                  *extra_loggers: logging.Logger) -> None:
     """Additionally log to ``path`` in the fixed ``ISO8601 L message``

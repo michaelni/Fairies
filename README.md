@@ -108,8 +108,8 @@ is tailed automatically; `--tail FILE` adds extras):
 
 The list is a table over the ticket files: select any row and act on
 it at any time; every action is a rename or a `requests/` file, so the
-UI can quit and restart freely. `a` toggles between all tickets and the
-relevant set, `y` hands the selected reviewed verdict to the agent's
+UI can quit and restart freely. `a` cycles the list lens
+(relevant/review/merge/ci/actionable/all), `y` hands the selected reviewed verdict to the agent's
 send pass (`reviewed/` -> `outgoing/`; the post is guard-checked
 there), `s` skips it, `r`/`f` request a fresh gate-bypassing review,
 `o` edits its review message in `$EDITOR`, `t` cycles the list sort

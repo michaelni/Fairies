@@ -122,6 +122,17 @@ def _repo_short(repo: str) -> str:
 
 
 SORT_MODES = ("arrival", "status", "repo", "number")
+# the a key cycles these lenses: the default working view, then one
+# per attention surface (review/merge/CI are different jobs), any of
+# them, and everything
+FILTER_MODES = ("relevant", "review", "merge", "ci", "actionable", "all")
+_FILTER_STATES = {
+    "review": ("reviewed", INVALID),
+    "merge": ("merge-ready",),
+    "ci": ("ci-blocked",),
+    "actionable": ("reviewed", INVALID, "merge-ready", "ci-blocked",
+                   "awaiting-approver", "error"),
+}
 _SORT_KEYS = {
     "status": lambda it: _SORT_STATES[it.state],
     # repo mode orders by the short name the list column displays, or
@@ -148,7 +159,7 @@ class Model:
         # (repo, state) -> (dir mtime, listing): an unchanged state dir
         # is not re-listed and its files are not re-stat'ed.
         self._dirs: dict[tuple[str, str], tuple[float, list[tuple[str, int]]]] = {}
-        self.show_all = False
+        self.filter_mode = FILTER_MODES[0]
         self.sort_mode = SORT_MODES[0]
         # Rows the operator acted on (y/s/x) and rows seen in a live
         # state this session: they stay listed after settling so the
@@ -249,8 +260,11 @@ class Model:
         the sort mode (stable, so arrival order breaks ties). Caller
         holds ``lock``."""
         items = [self.items[k] for k in self.order]
-        if not self.show_all:
+        if self.filter_mode == "relevant":
             items = [it for it in items if self._relevant(it)]
+        elif self.filter_mode != "all":
+            allowed = _FILTER_STATES[self.filter_mode]
+            items = [it for it in items if it.state in allowed]
         if self.sort_mode != "arrival":
             items.sort(key=_SORT_KEYS[self.sort_mode])
         return items
@@ -259,6 +273,11 @@ class Model:
         self.sort_mode = SORT_MODES[
             (SORT_MODES.index(self.sort_mode) + 1) % len(SORT_MODES)]
         return self.sort_mode
+
+    def cycle_filter(self) -> str:
+        self.filter_mode = FILTER_MODES[
+            (FILTER_MODES.index(self.filter_mode) + 1) % len(FILTER_MODES)]
+        return self.filter_mode
 
     def act(self, action: str) -> None:
         """Execute a table action on the cursor row as a file operation:
@@ -509,7 +528,7 @@ ACTION_KEYS = {"y": "apply", "s": "skip", "r": "rerun", "f": "force",
                "x": "cancel"}
 KEYMAP = (("q", "quit"), ("y", "apply"), ("s", "skip"), ("r", "rerun"),
           ("f", "force"), ("x", "drop"), ("o", "edit msg"),
-          ("a", "all/relevant"), ("t", "sort"), ("e/E", "export"),
+          ("a", "filter"), ("t", "sort"), ("e/E", "export"),
           ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
 
 
@@ -665,8 +684,9 @@ class UILoop:
         current sort mode."""
         key = self.styles.get("key") or (lambda s: s)
         label = self.styles.get("label") or (lambda s: s)
-        self._status_mode = self.model.sort_mode
-        pairs = [(k, f"sort:{self._status_mode}" if k == "t" else d)
+        self._status_mode = (self.model.sort_mode, self.model.filter_mode)
+        pairs = [(k, f"sort:{self.model.sort_mode}" if k == "t"
+                  else f"filter:{self.model.filter_mode}" if k == "a" else d)
                  for k, d in KEYMAP]
         self._status_plain = "  ".join(f"{k} {d}" for k, d in pairs)
         self._status_styled = "  ".join(f"{key(k)} {label(d)}" for k, d in pairs)
@@ -861,7 +881,7 @@ class UILoop:
         buf.append(t.move_xy(0, row) + divider("─" * w))
         for col in {col_t, col_b}:
             buf.append(t.move_xy(col, row) + divider("┼"))
-        if self._status_mode != self.model.sort_mode:
+        if self._status_mode != (self.model.sort_mode, self.model.filter_mode):
             self._build_status()
         note = f" ▶ {nact} reviewed  " if nact else " "
         if len(note) + len(self._status_plain) > w:
@@ -903,7 +923,7 @@ class UILoop:
             return
         title = f" {PANE_GLYPHS[pane]} {PANES[pane]} "
         if pane == "tr":
-            title += f"[{'all' if self.model.show_all else 'relevant'}] "
+            title += f"[{self.model.filter_mode}] "
         bar = title[:rect.w].ljust(rect.w)
         bar_fn = self.styles.get("bar_focus" if pane == self.focus else "bar_blur") \
             or (t.reverse if pane == self.focus else (lambda s: s))
@@ -1032,9 +1052,10 @@ class UILoop:
         elif ks == "a":
             with self.model.lock:
                 key = self.model._cursor_key()
-                self.model.show_all = not self.model.show_all
+                mode = self.model.cycle_filter()
                 if key is not None:
                     self.model._move_cursor_to(key)
+            logger.info("list filter: %s", mode)
         elif ks == "t":
             with self.model.lock:
                 key = self.model._cursor_key()

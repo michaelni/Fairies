@@ -126,7 +126,7 @@ class PollTests(DbCase):
         self.model.poll()
         self.assertEqual(self.keys(), [(R1, 3), (R1, 4), (R1, 6)])
         with self.model.lock:
-            self.model.show_all = True
+            self.model.filter_mode = "all"
         self.assertEqual(self.keys(), [(R1, 1), (R1, 2), (R1, 3), (R1, 4), (R1, 6)])
 
     def test_a_row_seen_live_stays_listed_after_it_settles(self) -> None:
@@ -559,23 +559,43 @@ class EditReviewTests(DbCase):
 
 
 class FilterToggleTests(DbCase):
-    def test_cursor_follows_selection_across_the_a_toggle(self) -> None:
+    def test_a_cycles_the_lenses_and_each_shows_its_states(self) -> None:
+        fixtures = (("reviewed", 1), ("merge-ready", 2), ("ci-blocked", 3),
+                    ("awaiting-approver", 4), ("posted", 5), ("queued", 6))
+        for state, n in fixtures:
+            self.db.push(state, "pr", n, verdict(n))
+        self.model.poll()
+        expect = {
+            "relevant": [1, 2, 3, 4, 6],      # settled posted/ hidden
+            "review": [1],
+            "merge": [2],
+            "ci": [3],
+            "actionable": [1, 2, 3, 4],
+            "all": [1, 2, 3, 4, 5, 6],
+        }
+        for mode in fairy_tui.FILTER_MODES[1:] + ("relevant",):
+            self.assertEqual(self.model.cycle_filter(), mode)
+            self.assertEqual([n for _, n in self.keys()], expect[mode], mode)
+
+    def test_cursor_follows_selection_across_the_a_lens_cycle(self) -> None:
         self.db.push("skipped", "pr", 1, verdict(1, "skip"))
         self.db.push("reviewed", "pr", 2, verdict(2))
         self.db.push("skipped", "pr", 3, verdict(3, "skip"))
         self.model.poll()
-        self.model.show_all = True
+        self.model.filter_mode = "all"
         ui = make_ui(self.model)
 
         self.model.cursor = 1            # on #2 in the "all" view
-        ui.dispatch(Key("a"))            # -> relevant view: only #2
+        ui.dispatch(Key("a"))            # all -> relevant: only #2 visible
         self.assertEqual(self.model.cursor, 0)
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
-        ui.dispatch(Key("a"))            # back to "all": still on #2
+        ui.dispatch(Key("a"))            # relevant -> review lens: #2 remains
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
 
+        with self.model.lock:
+            self.model.filter_mode = "all"
         self.model.cursor = 2            # on filtered-out #3
         ui.dispatch(Key("a"))            # nearest preceding visible: #2
         with self.model.lock:

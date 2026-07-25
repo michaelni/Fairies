@@ -47,16 +47,16 @@ class AgentCase(unittest.TestCase):
         self.ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.prepare = mock.Mock(side_effect=lambda ns, pr, **kw: prepared_for(pr))
 
-    def scan(self, prs: list[dict], forced: set[int] = frozenset()) -> None:
+    def scan(self, prs: list[dict], fetch=None) -> None:
         with mock.patch.object(fairy, "list_open_prs", return_value=prs), \
+                mock.patch.object(fairy, "get_pr",
+                                  side_effect=fetch or (lambda ns, n: make_pr(n))), \
                 mock.patch.object(fairy, "safe_prepare_pr", self.prepare), \
                 mock.patch.object(fairy, "get_self_login", return_value="fairy"), \
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):
             agent.scan_pass(self.db, self.ns, None, now=NOW)
-            if forced:  # requests are consumed by scan_pass itself
-                pass
 
     def age(self, state: str, kind: str, number: int, hours: float) -> None:
         data = self.db.get(state, kind, number)
@@ -211,6 +211,26 @@ class LifecycleTests(AgentCase):
         self.assertTrue(self.db.get("queued", "pr", 3)["forced"])
         self.assertIsNone(self.db.get("requests", "pr", 3))
         self.assertEqual(self.ns.force_review_prs, set())  # undone after the pass
+
+    def test_request_for_an_unlisted_item_is_fetched_and_consumed(self) -> None:
+        # A closed/merged item never appears in the open listing; the
+        # request must fetch it directly or it wedges requests/ forever.
+        self.db.push("requests", "pr", 9, {"action": "rerun"})
+        self.prepare.side_effect = lambda ns, pr, **kw: (
+            gate_skip(pr, "not open") if pr["number"] == 9 else prepared_for(pr))
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 9), "skipped")  # gate outcome shown
+        self.assertIsNone(self.db.get("requests", "pr", 9))
+
+    def test_failed_forced_fetch_becomes_an_error_ticket(self) -> None:
+        self.db.push("requests", "pr", 9, {"action": "rerun"})
+
+        def fetch(ns, n):
+            raise RuntimeError("404")
+
+        self.scan([make_pr(1)], fetch=fetch)
+        self.assertIn("404", self.db.get("error", "pr", 9)["error"])
+        self.assertIsNone(self.db.get("requests", "pr", 9))
 
     def test_old_settled_tickets_are_pruned_open_ones_kept(self) -> None:
         self.db.push("posted", "pr", 1, {})   # still open -> kept

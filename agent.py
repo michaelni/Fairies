@@ -144,9 +144,26 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
         fetch_one, list_open, forced_ns = issue_fairy.get_issue, \
             issue_fairy.list_open_issues, ns.force_review_issues
     if ns.forced_only:  # --forced-only: no open listing, just the named items
-        items = [fetch_one(ns, n) for n in sorted(forced_ns | forced)]
+        items = []
+        missing = sorted(forced_ns | forced)
     else:
         items = list_open(ns)
+        listed = {int(i["number"]) for i in items
+                  if str(i.get("number")).isdigit()}
+        # forced/requested numbers may be closed or merged: absent from
+        # the open listing but explicitly asked for
+        missing = sorted((forced_ns | forced) - listed)
+    for n in missing:
+        try:
+            items.append(fetch_one(ns, n))
+        except Exception as exc:
+            logger.error("%s #%d: forced fetch failed: %s", kind, n, exc)
+            # an error ticket marks the request consumed and puts the
+            # failure on screen; an existing ticket already does both
+            # (find() reporting the request file itself counts as none)
+            if db.find(kind, n) in (None, "requests"):
+                db.push("error", kind, n,
+                        {"error": f"forced fetch failed: {exc}"})
     # Request-forced numbers bypass the gates through the same ns set
     # the gates read; the addition is undone after the pass so a
     # request does not force every future scan.
@@ -259,10 +276,15 @@ def consume_requests(db: filedb.Db) -> dict[str, set[int]]:
     return forced
 
 
-def finish_requests(db: filedb.Db) -> None:
-    for kind, number in db.list_state("requests"):
-        if db.find(kind, number) in ("queued", "llm", "reviewed"):
-            db.pop("requests", kind, number)
+def finish_requests(db: filedb.Db, forced: dict[str, set[int]]) -> None:
+    """Drop the requests this pass consumed, but only once some ticket
+    exists for the item (at-least-once: a crashed pass retries). A
+    request that arrived mid-pass is not in ``forced`` and waits."""
+    for kind, numbers in forced.items():
+        for number in numbers:
+            # find() would report the request file itself
+            if db.find(kind, number) not in (None, "requests"):
+                db.pop("requests", kind, number)
 
 
 def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
@@ -300,7 +322,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                                   self_login=self_login, forced=forced[kind])
         finally:
             gcli_cache.save_cache(ns.cache, cache)
-    finish_requests(db)
+    finish_requests(db, forced)
     cancel_closed(db, open_set, full_kinds)
     for kind, number in db.reap():
         logger.warning("%s #%d re-queued: its worker died", kind, number)

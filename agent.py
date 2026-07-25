@@ -194,10 +194,21 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
         if prior == "skipped" and prior_data and prior_data.get("llm_at"):
             # An LLM skip serves its doubling backoff in skipped/; the
             # file is the memory, so it must not be refreshed early.
+            # New activity bypasses the wait outright: a push, comment
+            # or @-mention must reach the gates now, not in days (the
+            # old compute_llm_skip_backoff keyed on exactly this).
+            unchanged = (
+                prior_data.get("expected_updated_at") == item.get("updated_at")
+                and (kind != "pr" or prior_data.get("expected_head_ref")
+                     == fairy.get_pr_head_ref(item)))
             wait = backoff_wait_h(prior_data.get("skip_backoff_h", 0))
-            if number not in forced_ns and _age_h(prior_data, now) < wait:
+            if unchanged and number not in forced_ns \
+                    and _age_h(prior_data, now) < wait:
                 continue
-            backoff_h = wait
+            # a changed item re-enters without doubling: the doubling
+            # counts served waits, not bypasses
+            backoff_h = wait if unchanged \
+                else float(prior_data.get("skip_backoff_h") or 0)
         if prior == "error" and prior_data and number not in forced_ns \
                 and _age_h(prior_data, now) < ERROR_RETRY_H:
             continue  # a persistently failing item must not burn spend every cycle

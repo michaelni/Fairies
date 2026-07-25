@@ -104,23 +104,41 @@ class TicketRoutingTests(AgentCase):
         self.assertEqual(self.db.find("pr", 1), "posted")
 
 
+def llm_skip(backoff: float, updated: str = "2026-07-19T10:00:00Z",
+             head: str = "h1") -> dict:
+    return {"llm_at": NOW.isoformat(), "skip_backoff_h": backoff,
+            "expected_updated_at": updated, "expected_head_ref": head}
+
+
 class BackoffTests(AgentCase):
     def test_llm_skip_waits_out_its_backoff_untouched(self) -> None:
-        self.db.push("skipped", "pr", 1, {"llm_at": NOW.isoformat(),
-                                          "skip_backoff_h": 0})
+        self.db.push("skipped", "pr", 1, llm_skip(0))
         self.age("skipped", "pr", 1, hours=1)  # within the 24h minimum
         self.scan([make_pr(1)])
         self.prepare.assert_not_called()
         self.assertEqual(self.db.find("pr", 1), "skipped")
 
     def test_expired_backoff_requeues_with_doubled_wait(self) -> None:
-        self.db.push("skipped", "pr", 1, {"llm_at": NOW.isoformat(),
-                                          "skip_backoff_h": 24})
+        self.db.push("skipped", "pr", 1, llm_skip(24))
         self.age("skipped", "pr", 1, hours=49)  # past the 48h doubled wait
         self.scan([make_pr(1)])
         t = self.db.get("queued", "pr", 1)
         self.assertEqual(t["skip_backoff_h"], 48)
         self.assertIsNone(self.db.get("skipped", "pr", 1))
+
+    def test_new_activity_bypasses_the_window_without_doubling(self) -> None:
+        # A push or new comment must reach the gates now, not after the
+        # 48h window; the backoff only doubles for waits actually served.
+        self.db.push("skipped", "pr", 1, llm_skip(24, updated="old"))
+        self.age("skipped", "pr", 1, hours=1)
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.get("queued", "pr", 1)["skip_backoff_h"], 24)
+
+    def test_new_head_bypasses_the_window_too(self) -> None:
+        self.db.push("skipped", "pr", 1, llm_skip(24, head="old-sha"))
+        self.age("skipped", "pr", 1, hours=1)
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "queued")
 
 
 class ReuseTests(AgentCase):

@@ -77,6 +77,14 @@ def main() -> int:
         if state == "reviewed" and review.get("classification") == "skip" \
                 and not review.get("label_changes"):
             state = "skipped"
+        # The old skip counter n meant a 24*2^(n-1)h window. The filedb
+        # stores the PRIOR backoff, and the agent's next wait is
+        # max(24, 2*B): B must be HALF the old window or every migrated
+        # ticket waits twice as long as before (found by the cutover
+        # A/B: 8 parked items the old pipeline was already re-reviewing).
+        skips = data.pop("consecutive_skip_count", 0) or 0
+        if state == "skipped" and skips:
+            data["skip_backoff_h"] = 12.0 * (2 ** (skips - 1))
         db.push(state, kind, int(num), data)
         if args.move:
             path.unlink()

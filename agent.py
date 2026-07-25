@@ -517,6 +517,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def warn_simulate_past_limitations(ignore_after: datetime) -> None:
+    """Surface what ``--simulate-past`` does NOT rewrite."""
+    logger.warning(
+        "--simulate-past=%s active. Limitations:\n"
+        "  * CI status: current Forgejo state, not the state at the cutoff.\n"
+        "  * Wrapper web_search reaches today's web; use --web-search off\n"
+        "    (or cached) in your --llm-review-cmd. (vector_store_search is\n"
+        "    fine if --repo-root points at the prepped mirror.)\n"
+        "  * PR/comment bodies: post-cutoff edits cannot be reverted.\n"
+        "  * Dismissed reviews: cannot be revived.\n"
+        "  * --patch-repo (and the wrapper's --repo-root etc.) must be a\n"
+        "    cutoff-prepped mirror: master rewound, every replayed PR's\n"
+        "    head pinned at --patch-pr-ref-template. Fairy trusts those\n"
+        "    refs verbatim; nothing here verifies they match the cutoff.\n"
+        "  * Pass --cache and --db-root <separate paths> to keep the live\n"
+        "    caches and filedb clean.",
+        ignore_after.isoformat(),
+    )
+
+
 def db_root_for(ns: argparse.Namespace) -> Path:
     return workset.repo_dir(
         Path.home() / ".fairy" / "db",
@@ -550,6 +570,9 @@ def main() -> int:
                      gcli_cache.logger, filedb.logger)
     db = filedb.Db(args.db_root or db_root_for(lead))
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
+    for ns in (pr_ns, issue_ns):
+        if ns is not None and getattr(ns, "simulate_past", None):
+            warn_simulate_past_limitations(ns.simulate_past)
     # The forge rescan stays on the --loop interval, but operator files
     # must not wait for it: a request or a y-press (outgoing/) wakes the
     # loop within milliseconds; a wake without a request only needs the

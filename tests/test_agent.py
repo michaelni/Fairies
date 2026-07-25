@@ -291,10 +291,11 @@ class LifecycleTests(AgentCase):
 
 
 def verdict_ticket(n: int, classification: str = "moderate_issues",
+                   msg: str = "m", labels: list | None = None,
                    **fields) -> dict:
     t = {"title": f"t{n}", "author": "a",
-         "review": {"classification": classification, "message": "m",
-                    "label_changes": []},
+         "review": {"classification": classification, "message": msg,
+                    "label_changes": labels or []},
          "expected_updated_at": "2026-07-19T10:00:00Z",
          "expected_head_ref": f"h{n}", "llm_at": NOW.isoformat()}
     t.update(fields)
@@ -375,6 +376,53 @@ class SendTests(SendCase):
         submit.assert_not_called()
         self.assertEqual(self.db.find("pr", 1), "outgoing")
 
+    def test_deleted_outgoing_file_is_never_posted(self) -> None:
+        # the operator deleting the file IS the veto: an unclaimable
+        # ticket cannot be posted, however stale the send pass's listing
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1))
+        self.db.path("outgoing", "pr", 1).unlink()
+        with mock.patch.object(filedb.Db, "list_state",
+                               return_value=[("pr", 1)]), \
+                mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns)
+        submit.assert_not_called()
+
+    def test_operator_edit_is_what_gets_posted(self) -> None:
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1, msg="original"))
+        self.db.try_move("outgoing", "outgoing", "pr", 1,
+                         mutate=lambda d: d["review"].update(
+                             message="edited by hand"))
+        with mock.patch.object(fairy, "check_pr_still_unchanged",
+                               return_value=None), \
+                mock.patch.object(fairy, "submit_decision_action",
+                                  return_value=True) as submit:
+            self.send(pr_ns=self.ns)
+        self.assertEqual(submit.call_args.args[2].llm_message, "edited by hand")
+
+    def test_label_only_verdict_posts_labels_then_lands_in_posted(self) -> None:
+        labels = [{"label": "needs docs", "op": "add", "reason": "", "post": False}]
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1, "skip", labels=labels))
+        with mock.patch.object(fairy, "check_pr_still_unchanged",
+                               return_value=None), \
+                mock.patch.object(fairy, "apply_triage_labels",
+                                  return_value=True) as apply, \
+                mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns)
+        submit.assert_not_called()  # nothing to comment/approve
+        self.assertFalse(apply.call_args.kwargs["skip_guard"])
+        self.assertEqual(self.db.find("pr", 1), "posted")
+
+    def test_label_only_guard_failure_posts_nothing(self) -> None:
+        labels = [{"label": "needs docs", "op": "add", "reason": "", "post": False}]
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1, "skip", labels=labels))
+        with mock.patch.object(fairy, "check_pr_still_unchanged",
+                               return_value=None), \
+                mock.patch.object(fairy, "apply_triage_labels",
+                                  return_value=False):
+            self.send(pr_ns=self.ns)
+        t = self.db.get("reviewed", "pr", 1)
+        self.assertIn("changed during submit", t["send_blocked"])
+
     def test_issue_outgoing_posts_through_the_issue_seam(self) -> None:
         issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.db.push("outgoing", "issue", 5, verdict_ticket(
@@ -425,6 +473,120 @@ class ForcedOnlyTests(AgentCase):
             agent.scan_pass(self.db, self.ns, None, now=NOW)
         listing.assert_not_called()
         self.assertEqual(self.db.find("pr", 7), "queued")
+
+
+class BackoffMathTests(unittest.TestCase):
+    def test_floor_and_doubling(self) -> None:  # cutover audit G8
+        self.assertEqual(agent.backoff_wait_h(0), 24.0)
+        self.assertEqual(agent.backoff_wait_h(None), 24.0)
+        self.assertEqual(agent.backoff_wait_h(24), 48.0)
+        self.assertEqual(agent.backoff_wait_h(48), 96.0)
+
+
+class PortedGateContractTests(AgentCase):
+    """Ports from the deleted pipeline tests (cutover audit G2-G15)."""
+
+    def test_limit_zero_queues_every_pr(self) -> None:
+        self.ns.limit = 0
+        self.scan([make_pr(n) for n in range(1, 6)])
+        self.assertEqual(len(self.db.list_state("queued")), 5)
+
+    def test_gate_outcomes_never_consume_limit_slots(self) -> None:
+        # the --limit invariant: it caps LLM entries, so items the gates
+        # turn away must not eat slots
+        self.ns.limit = 2
+        self.prepare.side_effect = lambda ns, pr, **kw: (
+            gate_skip(pr) if pr["number"] % 2 else prepared_for(pr))
+        self.scan([make_pr(n) for n in (1, 2, 3, 4, 5, 6)])
+        self.assertEqual(self.db.list_state("queued"), [("pr", 2), ("pr", 4)])
+        self.assertEqual(len(self.db.list_state("skipped")), 3)
+        self.assertIsNone(self.db.find("pr", 6))  # over limit: nothing written
+
+    def test_forced_number_reruns_despite_standing_verdict(self) -> None:
+        self.db.push("reviewed", "pr", 1, {
+            "review": {"classification": "moderate_issues"},
+            "expected_updated_at": "2026-07-19T10:00:00Z",
+            "expected_head_ref": "h1"})
+        self.ns.force_review_prs = {1}
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "queued")
+
+    def test_gate_skip_ticket_never_serves_a_backoff_wait(self) -> None:
+        self.db.push("skipped", "pr", 1, {"reason": "no activity"})  # no llm_at
+        self.scan([make_pr(1)])
+        self.prepare.assert_called_once()
+        self.assertEqual(self.db.find("pr", 1), "queued")
+
+    def test_forced_number_bypasses_a_served_backoff_window(self) -> None:
+        self.db.push("skipped", "pr", 1, llm_skip(24))
+        self.age("skipped", "pr", 1, hours=1)
+        self.ns.force_review_prs = {1}
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "queued")
+
+    def test_error_retry_is_paced_not_forgotten(self) -> None:
+        self.db.push("error", "pr", 1, {"error": "boom"})
+        self.age("error", "pr", 1, hours=1)
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()  # within ERROR_RETRY_H: no spend
+        self.assertEqual(self.db.find("pr", 1), "error")
+        self.age("error", "pr", 1, hours=25)
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "queued")  # and never forgotten
+
+    def test_corrupt_timestamps_fail_open(self) -> None:
+        self.db.push("skipped", "pr", 1, dict(llm_skip(24), llm_at="garbage"))
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "queued")
+
+
+def make_issue(n: int) -> dict:
+    return {"number": n, "title": f"i{n}",
+            "updated_at": "2026-07-19T10:00:00Z", "html_url": f"u{n}"}
+
+
+class IssueSideScanTests(AgentCase):
+    """The kind-specific seams of the shared scan (cutover audit
+    G13/G14): issues have no head guard and their own prepare."""
+
+    def scan_issues(self, issues: list[dict], prepare) -> None:
+        ins = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
+        ins.limit = 1
+        with mock.patch.object(issue_fairy, "list_open_issues",
+                               return_value=issues), \
+                mock.patch.object(issue_fairy, "prepare_issue",
+                                  side_effect=prepare) as self.prepare_issue, \
+                mock.patch.object(fairy, "get_self_login", return_value="fairy"), \
+                mock.patch.object(agent.gcli_cache, "load_cache",
+                                  return_value=mock.Mock()), \
+                mock.patch.object(agent.gcli_cache, "save_cache"):
+            agent.scan_pass(self.db, None, ins, now=NOW)
+
+    def test_issue_scan_gates_limit_and_ticket_shape(self) -> None:
+        def prepare(ns, issue, **kw):
+            if issue["number"] == 1:
+                return fairy.Decision(1, "i1", "a", "-", "skip", "too new", None)
+            return issue_fairy.PreparedIssue(
+                issue=issue, number=issue["number"], title=issue["title"],
+                author="a", last_activity=None, base_reason="stale",
+                discussion=[], reviewer_username="fairy")
+
+        self.scan_issues([make_issue(n) for n in (1, 2, 3)], prepare)
+        self.assertEqual(self.db.list_state("queued"), [("issue", 2)])
+        self.assertEqual(self.db.list_state("skipped"), [("issue", 1)])
+        self.assertIsNone(self.db.find("issue", 3))  # over --limit 1
+        prepared = issue_fairy.prepared_issue_from_dict(
+            self.db.get("queued", "issue", 2)["prepared"])
+        self.assertEqual(prepared.number, 2)
+
+    def test_issue_standing_verdict_reused_without_head_guard(self) -> None:
+        self.db.push("reviewed", "issue", 1, {
+            "review": {"classification": "reply"},
+            "expected_updated_at": "2026-07-19T10:00:00Z",
+            "expected_head_ref": None})
+        self.scan_issues([make_issue(1)], prepare=AssertionError)
+        self.prepare_issue.assert_not_called()
+        self.assertEqual(self.db.find("issue", 1), "reviewed")
 
 
 class OnePassTests(unittest.TestCase):

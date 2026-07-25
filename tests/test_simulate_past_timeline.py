@@ -81,5 +81,28 @@ class SimulatePastTimelineTests(unittest.TestCase):
         )
 
 
+class CommitStatusCutoffTests(unittest.TestCase):
+    """Ported verbatim from the deleted test_fairy_pipeline.py (cutover
+    audit G1): the CI-status list must not leak post-cutoff results
+    into a --simulate-past run."""
+
+    def test_simulate_past_filters_post_cutoff_statuses(self) -> None:
+        import argparse
+        from unittest import mock
+        rows = [
+            {"context": "old", "created_at": "2026-07-12T00:00:00Z"},
+            {"context": "new", "created_at": "2026-07-13T11:22:22Z"},
+        ]
+        args = argparse.Namespace(owner="o", repo="r",
+                                  simulate_past=datetime(2026, 7, 13, tzinfo=timezone.utc))
+        with mock.patch.object(fairy, "gcli_api", return_value=rows):
+            kept = fairy.list_commit_statuses(args, "sha")
+        self.assertEqual(["old"], [s["context"] for s in kept])
+        args.simulate_past = None
+        with mock.patch.object(fairy, "gcli_api", return_value=rows):
+            kept = fairy.list_commit_statuses(args, "sha")
+        self.assertEqual(2, len(kept))
+
+
 if __name__ == "__main__":
     unittest.main()

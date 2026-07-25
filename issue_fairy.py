@@ -117,7 +117,9 @@ def prepared_issue_from_dict(data: dict) -> PreparedIssue:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Analyze open Forgejo/Gitea issues via an LLM wrapper and post verdicts.",
+        description="The issue side of the repo agent. Pass these arguments "
+                    "as one --issue-args string to agent.py, worker.py or "
+                    "fairy_tui.py.",
     )
     add_forge_repo_args(p)
     p.add_argument(
@@ -632,3 +634,12 @@ def submit_issue_decision(
         )
     return True
 
+
+
+if __name__ == "__main__":
+    # Library module: running it directly only documents the per-side
+    # argument string (``./issue_fairy.py --help``).
+    parse_args()
+    raise SystemExit(
+        "issue_fairy.py is a library: pass the arguments above as one "
+        "--issue-args string to agent.py, worker.py or fairy_tui.py")

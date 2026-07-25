@@ -288,7 +288,9 @@ def flatten_label_args(values: list[list[str]] | None) -> list[str]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Approve stale Forgejo/Gitea PRs via gcli.",
+        description="The PR side of the repo agent. Pass these arguments as "
+                    "one --pr-args string to agent.py, worker.py or "
+                    "fairy_tui.py.",
     )
     add_forge_repo_args(p)
     p.add_argument(
@@ -2920,3 +2922,12 @@ def workset_repo_dir(args: argparse.Namespace) -> Path | None:
         repo=args.repo,
     )
 
+
+
+if __name__ == "__main__":
+    # Library module: running it directly only documents the per-side
+    # argument string (``./fairy.py --help``).
+    parse_args()
+    raise SystemExit(
+        "fairy.py is a library: pass the arguments above as one --pr-args "
+        "string to agent.py, worker.py or fairy_tui.py")

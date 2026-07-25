@@ -422,9 +422,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     "for one repository's PRs and issues.",
     )
     p.add_argument("--pr-args", metavar="ARGS",
-                   help="fairy.py argument string for the PR side")
+                   help="the PR side's argument string; ./fairy.py --help "
+                        "documents its contents")
     p.add_argument("--issue-args", metavar="ARGS",
-                   help="issue_fairy.py argument string for the issue side")
+                   help="the issue side's argument string; ./issue_fairy.py "
+                        "--help documents its contents")
     p.add_argument("--db-root", type=Path,
                    help="filedb root for this repo (default: ~/.fairy/db/<forge~account~owner~repo>)")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",

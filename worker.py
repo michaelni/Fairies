@@ -175,9 +175,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="LLM worker: claim queued filedb tickets and review them.",
     )
     p.add_argument("--pr-args", metavar="ARGS",
-                   help="fairy.py argument string (models, wrapper, hosts) for PR tickets")
+                   help="the PR side's argument string (models, wrapper, "
+                        "hosts); ./fairy.py --help documents its contents")
     p.add_argument("--issue-args", metavar="ARGS",
-                   help="issue_fairy.py argument string for issue tickets")
+                   help="the issue side's argument string; ./issue_fairy.py "
+                        "--help documents its contents")
     p.add_argument("--db-root", type=Path,
                    help="filedb root (default: derived from the side's repo)")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",

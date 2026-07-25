@@ -52,13 +52,16 @@ from __future__ import annotations
 
 import fcntl
 import json
+import logging
 import os
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-__all__ = ["Db", "Claim", "STATES", "KINDS"]
+__all__ = ["Db", "Claim", "STATES", "KINDS", "logger"]
+
+logger = logging.getLogger(__name__)
 
 # Pipeline order doubles as crash-remnant precedence: an item present in
 # two directories is a remnant in the earlier one.
@@ -157,15 +160,27 @@ class Db:
         finally:
             os.close(fd)
 
+    def _lock_path(self, kind: str, number: int) -> Path:
+        return self.root / _LOCKS / f"{kind}-{int(number)}.lock"
+
     def _lock_fd(self, kind: str, number: int, *, block: bool) -> int:
-        path = self.root / _LOCKS / f"{kind}-{int(number)}.lock"
-        fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
-        except OSError:
+        path = self._lock_path(kind, number)
+        while True:
+            fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+            except OSError:
+                os.close(fd)
+                raise
+            # prune unlinks dead items' lock files: a flock acquired on
+            # an inode that no longer is the file at ``path`` excludes
+            # nobody -- retry on the current file.
+            try:
+                if os.fstat(fd).st_ino == os.stat(path).st_ino:
+                    return fd
+            except FileNotFoundError:
+                pass
             os.close(fd)
-            raise
-        return fd
 
     # ---- basic operations (all atomic; readers lock-free) ----
 
@@ -307,9 +322,15 @@ class Db:
                          if self.path(s, kind, number).exists()]
                 if later:
                     path.unlink(missing_ok=True)
+                    logger.info("reaped crash remnant %s/%s-%d (item is in %s)",
+                                state, kind, number, later[-1])
                 elif path.exists():
                     os.rename(path, self.path(to_state, kind, number))
                     recovered.append((kind, number))
+                # a dead worker also leaves the wrapper's sidecar lock
+                # and tmp next to the claimed file
+                for suffix in (".lock", ".tmp"):
+                    path.with_suffix(suffix).unlink(missing_ok=True)
             finally:
                 os.close(fd)
         return recovered
@@ -335,4 +356,10 @@ class Db:
                 with self.lock(kind, number):
                     self.path(state, kind, number).unlink(missing_ok=True)
                     removed += 1
+                    logger.info("pruned %s/%s-%d (settled since %s)",
+                                state, kind, number, changed)
+                    if self.find(kind, number) is None:
+                        # last trace gone: drop the item's lock file too,
+                        # or locks/ grows one inode per item forever
+                        self._lock_path(kind, number).unlink(missing_ok=True)
         return removed

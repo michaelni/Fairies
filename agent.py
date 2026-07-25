@@ -521,11 +521,11 @@ def main() -> int:
     issue_ns = issue_fairy.parse_args(shlex.split(args.issue_args)) if args.issue_args else None
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
-                  logger, workset.logger, gcli_cache.logger)
+                  logger, workset.logger, gcli_cache.logger, filedb.logger)
     for log_file in {ns.log_file for ns in (pr_ns, issue_ns)
                      if ns and ns.log_file}:
         add_file_log(log_file, fairy.logger, logger, workset.logger,
-                     gcli_cache.logger)
+                     gcli_cache.logger, filedb.logger)
     db = filedb.Db(args.db_root or db_root_for(lead))
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
     # The forge rescan stays on the --loop interval, but operator files

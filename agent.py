@@ -511,11 +511,19 @@ def main() -> int:
     watch_paths([db.root / "requests", db.root / "outgoing"], wake.set)
     next_scan = 0.0
     while True:
-        if time.monotonic() >= next_scan or db.list_state("requests"):
-            one_pass(db, pr_ns, issue_ns, args)
+        try:
+            if time.monotonic() >= next_scan or db.list_state("requests"):
+                one_pass(db, pr_ns, issue_ns, args)
+                next_scan = time.monotonic() + args.loop
+            else:
+                send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
+        except Exception:
+            # A transient forge/gcli error must not kill the daemon;
+            # one-shot (cron) mode still fails loudly via its exit code.
+            if not args.loop:
+                raise
+            logger.exception("pass failed; retrying in %gs", args.loop)
             next_scan = time.monotonic() + args.loop
-        else:
-            send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
         if not args.loop:
             return 0
         wake.wait(max(0.0, next_scan - time.monotonic()))

@@ -7,6 +7,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from threading import Event
@@ -138,6 +139,49 @@ class PollTests(DbCase):
         self.model.poll()
         self.assertEqual(self.model.items[(R1, "pr", 5)].state, "skipped")
         self.assertIn((R1, 5), self.keys())
+
+
+class DirMtimeGateTests(DbCase):
+    """Unchanged state dirs are not re-listed: every filedb write lands
+    by rename into its dir, so the dir mtime is the change signal."""
+
+    def age_dirs(self, seconds: float = 10) -> None:
+        for db in (self.db, self.db2):
+            for state in filedb.STATES:
+                t = time.time() - seconds
+                os.utime(db.root / state, (t, t))
+
+    def listing_calls(self) -> list[str]:
+        calls: list[str] = []
+        orig = filedb.Db.list_state
+        with mock.patch.object(
+                filedb.Db, "list_state", autospec=True,
+                side_effect=lambda db, s: (calls.append(s), orig(db, s))[1]):
+            self.model.poll()
+        return calls
+
+    def test_unchanged_aged_dirs_skip_the_rescan(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.age_dirs()
+        self.model.poll()  # caches every (old enough) dir listing
+        self.assertEqual(self.listing_calls(), [])
+        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "reviewed")
+
+    def test_renames_are_seen_through_the_gate(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.age_dirs()
+        self.model.poll()
+        self.db.move("reviewed", "outgoing", "pr", 5)  # bumps both dirs
+        self.model.poll()
+        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "outgoing")
+
+    def test_a_recently_modified_dir_is_never_trusted(self) -> None:
+        # Coarse file timestamps: a rename in the same clock tick as the
+        # scan can leave the dir mtime unchanged, so fresh mtimes must
+        # not enter the cache.
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()  # dir mtimes are "now": nothing may be cached
+        self.assertIn("reviewed", self.listing_calls())
 
 
 class ActTests(DbCase):

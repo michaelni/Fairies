@@ -145,6 +145,9 @@ class Model:
         self.items: dict[tuple[str, str, int], Item] = {}
         self.order: list[tuple[str, str, int]] = []
         self._read: dict[tuple[str, str, int], tuple[Path, float]] = {}
+        # (repo, state) -> (dir mtime, listing): an unchanged state dir
+        # is not re-listed and its files are not re-stat'ed.
+        self._dirs: dict[tuple[str, str], tuple[float, list[tuple[str, int]]]] = {}
         self.show_all = False
         self.sort_mode = SORT_MODES[0]
         # Rows the operator acted on (y/s/x) and rows seen in a live
@@ -163,16 +166,45 @@ class Model:
     def poll(self) -> None:
         """Rescan every side's state directories: the files are the whole
         truth -- agent, workers and operator hand-edits all land here.
-        File IO happens outside ``lock``."""
-        found: dict[tuple[str, str, int], tuple[str, filedb.Db]] = {}
+        File IO happens outside ``lock``.
+
+        Every filedb write lands by rename INTO its state directory
+        (content rewrites included), so a directory whose mtime has not
+        moved needs no re-listing and none of its files re-stat'ed:
+        steady state costs a dozen directory stats per side, not one
+        stat per ticket."""
+        now = time.time()
+        found: dict[tuple[str, str, int], tuple[str, filedb.Db, bool]] = {}
         for repo, db in self.sides:
             for state in filedb.STATES:
-                for kind, number in db.list_state(state):
+                try:
+                    dir_mtime = (db.root / state).stat().st_mtime
+                except OSError:
+                    self._dirs.pop((repo, state), None)
+                    continue
+                cached = self._dirs.get((repo, state))
+                rescanned = cached is None or cached[0] != dir_mtime
+                if rescanned:
+                    listing = db.list_state(state)
+                    # Linux file timestamps come from the coarse clock: a
+                    # rename in the same tick as this scan could leave the
+                    # mtime unchanged, so a just-modified directory is
+                    # never trusted as clean.
+                    if dir_mtime < now - 2.0:
+                        self._dirs[(repo, state)] = (dir_mtime, listing)
+                    else:
+                        self._dirs.pop((repo, state), None)
+                else:
+                    listing = cached[1]
+                for kind, number in listing:
                     # later directory wins: crash-remnant precedence
-                    found[(repo, kind, number)] = (state, db)
+                    found[(repo, kind, number)] = (state, db, rescanned)
         updates: list[tuple[tuple[str, str, int], str, dict | None, str]] = []
         for key in sorted(found):
-            state, db = found[key]
+            state, db, rescanned = found[key]
+            item = self.items.get(key)
+            if not rescanned and item is not None and item.state == state:
+                continue  # unchanged dir => unchanged files inside it
             path = db.path(state, key[1], key[2])
             try:
                 tag = (path, path.stat().st_mtime)

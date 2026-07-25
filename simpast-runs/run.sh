@@ -10,8 +10,8 @@
 # (harness and wrapper stay at the working-tree version).
 #
 # Arms run sequentially (they share the working-tree prompt). Samples
-# within an arm run in parallel up to PAR, each with an isolated cache +
-# bot_state so they don't race. Each cell streams live to the terminal
+# within an arm run in parallel up to PAR, each with an isolated cache
+# and filedb so they don't race. Each cell streams live to the terminal
 # and to its run.log; a cell is only marked complete (.done) after a
 # clean finish, so an interrupted run resumes without skipping a cell
 # that never finished.
@@ -125,7 +125,6 @@ run_one() {
         --patch-repo $PATCH_REPO
         --patch-pr-ref-template fforge/pr/{number}
         --cache $outdir/cache.pkl
-        --fairy-state-cache $outdir/bot_state.pkl
         --forced-only --force-review-non-open ${FORCE_ENGAGE:+--force-engage} $force
         --llm-parallelism ${#PRS[@]}
         --llm-review-cmd \"./pr_review_wrapper.py

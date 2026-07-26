@@ -325,10 +325,13 @@ class Db:
             return None
         return Claim(self, fd, kind, number, src_state, dst)
 
-    def reap(self, state: str = "llm", to_state: str = "queued") -> list[tuple[str, int]]:
+    def reap(self, state: str = "llm",
+             to_state: str | None = "queued") -> list[tuple[str, int]]:
         """Recover items whose claim holder died: acquirable lock + file
         still in ``state``. A remnant whose item also exists in a later
-        state is deleted instead of re-queued."""
+        state is deleted instead of re-queued; ``to_state=None`` only
+        deletes remnants (for states like reviewed/ where a lone file
+        is simply valid)."""
         recovered = []
         for kind, number in self.list_state(state):
             try:
@@ -343,7 +346,7 @@ class Db:
                     path.unlink(missing_ok=True)
                     logger.info("reaped crash remnant %s/%s-%d (item is in %s)",
                                 state, kind, number, later[-1])
-                elif path.exists():
+                elif to_state is not None and path.exists():
                     os.rename(path, self.path(to_state, kind, number))
                     recovered.append((kind, number))
                 # a dead worker also leaves the wrapper's sidecar lock

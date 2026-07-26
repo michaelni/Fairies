@@ -359,6 +359,10 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     cancel_closed(db, open_set, full_kinds)
     for kind, number in db.reap():
         logger.warning("%s #%d re-queued: its worker died", kind, number)
+    # a crash between finish's dst-write and src-unlink can leave a
+    # reviewed/ remnant behind an outgoing/posted file; without this it
+    # would be re-promoted and could re-post the verdict
+    db.reap("reviewed", None)
     if full_kinds == kinds:  # prune's keep-set is kind-blind
         retention_ns = pr_ns or issue_ns
         before = now - timedelta(days=retention_ns.workset_retention_days)
@@ -472,9 +476,11 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str, number: int, *,
 def promote_reviewed(db: filedb.Db, kind: str) -> None:
     """--approve: standing actionable verdicts go out without an operator."""
     for k, number in db.list_state("reviewed"):
-        if k == kind and postable(
+        # find() precedence: a reviewed/ crash remnant behind a later
+        # state must not be promoted (and posted) a second time
+        if k == kind and db.find(kind, number) == "reviewed" and postable(
                 ticket_decision(kind, number, db.get("reviewed", kind, number) or {})):
-            db.move("reviewed", "outgoing", kind, number)
+            db.try_move("reviewed", "outgoing", kind, number)
 
 
 def log_summary(db: filedb.Db) -> None:
@@ -512,7 +518,7 @@ def ask_pass(db: filedb.Db, kinds: set[str]) -> None:
     pass via outgoing/, s/x settle it, l(ater)/enter leaves it, q
     stops asking. Rows a worker holds are simply skipped this round."""
     for kind, number in db.list_state("reviewed"):
-        if kind not in kinds:
+        if kind not in kinds or db.find(kind, number) != "reviewed":
             continue
         ticket = db.get("reviewed", kind, number) or {}
         decision = ticket_decision(kind, number, ticket)

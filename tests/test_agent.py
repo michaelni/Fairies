@@ -436,6 +436,17 @@ class SendTests(SendCase):
         t = self.db.get("reviewed", "pr", 1)
         self.assertEqual(t["send_blocked"], "nothing to post")
 
+    def test_reviewed_crash_remnant_is_not_repromoted(self) -> None:
+        # crash between finish's dst-write and src-unlink: the item is
+        # in outgoing AND reviewed; only the later state is real
+        self.ns.approve = True
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1))
+        self.db.path("reviewed", "pr", 1).write_text(
+            self.db.path("outgoing", "pr", 1).read_text())
+        agent.promote_reviewed(self.db, "pr")
+        self.assertIsNotNone(self.db.get("outgoing", "pr", 1))
+        self.assertIsNotNone(self.db.get("reviewed", "pr", 1))  # the scan pass reaps it, not promote
+
     def test_dry_run_never_promotes_reviewed_to_outgoing(self) -> None:
         # promotion is persistent: a dry preview must not stage posts
         # that a later normal run would then send without consent

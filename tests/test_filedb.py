@@ -63,6 +63,17 @@ class HygieneTests(DbCase):
         self.assertFalse(path.with_suffix(".tmp").exists())
 
 
+class ReapRemnantOnlyTests(DbCase):
+    def test_to_state_none_deletes_remnants_but_never_requeues(self) -> None:
+        self.db.push("reviewed", "pr", 1, {"title": "lone: valid"})
+        self.db.push("reviewed", "pr", 2, {"title": "remnant"})
+        self.db.push("outgoing", "pr", 2, {"title": "real"})
+        self.assertEqual(self.db.reap("reviewed", None), [])
+        self.assertIsNotNone(self.db.get("reviewed", "pr", 1))
+        self.assertIsNone(self.db.get("reviewed", "pr", 2))
+        self.assertIsNotNone(self.db.get("outgoing", "pr", 2))
+
+
 class TryPopTests(DbCase):
     def test_try_pop_refuses_claimed_items_instead_of_blocking(self) -> None:
         self.db.push("requests", "pr", 5, {"action": "rerun"})

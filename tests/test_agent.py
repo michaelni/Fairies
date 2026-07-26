@@ -62,8 +62,9 @@ class AgentCase(unittest.TestCase):
     def age(self, state: str, kind: str, number: int, hours: float) -> None:
         data = self.db.get(state, kind, number)
         data["state_changed_at"] = (NOW - timedelta(hours=hours)).isoformat()
-        if data.get("llm_at"):  # the backoff window is measured from here
-            data["llm_at"] = data["state_changed_at"]
+        for field in ("llm_at", "snoozed_at"):
+            if data.get(field):  # the backoff window is measured from these
+                data[field] = data["state_changed_at"]
         self.db._write(self.db.path(state, kind, number), data)
 
 
@@ -180,6 +181,22 @@ class BackoffTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.get("queued", "pr", 1)["skip_backoff_h"], 24)
 
+    def test_s_on_a_queued_row_snoozes_without_an_llm_run(self) -> None:
+        # s before the worker got there: no llm_at exists, only the
+        # press; the item must not bounce straight back to queued
+        self.db.push("skipped", "pr", 1, {
+            "snoozed_at": NOW.isoformat(), "reason": "operator skip",
+            "skip_backoff_h": 0,
+            "expected_updated_at": "2026-07-19T10:00:00Z",
+            "expected_head_ref": "h1"})
+        self.age("skipped", "pr", 1, hours=1)
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.find("pr", 1), "skipped")
+        self.age("skipped", "pr", 1, hours=25)
+        self.scan([make_pr(1)])  # snooze served: normal life resumes
+        self.assertEqual(self.db.find("pr", 1), "queued")
+
     def test_label_edit_does_not_bypass_the_window(self) -> None:
         # A label/milestone edit bumps updated_at but neither head nor
         # discussion: the wait must hold (old compute_llm_skip_backoff
@@ -250,9 +267,21 @@ class ReuseTests(AgentCase):
         self.prepare.assert_not_called()
         self.assertEqual(self.db.find("pr", 1), "reviewed")
 
+    def test_closure_cancel_from_a_short_listing_revives(self) -> None:
+        # a transient pagination glitch cancels with reason "not open";
+        # when the item is listed again the verdict work must resume --
+        # only operator cancels stick
+        self.db.push("cancelled", "pr", 1, {
+            "review": {"classification": "moderate_issues"},
+            "reason": "not open",
+            "expected_updated_at": "2026-07-19T10:00:00Z"})
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "queued")
+
     def test_operator_cancel_sticks_until_new_activity(self) -> None:
         self.db.push("cancelled", "pr", 1, {
             "review": {"classification": "moderate_issues"},
+            "reason": "operator cancel",
             "expected_updated_at": "2026-07-19T10:00:00Z"})
         self.scan([make_pr(1)])
         self.prepare.assert_not_called()

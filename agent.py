@@ -226,11 +226,17 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                          == fairy.get_pr_head_ref(item))):
                 continue  # standing verdict; reuse
         if prior == "cancelled" and number not in forced_ns and prior_data \
+                and str(prior_data.get("reason", "")).startswith("operator") \
                 and prior_data.get("expected_updated_at") == item.get("updated_at"):
-            continue  # the operator threw it out; only new activity revives it
+            # the operator threw it out; only new activity revives it.
+            # Closure cancels ("not open") deliberately do NOT stick: a
+            # transiently short forge listing must cost one redundant
+            # review at most, never a permanently dead verdict.
+            continue
         backoff_h = 0.0
         in_backoff_window = False
-        if prior == "skipped" and prior_data and prior_data.get("llm_at"):
+        if prior == "skipped" and prior_data and (
+                prior_data.get("llm_at") or prior_data.get("snoozed_at")):
             # An LLM skip serves its doubling backoff in skipped/; the
             # file is the memory, so it must not be refreshed early.
             # New activity bypasses the wait outright: a push, comment

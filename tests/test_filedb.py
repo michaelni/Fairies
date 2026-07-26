@@ -74,6 +74,25 @@ class ReapRemnantOnlyTests(DbCase):
         self.assertIsNotNone(self.db.get("outgoing", "pr", 2))
 
 
+class TokenTests(DbCase):
+    def test_sample_and_review_tokens_coexist_with_the_base(self) -> None:
+        for token in (12345, "12345s1", "12345s2", "12345s1r2"):
+            self.db.push("queued", "pr", token, {"eval": str(token)})
+        self.assertEqual(self.db.list_state("queued"),
+                         [("pr", 12345), ("pr", "12345s1"),
+                          ("pr", "12345s1r2"), ("pr", "12345s2")])
+        self.assertEqual(self.db.get("queued", "pr", "12345s2")["eval"],
+                         "12345s2")
+
+    def test_forge_number_and_is_base(self) -> None:
+        self.assertEqual(filedb.forge_number("12345s1r2"), 12345)
+        self.assertEqual(filedb.forge_number(12345), 12345)
+        self.assertTrue(filedb.is_base(12345))
+        self.assertFalse(filedb.is_base("12345s1"))
+        with self.assertRaises(ValueError):
+            self.db.push("queued", "pr", "12345x9", {})
+
+
 class NoOpWriteTests(DbCase):
     def test_identical_content_is_not_rewritten(self) -> None:
         # every writer benefits: no fsync churn, no dir-mtime bump for

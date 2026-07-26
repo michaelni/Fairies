@@ -54,12 +54,14 @@ import fcntl
 import json
 import logging
 import os
+import re
 import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-__all__ = ["Db", "Claim", "STATES", "KINDS", "logger"]
+__all__ = ["Db", "Claim", "STATES", "KINDS", "forge_number",
+           "is_base", "logger"]
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +73,35 @@ STATES = ("requests", "queued", "llm", "reviewed", "outgoing",
 KINDS = ("pr", "issue")
 _TMP = "tmp"
 _LOCKS = "locks"
+# Ticket identity: the forge number, optionally refined by a sample
+# and/or review dimension -- "12345", "12345s2", "12345s1r2". Suffixed
+# tickets are operator/tooling-created evaluations of the same forge
+# item; only the base ticket takes part in scanning, gating and
+# posting by default.
+_TOKEN_RE = re.compile(r"(\d+)(?:s\d+)?(?:r\d+)?")
 
 
-def _name(kind: str, number: int) -> str:
+def _token(number) -> str:
+    token = str(number)
+    if not _TOKEN_RE.fullmatch(token):
+        raise ValueError(f"invalid ticket token {number!r}")
+    return token
+
+
+def forge_number(number) -> int:
+    """The forge item number behind any ticket token."""
+    return int(_TOKEN_RE.fullmatch(_token(number)).group(1))
+
+
+def is_base(number) -> bool:
+    """True for the plain per-item ticket (no sample/review suffix)."""
+    return str(number).isdigit()
+
+
+def _name(kind: str, number) -> str:
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind!r}")
-    return f"{kind}-{int(number)}.json"
+    return f"{kind}-{_token(number)}.json"
 
 
 class Claim:
@@ -176,8 +201,8 @@ class Db:
         finally:
             os.close(fd)
 
-    def _lock_path(self, kind: str, number: int) -> Path:
-        return self.root / _LOCKS / f"{kind}-{int(number)}.lock"
+    def _lock_path(self, kind: str, number) -> Path:
+        return self.root / _LOCKS / f"{kind}-{_token(number)}.lock"
 
     def _lock_fd(self, kind: str, number: int, *, block: bool) -> int:
         path = self._lock_path(kind, number)
@@ -322,9 +347,12 @@ class Db:
         out = []
         for p in (self.root / state).glob("*.json"):
             kind, _, num = p.stem.partition("-")
-            if kind in KINDS and num.isdigit():
-                out.append((kind, int(num)))
-        return sorted(out)
+            if kind in KINDS and _TOKEN_RE.fullmatch(num):
+                # plain numbers stay ints (callers sort and compare
+                # them); suffixed tokens pass through as strings
+                out.append((kind, int(num) if num.isdigit() else num))
+        return sorted(out, key=lambda kn: (kn[0], forge_number(kn[1]),
+                                           str(kn[1])))
 
     def find(self, kind: str, number: int) -> str | None:
         """The item's state; with crash remnants, the latest one."""

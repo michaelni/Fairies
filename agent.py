@@ -690,6 +690,18 @@ def main() -> int:
     pr_ns = fairy.parse_args(shlex.split(args.pr_args)) if args.pr_args else None
     issue_ns = issue_fairy.parse_args(shlex.split(args.issue_args)) if args.issue_args else None
     lead = pr_ns or issue_ns
+    for ns, forced in ((pr_ns, "force_review_prs"),
+                       (issue_ns, "force_review_issues")):
+        if ns is None:
+            continue
+        # config errors exit now with rc=2, like the old entry points:
+        # discovering them per-item would burn error retries for days
+        if getattr(ns, "simulate_past", None)                 and not getattr(ns, "patch_pr_ref_template", None):
+            raise SystemExit(
+                "--simulate-past requires --patch-pr-ref-template")
+        if ns.forced_only and not getattr(ns, forced):
+            raise SystemExit(
+                "--forced-only requires at least one --force-review-*")
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   logger, workset.logger, gcli_cache.logger, filedb.logger)
     for log_file in {ns.log_file for ns in (pr_ns, issue_ns)

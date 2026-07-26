@@ -385,6 +385,16 @@ class SendTests(SendCase):
         t = self.db.get("reviewed", "pr", 1)
         self.assertEqual(t["send_blocked"], "nothing to post")
 
+    def test_dry_run_never_promotes_reviewed_to_outgoing(self) -> None:
+        # promotion is persistent: a dry preview must not stage posts
+        # that a later normal run would then send without consent
+        self.ns.approve = True
+        self.db.push("reviewed", "pr", 1, verdict_ticket(1))
+        with mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns, dry_run=True)
+        submit.assert_not_called()
+        self.assertEqual(self.db.find("pr", 1), "reviewed")
+
     def test_dry_run_posts_nothing_and_keeps_outgoing(self) -> None:
         self.db.push("outgoing", "pr", 1, verdict_ticket(1))
         with mock.patch.object(fairy, "submit_decision_action") as submit:

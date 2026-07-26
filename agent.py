@@ -541,7 +541,16 @@ def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         if ns is None:
             continue
         if getattr(ns, "approve", False):
-            promote_reviewed(db, kind)
+            if dry_run:
+                # promotion is a persistent staging step: a later normal
+                # run would post whatever a dry preview promoted
+                for k, number in db.list_state("reviewed"):
+                    if k == kind and postable(ticket_decision(
+                            k, number, db.get("reviewed", k, number) or {})):
+                        logger.info("%s #%d: DRY RUN, would promote to "
+                                    "outgoing/", k, number)
+            else:
+                promote_reviewed(db, kind)
         outgoing = [n for k, n in db.list_state("outgoing") if k == kind]
         if not outgoing:
             continue

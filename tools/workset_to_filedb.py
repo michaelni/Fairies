@@ -42,11 +42,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import filedb  # noqa: E402
 
-# old workset.WorkState value -> filedb directory
+# Old workset.WorkState value -> filedb directory. In-flight states
+# (QUEUED/TRIAGE/REVIEW/COMBINE) become requests/: the old files carry
+# no prepared payload (it lived in the pipeline's memory), so a queued/
+# ticket would only crash the worker -- a rerun request makes the agent
+# rebuild a fresh one.
 STATE_DIRS = {
-    1: "queued", 2: "llm", 3: "llm", 4: "llm", 5: "reviewed",
-    6: "posted", 7: "skipped", 8: "cancelled", 9: "error",
+    1: "requests", 2: "requests", 3: "requests", 4: "requests",
+    5: "reviewed", 6: "posted", 7: "skipped", 8: "cancelled", 9: "error",
 }
+# classification -> post action, as fairy.decision_from_review and
+# issue_fairy.issue_review_decision derive it
+ACTIONS = {"approve": "approve", "minor_issues_approve": "approve",
+           "moderate_issues": "comment", "reply_no_verdict": "comment",
+           "reply": "comment", "major_issues": "request_changes"}
 
 
 def main() -> int:
@@ -85,6 +94,13 @@ def main() -> int:
         skips = data.pop("consecutive_skip_count", 0) or 0
         if state == "skipped" and skips:
             data["skip_backoff_h"] = 12.0 * (2 ** (skips - 1))
+        if state == "requests":
+            data = {"action": "rerun"}
+        # log_summary and the TUI's awaiting-you stats read the action
+        # the new worker records; derive it for migrated verdicts
+        if state == "reviewed" and "action" not in data \
+                and review.get("classification") in ACTIONS:
+            data["action"] = ACTIONS[review["classification"]]
         db.push(state, kind, int(num), data)
         if args.move:
             path.unlink()

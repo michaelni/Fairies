@@ -425,8 +425,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "immediately. If your LLM review command is configured for triage "
             "(e.g. pr_review_wrapper.py with --triage-model), run it so the "
             "mini model can post a short reply_no_verdict pointing at the failure. "
-            "If every failing context was already mentioned in a prior comment by the "
-            "bot, the wrapper is not invoked. Requires --llm-review-cmd and a "
+            "If every failing context was already mentioned in a prior comment by "
+            "fairy, the wrapper is not invoked. Requires --llm-review-cmd and a "
             "command line that includes --triage-model."
         ),
     )

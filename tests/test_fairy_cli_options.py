@@ -33,6 +33,16 @@ OLD = "2026-06-01T00:00:00Z"
 HUMAN_COMMENT = {"user": {"login": "dev"}, "created_at": OLD,
                  "updated_at": OLD, "body": "please have a look"}
 
+FAIRY_CI_HEADS_UP = {"user": {"login": "fairy"},
+                     "created_at": "2026-06-02T00:00:00Z",
+                     "updated_at": "2026-06-02T00:00:00Z",
+                     "body": "heads-up: the / build job is red"}
+
+NEWER_HUMAN_COMMENT = {"user": {"login": "dev"},
+                       "created_at": "2026-06-03T00:00:00Z",
+                       "updated_at": "2026-06-03T00:00:00Z",
+                       "body": "thanks, looking"}
+
 FAILING_CI = [{"context": "/ build", "status": "failure",
                "description": "Tests failed in 2m13s",
                "target_url": "/o/r/actions/runs/1/jobs/0",
@@ -55,18 +65,20 @@ class TriageOnCiFailureTests(unittest.TestCase):
     """--triage-on-ci-failure decides whether a CI-red PR stops at a
     skip or reaches the triage LLM with a failure payload."""
 
-    def prepare(self, flags: str):
-        with mock.patch.object(fairy, "get_pr_discussion",
-                               return_value=([], [HUMAN_COMMENT], [])), \
+    def prepare(self, flags: str, comments: list | None = None,
+                self_login: str | None = None, statuses: list | None = None):
+        with mock.patch.object(
+                fairy, "get_pr_discussion",
+                return_value=([], comments or [HUMAN_COMMENT], [])), \
                 mock.patch.object(fairy.gcli_cache, "get",
                                   return_value={"timeline": []}), \
                 mock.patch.object(fairy, "list_commit_statuses",
-                                  return_value=FAILING_CI), \
+                                  return_value=statuses or FAILING_CI), \
                 mock.patch.object(fairy, "get_auto_merge_info",
                                   return_value="no"), \
                 mock.patch.object(fairy, "attach_ci_failure_logs"):
             return fairy.prepare_pr(
-                pr_ns(flags), open_pr(), now=NOW, self_login=None,
+                pr_ns(flags), open_pr(), now=NOW, self_login=self_login,
                 wip_re=fairy.compile_wip_regex([]),
                 cache=gcli_cache.Cache(),
                 discussion_cache_max_age=timedelta(hours=1))
@@ -94,6 +106,29 @@ class TriageOnCiFailureTests(unittest.TestCase):
             "--triage-on-ci-failure --llm-review-cmd wrapper --patch-repo /p")
         self.assertEqual(decision.action, "skip")
         self.assertIn("needs --triage-model", decision.reason)
+
+    def test_an_already_announced_failure_never_invokes_the_wrapper(self) -> None:
+        """Documented: "If every failing context was already mentioned
+        in a prior comment by fairy, the wrapper is not invoked"."""
+        decision = self.prepare(
+            "--triage-on-ci-failure " + TRIAGE_CMD + " --patch-repo /p",
+            comments=[FAIRY_CI_HEADS_UP, NEWER_HUMAN_COMMENT],
+            self_login="fairy")
+        self.assertEqual(decision.action, "skip")
+        self.assertIn("already mentioned all current ERROR/FAILURE job(s)",
+                      decision.reason)
+
+    def test_a_newly_red_job_still_reaches_the_wrapper(self) -> None:
+        prepared = self.prepare(
+            "--triage-on-ci-failure " + TRIAGE_CMD + " --patch-repo /p",
+            comments=[FAIRY_CI_HEADS_UP, NEWER_HUMAN_COMMENT],
+            self_login="fairy",
+            statuses=FAILING_CI + [dict(FAILING_CI[0], context="/ fate")])
+        self.assertEqual(
+            prepared.ci_triage["contexts_bot_already_mentioned"], ["/ build"])
+        self.assertEqual(
+            prepared.ci_triage["contexts_still_requiring_announcement"],
+            ["/ fate"])
 
 
 class ApproveMessageTests(unittest.TestCase):

@@ -44,7 +44,7 @@ tickets whose item left the open listing, and prunes settled tickets.
 
 A send pass follows each scan: every outgoing/ item is re-read under
 its claim lock, guard-checked against the live forge and posted
-through the same submit seams the old pipelines use. A guard failure
+through fairy/issue_fairy's guarded submit seams. A guard failure
 returns the verdict to reviewed/ with a note (manual mode) or, under
 --approve auto mode -- which itself promotes actionable reviewed/
 verdicts to outgoing/ -- re-gates it via skipped/ so a cron run never
@@ -276,8 +276,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # updated_at moved during the wait, but only real activity
             # bypasses it: a label/milestone edit bumps updated_at
             # without touching head or discussion, and must not burn an
-            # LLM run early (the old compute_llm_skip_backoff keyed on
-            # exactly this head+last_activity pair).
+            # LLM run early -- the bypass keys on the head+last_activity
+            # pair, deliberately not on updated_at.
             last_iso = (prepared.last_activity.isoformat()
                         if prepared.last_activity else None)
             if last_iso == prior_data.get("last_activity_iso") \
@@ -357,8 +357,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     kinds: set[str] = set()
     # A --forced-only side's open_set is just the named items, not the
     # open listing: everything else would look closed, so closing and
-    # pruning are skipped for it (the old workset_prune had the same
-    # guard).
+    # pruning are skipped for it.
     full_kinds: set[str] = set()
     for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
         if ns is None:
@@ -429,8 +428,8 @@ def postable(decision: fairy.Decision | None) -> bool:
 
 def post_decision(ns: argparse.Namespace, kind: str, decision: fairy.Decision,
                   *, cache, counts: dict[str, int]) -> bool:
-    """The forge side effects, through the same seams the old pipelines
-    post through; False when the staleness guard blocked the post."""
+    """The forge side effects, through fairy/issue_fairy's guarded
+    submit seams; False when the staleness guard blocked the post."""
     if kind == "issue":
         return issue_fairy.submit_issue_decision(
             ns, decision, cache=cache, submitted_counts=counts)
@@ -503,7 +502,7 @@ def promote_reviewed(db: filedb.Db, kind: str) -> None:
 
 
 def log_summary(db: filedb.Db) -> None:
-    """The old end-of-run report, rebuilt from the directories: which
+    """End-of-pass report from the directories: which
     verdicts an operator could apply right now, and which items need a
     human's CI/approval action -- with the details, not just counts."""
     ready = []
@@ -695,8 +694,8 @@ def main() -> int:
                        (issue_ns, "force_review_issues")):
         if ns is None:
             continue
-        # config errors exit now with rc=2, like the old entry points:
-        # discovering them per-item would burn error retries for days
+        # config errors exit with rc=2 at startup: discovered
+        # per-item they would burn error retries for days
         if getattr(ns, "simulate_past", None)                 and not getattr(ns, "patch_pr_ref_template", None):
             raise SystemExit(
                 "--simulate-past requires --patch-pr-ref-template")

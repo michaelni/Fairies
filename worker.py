@@ -231,7 +231,14 @@ def main() -> int:
     wake = Event()
     watch_paths([db.root / "queued"], wake.set)
     while True:
-        drain(db, sides, parallel=args.parallel)
+        try:
+            drain(db, sides, parallel=args.parallel)
+        except Exception:
+            # same contract as the agent loop: a transient error must
+            # not kill the daemon; one-shot mode fails loudly
+            if not args.loop:
+                raise
+            logger.exception("drain failed; retrying in %gs", args.loop)
         if not args.loop:
             return 0
         wake.wait(args.loop)

@@ -116,14 +116,16 @@ FAIRIES_ISSUES="
 "
 
 mkdir -p logs
-./agent.py  --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --loop 600 &
-./worker.py --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --loop 600 &
-./agent.py  --pr-args "$WEB_PR" --loop 600 &
-./worker.py --pr-args "$WEB_PR" --loop 600 &
-./agent.py  --pr-args "$FATE_PR" --loop 600 &
-./worker.py --pr-args "$FATE_PR" --loop 600 &
-./agent.py  --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --loop 600 &
-./worker.py --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --loop 600 &
+# console output goes to .console files: a backgrounded process's
+# stderr handlers would otherwise scribble over the blessed screen
+./agent.py  --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --loop 600 >"logs/agent-ffmpeg.console" 2>&1 &
+./worker.py --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --loop 600 >"logs/worker-ffmpeg.console" 2>&1 &
+./agent.py  --pr-args "$WEB_PR" --loop 600 >"logs/agent-web.console" 2>&1 &
+./worker.py --pr-args "$WEB_PR" --loop 600 >"logs/worker-web.console" 2>&1 &
+./agent.py  --pr-args "$FATE_PR" --loop 600 >"logs/agent-fateserver.console" 2>&1 &
+./worker.py --pr-args "$FATE_PR" --loop 600 >"logs/worker-fateserver.console" 2>&1 &
+./agent.py  --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --loop 600 >"logs/agent-fairies.console" 2>&1 &
+./worker.py --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --loop 600 >"logs/worker-fairies.console" 2>&1 &
 trap 'kill $(jobs -p) 2>/dev/null' EXIT
 
 ./fairy_tui.py --log-file fairy_tui.log \

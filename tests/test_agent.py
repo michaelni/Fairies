@@ -100,6 +100,10 @@ class TicketRoutingTests(AgentCase):
         self.assertEqual(self.db.list_state("skipped"), [("pr", 4)])
         self.assertEqual(self.db.get("ci-blocked", "pr", 2)
                          ["cancelled_ci_contexts"], ["job1"])
+        # attention rows are acted on in the forge web UI: the link
+        # must ride on the ticket
+        self.assertEqual(self.db.get("merge-ready", "pr", 1)["html_url"],
+                         "https://forge/pr/1")
 
     def test_pr_prepare_failure_is_a_paced_error_not_a_skip(self) -> None:
         # like the issue side: a row, a summary line, ERROR_RETRY_H --

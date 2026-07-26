@@ -82,11 +82,12 @@ class PollTests(DbCase):
     """poll() drives rows purely from the state directories."""
 
     def test_rows_are_files_and_state_is_the_directory(self) -> None:
-        self.db.push("queued", "pr", 5, verdict(5))
+        self.db.push("queued", "pr", 5, dict(verdict(5), prepared={"pr": {}}))
         self.model.poll()
         item = self.model.items[(R1, "pr", 5)]
         self.assertEqual(item.state, "queued")
         self.assertEqual(item.data["title"], "from disk")
+        self.assertNotIn("prepared", item.data)  # multi-MB, never shown
         self.db.move("queued", "llm", "pr", 5,
                      mutate=lambda d: d.update(stage="triage"))
         self.model.poll()

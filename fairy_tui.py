@@ -225,8 +225,9 @@ class Model:
             if self._read.get(key) == tag:
                 continue
             try:
-                updates.append((key, state, json.loads(
-                    path.read_text(encoding="utf-8")), ""))
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data.pop("prepared", None)  # multi-MB payload; never shown
+                updates.append((key, state, data, ""))
             except (FileNotFoundError, IsADirectoryError):
                 continue
             except (OSError, ValueError) as exc:
@@ -1332,7 +1333,16 @@ def build_sides(
             label = f"{ns.owner}/{ns.repo}"
             if any(known.casefold() == label.casefold() for known, _ in sides):
                 continue
-            sides.append((label, filedb.Db(agent.db_root_for(ns))))
+            root = agent.db_root_for(ns)
+            if not root.exists():
+                # db roots are case-sensitive while the forge is not: a
+                # case slip silently shows an empty repo
+                for sibling in root.parent.glob("*"):
+                    if sibling.name.casefold() == root.name.casefold():
+                        logger.warning("side %s: %s does not exist but %s "
+                                       "does -- check the owner/repo case",
+                                       label, root.name, sibling.name)
+            sides.append((label, filedb.Db(root)))
     tails += [t for t in args.tail or [] if t not in tails]
     return sides, tails
 

@@ -36,8 +36,12 @@ through tmp-file + rename, transitions and claims serialize on a
 stable per-item sidecar lock in ``locks/`` (content writes replace the
 inode, so the payload file itself can never carry a lock). Readers
 need no locks. A crash between the two steps of a transition leaves
-the item in two directories; the later pipeline state wins and
-``reap()`` deletes the earlier remnant.
+the item in two directories; the later pipeline state wins
+(``find()`` precedence). Remnants are deliberately NOT deleted
+eagerly -- they are crash evidence: ``reap()`` recovers llm/ claims
+whose worker died, the agent clears reviewed/ remnants that shadow a
+later state, and everything else is resolved by precedence until
+retention pruning.
 
 What belongs here: the per-repo directory layout, atomic push/get/pop/
 move, the worker claim protocol (lock -> rename -> work -> finish),

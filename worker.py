@@ -164,6 +164,8 @@ def _review_claimed(sides: dict[str, argparse.Namespace],
         ticket["error"] = f"worker: {exc}"
         ticket["llm_at"] = datetime.now(timezone.utc).isoformat()
         claim.finish("error", ticket)
+        for suffix in (".lock", ".tmp"):  # the wrapper's sidecars
+            claim.path.with_suffix(suffix).unlink(missing_ok=True)
         return False
 
 

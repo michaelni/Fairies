@@ -30,6 +30,12 @@ class Key(str):
     name = None
 
 
+def NamedKey(name: str) -> Key:
+    k = Key("")
+    k.name = name
+    return k
+
+
 def make_term(stream: io.StringIO | None = None, cols: int = 100) -> blessed.Terminal:
     """Headless terminal fixture. blessed re-reads COLUMNS/LINES on
     every width query, so they are set for good rather than patched."""
@@ -627,6 +633,71 @@ class FsWatchTests(DbCase):
             ui._maybe_poll()
             poll.assert_called_once()
         self.assertFalse(ui.needs_poll.is_set())
+
+
+class CountAndSearchTests(DbCase):
+    def setUp(self) -> None:
+        super().setUp()
+        for n, title in ((1, "hevc sao fix"), (2, "rtp muxer"), (3, "lut parse")):
+            self.db.push("reviewed", "pr", n, verdict(n, msg=title, title=title))
+        self.model.poll()
+        self.ui = make_ui(self.model)
+
+    def test_count_prefix_spawns_n_sample_requests(self) -> None:
+        self.ui.dispatch(Key("3"))
+        self.ui.dispatch(Key("r"))
+        self.assertEqual([n for k, n in self.db.list_state("requests")],
+                         ["1s1", "1s2", "1s3"])
+        self.assertEqual(self.ui.count_buf, "")
+
+    def test_count_ten_or_more_is_refused(self) -> None:
+        self.ui.dispatch(Key("1"))
+        self.ui.dispatch(Key("0"))
+        with self.assertLogs(fairy_tui.logger, level="ERROR"):
+            self.ui.dispatch(Key("r"))
+        self.assertEqual(self.db.list_state("requests"), [])
+
+    def test_backspace_edits_the_count(self) -> None:
+        self.ui.dispatch(Key("1"))
+        self.ui.dispatch(Key("0"))
+        self.ui.dispatch(NamedKey("KEY_BACKSPACE"))
+        self.ui.dispatch(Key("r"))  # count 1: plain rerun of the row
+        self.assertEqual([n for k, n in self.db.list_state("requests")], [1])
+
+    def test_count_scrolls_by_n_lines(self) -> None:
+        self.ui.focus = "tr"
+        self.model.cursor = 0
+        self.ui.dispatch(Key("2"))
+        self.ui.dispatch(NamedKey("KEY_DOWN"))
+        self.assertEqual(self.model.cursor, 2)
+
+    def test_search_over_an_empty_list_reports_no_match(self) -> None:
+        for n in (1, 2, 3):
+            self.db.pop("reviewed", "pr", n)
+        self.model.poll()
+        for ch in "/11":
+            self.ui.dispatch(Key(ch))
+        with self.assertLogs(fairy_tui.logger, level="INFO"):
+            self.ui.dispatch(NamedKey("KEY_ENTER"))
+
+    def test_search_with_a_stale_cursor_still_wraps(self) -> None:
+        self.model.cursor = 99
+        for ch in "/lut":
+            self.ui.dispatch(Key(ch))
+        self.ui.dispatch(NamedKey("KEY_ENTER"))
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 3))
+
+    def test_search_jumps_and_n_repeats(self) -> None:
+        self.model.cursor = 0
+        for ch in "/lut":
+            self.ui.dispatch(Key(ch))
+        self.ui.dispatch(NamedKey("KEY_ENTER"))
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 3))
+        self.ui.dispatch(Key("n"))  # wraps: only one match, stays
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 3))
 
 
 class LogTailTests(unittest.TestCase):

@@ -280,7 +280,7 @@ class Model:
             (FILTER_MODES.index(self.filter_mode) + 1) % len(FILTER_MODES)]
         return self.filter_mode
 
-    def act(self, action: str) -> None:
+    def act(self, action: str, count: int = 1) -> None:
         """Execute a table action on the cursor row as a file operation:
         apply = reviewed -> outgoing (the agent's send pass posts it),
         skip/cancel = -> skipped/cancelled, rerun/force = a request the
@@ -305,9 +305,23 @@ class Model:
                 if item.state in ("queued", "llm", "outgoing"):
                     logger.info("%s is already in flight", label)
                     return
-                db.request(item.kind, item.number, {"action": "rerun"})
+                if count >= 10:
+                    # fat-finger guard: a stray count must not spawn a
+                    # gigantic evaluation batch
+                    logger.error("%s: refusing %d evaluations (max 9)",
+                                 label, count)
+                    return
+                if count == 1:
+                    db.request(item.kind, item.number, {"action": "rerun"})
+                    logger.info("requested a fresh review of %s", label)
+                else:
+                    base = filedb.forge_number(item.number)
+                    for i in range(1, count + 1):
+                        db.request(item.kind, f"{base}s{i}",
+                                   {"action": "rerun"})
+                    logger.info("requested %d sample evaluations of %s",
+                                count, label)
                 self.seen_live.add(key)
-                logger.info("requested a fresh review of %s", label)
             elif action == "apply":
                 if item.state != "reviewed" or not agent.postable(
                         agent.ticket_decision(item.kind, item.number, item.data)):
@@ -537,7 +551,7 @@ ACTION_KEYS = {"y": "apply", "s": "skip", "r": "rerun", "f": "force",
                "x": "cancel"}
 KEYMAP = (("q", "quit"), ("y", "apply"), ("s", "skip"), ("r", "rerun"),
           ("f", "force"), ("x", "drop"), ("o", "edit msg"),
-          ("a", "filter"), ("t", "sort"), ("e/E", "export"),
+          ("a", "filter"), ("t", "sort"), ("/", "search"), ("e/E", "export"),
           ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
 
 
@@ -686,6 +700,10 @@ class UILoop:
         self.styles = _styles(term)
         self.needs_poll = Event()  # set by the filesystem watcher
         self._last_poll = 0.0
+        self.count_buf = ""     # 0-9 prefix for r/f and arrow scrolling
+        self.search_mode = False
+        self.search_buf = ""
+        self.last_search = ""
         self._build_status()
 
     def _build_status(self) -> None:
@@ -893,6 +911,10 @@ class UILoop:
         if self._status_mode != (self.model.sort_mode, self.model.filter_mode):
             self._build_status()
         note = f" ▶ {nact} reviewed  " if nact else " "
+        if self.search_mode:
+            note = f" /{self.search_buf}▏" + note
+        elif self.count_buf:
+            note = f" {self.count_buf}x " + note
         if len(note) + len(self._status_plain) > w:
             status = (note + self._status_plain)[:w].ljust(w)
         else:
@@ -1017,8 +1039,53 @@ class UILoop:
         rects = self.layout.rects(self.term.width, max(3, self.term.height - 1))
         return max(1, rects[self.focus].h - 2)
 
+    def _take_count(self) -> int:
+        n = int(self.count_buf or "1")
+        self.count_buf = ""
+        return n
+
+    def _search_jump(self) -> None:
+        query = (self.search_buf or self.last_search).casefold()
+        if not query:
+            return
+        self.last_search = self.search_buf or self.last_search
+        with self.model.lock:
+            vis = self.model.visible()
+            start = min(self.model.cursor + 1, len(vis))
+            for i in list(range(start, len(vis))) + list(range(0, start)):
+                it = vis[i]
+                if query in str(it.number).casefold() \
+                        or query in (it.data.get("title") or "").casefold() \
+                        or query in it.state:
+                    self.model.cursor = i
+                    return
+        logger.info("no ticket matches %r", query)
+
     def dispatch(self, ks) -> None:
         name = ks.name or ""
+        if self.search_mode:
+            if name == "KEY_ENTER" or str(ks) in ("\n", "\r"):
+                self.search_mode = False
+                self._search_jump()
+            elif name == "KEY_ESCAPE":
+                self.search_mode = False
+                self.search_buf = ""
+            elif name in ("KEY_BACKSPACE", "KEY_DELETE") \
+                    or str(ks) in ("\x7f", "\x08"):
+                self.search_buf = self.search_buf[:-1]
+            elif not name and str(ks).isprintable():
+                self.search_buf += str(ks)
+            self.model.dirty.set()
+            return
+        if not name and str(ks).isdigit():
+            # two digits suffice: anything >=10 is refused anyway
+            self.count_buf = (self.count_buf + str(ks))[-2:]
+            self.model.dirty.set()
+            return
+        if name in ("KEY_BACKSPACE", "KEY_DELETE") and self.count_buf:
+            self.count_buf = self.count_buf[:-1]
+            self.model.dirty.set()
+            return
         body_h = max(3, self.term.height - 1)
         if name.startswith("MOUSE_"):
             y, x = ks.mouse_yx
@@ -1049,9 +1116,9 @@ class UILoop:
         if name == "KEY_TAB":
             self.focus = FOCUS_ORDER[(FOCUS_ORDER.index(self.focus) + 1) % 4]
         elif name == "KEY_UP":
-            self._scroll_pane(self.focus, -1)
+            self._scroll_pane(self.focus, -self._take_count())
         elif name == "KEY_DOWN":
-            self._scroll_pane(self.focus, 1)
+            self._scroll_pane(self.focus, self._take_count())
         elif name == "KEY_PGUP":
             self._scroll_pane(self.focus, -self._page())
         elif name == "KEY_PGDOWN":
@@ -1072,8 +1139,16 @@ class UILoop:
                 if key is not None:
                     self.model._move_cursor_to(key)
             logger.info("list sort: %s", mode)
+        elif str(ks) in ("r", "f"):
+            self.model.act(ACTION_KEYS[str(ks)], self._take_count())
         elif str(ks) in ACTION_KEYS:
+            self.count_buf = ""
             self.model.act(ACTION_KEYS[str(ks)])
+        elif ks == "/":
+            self.search_mode = True
+            self.search_buf = ""
+        elif ks == "n":
+            self._search_jump()
         elif ks == "o":
             self.edit_review()
         elif ks in ("e", "E"):

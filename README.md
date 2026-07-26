@@ -112,7 +112,10 @@ UI can quit and restart freely. `a` cycles the list lens
 (relevant/review/merge/ci/actionable/all), `y` hands the selected reviewed verdict to the agent's
 send pass (`reviewed/` -> `outgoing/`; the post is guard-checked
 there), `s` skips it, `r`/`f` request a fresh gate-bypassing review,
-`o` edits its review message in `$EDITOR`, `t` cycles the list sort
+`o` edits its review message in `$EDITOR` (a `0-9` count prefix makes
+`r` request that many parallel sample evaluations -- max 9 -- and
+makes the arrows scroll that many lines; `/text` searches
+number/title/state, `n` repeats), `t` cycles the list sort
 (arrival/status/repo/number), `q` quits, `x` throws it out, `e`/`E` export the focused pane (visible/full), arrows and
 PgUp/PgDn scroll, Tab or a mouse click moves focus, clicking a URL,
 git hash or `#number` copies it to the primary selection for

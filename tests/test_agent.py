@@ -148,6 +148,22 @@ class BackoffTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", 1), "queued")
 
+    def test_operator_skip_snoozes_with_doubling(self) -> None:
+        # Approved cutover divergence D5: s means "not now", not "not
+        # this run" -- a >=24h doubling wait that any real activity
+        # bypasses, instead of the old re-review-every-run.
+        self.db.push("skipped", "pr", 1, {
+            "llm_at": NOW.isoformat(), "reason": "operator skip",
+            "review": {"classification": "moderate_issues"},
+            "expected_updated_at": "2026-07-19T10:00:00Z",
+            "expected_head_ref": "h1"})
+        self.age("skipped", "pr", 1, hours=1)
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()  # snoozing
+        self.age("skipped", "pr", 1, hours=25)
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.get("queued", "pr", 1)["skip_backoff_h"], 24)
+
     def test_label_edit_does_not_bypass_the_window(self) -> None:
         # A label/milestone edit bumps updated_at but neither head nor
         # discussion: the wait must hold (old compute_llm_skip_backoff

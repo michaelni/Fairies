@@ -876,6 +876,24 @@ class AskPassTests(AgentCase):
         self.ask(["bogus", "y"])
         self.assertEqual(self.db.find("pr", 1), "outgoing")
 
+    def test_retry_reviews_again_and_reasks(self) -> None:
+        self.db.push("reviewed", "pr", 1, verdict_ticket(1))
+
+        def fresh_review():
+            self.assertEqual(self.db.get("requests", "pr", 1)["action"],
+                             "rerun")  # the request precedes the cycle
+            self.db.push("reviewed", "pr", 1, verdict_ticket(1, title="fresh"))
+
+        with mock.patch("builtins.input", side_effect=["r", "y"]):
+            agent.ask_pass(self.db, {"pr"}, retry=fresh_review)
+        self.assertEqual(self.db.get("outgoing", "pr", 1)["title"], "fresh")
+
+    def test_retry_without_inline_worker_files_the_request(self) -> None:
+        self.db.push("reviewed", "pr", 1, verdict_ticket(1))
+        self.ask(["r"])
+        self.assertEqual(self.db.get("requests", "pr", 1)["action"], "rerun")
+        self.assertEqual(self.db.find("pr", 1), "reviewed")  # verdict kept
+
 
 class StartupValidationTests(unittest.TestCase):
     """Broken side configs exit rc=2 at startup, as master's block did."""
@@ -944,6 +962,16 @@ class OnePassTests(unittest.TestCase):
 
     def test_without_drain_the_agent_never_reviews(self) -> None:
         self.assertEqual(self._run(["--pr-args", "x"]), ["scan", "send"])
+
+    def test_ask_gets_an_inline_retry_only_with_drain(self) -> None:
+        retries = []
+        with mock.patch.object(agent, "ask_pass",
+                               side_effect=lambda db, kinds, retry=None:
+                               retries.append(retry)):
+            self._run(["--pr-args", "x", "--ask", "--drain"])
+            self._run(["--pr-args", "x", "--ask"])
+        self.assertIsNotNone(retries[0])
+        self.assertIsNone(retries[1])
 
 
 if __name__ == "__main__":

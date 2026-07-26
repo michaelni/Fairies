@@ -588,50 +588,66 @@ def log_summary(db: filedb.Db) -> None:
                         f"  [{detail}]" if detail else "")
 
 
-def ask_pass(db: filedb.Db, kinds: set[str]) -> None:
+def ask_pass(db: filedb.Db, kinds: set[str], retry=None) -> None:
     """--ask: the pre-TUI prompt flow. Print each actionable reviewed/
     verdict (URL, action, message) and ask; y hands it to the send
-    pass via outgoing/, s/x settle it, l(ater)/enter leaves it, q
-    stops asking. Rows a worker holds are simply skipped this round."""
+    pass via outgoing/, s/x settle it, l(ater)/enter leaves it, r
+    requeues it for a fresh review (``retry`` produces it inline and
+    the fresh verdict is asked again; without an inline worker the
+    request waits for one), q stops asking. Rows a worker holds are
+    simply skipped this round."""
     for kind, number in db.list_state("reviewed"):
-        if kind not in kinds or not filedb.is_base(number) \
-                or db.find(kind, number) != "reviewed":
+        if kind not in kinds or not filedb.is_base(number):
             continue
-        ticket = db.get("reviewed", kind, number) or {}
-        decision = ticket_decision(kind, number, ticket)
-        if not postable(decision):
-            continue
-        print(f"\n{ticket.get('html_url') or f'{kind} #{number}'}"
-              f"  {ticket.get('title', '')}")
-        print(fairy.manual_action_description(decision))
-        message = (ticket.get("review") or {}).get("message") or ""
-        if message:
-            print(message)
-        while True:
-            try:
-                choice = input(f"{kind} #{number}: post? "
-                               "[y]es/[s]kip/[x] cancel/[l]ater/[q]uit ")
-            except EOFError:
-                return
-            choice = choice.strip().lower()
-            if choice in ("y", "yes"):
-                db.try_move("reviewed", "outgoing", kind, number)
+        asking = True
+        while asking and db.find(kind, number) == "reviewed":
+            asking = False
+            ticket = db.get("reviewed", kind, number) or {}
+            decision = ticket_decision(kind, number, ticket)
+            if not postable(decision):
                 break
-            if choice in ("s", "skip"):
-                db.try_move("reviewed", "skipped", kind, number,
-                            mutate=lambda d: d.update(
-                                reason="operator skip",
-                                snoozed_at=datetime.now(timezone.utc).isoformat()))
-                break
-            if choice in ("x", "cancel"):
-                db.try_move("reviewed", "cancelled", kind, number,
-                            mutate=lambda d: d.update(reason="operator cancel"))
-                break
-            if choice in ("", "l", "later"):
-                break
-            if choice in ("q", "quit"):
-                return
-            print("please answer y, s, x, l or q")
+            print(f"\n{ticket.get('html_url') or f'{kind} #{number}'}"
+                  f"  {ticket.get('title', '')}")
+            print(fairy.manual_action_description(decision))
+            message = (ticket.get("review") or {}).get("message") or ""
+            if message:
+                print(message)
+            while True:
+                try:
+                    choice = input(f"{kind} #{number}: post? [y]es/[s]kip/"
+                                   "[x] cancel/[r]etry/[l]ater/[q]uit ")
+                except EOFError:
+                    return
+                choice = choice.strip().lower()
+                if choice in ("y", "yes"):
+                    db.try_move("reviewed", "outgoing", kind, number)
+                    break
+                if choice in ("s", "skip"):
+                    db.try_move("reviewed", "skipped", kind, number,
+                                mutate=lambda d: d.update(
+                                    reason="operator skip",
+                                    snoozed_at=datetime.now(timezone.utc).isoformat()))
+                    break
+                if choice in ("x", "cancel"):
+                    db.try_move("reviewed", "cancelled", kind, number,
+                                mutate=lambda d: d.update(reason="operator cancel"))
+                    break
+                if choice in ("r", "retry"):
+                    db.push("requests", kind, number, {"action": "rerun"})
+                    if retry is None:
+                        print("rerun requested; a worker will pick it up")
+                    else:
+                        retry()
+                        asking = True
+                        if db.find(kind, number) != "reviewed":
+                            print(f"{kind} #{number}: the rerun verdict landed "
+                                  f"in {db.find(kind, number)}/")
+                    break
+                if choice in ("", "l", "later"):
+                    break
+                if choice in ("q", "quit"):
+                    return
+                print("please answer y, s, x, r, l or q")
 
 
 def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
@@ -692,7 +708,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--ask", action="store_true",
                    help="prompt per reviewed verdict before the send pass "
                         "(the pre-TUI manual flow: y posts, s/x settle, "
-                        "l defers, q stops)")
+                        "r reruns the review, l defers, q stops)")
     p.add_argument("--dry-run", action="store_true",
                    help="log what the send pass would post; post nothing")
     args = p.parse_args(argv)
@@ -731,15 +747,21 @@ def db_root_for(ns: argparse.Namespace) -> Path:
 def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
              issue_ns: argparse.Namespace | None,
              args: argparse.Namespace) -> None:
-    scan_pass(db, pr_ns, issue_ns)
-    if args.drain:
-        # Imported here: worker imports agent for db_root_for, so a
-        # module-level import back would be circular.
-        import worker
-        worker.drain(db, {k: v for k, v in (("pr", pr_ns), ("issue", issue_ns))
-                          if v is not None}, parallel=args.drain)
+    sides = {k: v for k, v in (("pr", pr_ns), ("issue", issue_ns))
+             if v is not None}
+
+    def review_cycle() -> None:
+        scan_pass(db, pr_ns, issue_ns)
+        if args.drain:
+            # Imported here: worker imports agent for db_root_for, so a
+            # module-level import back would be circular.
+            import worker
+            worker.drain(db, sides, parallel=args.drain)
+
+    review_cycle()
     if args.ask:
-        ask_pass(db, {k for k, v in (("pr", pr_ns), ("issue", issue_ns)) if v})
+        ask_pass(db, set(sides),
+                 retry=review_cycle if args.drain else None)
     send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
     log_summary(db)
 

@@ -636,6 +636,13 @@ class PortedGateContractTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", 1), "queued")
 
+    def test_naive_timestamps_never_crash_the_scan(self) -> None:
+        # a hand-edited timestamp without timezone must not TypeError
+        self.db.push("skipped", "pr", 1,
+                     dict(llm_skip(24), llm_at="2026-01-01T00:00:00"))
+        self.scan([make_pr(1)])  # months old: window served long ago
+        self.assertEqual(self.db.find("pr", 1), "queued")
+
 
 def make_issue(n: int) -> dict:
     return {"number": n, "title": f"i{n}",

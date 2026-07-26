@@ -374,6 +374,10 @@ class Db:
                 when = datetime.fromisoformat(changed)
             except (TypeError, ValueError):
                 continue
+            if when.tzinfo is None:
+                # hand-edited naive timestamp: comparing it with the
+                # aware cutoff would TypeError and kill the pass
+                when = when.replace(tzinfo=timezone.utc)
             if when < before:
                 with self.lock(kind, number):
                     self.path(state, kind, number).unlink(missing_ok=True)

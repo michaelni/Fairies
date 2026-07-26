@@ -92,9 +92,10 @@ def backoff_wait_h(prior_backoff_h: float) -> float:
 
 
 def _age_h(data: dict, now: datetime, field: str = "state_changed_at") -> float:
-    try:
-        changed = datetime.fromisoformat(data[field])
-    except (KeyError, TypeError, ValueError):
+    # iso_to_dt: a hand-edited naive timestamp must degrade to a wrong
+    # age, never to a TypeError that kills the scan pass
+    changed = iso_to_dt(data.get(field))
+    if changed is None:
         return float("inf")
     return (now - changed).total_seconds() / 3600.0
 

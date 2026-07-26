@@ -125,13 +125,14 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
     }
 
 
-def _route(db: filedb.Db, kind: str, number: int, state: str, data: dict) -> None:
-    """Scan-time routing: dst-first, and refused when the item went
-    in-flight (a worker claim, or an operator y moving it to outgoing/)
-    during the seconds the prepare took -- the earlier IN_FLIGHT check
-    is stale by then and a blind pop would delete the pending work."""
-    if not db.replace(state, kind, number, data, unless=IN_FLIGHT):
-        logger.info("%s #%d went in-flight while preparing; not rerouted",
+def _route(db: filedb.Db, kind: str, number: int, state: str, data: dict,
+           prior: str | None) -> None:
+    """Scan-time routing: dst-first, and refused when the item moved at
+    all (worker claim, operator y/s/x) during the seconds the prepare
+    took -- the scan's decision was made against ``prior`` and is stale
+    for anything else."""
+    if not db.replace(state, kind, number, data, expect=prior):
+        logger.info("%s #%d moved while preparing; not rerouted",
                     kind, number)
 
 
@@ -257,7 +258,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                                                 "skipped"):
                 if prior != "skipped" or (prior_data or {}).get("llm_at"):
                     continue
-            _route(db, kind, number, state, gate_ticket(prepared, item))
+            _route(db, kind, number, state, gate_ticket(prepared, item), prior)
             continue
         if in_backoff_window:
             # updated_at moved during the wait, but only real activity
@@ -284,7 +285,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             "forced": number in forced_ns,
             "prepared": fairy.prepared_to_dict(prepared),
         }
-        _route(db, kind, number, "queued", ticket)
+        _route(db, kind, number, "queued", ticket, prior)
         queued += 1
         logger.info("%s #%d queued (backoff %gh, %d/%s)", kind, number,
                     backoff_h, queued, limit or "inf")

@@ -222,20 +222,20 @@ class Db:
             return True
 
     def replace(self, state: str, kind: str, number: int, data: dict,
-                *, unless: tuple[str, ...] = ()) -> bool:
+                *, expect: str | None) -> bool:
         """Put the item into ``state`` wherever it currently is: dst is
         written FIRST, then the old file dropped, so a crash leaves a
         remnant for the precedence rule, never a lost ticket. Non-
-        blocking, and refused (False) when the item is claimed or its
-        current state is in ``unless`` -- it moved while the caller was
-        deciding."""
+        blocking, and refused (False) when the item is claimed or no
+        longer in ``expect`` -- any move under the caller's feet (a
+        worker claim, an operator y/s/x) invalidates the decision."""
         try:
             fd = self._lock_fd(kind, number, block=False)
         except OSError:
             return False
         try:
             prior = self.find(kind, number)
-            if prior in unless:
+            if prior != expect:
                 return False
             self._write_state(state, kind, number, data)
             if prior is not None and prior != state:

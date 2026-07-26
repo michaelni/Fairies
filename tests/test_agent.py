@@ -238,6 +238,23 @@ class ReuseTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", 1), "queued")
 
+    def test_s_and_x_during_the_slow_prepare_are_not_clobbered(self) -> None:
+        # Same race as the y test below, for the decline actions: the
+        # operator said no during the prepare; the fresh queued ticket
+        # must not resurrect the item.
+        self.db.push("reviewed", "pr", 1, {
+            "review": {"classification": "moderate_issues"},
+            "expected_updated_at": "old", "expected_head_ref": "old"})
+
+        def prepare_and_skip(ns, pr, **kw):
+            self.db.try_move("reviewed", "skipped", "pr", pr["number"],
+                             mutate=lambda d: d.update(reason="operator skip"))
+            return prepared_for(pr)
+
+        self.prepare.side_effect = prepare_and_skip
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "skipped")
+
     def test_y_press_during_the_slow_prepare_is_not_clobbered(self) -> None:
         # The IN_FLIGHT check runs before prepare; prepare takes seconds.
         # An operator y (reviewed -> outgoing) in that window must not be

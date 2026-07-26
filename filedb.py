@@ -141,6 +141,10 @@ class Db:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=1)
                 f.write("\n")
+                f.flush()
+                # fsync before the rename: without it a power loss can
+                # leave a truncated ticket under the final name
+                os.fsync(f.fileno())
             os.replace(tmp, dst)
         except BaseException:
             Path(tmp).unlink(missing_ok=True)
@@ -193,6 +197,11 @@ class Db:
             return json.loads(self.path(state, kind, number).read_text(encoding="utf-8"))
         except FileNotFoundError:
             return None
+        except ValueError as exc:
+            # a torn or hand-broken ticket must degrade (callers treat
+            # None as no-prior-data), not wedge every pass that reads it
+            logger.error("unreadable %s/%s-%d: %s", state, kind, number, exc)
+            return None
 
     def pop(self, state: str, kind: str, number: int) -> dict | None:
         """Read and delete; None when absent."""
@@ -201,6 +210,9 @@ class Db:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except FileNotFoundError:
+                return None
+            except ValueError as exc:
+                logger.error("unreadable %s/%s-%d: %s", state, kind, number, exc)
                 return None
             path.unlink()
             return data
@@ -214,6 +226,10 @@ class Db:
             try:
                 data = json.loads(src.read_text(encoding="utf-8"))
             except FileNotFoundError:
+                return False
+            except ValueError as exc:
+                logger.error("unreadable %s/%s-%d: %s",
+                             src_state, kind, number, exc)
                 return False
             if mutate is not None:
                 mutate(data)

@@ -74,6 +74,15 @@ class ReapRemnantOnlyTests(DbCase):
         self.assertIsNotNone(self.db.get("outgoing", "pr", 2))
 
 
+class TornTicketTests(DbCase):
+    def test_torn_tickets_degrade_instead_of_wedging(self) -> None:
+        self.db.push("skipped", "pr", 5, {"a": 1})
+        self.db.path("skipped", "pr", 5).write_text("{ torn")
+        self.assertIsNone(self.db.get("skipped", "pr", 5))
+        self.assertIsNone(self.db.pop("skipped", "pr", 5))
+        self.assertFalse(self.db.move("skipped", "queued", "pr", 5))
+
+
 class TryPopTests(DbCase):
     def test_try_pop_refuses_claimed_items_instead_of_blocking(self) -> None:
         self.db.push("requests", "pr", 5, {"action": "rerun"})

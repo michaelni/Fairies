@@ -941,6 +941,64 @@ class ColorTests(unittest.TestCase):
         self.assertEqual(logging_setup.call_args.kwargs["color"], "never")
 
 
+class _StopLoop(BaseException):
+    """Sentinel to end a daemon loop; a BaseException so the loop's own
+    ``except Exception`` cannot swallow it."""
+
+
+class LoopTests(unittest.TestCase):
+    """--loop N is the daemon contract: keep passing, and survive a
+    failed pass. Without it one pass runs and an error is fatal, so
+    cron sees the failure in the exit code."""
+
+    def run_main(self, flags: str, outcomes: list) -> list[int]:
+        import shlex
+        import time
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        argv = ["agent.py", "--db-root", tmp.name,
+                "--pr-args", "--owner o --repo r"] + shlex.split(flags)
+        calls = self.calls = []
+
+        def one_pass(*args, **kwargs) -> None:
+            calls.append(len(calls))
+            outcome = outcomes[min(len(calls) - 1, len(outcomes) - 1)]
+            if outcome is not None:
+                raise outcome
+
+        wake = mock.Mock()
+        wake.wait.side_effect = lambda timeout=None: time.sleep(timeout or 0)
+        with mock.patch.object(agent, "one_pass", side_effect=one_pass), \
+                mock.patch.object(agent, "send_pass"), \
+                mock.patch.object(agent, "setup_logging"), \
+                mock.patch.object(agent, "watch_paths"), \
+                mock.patch.object(agent, "Event", return_value=wake), \
+                mock.patch.object(sys, "argv", argv):
+            self.rc = agent.main()
+        return calls
+
+    def test_loop_keeps_scanning(self) -> None:
+        with self.assertRaises(_StopLoop):
+            self.run_main("--loop 0.01", [None, None, _StopLoop()])
+        self.assertEqual(len(self.calls), 3)
+
+    def test_without_loop_a_single_pass_returns(self) -> None:
+        self.assertEqual(self.run_main("", [None]), [0])
+        self.assertEqual(self.rc, 0)
+
+    def test_a_failed_pass_does_not_kill_the_daemon(self) -> None:
+        """A transient forge/gcli error costs one interval, not the
+        whole service."""
+        with self.assertRaises(_StopLoop):
+            self.run_main("--loop 0.01", [RuntimeError("forge 500"),
+                                          _StopLoop()])
+        self.assertEqual(len(self.calls), 2)
+
+    def test_a_failed_pass_is_fatal_in_one_shot_mode(self) -> None:
+        with self.assertRaises(RuntimeError):
+            self.run_main("", [RuntimeError("forge 500")])
+
+
 class OnePassTests(unittest.TestCase):
     def _run(self, argv: list[str]) -> list[str]:
         import worker

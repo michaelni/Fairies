@@ -215,6 +215,64 @@ class DrainTests(WorkerCase):
         self.assertTrue(t["llm_at"])
 
 
+class _StopLoop(BaseException):
+    """Sentinel to end the worker loop; a BaseException so the loop's
+    own ``except Exception`` cannot swallow it."""
+
+
+class LoopTests(unittest.TestCase):
+    """--loop N is the daemon contract, the same one the agent keeps:
+    keep draining, and survive a failed drain. Without it the worker
+    drains once and an error is fatal, so cron sees the exit code."""
+
+    def run_main(self, flags: str, outcomes: list) -> list[int]:
+        import shlex
+        import time
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        argv = ["worker.py", "--db-root", tmp.name,
+                "--pr-args", "--owner o --repo r"] + shlex.split(flags)
+        calls = self.calls = []
+
+        def drain(*args, **kwargs) -> int:
+            calls.append(len(calls))
+            outcome = outcomes[min(len(calls) - 1, len(outcomes) - 1)]
+            if outcome is not None:
+                raise outcome
+            return 0
+
+        wake = mock.Mock()
+        wake.wait.side_effect = lambda timeout=None: time.sleep(timeout or 0)
+        with mock.patch.object(worker, "drain", side_effect=drain), \
+                mock.patch.object(worker, "setup_logging"), \
+                mock.patch.object(worker, "watch_paths"), \
+                mock.patch.object(worker, "Event", return_value=wake), \
+                mock.patch.object(sys, "argv", argv):
+            self.rc = worker.main()
+        return calls
+
+    def test_loop_keeps_draining(self) -> None:
+        with self.assertRaises(_StopLoop):
+            self.run_main("--loop 0.01", [None, None, _StopLoop()])
+        self.assertEqual(len(self.calls), 3)
+
+    def test_without_loop_a_single_drain_returns(self) -> None:
+        self.assertEqual(self.run_main("", [None]), [0])
+        self.assertEqual(self.rc, 0)
+
+    def test_a_failed_drain_does_not_kill_the_daemon(self) -> None:
+        """A wrapper/provider outage costs one interval, not the whole
+        service."""
+        with self.assertRaises(_StopLoop):
+            self.run_main("--loop 0.01", [RuntimeError("provider 503"),
+                                          _StopLoop()])
+        self.assertEqual(len(self.calls), 2)
+
+    def test_a_failed_drain_is_fatal_in_one_shot_mode(self) -> None:
+        with self.assertRaises(RuntimeError):
+            self.run_main("", [RuntimeError("provider 503")])
+
+
 class ColorTests(unittest.TestCase):
     def test_side_color_reaches_setup_logging(self) -> None:
         tmp = tempfile.TemporaryDirectory()

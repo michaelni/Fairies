@@ -110,7 +110,7 @@ STATE_W = max(len(s) for s in _SORT_STATES)
 class Item:
     repo: str            # side repo label, "owner/repo"
     kind: str            # filedb kind: "pr" | "issue"
-    number: int
+    number: int | str  # ticket token; see filedb
     state: str           # filedb directory name, or "invalid"
     data: dict = field(default_factory=dict)  # last good ticket content
     error: str = ""      # why the current file fails to parse
@@ -138,7 +138,8 @@ _SORT_KEYS = {
     # repo mode orders by the short name the list column displays, or
     # rows would look unsorted whenever owners differ.
     "repo": lambda it: (_repo_short(it.repo).casefold(), it.repo, it.kind),
-    "number": lambda it: it.number,
+    # tokens sort with their base item, samples/reviews after it
+    "number": lambda it: (filedb.forge_number(it.number), str(it.number)),
 }
 
 
@@ -295,6 +296,11 @@ class Model:
                 return
             db = self.db(item)
             label = f"{_KIND_DISP[item.kind]} {item.repo}#{item.number}"
+            if action == "apply" and not filedb.is_base(item.number):
+                logger.info("%s is a sample/review evaluation: post the "
+                            "base ticket, or mv it to outgoing/ to force",
+                            label)
+                return
             if action in ("rerun", "force"):
                 if item.state in ("queued", "llm", "outgoing"):
                     logger.info("%s is already in flight", label)

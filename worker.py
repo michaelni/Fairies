@@ -120,7 +120,8 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
                 decision = issue_fairy.evaluate_issue(ns, prepared)
             except Exception as exc:
                 decision = fairy.Decision(
-                    claim.number, ticket.get("title", ""), ticket.get("author", ""),
+                    filedb.forge_number(claim.number), ticket.get("title", ""),
+                    ticket.get("author", ""),
                     "-", "error", str(exc), None, "error", "")
     finally:
         ns.workset_file_override = None
@@ -132,7 +133,7 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
     claim.finish(state, ticket)
     # workset.update_json's sidecar lock next to the claimed file
     claim.path.with_suffix(".lock").unlink(missing_ok=True)
-    logger.info("%s #%d -> %s (llm %s)", claim.kind, claim.number, state,
+    logger.info("%s #%s -> %s (llm %s)", claim.kind, claim.number, state,
                 decision.llm_classification)
     return state
 
@@ -153,7 +154,7 @@ def _review_claimed(sides: dict[str, argparse.Namespace],
         # (sorted-first) ticket on every pass and starve the
         # worker; a ticket that cannot even be read belongs in
         # error/ where the agent's retry gate paces it.
-        logger.exception("%s #%d: review failed; ticket -> error/",
+        logger.exception("%s #%s: review failed; ticket -> error/",
                          kind, number)
         try:
             ticket = claim.read()

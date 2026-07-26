@@ -133,7 +133,7 @@ def _route(db: filedb.Db, kind: str, number: int, state: str, data: dict,
     took -- the scan's decision was made against ``prior`` and is stale
     for anything else."""
     if not db.replace(state, kind, number, data, expect=prior):
-        logger.info("%s #%d moved while preparing; not rerouted",
+        logger.info("%s #%s moved while preparing; not rerouted",
                     kind, number)
 
 
@@ -148,16 +148,30 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
     else:
         fetch_one, list_open, forced_ns = issue_fairy.get_issue, \
             issue_fairy.list_open_issues, ns.force_review_issues
+    # a request may name a sample/review token: the base item is
+    # fetched and force-prepared once; tickets are created for each
+    # requested evaluation
+    evals: dict[int, set] = {}
+    forced_base = set()
+    for token in forced:
+        base = filedb.forge_number(token)
+        forced_base.add(base)
+        if not filedb.is_base(token):
+            evals.setdefault(base, set()).add(token)
+    # a samples-only request force-prepares the base as the payload
+    # template but must not queue a base evaluation nobody asked for
+    template_only = {b for b in evals
+                     if b not in forced and b not in forced_ns}
     if ns.forced_only:  # --forced-only: no open listing, just the named items
         items = []
-        missing = sorted(forced_ns | forced)
+        missing = sorted(forced_ns | forced_base)
     else:
         items = list_open(ns)
         listed = {int(i["number"]) for i in items
                   if str(i.get("number")).isdigit()}
         # forced/requested numbers may be closed or merged: absent from
         # the open listing but explicitly asked for
-        missing = sorted((forced_ns | forced) - listed)
+        missing = sorted((forced_ns | forced_base) - listed)
     for n in missing:
         try:
             items.append(fetch_one(ns, n))
@@ -172,7 +186,7 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
     # Request-forced numbers bypass the gates through the same ns set
     # the gates read; the addition is undone after the pass so a
     # request does not force every future scan.
-    added_forced = forced - forced_ns
+    added_forced = forced_base - forced_ns
     forced_ns |= added_forced
     cache_age = timedelta(hours=ns.discussion_cache_max_age_hours)
     items = [i for i in items if str(i.get("number")).isdigit()]
@@ -184,14 +198,16 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
         _scan_items(db, ns, kind, items, now=now, cache=cache,
                     self_login=self_login, forced_ns=forced_ns,
                     wip_re=wip_re if kind == "pr" else None,
-                    cache_age=cache_age, limit=limit)
+                    cache_age=cache_age, limit=limit, evals=evals,
+                    template_only=template_only)
     finally:
         forced_ns -= added_forced
     return open_set
 
 
 def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
-                wip_re, cache_age, limit) -> None:
+                wip_re, cache_age, limit, evals={},
+                template_only=frozenset()) -> None:
     queued = 0
     for item in sorted(items, key=lambda i: (int(i["number"]) not in forced_ns,
                                              int(i["number"]))):
@@ -270,8 +286,16 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                                                 "skipped"):
                 if prior != "skipped" or (prior_data or {}).get("llm_at"):
                     continue
-            _route(db, kind, number, state, gate_ticket(prepared, item),
-                   prior)
+            ticket = gate_ticket(prepared, item)
+            _route(db, kind, number, state, ticket, prior)
+            for token in evals.get(number, ()):
+                # a requested evaluation of a gate-skipped item cannot
+                # be built (no payload); the error ticket consumes the
+                # request and puts the reason on screen
+                if db.find(kind, token) in (None, "requests"):
+                    db.push("error", kind, token,
+                            {"error": f"base item gate-skipped: "
+                                      f"{prepared.reason}"})
             continue
         if in_backoff_window:
             # updated_at moved during the wait, but only real activity
@@ -301,7 +325,14 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             "forced": number in forced_ns,
             "prepared": fairy.prepared_to_dict(prepared),
         }
-        _route(db, kind, number, "queued", ticket, prior)
+        if number not in template_only:
+            _route(db, kind, number, "queued", ticket, prior)
+        for token in evals.get(number, ()):
+            # one prepare, one payload copy per requested evaluation;
+            # samples never re-enter via gates/backoff (scan keys on
+            # forge numbers only), so a skipped sample is final
+            _route(db, kind, token, "queued", dict(ticket),
+                   db.find(kind, token))
         queued += 1
         logger.info("%s #%d queued (backoff %gh, %d/%s)", kind, number,
                     backoff_h, queued, limit or "inf")
@@ -340,7 +371,8 @@ def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
     for state in ("queued", "reviewed", "ci-blocked", "merge-ready",
                   "awaiting-approver"):
         for kind, number in db.list_state(state):
-            if kind in kinds and (kind, number) not in open_set:
+            if kind in kinds \
+                    and (kind, filedb.forge_number(number)) not in open_set:
                 # try_move: a claimed item's lock is held for the whole
                 # review and must not stall the pass; retried next scan
                 if db.try_move(state, "cancelled", kind, number,
@@ -376,7 +408,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     finish_requests(db, forced, kinds)
     cancel_closed(db, open_set, full_kinds)
     for kind, number in db.reap():
-        logger.warning("%s #%d re-queued: its worker died", kind, number)
+        logger.warning("%s #%s re-queued: its worker died", kind, number)
     # a crash between finish's dst-write and src-unlink can leave a
     # reviewed/ remnant behind an outgoing/posted file; without this it
     # would be re-promoted and could re-post the verdict
@@ -385,10 +417,11 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         retention_ns = pr_ns or issue_ns
         before = now - timedelta(days=retention_ns.workset_retention_days)
         for state in ("posted", "skipped", "cancelled", "error"):
-            db.prune(state, before, keep=open_set)
+            db.prune(state, before, keep=open_set,
+                     key=lambda kn: (kn[0], filedb.forge_number(kn[1])))
 
 
-def ticket_decision(kind: str, number: int, ticket: dict) -> fairy.Decision | None:
+def ticket_decision(kind: str, number, ticket: dict) -> fairy.Decision | None:
     """Rebuild a postable Decision purely from a verdict ticket; the
     ticket's guard rides on the Decision so the staleness checks pin
     the post to the reviewed state."""
@@ -406,13 +439,15 @@ def ticket_decision(kind: str, number: int, ticket: dict) -> fairy.Decision | No
             for c in review.get("label_changes") or () if isinstance(c, dict)))
     if kind == "pr":
         decision = fairy.decision_from_review(
-            llm, number=number, title=ticket.get("title", ""),
+            llm, number=filedb.forge_number(number),
+            title=ticket.get("title", ""),
             author=ticket.get("author", ""), auto_merge="-",
             last_activity=iso_to_dt(ticket.get("last_activity_iso")),
             base_reason="persisted review")
     else:
         decision = issue_fairy.issue_review_decision(
-            llm, number=number, title=ticket.get("title", ""),
+            llm, number=filedb.forge_number(number),
+            title=ticket.get("title", ""),
             author=ticket.get("author", ""), reason="persisted review",
             last_activity=iso_to_dt(ticket.get("last_activity_iso")))
     return dataclasses_replace(
@@ -458,7 +493,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str, number: int, *,
             claim.finish("reviewed", dict(ticket, send_blocked="nothing to post"))
             return "reviewed"
         if dry_run:
-            logger.info("%s #%d: DRY RUN, would post: %s", kind, number,
+            logger.info("%s #%s: DRY RUN, would post: %s", kind, number,
                         fairy.manual_action_description(decision))
             claim.abort()
             return None
@@ -470,7 +505,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str, number: int, *,
             if post_decision(ns, kind, decision, cache=cache, counts=counts):
                 claim.finish("posted", dict(
                     ticket, posted_at=datetime.now(timezone.utc).isoformat()))
-                logger.info("%s #%d posted: %s", kind, number,
+                logger.info("%s #%s posted: %s", kind, number,
                             fairy.manual_action_description(decision))
                 return "posted"
             reason = "item changed during submit"
@@ -485,7 +520,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str, number: int, *,
         else:
             state = "reviewed"
         claim.finish(state, dict(ticket, send_blocked=reason))
-        logger.info("%s #%d not posted (%s) -> %s/", kind, number, reason, state)
+        logger.info("%s #%s not posted (%s) -> %s/", kind, number, reason, state)
         return state
     except Exception:
         claim.abort()
@@ -497,7 +532,8 @@ def promote_reviewed(db: filedb.Db, kind: str) -> None:
     for k, number in db.list_state("reviewed"):
         # find() precedence: a reviewed/ crash remnant behind a later
         # state must not be promoted (and posted) a second time
-        if k == kind and db.find(kind, number) == "reviewed" and postable(
+        if k == kind and filedb.is_base(number) \
+                and db.find(kind, number) == "reviewed" and postable(
                 ticket_decision(kind, number, db.get("reviewed", kind, number) or {})):
             db.try_move("reviewed", "outgoing", kind, number)
 
@@ -514,7 +550,7 @@ def log_summary(db: filedb.Db) -> None:
     if ready:
         logger.info("reviewed/ awaiting you: %d", len(ready))
         for kind, number, action, title in ready:
-            logger.info("  %s #%-6d %-15s %s", kind, number, action, title)
+            logger.info("  %s #%-6s %-15s %s", kind, number, action, title)
     for state, label in (("merge-ready", "approved, ready to apply"),
                          ("ci-blocked", "CI needs a human"),
                          ("awaiting-approver", "waiting for an approver")):
@@ -527,7 +563,7 @@ def log_summary(db: filedb.Db) -> None:
             detail = ", ".join((t.get("cancelled_ci_contexts") or [])
                                + (t.get("blocked_ci_contexts") or [])
                                + (t.get("external_approvers") or []))
-            logger.info("  %s #%-6d %s%s", kind, number, t.get("title", ""),
+            logger.info("  %s #%-6s %s%s", kind, number, t.get("title", ""),
                         f"  [{detail}]" if detail else "")
 
 
@@ -537,7 +573,8 @@ def ask_pass(db: filedb.Db, kinds: set[str]) -> None:
     pass via outgoing/, s/x settle it, l(ater)/enter leaves it, q
     stops asking. Rows a worker holds are simply skipped this round."""
     for kind, number in db.list_state("reviewed"):
-        if kind not in kinds or db.find(kind, number) != "reviewed":
+        if kind not in kinds or not filedb.is_base(number) \
+                or db.find(kind, number) != "reviewed":
             continue
         ticket = db.get("reviewed", kind, number) or {}
         decision = ticket_decision(kind, number, ticket)
@@ -588,7 +625,7 @@ def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                 for k, number in db.list_state("reviewed"):
                     if k == kind and postable(ticket_decision(
                             k, number, db.get("reviewed", k, number) or {})):
-                        logger.info("%s #%d: DRY RUN, would promote to "
+                        logger.info("%s #%s: DRY RUN, would promote to "
                                     "outgoing/", k, number)
             else:
                 promote_reviewed(db, kind)

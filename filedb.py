@@ -237,7 +237,7 @@ class Db:
         except ValueError as exc:
             # a torn or hand-broken ticket must degrade (callers treat
             # None as no-prior-data), not wedge every pass that reads it
-            logger.error("unreadable %s/%s-%d: %s", state, kind, number, exc)
+            logger.error("unreadable %s/%s-%s: %s", state, kind, number, exc)
             return None
 
     def pop(self, state: str, kind: str, number: int) -> dict | None:
@@ -249,7 +249,7 @@ class Db:
             except FileNotFoundError:
                 return None
             except ValueError as exc:
-                logger.error("unreadable %s/%s-%d: %s", state, kind, number, exc)
+                logger.error("unreadable %s/%s-%s: %s", state, kind, number, exc)
                 return None
             path.unlink()
             return data
@@ -265,7 +265,7 @@ class Db:
             except FileNotFoundError:
                 return False
             except ValueError as exc:
-                logger.error("unreadable %s/%s-%d: %s",
+                logger.error("unreadable %s/%s-%s: %s",
                              src_state, kind, number, exc)
                 return False
             if mutate is not None:
@@ -310,6 +310,13 @@ class Db:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
             except FileNotFoundError:
+                return None
+            except ValueError as exc:
+                # a torn command file carries no recoverable intent:
+                # consuming it beats wedging every pass on it
+                logger.error("unreadable %s/%s-%s: %s; discarding",
+                             state, kind, number, exc)
+                path.unlink(missing_ok=True)
                 return None
             path.unlink()
             return data
@@ -400,7 +407,7 @@ class Db:
                          if self.path(s, kind, number).exists()]
                 if later:
                     path.unlink(missing_ok=True)
-                    logger.info("reaped crash remnant %s/%s-%d (item is in %s)",
+                    logger.info("reaped crash remnant %s/%s-%s (item is in %s)",
                                 state, kind, number, later[-1])
                 elif to_state is not None and path.exists():
                     os.rename(path, self.path(to_state, kind, number))
@@ -414,13 +421,17 @@ class Db:
         return recovered
 
     def prune(self, state: str, before: datetime,
-              keep: set[tuple[str, int]] = frozenset()) -> int:
+              keep: set[tuple[str, int]] = frozenset(),
+              key=None, kinds=None) -> int:
         """Delete ``state`` items whose last transition predates
-        ``before``, except those in ``keep`` (e.g. still-open items
-        whose archived verdict is backoff memory)."""
+        ``before``, except those whose ``key((kind, number))`` (default:
+        identity) is in ``keep`` (e.g. still-open items whose archived
+        verdict is backoff memory)."""
         removed = 0
         for kind, number in self.list_state(state):
-            if (kind, number) in keep:
+            if kinds is not None and kind not in kinds:
+                continue  # another agent's kind: its open-set, its call
+            if (key((kind, number)) if key else (kind, number)) in keep:
                 continue
             data = self.get(state, kind, number)
             if data is None:
@@ -438,7 +449,7 @@ class Db:
                 with self.lock(kind, number):
                     self.path(state, kind, number).unlink(missing_ok=True)
                     removed += 1
-                    logger.info("pruned %s/%s-%d (settled since %s)",
+                    logger.info("pruned %s/%s-%s (settled since %s)",
                                 state, kind, number, changed)
                     if self.find(kind, number) is None:
                         # last trace gone: drop the item's lock file too,

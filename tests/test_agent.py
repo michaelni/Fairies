@@ -363,6 +363,35 @@ class LifecycleTests(AgentCase):
         self.assertEqual(self.db.get("requests", "issue", 9)["action"],
                          "rerun")
 
+    def test_sample_requests_create_parallel_evaluations(self) -> None:
+        # 3 samples = 3 queued tickets from one prepare; no base
+        # evaluation nobody asked for
+        for token in ("7s1", "7s2", "7s3"):
+            self.db.push("requests", "pr", token, {"action": "rerun"})
+        self.scan([make_pr(7)])
+        self.assertEqual(self.db.list_state("queued"),
+                         [("pr", "7s1"), ("pr", "7s2"), ("pr", "7s3")])
+        for token in ("7s1", "7s2", "7s3"):
+            t = self.db.get("queued", "pr", token)
+            self.assertEqual(fairy.prepared_pr_from_dict(
+                t["prepared"]).number, 7)
+            self.assertIsNone(self.db.get("requests", "pr", token))
+
+    def test_skipped_sample_never_requeues(self) -> None:
+        # a 3-sample evaluation must not loop into 3 more evaluations
+        self.db.push("skipped", "pr", "7s1",
+                     dict(llm_skip(0), reason="operator skip"))
+        self.age("skipped", "pr", "7s1", hours=100)  # any wait long served
+        self.scan([make_pr(7)])
+        self.assertEqual(self.db.find("pr", "7s1"), "skipped")
+
+    def test_sample_of_a_gate_skipped_item_becomes_an_error_ticket(self) -> None:
+        self.db.push("requests", "pr", "7s1", {"action": "rerun"})
+        self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(pr, "not open")
+        self.scan([make_pr(7)])
+        self.assertIn("gate-skipped", self.db.get("error", "pr", "7s1")["error"])
+        self.assertIsNone(self.db.get("requests", "pr", "7s1"))
+
     def test_old_settled_tickets_are_pruned_open_ones_kept(self) -> None:
         self.db.push("posted", "pr", 1, {})   # still open -> kept
         self.db.push("posted", "pr", 99, {})  # closed + old -> pruned

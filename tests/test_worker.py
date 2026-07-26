@@ -105,6 +105,24 @@ class VerdictRoutingTests(WorkerCase):
         self.assertNotIn("stage", t)  # transient progress, spent with the run
 
 
+class OperatorVetoTests(WorkerCase):
+    def test_cancel_flag_discards_the_verdict(self) -> None:
+        self.db.push("queued", "pr", 5, queued_ticket(5))
+
+        def llm_with_midway_cancel(ns, prepared):
+            workset.update_json(
+                Path(ns.workset_file_override),
+                lambda d: d.update(cancel=True, reason="operator cancel"))
+            return decision(prepared.number)
+
+        state = self.run_one(5, llm_with_midway_cancel)
+        self.assertEqual(state, "cancelled")
+        t = self.db.get("cancelled", "pr", 5)
+        self.assertEqual(t["reason"], "operator cancel")
+        self.assertNotIn("review", t)
+        self.assertIsNone(self.db.get("llm", "pr", 5))
+
+
 class DrainTests(WorkerCase):
     def test_drain_reviews_every_queued_ticket_of_its_kinds(self) -> None:
         for n in (1, 2):

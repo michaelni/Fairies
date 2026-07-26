@@ -236,16 +236,21 @@ class CodexShellRelay:
             self.stop()
             raise RuntimeError(f"codex relay failed to start: {ready!r}")
         self._thread = threading.Thread(
-            target=serve_dispatch,
-            args=(self._proc.stdout, self._proc.stdin),
-            kwargs=dict(machine_labels=self.machine_labels,
-                        open_shell=self.open_shell,
-                        max_timeout_s=self.max_timeout_s,
-                        shells=self._shells),
-            name="codex-shell-dispatch", daemon=True,
+            target=self._serve, name="codex-shell-dispatch", daemon=True,
         )
         self._thread.start()
         return self
+
+    def _serve(self) -> None:
+        try:
+            serve_dispatch(self._proc.stdout, self._proc.stdin,
+                           machine_labels=self.machine_labels,
+                           open_shell=self.open_shell,
+                           max_timeout_s=self.max_timeout_s,
+                           shells=self._shells)
+        except SystemExit:
+            logger.warning("operator cancelled; stopping the codex container")
+            self.container.stop()
 
     def _drain_stderr(self) -> None:
         buffered = 0

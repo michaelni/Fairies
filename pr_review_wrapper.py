@@ -1184,6 +1184,7 @@ def open_review_container_shell(
 
 def main() -> int:
     args = parse_args()
+    shell_tool.CANCEL_FILE = args.workset_file
     debug_dir_specified = any(
         arg == "--debug-response-dir" or arg.startswith("--debug-response-dir=")
         for arg in sys.argv[1:]

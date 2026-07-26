@@ -128,8 +128,11 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
     ticket = claim.read()  # the wrapper noted stage/triage/drafts meanwhile
     ticket.pop("prepared", None)
     ticket.pop("stage", None)
-    ticket.update(verdict_fields(decision, prepared))
-    state = verdict_state(decision)
+    if ticket.pop("cancel", None):
+        state = "cancelled"
+    else:
+        ticket.update(verdict_fields(decision, prepared))
+        state = verdict_state(decision)
     claim.finish(state, ticket)
     # workset.update_json's sidecar lock next to the claimed file
     claim.path.with_suffix(".lock").unlink(missing_ok=True)

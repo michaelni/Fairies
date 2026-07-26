@@ -67,6 +67,7 @@ from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import BadModelOutput, ReviewContext, Reviewer, RoleSpec
 from podman_host import ShellHostSpec
+import shell_tool
 
 __all__ = [
     "CODEX_EFFORTS",
@@ -548,6 +549,8 @@ class CodexReviewer(Reviewer):
         except BadModelOutput:
             raise  # codex ran fine, only the final JSON was malformed
         except Exception:
+            if shell_tool.cancelled():
+                raise SystemExit("operator cancelled")
             # An abnormal exit may mean a PR-derived command tampered with the
             # review containers, so mark them for forensics rather than removal.
             if ctx.report_poisoned is not None and relay is not None:

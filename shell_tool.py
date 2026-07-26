@@ -42,7 +42,9 @@ its own envelope around it.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import os
 import threading
 from typing import Callable, Sequence
 
@@ -57,6 +59,7 @@ from shell_bridge_client import (  # noqa: F401
 __all__ = [
     "DEFAULT_SHELL_TIMEOUT_S",
     "build_shell_tool_schema",
+    "cancelled",
     "exec_machine_call",
     "exec_shell_call",
     "run_session_commands",
@@ -65,6 +68,19 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 DEFAULT_SHELL_TIMEOUT_S = 120.0
+CANCEL_FILE: str | None = None
+_cancel_state = (0, False)
+
+
+def cancelled() -> bool:
+    global _cancel_state
+    if not CANCEL_FILE:
+        return False
+    stamp = os.stat(CANCEL_FILE).st_mtime_ns
+    if stamp != _cancel_state[0]:
+        _cancel_state = (stamp,
+                         bool(json.load(open(CANCEL_FILE)).get("cancel")))
+    return _cancel_state[1]
 
 
 def exec_shell_call(
@@ -83,6 +99,8 @@ def exec_shell_call(
     rather than raising. ``timeout_seconds`` is clamped to
     ``[1.0, max_timeout_s]``.
     """
+    if cancelled():
+        raise SystemExit("operator cancelled")
     if not isinstance(args, dict):
         return {"error": "arguments must be a JSON object"}
     command = args.get("command")

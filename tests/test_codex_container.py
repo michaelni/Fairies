@@ -122,5 +122,25 @@ class RelayReadinessTests(unittest.TestCase):
         self.assertTrue(proc.killed)
 
 
+class RelayCancelTests(unittest.TestCase):
+    def _serve(self, dispatch_effect) -> mock.Mock:
+        container = mock.Mock()
+        relay = CodexShellRelay(
+            container, relay_container_path="/work/.codex-run/relay.py",
+            machine_labels=("x86_64",), open_shell=lambda label: (None, ""),
+            max_timeout_s=60.0)
+        relay._proc = _FakeProc(b"")
+        with mock.patch.object(codex_container, "serve_dispatch",
+                               side_effect=dispatch_effect):
+            relay._serve()
+        return container
+
+    def test_cancel_at_a_shell_call_stops_the_codex_container(self) -> None:
+        self._serve(SystemExit).stop.assert_called_once()
+
+    def test_normal_eof_stops_nothing(self) -> None:
+        self._serve(None).stop.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

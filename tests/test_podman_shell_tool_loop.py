@@ -461,3 +461,45 @@ class ShellToolSchemaTests(unittest.TestCase):
         self.assertIn("default x86_64", machine["description"])
         self.assertNotIn("machine", tool["parameters"]["required"])
 
+
+
+class CancelPlaneTests(unittest.TestCase):
+    def setUp(self) -> None:
+        import shell_tool
+        import tempfile
+        self.shell_tool = shell_tool
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.path = Path(tmp.name) / "pr-5.json"
+        self.path.write_text("{}")
+        shell_tool.CANCEL_FILE = str(self.path)
+        shell_tool._cancel_state = (0, False)
+        self.addCleanup(setattr, shell_tool, "CANCEL_FILE", None)
+
+    def _ok_session(self):
+        session = mock.Mock(spec=lc.ContainerShellSession)
+        session.exec.return_value = lc.ExecResult(
+            exit_code=0, stdout="ok\n", stderr="", duration_s=0.01,
+            stdout_truncated=False, stderr_truncated=False)
+        return session
+
+    def test_flagged_claim_stops_before_the_command_runs(self) -> None:
+        self.path.write_text('{"cancel": true}')
+        session = mock.Mock()
+        with self.assertRaises(SystemExit):
+            self.shell_tool.exec_shell_call(session, {"command": "true"},
+                                            max_timeout_s=5)
+        session.exec.assert_not_called()
+
+    def test_unflagged_claim_does_not_interfere(self) -> None:
+        payload = self.shell_tool.exec_shell_call(
+            self._ok_session(), {"command": "true"}, max_timeout_s=5)
+        self.assertEqual(payload["exit_code"], 0)
+
+    def test_flag_written_after_a_clean_check_is_still_caught(self) -> None:
+        self.shell_tool.exec_shell_call(
+            self._ok_session(), {"command": "true"}, max_timeout_s=5)
+        self.path.write_text('{"cancel": true}')
+        with self.assertRaises(SystemExit):
+            self.shell_tool.exec_shell_call(
+                self._ok_session(), {"command": "true"}, max_timeout_s=5)

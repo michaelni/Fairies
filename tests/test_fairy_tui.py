@@ -247,6 +247,15 @@ class ActTests(DbCase):
         self.assertEqual(self.db.get("cancelled", "pr", 6)["reason"],
                          "operator cancel")
 
+    def test_x_on_a_running_review_requests_the_cancel(self) -> None:
+        self.db.push("llm", "pr", 5, verdict(5))
+        self.model.poll()
+        self.model.act("cancel")
+        t = self.db.get("llm", "pr", 5)
+        self.assertTrue(t["cancel"])
+        self.assertEqual(t["reason"], "operator cancel")
+        self.assertEqual(self.db.find("pr", 5), "llm")
+
     def test_act_advances_to_the_next_reviewed_row(self) -> None:
         self.db.push("reviewed", "pr", 1, verdict(1))
         self.db.push("reviewed", "pr", 2, verdict(2))

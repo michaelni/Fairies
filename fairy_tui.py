@@ -78,6 +78,7 @@ import fairy
 import filedb
 import issue_fairy
 import tui_core
+import workset
 from common import setup_logging, watch_paths
 
 __all__ = ["main"]
@@ -338,6 +339,8 @@ class Model:
                 logger.info("%s -> outgoing/ (the agent's send pass posts it)",
                             label)
                 self._advance_to_reviewed(key)
+            elif action == "cancel" and item.state == "llm":
+                workset.update_json(db.path("llm", item.kind, item.number), lambda d: d.update(cancel=True, reason="operator cancel"))
             elif action in ("skip", "cancel"):
                 dst = "skipped" if action == "skip" else "cancelled"
                 if item.state in ("llm", INVALID) or item.state in HIDDEN_SETTLED:

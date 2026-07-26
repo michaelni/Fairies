@@ -387,6 +387,16 @@ class CodexReviewerRunTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "no final message"):
             self._run(last_message=None)
 
+    def test_cancel_killed_run_skips_poisoning(self) -> None:
+        poisoned = []
+        ctx = _ctx(report_poisoned=poisoned.append)
+        self._relay_sessions = ["a session codex had opened"]
+        with mock.patch.object(codex_reviewer.shell_tool, "cancelled",
+                               return_value=True):
+            with self.assertRaises(SystemExit):
+                self._run(last_message=None, ctx=ctx)
+        self.assertFalse(poisoned)
+
     def test_non_json_final_message_is_bad_model_output(self) -> None:
         with self.assertRaises(BadModelOutput):
             self._run(last_message="I approve of this patch.")

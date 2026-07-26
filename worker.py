@@ -240,7 +240,7 @@ def main() -> int:
         sides["issue"] = issue_fairy.parse_args(shlex.split(args.issue_args))
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
-                  logger, workset.logger, filedb.logger)
+                  logger, workset.logger, filedb.logger, color=lead.color)
     for log_file in {ns.log_file for ns in sides.values() if ns.log_file}:
         add_file_log(log_file, fairy.logger, logger, workset.logger,
                      filedb.logger)

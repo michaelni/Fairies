@@ -776,7 +776,7 @@ def main() -> int:
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   logger, workset.logger, gcli_cache.logger, filedb.logger,
-                  forge_gcli.logger, ci_log.logger)
+                  forge_gcli.logger, ci_log.logger, color=lead.color)
     for log_file in {ns.log_file for ns in (pr_ns, issue_ns)
                      if ns and ns.log_file}:
         add_file_log(log_file, fairy.logger, logger, workset.logger,

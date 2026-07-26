@@ -910,6 +910,19 @@ class StartupValidationTests(unittest.TestCase):
         agent.validate_sides(self.pr("--forced-only --force-review-pr 5"), None)
 
 
+class ColorTests(unittest.TestCase):
+    def test_side_color_reaches_setup_logging(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        argv = ["agent.py", "--db-root", tmp.name,
+                "--pr-args", "--owner o --repo r --color never"]
+        with mock.patch.object(agent, "setup_logging") as logging_setup, \
+                mock.patch.object(agent, "one_pass"), \
+                mock.patch.object(sys, "argv", argv):
+            agent.main()
+        self.assertEqual(logging_setup.call_args.kwargs["color"], "never")
+
+
 class OnePassTests(unittest.TestCase):
     def _run(self, argv: list[str]) -> list[str]:
         import worker

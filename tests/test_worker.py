@@ -215,5 +215,18 @@ class DrainTests(WorkerCase):
         self.assertTrue(t["llm_at"])
 
 
+class ColorTests(unittest.TestCase):
+    def test_side_color_reaches_setup_logging(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        argv = ["worker.py", "--db-root", tmp.name,
+                "--pr-args", "--owner o --repo r --color always"]
+        with mock.patch.object(worker, "setup_logging") as logging_setup, \
+                mock.patch.object(worker, "drain"), \
+                mock.patch.object(sys, "argv", argv):
+            worker.main()
+        self.assertEqual(logging_setup.call_args.kwargs["color"], "always")
+
+
 if __name__ == "__main__":
     unittest.main()

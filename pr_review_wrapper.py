@@ -651,6 +651,10 @@ def parse_args() -> argparse.Namespace:
         p.error(f"duplicate machine labels in --shell-host: {', '.join(labels)}")
     if args.podman and not args.machines:
         p.error("--podman requires at least one --shell-host")
+    if args.extra_model and not args.combine_model:
+        # rejected at parse time: discovered after run_parallel it would
+        # have billed every reviewer before failing
+        p.error("--extra-model requires --combine-model to merge the drafts")
     codex_host_spec = args.codex_host
     args.codex_host = None
     if codex_host_spec:

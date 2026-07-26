@@ -38,6 +38,12 @@ class ModelEnsembleOptionTests(unittest.TestCase):
     """--extra-model / --combine-model build the reviewer ensemble in
     main() and are validated against --codex-host at parse time."""
 
+    def test_extra_model_without_combine_model_fails_at_parse_time(self) -> None:
+        """Discovered at run time it would bill every reviewer first."""
+        with self.assertRaises(SystemExit) as ctx:
+            parse("--extra-model", "anthropic:claude-opus-4")
+        self.assertEqual(ctx.exception.code, 2)
+
     def test_extra_model_is_repeatable_and_ordered(self) -> None:
         args = parse("--extra-model", "anthropic:claude-opus-4",
                      "--extra-model", "zai:glm-5.2",
@@ -53,8 +59,10 @@ class ModelEnsembleOptionTests(unittest.TestCase):
 
     def test_a_codex_extra_model_needs_a_codex_host(self) -> None:
         with self.assertRaises(SystemExit):
-            parse("--extra-model", "codex:gpt-5.6-sol")
+            parse("--extra-model", "codex:gpt-5.6-sol",
+                  "--combine-model", "openai:gpt-5.4")
         args = parse("--extra-model", "codex:gpt-5.6-sol",
+                     "--combine-model", "openai:gpt-5.4",
                      "--codex-host", "fairy@codexbox")
         self.assertEqual(args.extra_model, ["codex:gpt-5.6-sol"])
 

@@ -235,7 +235,8 @@ def review_pr(
 
     if combiner is None:
         if len(drafts) != 1:
-            raise SystemExit("more than one --model requires --combine-model to merge them")
+            raise SystemExit(
+                "several model reviewers require --combine-model to merge their drafts")
         return drafts[0]
 
     logger.info("combine stage: %s merging %d draft(s)", combiner.name, len(drafts))

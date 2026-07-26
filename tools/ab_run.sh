@@ -51,6 +51,8 @@ STUB="$NEW_TREE/tools/ab_stub_llm.py"
 
 mkdir -p "$AB_DIR/payloads-a" "$AB_DIR/payloads-b" "$AB_DIR/worksetA"
 echo "=== A/B snapshot -> $AB_DIR"
+git -C "$OLD_TREE" rev-parse HEAD > "$AB_DIR/arm-a.sha"
+git -C "$NEW_TREE" rev-parse HEAD > "$AB_DIR/arm-b.sha"
 cp "$PROD_CACHE" "$AB_DIR/cacheA.pkl"
 cp "$PROD_CACHE" "$AB_DIR/cacheB.pkl"
 cp "$PROD_ISSUE_CACHE" "$AB_DIR/icacheA.pkl"

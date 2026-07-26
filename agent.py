@@ -414,11 +414,13 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     # would be re-promoted and could re-post the verdict
     db.reap("reviewed", None)
     if full_kinds == kinds:  # prune's keep-set is kind-blind
-        retention_ns = pr_ns or issue_ns
-        before = now - timedelta(days=retention_ns.workset_retention_days)
-        for state in ("posted", "skipped", "cancelled", "error"):
-            db.prune(state, before, keep=open_set,
-                     key=lambda kn: (kn[0], filedb.forge_number(kn[1])))
+        for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
+            if ns is None:
+                continue
+            before = now - timedelta(days=ns.workset_retention_days)
+            for state in ("posted", "skipped", "cancelled", "error"):
+                db.prune(state, before, keep=open_set, kinds={kind},
+                         key=lambda kn: (kn[0], filedb.forge_number(kn[1])))
 
 
 def ticket_decision(kind: str, number, ticket: dict) -> fairy.Decision | None:

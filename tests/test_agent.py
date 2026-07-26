@@ -354,6 +354,20 @@ class LifecycleTests(AgentCase):
         self.assertIn("404", self.db.get("error", "pr", 9)["error"])
         self.assertIsNone(self.db.get("requests", "pr", 9))
 
+    def test_prune_leaves_the_other_kinds_tickets_alone(self) -> None:
+        # split pr-only/issue-only agents share one db root: the pr
+        # agent's keep-set knows nothing about open issues
+        self.db.push("skipped", "issue", 9, {"llm_at": "x"})
+        self.age("skipped", "issue", 9, hours=24 * 30)
+        self.scan([make_pr(1)])
+        self.assertIsNotNone(self.db.get("skipped", "issue", 9))
+
+    def test_torn_request_is_consumed_not_wedging(self) -> None:
+        self.db.push("requests", "pr", 9, {"action": "rerun"})
+        self.db.path("requests", "pr", 9).write_text("{ torn")
+        self.scan([make_pr(1)])  # must not raise
+        self.assertIsNone(self.db.get("requests", "pr", 9))
+
     def test_request_for_an_unscanned_kind_is_left_alone(self) -> None:
         # a pr-only agent shares the db with issue tickets: an issue
         # rerun request is another agent's to satisfy, not ours to eat
@@ -401,6 +415,25 @@ class LifecycleTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertIsNotNone(self.db.get("posted", "pr", 1))
         self.assertIsNone(self.db.get("posted", "pr", 99))
+
+    def test_each_side_prunes_by_its_own_retention(self) -> None:
+        self.ns.workset_retention_days = 30.0
+        issue_ns = issue_fairy.parse_args(
+            ["--owner", "o", "--repo", "r", "--workset-retention-days", "5"])
+        for kind in ("pr", "issue"):
+            self.db.push("posted", kind, 9, {})
+            self.age("posted", kind, 9, hours=24 * 10)
+        with mock.patch.object(fairy, "list_open_prs", return_value=[]), \
+                mock.patch.object(issue_fairy, "list_open_issues",
+                                  return_value=[]), \
+                mock.patch.object(fairy, "get_self_login",
+                                  return_value="fairy"), \
+                mock.patch.object(agent.gcli_cache, "load_cache",
+                                  return_value=mock.Mock()), \
+                mock.patch.object(agent.gcli_cache, "save_cache"):
+            agent.scan_pass(self.db, self.ns, issue_ns, now=NOW)
+        self.assertIsNotNone(self.db.get("posted", "pr", 9))
+        self.assertIsNone(self.db.get("posted", "issue", 9))
 
 
 def verdict_ticket(n: int, classification: str = "moderate_issues",

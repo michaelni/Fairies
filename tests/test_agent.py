@@ -873,6 +873,39 @@ class AskPassTests(AgentCase):
         self.assertEqual(self.db.find("pr", 1), "outgoing")
 
 
+class StartupValidationTests(unittest.TestCase):
+    """Broken side configs exit rc=2 at startup, as master's block did."""
+
+    def pr(self, extra: str) -> object:
+        import shlex
+        return fairy.parse_args(shlex.split("--owner o --repo r " + extra))
+
+    def test_llm_review_cmd_requires_patch_repo(self) -> None:
+        ns = self.pr("--llm-review-cmd wrapper")
+        with self.assertRaises(SystemExit) as ctx:
+            agent.validate_sides(ns, None)
+        self.assertEqual(ctx.exception.code, 2)  # rc 2, not 1: cron distinguishes config from crash
+
+    def test_patch_repo_satisfies_the_check(self) -> None:
+        agent.validate_sides(self.pr("--llm-review-cmd wrapper --patch-repo p"),
+                             None)
+
+    def test_simulate_past_template_must_contain_number(self) -> None:
+        base = "--simulate-past 2026-07-01T00:00:00+00:00 "
+        with self.assertRaises(SystemExit):
+            agent.validate_sides(self.pr(base), None)
+        with self.assertRaises(SystemExit):
+            agent.validate_sides(
+                self.pr(base + "--patch-pr-ref-template fforge/pr/"), None)
+        agent.validate_sides(
+            self.pr(base + "--patch-pr-ref-template fforge/pr/{number}"), None)
+
+    def test_forced_only_requires_a_force_review(self) -> None:
+        with self.assertRaises(SystemExit):
+            agent.validate_sides(self.pr("--forced-only"), None)
+        agent.validate_sides(self.pr("--forced-only --force-review-pr 5"), None)
+
+
 class OnePassTests(unittest.TestCase):
     def _run(self, argv: list[str]) -> list[str]:
         import worker

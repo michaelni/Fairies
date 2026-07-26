@@ -68,8 +68,10 @@ from dataclasses import replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import ci_log
 import fairy
 import filedb
+import forge_gcli
 import gcli_cache
 import issue_fairy
 import workset
@@ -122,6 +124,8 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
         "author": decision.author,
         "action": decision.action,
         "reason": decision.reason,
+        # the attention rows exist to be acted on in the forge web UI
+        "html_url": str(item.get("html_url") or ""),
         # so an operator x (-> cancelled) sticks until the item changes
         "expected_updated_at": item.get("updated_at"),
         "cancelled_ci_contexts": list(decision.cancelled_ci_contexts),
@@ -180,7 +184,7 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
         try:
             items.append(fetch_one(ns, n))
         except Exception as exc:
-            logger.error("%s #%d: forced fetch failed: %s", kind, n, exc)
+            logger.error("%s #%s: forced fetch failed: %s", kind, n, exc)
             # an error ticket marks the request consumed and puts the
             # failure on screen; an existing ticket already does both
             # (find() reporting the request file itself counts as none)
@@ -284,6 +288,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 if prior not in ("posted", "cancelled", "reviewed"):
                     _route(db, kind, number, "error", {
                         "title": str(item.get("title") or ""),
+                        "html_url": str(item.get("html_url") or ""),
                         "error": f"prepare failed: {exc}",
                         "expected_updated_at": item.get("updated_at"),
                     }, prior)
@@ -391,7 +396,7 @@ def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
                 # review and must not stall the pass; retried next scan
                 if db.try_move(state, "cancelled", kind, number,
                                mutate=lambda d: d.update(reason="not open")):
-                    logger.info("%s #%d cancelled: left the open listing",
+                    logger.info("%s #%s cancelled: left the open listing",
                                 kind, number)
 
 
@@ -656,7 +661,7 @@ def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                     send_one(db, ns, kind, number, cache=cache,
                              counts=counts, dry_run=dry_run)
                 except Exception:
-                    logger.exception("%s #%d: send failed; stays in outgoing/",
+                    logger.exception("%s #%s: send failed; stays in outgoing/",
                                      kind, number)
         finally:
             gcli_cache.save_cache(ns.cache, cache)
@@ -739,29 +744,45 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     log_summary(db)
 
 
+def _config_error(message: str) -> None:
+    logger.error(message)
+    raise SystemExit(2)
+
+
+def validate_sides(pr_ns: argparse.Namespace | None,
+                   issue_ns: argparse.Namespace | None) -> None:
+    """Reject broken side configs with rc=2 at startup: discovered
+    per-item they would burn error retries for days."""
+    if pr_ns and pr_ns.llm_review_cmd and pr_ns.patch_repo is None:
+        _config_error("--llm-review-cmd requires --patch-repo PATH")
+    for ns, forced in ((pr_ns, "force_review_prs"),
+                       (issue_ns, "force_review_issues")):
+        if ns is None:
+            continue
+        if getattr(ns, "simulate_past", None) is not None \
+                and "{number}" not in (getattr(ns, "patch_pr_ref_template", None) or ""):
+            _config_error(
+                "--simulate-past requires --patch-pr-ref-template TEMPLATE "
+                "containing {number} (e.g. fforge/pr/{number})")
+        if ns.forced_only and not getattr(ns, forced):
+            _config_error(
+                "--forced-only requires at least one --force-review-*")
+
+
 def main() -> int:
     args = parse_args()
     pr_ns = fairy.parse_args(shlex.split(args.pr_args)) if args.pr_args else None
     issue_ns = issue_fairy.parse_args(shlex.split(args.issue_args)) if args.issue_args else None
     lead = pr_ns or issue_ns
-    for ns, forced in ((pr_ns, "force_review_prs"),
-                       (issue_ns, "force_review_issues")):
-        if ns is None:
-            continue
-        # config errors exit with rc=2 at startup: discovered
-        # per-item they would burn error retries for days
-        if getattr(ns, "simulate_past", None)                 and not getattr(ns, "patch_pr_ref_template", None):
-            raise SystemExit(
-                "--simulate-past requires --patch-pr-ref-template")
-        if ns.forced_only and not getattr(ns, forced):
-            raise SystemExit(
-                "--forced-only requires at least one --force-review-*")
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
-                  logger, workset.logger, gcli_cache.logger, filedb.logger)
+                  logger, workset.logger, gcli_cache.logger, filedb.logger,
+                  forge_gcli.logger, ci_log.logger)
     for log_file in {ns.log_file for ns in (pr_ns, issue_ns)
                      if ns and ns.log_file}:
         add_file_log(log_file, fairy.logger, logger, workset.logger,
-                     gcli_cache.logger, filedb.logger)
+                     gcli_cache.logger, filedb.logger, forge_gcli.logger,
+                     ci_log.logger)
+    validate_sides(pr_ns, issue_ns)
     db = filedb.Db(args.db_root or db_root_for(lead))
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
     for ns in (pr_ns, issue_ns):

@@ -176,6 +176,30 @@ class BackoffTests(AgentCase):
         self.assertEqual(self.db.get("skipped", "pr", 1)["expected_updated_at"],
                          "2026-07-19T10:00:00Z")
 
+    def test_operator_skip_of_an_old_verdict_still_snoozes(self) -> None:
+        # llm_at may be days old when the operator presses s; the snooze
+        # is measured from the press, not the review
+        t = {"llm_at": (NOW - timedelta(hours=100)).isoformat(),
+             "snoozed_at": (NOW - timedelta(hours=1)).isoformat(),
+             "reason": "operator skip",
+             "review": {"classification": "moderate_issues"},
+             "expected_updated_at": "2026-07-19T10:00:00Z",
+             "expected_head_ref": "h1"}
+        self.db.push("skipped", "pr", 1, t)
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.find("pr", 1), "skipped")
+
+    def test_x_on_a_queued_item_sticks(self) -> None:
+        self.scan([make_pr(1)])  # queued ticket now carries the guard
+        self.assertTrue(self.db.try_move(
+            "queued", "cancelled", "pr", 1,
+            mutate=lambda d: d.update(reason="operator cancel")))
+        self.prepare.reset_mock()
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.find("pr", 1), "cancelled")
+
     def test_label_refresh_does_not_extend_the_window(self) -> None:
         # The wait is measured from llm_at: however often labels get
         # edited (each refresh re-stamps state_changed_at), the item

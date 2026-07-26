@@ -223,11 +223,13 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # updated_at is judged after prepare (below), because only
             # the discussion tells label edits apart from real activity.
             wait = backoff_wait_h(prior_data.get("skip_backoff_h", 0))
-            # the window is measured from the LLM run, so the label-edit
-            # refresh below (which re-stamps state_changed_at) cannot
-            # extend it
-            served = (number not in forced_ns
-                      and _age_h(prior_data, now, "llm_at") < wait)
+            # the window is measured from the LLM run or the operator's
+            # s-press, whichever is later -- so skipping an old verdict
+            # is a real snooze, and the label-edit refresh below (which
+            # re-stamps state_changed_at) cannot extend anything
+            age = min(_age_h(prior_data, now, "llm_at"),
+                      _age_h(prior_data, now, "snoozed_at"))
+            served = number not in forced_ns and age < wait
             if served and prior_data.get("expected_updated_at") == item.get("updated_at"):
                 continue
             in_backoff_window = served
@@ -280,6 +282,9 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
         ticket = {
             "title": prepared.title,
             "author": prepared.author,
+            # queued/error tickets need the guard too, or an operator x
+            # on them cannot stick until new activity
+            "expected_updated_at": item.get("updated_at"),
             "html_url": str(getattr(prepared, "pr", getattr(prepared, "issue", {})).get("html_url") or ""),
             "skip_backoff_h": backoff_h,
             "forced": number in forced_ns,
@@ -527,7 +532,9 @@ def ask_pass(db: filedb.Db, kinds: set[str]) -> None:
                 break
             if choice in ("s", "skip"):
                 db.try_move("reviewed", "skipped", kind, number,
-                            mutate=lambda d: d.update(reason="operator skip"))
+                            mutate=lambda d: d.update(
+                                reason="operator skip",
+                                snoozed_at=datetime.now(timezone.utc).isoformat()))
                 break
             if choice in ("x", "cancel"):
                 db.try_move("reviewed", "cancelled", kind, number,

@@ -79,9 +79,11 @@ def verdict_state(decision: fairy.Decision) -> str:
 
 def verdict_fields(decision: fairy.Decision, prepared) -> dict:
     now = datetime.now(timezone.utc).isoformat()
-    if decision.llm_classification == "error":
-        return {"error": decision.reason, "llm_at": now}
     item = getattr(prepared, "pr", None) or getattr(prepared, "issue", {})
+    if decision.llm_classification == "error":
+        # the guard makes an operator x on the error row stick
+        return {"error": decision.reason, "llm_at": now,
+                "expected_updated_at": item.get("updated_at")}
     return {
         "error": None,
         "review": {

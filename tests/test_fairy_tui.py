@@ -229,8 +229,9 @@ class ActTests(DbCase):
         self.db.push("merge-ready", "pr", 6, {"title": "t"})
         self.model.poll()
         self.model.act("skip")
-        self.assertEqual(self.db.get("skipped", "pr", 5)["reason"],
-                         "operator skip")
+        skipped = self.db.get("skipped", "pr", 5)
+        self.assertEqual(skipped["reason"], "operator skip")
+        self.assertTrue(skipped["snoozed_at"])  # the snooze starts at the press
         self.model.poll()
         with self.model.lock:
             keys = [(it.repo, it.kind, it.number) for it in self.model.visible()]

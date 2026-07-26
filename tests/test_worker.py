@@ -86,7 +86,10 @@ class VerdictRoutingTests(WorkerCase):
         state = self.run_one(5, lambda ns, p: decision(5, action="error",
                                                        llm="error", msg=""))
         self.assertEqual(state, "error")
-        self.assertEqual(self.db.get("error", "pr", 5)["error"], "llm")
+        t = self.db.get("error", "pr", 5)
+        self.assertEqual(t["error"], "llm")
+        # the guard makes an operator x on the error row stick
+        self.assertEqual(t["expected_updated_at"], "2026-07-19T10:00:00Z")
 
     def test_wrapper_stage_notes_reach_the_claimed_ticket(self) -> None:
         self.db.push("queued", "pr", 5, queued_ticket(5))

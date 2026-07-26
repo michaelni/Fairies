@@ -67,7 +67,7 @@ import time
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Lock
 
@@ -325,8 +325,11 @@ class Model:
                                 " (fix or delete the file by hand)"
                                 if item.state == INVALID else "")
                     return
+                note = {"reason": "operator " + action}
+                if action == "skip":  # a real snooze even on old verdicts
+                    note["snoozed_at"] = datetime.now(timezone.utc).isoformat()
                 if not db.try_move(item.state, dst, item.kind, item.number,
-                                   mutate=lambda d: d.update(reason="operator " + action)):
+                                   mutate=lambda d: d.update(note)):
                     logger.info("%s is busy or changed; not %sed", label, action)
                     return
                 self.acted.add(key)

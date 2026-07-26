@@ -63,6 +63,19 @@ class HygieneTests(DbCase):
         self.assertFalse(path.with_suffix(".tmp").exists())
 
 
+class TryPopTests(DbCase):
+    def test_try_pop_refuses_claimed_items_instead_of_blocking(self) -> None:
+        self.db.push("requests", "pr", 5, {"action": "rerun"})
+        claim = self.db.claim("requests", "requests", "pr", 5)
+        try:
+            self.assertIsNone(self.db.try_pop("requests", "pr", 5))
+        finally:
+            claim.abort()
+        self.assertEqual(self.db.try_pop("requests", "pr", 5)["action"],
+                         "rerun")
+        self.assertIsNone(self.db.get("requests", "pr", 5))
+
+
 class ReplaceTests(DbCase):
     def test_replace_moves_wherever_the_item_currently_is(self) -> None:
         self.db.push("reviewed", "pr", 5, {"title": "old"})

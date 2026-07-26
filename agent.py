@@ -305,9 +305,10 @@ def finish_requests(db: filedb.Db, forced: dict[str, set[int]]) -> None:
     request that arrived mid-pass is not in ``forced`` and waits."""
     for kind, numbers in forced.items():
         for number in numbers:
-            # find() would report the request file itself
+            # find() would report the request file itself; try_pop so a
+            # worker's held review lock can never stall the agent pass
             if db.find(kind, number) not in (None, "requests"):
-                db.pop("requests", kind, number)
+                db.try_pop("requests", kind, number)
 
 
 def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
@@ -315,9 +316,12 @@ def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
     for state in ("queued", "reviewed"):
         for kind, number in db.list_state(state):
             if kind in kinds and (kind, number) not in open_set:
-                db.move(state, "cancelled", kind, number,
-                        mutate=lambda d: d.update(reason="not open"))
-                logger.info("%s #%d cancelled: left the open listing", kind, number)
+                # try_move: a claimed item's lock is held for the whole
+                # review and must not stall the pass; retried next scan
+                if db.try_move(state, "cancelled", kind, number,
+                               mutate=lambda d: d.update(reason="not open")):
+                    logger.info("%s #%d cancelled: left the open listing",
+                                kind, number)
 
 
 def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,

@@ -244,6 +244,25 @@ class Db:
         finally:
             os.close(fd)
 
+    def try_pop(self, state: str, kind: str, number: int) -> dict | None:
+        """Non-blocking ``pop``: None when absent or claimed (a worker
+        holds the item's lock for its whole review; blocking callers
+        would stall that long)."""
+        try:
+            fd = self._lock_fd(kind, number, block=False)
+        except OSError:
+            return None
+        try:
+            path = self.path(state, kind, number)
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                return None
+            path.unlink()
+            return data
+        finally:
+            os.close(fd)
+
     def try_move(self, src_state: str, dst_state: str, kind: str, number: int,
                  mutate=None) -> bool:
         """Non-blocking ``move`` for interactive callers: False when the

@@ -103,6 +103,10 @@ def _age_h(data: dict, now: datetime, field: str = "state_changed_at") -> float:
 def gate_state(decision: fairy.Decision) -> str:
     """Attention classes get their own directories; the rest is a plain
     gate skip."""
+    if decision.action == "error":
+        # a failed prepare must be paced and visible, not a silent
+        # every-scan refail dressed as a skip
+        return "error"
     if decision.merge_ready:
         return "merge-ready"
     if decision.cancelled_ci_contexts or decision.blocked_ci_contexts:
@@ -275,9 +279,9 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             except Exception as exc:
                 logger.error("issue #%d: prepare failed: %s", number, exc)
                 # an error/ ticket gives the failure a row, a summary
-                # line and ERROR_RETRY_H pacing; the posted/cancelled
-                # archive outranks it
-                if prior not in ("posted", "cancelled"):
+                # line and ERROR_RETRY_H pacing; the archive and a
+                # standing verdict outrank it
+                if prior not in ("posted", "cancelled", "reviewed"):
                     _route(db, kind, number, "error", {
                         "title": str(item.get("title") or ""),
                         "error": f"prepare failed: {exc}",
@@ -293,6 +297,10 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 if prior != "skipped" or (prior_data or {}).get("llm_at"):
                     continue
             ticket = gate_ticket(prepared, item)
+            if state == "error":
+                if prior in ("posted", "cancelled", "reviewed"):
+                    continue  # never clobber archive or a standing verdict
+                ticket["error"] = prepared.reason
             _route(db, kind, number, state, ticket, prior)
             for token in evals.get(number, ()):
                 # a requested evaluation of a gate-skipped item cannot

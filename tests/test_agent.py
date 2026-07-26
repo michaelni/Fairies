@@ -101,6 +101,26 @@ class TicketRoutingTests(AgentCase):
         self.assertEqual(self.db.get("ci-blocked", "pr", 2)
                          ["cancelled_ci_contexts"], ["job1"])
 
+    def test_pr_prepare_failure_is_a_paced_error_not_a_skip(self) -> None:
+        # like the issue side: a row, a summary line, ERROR_RETRY_H --
+        # and never a clobbered standing verdict
+        self.prepare.side_effect = lambda ns, pr, **kw: fairy.Decision(
+            pr["number"], pr["title"], "a", "-", "error",
+            "gcli timeout", None, "error", "")
+        self.scan([make_pr(1)])
+        self.assertIn("gcli timeout", self.db.get("error", "pr", 1)["error"])
+        self.prepare.reset_mock()
+        self.scan([make_pr(1)])  # within ERROR_RETRY_H: no refetch churn
+        self.prepare.assert_not_called()
+        self.db.push("reviewed", "pr", 2, {
+            "review": {"classification": "moderate_issues"},
+            "expected_updated_at": "old", "expected_head_ref": "old"})
+        self.prepare.side_effect = lambda ns, pr, **kw: fairy.Decision(
+            pr["number"], pr["title"], "a", "-", "error",
+            "forge 500", None, "error", "")
+        self.scan([make_pr(2)])
+        self.assertEqual(self.db.find("pr", 2), "reviewed")  # verdict kept
+
     def test_unchanged_gate_outcome_is_not_rewritten(self) -> None:
         # a rewrite per scan would defeat the TUI's dir-mtime gate and
         # re-stamp state_changed_at every pass

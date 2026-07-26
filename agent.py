@@ -478,8 +478,9 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str, number: int, *,
             # Auto mode must not stall on a stale verdict: without
             # llm_at the skipped/ ticket is re-gated (and, the item
             # having changed, freshly re-reviewed) on the next scan.
+            # skip_backoff_h is kept: the guard failing says nothing
+            # about the item's earned skip history.
             ticket.pop("llm_at", None)
-            ticket["skip_backoff_h"] = 0
             state = "skipped"
         else:
             state = "reviewed"

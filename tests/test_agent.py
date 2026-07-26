@@ -361,7 +361,7 @@ class LifecycleTests(AgentCase):
 def verdict_ticket(n: int, classification: str = "moderate_issues",
                    msg: str = "m", labels: list | None = None,
                    **fields) -> dict:
-    t = {"title": f"t{n}", "author": "a",
+    t = {"title": f"t{n}", "author": "a", "skip_backoff_h": 24,
          "review": {"classification": classification, "message": msg,
                     "label_changes": labels or []},
          "expected_updated_at": "2026-07-19T10:00:00Z",
@@ -425,7 +425,7 @@ class SendTests(SendCase):
         t = self.db.get("skipped", "pr", 1)
         self.assertEqual(t["send_blocked"], "PR head changed")
         self.assertNotIn("llm_at", t)  # next scan re-gates it immediately
-        self.assertEqual(t["skip_backoff_h"], 0)
+        self.assertEqual(t["skip_backoff_h"], 24)  # earned history kept
 
     def test_approve_promotes_only_actionable_reviewed_verdicts(self) -> None:
         self.ns.approve = True

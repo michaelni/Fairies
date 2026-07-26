@@ -251,6 +251,15 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                     cache=cache, discussion_cache_max_age=cache_age)
             except Exception as exc:
                 logger.error("issue #%d: prepare failed: %s", number, exc)
+                # an error/ ticket gives the failure a row, a summary
+                # line and ERROR_RETRY_H pacing; the posted/cancelled
+                # archive outranks it
+                if prior not in ("posted", "cancelled"):
+                    _route(db, kind, number, "error", {
+                        "title": str(item.get("title") or ""),
+                        "error": f"prepare failed: {exc}",
+                        "expected_updated_at": item.get("updated_at"),
+                    }, prior)
                 continue
         if isinstance(prepared, fairy.Decision):
             state = gate_state(prepared)

@@ -139,6 +139,48 @@ class DrainTests(WorkerCase):
         for n in (1, 2, 3):
             self.assertEqual(self.db.get("reviewed", "pr", n)["seen"], n)
 
+    def test_a_slow_review_never_idles_the_other_slots(self) -> None:
+        # a barrier round would wait for #1 before ever starting #3;
+        # the top-up must run #3 (pushed mid-drain) while #1 still holds
+        # its slot, or --parallel is parallel in name only
+        import threading
+        import time as _time
+        release = threading.Event()
+
+        def fake_llm(ns, prepared):
+            if prepared.number == 1:
+                self.assertTrue(release.wait(10), "top-up never happened")
+            elif prepared.number == 2:
+                self.db.push("queued", "pr", 3, queued_ticket(3))
+            elif prepared.number == 3:
+                release.set()
+            return decision(prepared.number)
+
+        for n in (1, 2):
+            self.db.push("queued", "pr", n, queued_ticket(n))
+        t0 = _time.monotonic()
+        with mock.patch.object(fairy, "safe_apply_llm_review_to_prepared",
+                               side_effect=fake_llm):
+            done = worker.drain(self.db, {"pr": self.ns}, parallel=2)
+        self.assertEqual(done, 3)
+        self.assertLess(_time.monotonic() - t0, 5)
+
+    def test_forced_tickets_are_claimed_first(self) -> None:
+        order = []
+        for n in (1, 2, 3):
+            ticket = queued_ticket(n)
+            ticket["forced"] = n == 3
+            self.db.push("queued", "pr", n, ticket)
+
+        def fake_llm(ns, prepared):
+            order.append(prepared.number)
+            return decision(prepared.number)
+
+        with mock.patch.object(fairy, "safe_apply_llm_review_to_prepared",
+                               side_effect=fake_llm):
+            worker.drain(self.db, {"pr": self.ns})
+        self.assertEqual(order, [3, 1, 2])
+
     def test_broken_ticket_lands_in_error_and_does_not_starve(self) -> None:
         # A ticket the worker cannot even read must not return to
         # queued/: sorted first, it would be re-claimed on every pass

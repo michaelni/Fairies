@@ -52,7 +52,7 @@ from __future__ import annotations
 import argparse
 import logging
 import shlex
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from threading import Event
 from datetime import datetime, timezone
 from pathlib import Path
@@ -137,13 +137,11 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
     return state
 
 
-def _drain_one(db: filedb.Db, sides: dict[str, argparse.Namespace],
-               kind: str, number: int) -> bool | None:
-    """Claim and review one ticket: True reviewed, False routed to
-    error/, None when the claim was lost to another worker."""
-    claim = db.claim("queued", "llm", kind, number)
-    if claim is None:
-        return None
+def _review_claimed(sides: dict[str, argparse.Namespace],
+                    claim: filedb.Claim) -> bool:
+    """Review one already-claimed ticket: True reviewed, False routed
+    to error/."""
+    kind, number = claim.kind, claim.number
     # a shallow copy per review: workset_file_override is per-ticket
     # state and the namespace is shared across drain threads
     ns = argparse.Namespace(**vars(sides[kind]))
@@ -171,21 +169,35 @@ def _drain_one(db: filedb.Db, sides: dict[str, argparse.Namespace],
 def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
           parallel: int = 1) -> int:
     """Claim and review every queued ticket of the configured kinds, up
-    to ``parallel`` at a time; returns the number reviewed. The claim
-    protocol already arbitrates, so threads and other worker processes
-    compose freely."""
+    to ``parallel`` at a time; returns the number reviewed. Slots top
+    up the moment a review finishes -- one slow review never idles the
+    others, and tickets arriving mid-drain are picked up immediately.
+    The claim protocol arbitrates, so threads and other worker
+    processes compose freely; per-provider rate limits stay with
+    concurrency.py inside the wrapper."""
+    slots = max(1, int(parallel or 1))
     done = 0
-    with ThreadPoolExecutor(max_workers=max(1, int(parallel or 1))) as pool:
+    in_flight: set = set()
+    with ThreadPoolExecutor(max_workers=slots) as pool:
         while True:
-            queued = [(k, n) for k, n in db.list_state("queued")
-                      if k in sides]
-            if not queued:
+            for kind, number in sorted(db.list_state("queued"), key=lambda kn: not (db.get("queued", *kn) or {}).get("forced")):
+                if len(in_flight) >= slots:
+                    break
+                if kind not in sides:
+                    continue
+                # claiming here (not in the thread) removes the item
+                # from queued/ before the next listing: no window in
+                # which it could be picked twice
+                claim = db.claim("queued", "llm", kind, number)
+                if claim is not None:
+                    in_flight.add(pool.submit(_review_claimed, sides, claim))
+            if not in_flight:
                 return done
-            outcomes = list(pool.map(
-                lambda kn: _drain_one(db, sides, *kn), queued))
-            done += outcomes.count(True)
-            if all(o is None for o in outcomes):
-                return done  # every claim lost: other workers own them
+            finished, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+            for fut in finished:
+                in_flight.discard(fut)
+                if fut.result():
+                    done += 1
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

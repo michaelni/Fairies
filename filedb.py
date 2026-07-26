@@ -152,8 +152,20 @@ class Db:
         return dst
 
     def _write_state(self, state: str, kind: str, number: int, data: dict) -> Path:
+        dst = self.path(state, kind, number)
+        stripped = {k: v for k, v in data.items() if k != "state_changed_at"}
+        try:
+            current = json.loads(dst.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            current = None
+        if current is not None and stripped == {
+                k: v for k, v in current.items() if k != "state_changed_at"}:
+            # identical content: no write -- no fsync churn, no dir-mtime
+            # bump (viewers key cheap polls on it), and state_changed_at
+            # keeps meaning "when did this actually change"
+            return dst
         data["state_changed_at"] = datetime.now(timezone.utc).isoformat()
-        return self._write(self.path(state, kind, number), data)
+        return self._write(dst, data)
 
     @contextmanager
     def lock(self, kind: str, number: int):

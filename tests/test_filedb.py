@@ -74,6 +74,20 @@ class ReapRemnantOnlyTests(DbCase):
         self.assertIsNotNone(self.db.get("outgoing", "pr", 2))
 
 
+class NoOpWriteTests(DbCase):
+    def test_identical_content_is_not_rewritten(self) -> None:
+        # every writer benefits: no fsync churn, no dir-mtime bump for
+        # viewers, state_changed_at keeps meaning "last actual change"
+        self.db.push("ci-blocked", "pr", 5, {"reason": "ci red"})
+        stamp = self.db.path("ci-blocked", "pr", 5).stat().st_mtime_ns
+        self.db.push("ci-blocked", "pr", 5, {"reason": "ci red"})
+        self.assertEqual(
+            self.db.path("ci-blocked", "pr", 5).stat().st_mtime_ns, stamp)
+        self.db.push("ci-blocked", "pr", 5, {"reason": "ci red, job2"})
+        self.assertNotEqual(
+            self.db.path("ci-blocked", "pr", 5).stat().st_mtime_ns, stamp)
+
+
 class TornTicketTests(DbCase):
     def test_torn_tickets_degrade_instead_of_wedging(self) -> None:
         self.db.push("skipped", "pr", 5, {"a": 1})

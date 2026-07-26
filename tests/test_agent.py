@@ -336,6 +336,15 @@ class LifecycleTests(AgentCase):
         self.assertIn("404", self.db.get("error", "pr", 9)["error"])
         self.assertIsNone(self.db.get("requests", "pr", 9))
 
+    def test_request_for_an_unscanned_kind_is_left_alone(self) -> None:
+        # a pr-only agent shares the db with issue tickets: an issue
+        # rerun request is another agent's to satisfy, not ours to eat
+        self.db.push("posted", "issue", 9, {"title": "old"})
+        self.db.push("requests", "issue", 9, {"action": "rerun"})
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.get("requests", "issue", 9)["action"],
+                         "rerun")
+
     def test_old_settled_tickets_are_pruned_open_ones_kept(self) -> None:
         self.db.push("posted", "pr", 1, {})   # still open -> kept
         self.db.push("posted", "pr", 99, {})  # closed + old -> pruned

@@ -305,11 +305,16 @@ def consume_requests(db: filedb.Db) -> dict[str, set[int]]:
     return forced
 
 
-def finish_requests(db: filedb.Db, forced: dict[str, set[int]]) -> None:
+def finish_requests(db: filedb.Db, forced: dict[str, set[int]],
+                    kinds: set[str]) -> None:
     """Drop the requests this pass consumed, but only once some ticket
     exists for the item (at-least-once: a crashed pass retries). A
-    request that arrived mid-pass is not in ``forced`` and waits."""
+    request that arrived mid-pass is not in ``forced`` and waits; a
+    request for a kind this agent never scanned is not ours to consume
+    (a pr-only agent must not eat an issue rerun)."""
     for kind, numbers in forced.items():
+        if kind not in kinds:
+            continue
         for number in numbers:
             # find() would report the request file itself; try_pop so a
             # worker's held review lock can never stall the agent pass
@@ -355,7 +360,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                                   self_login=self_login, forced=forced[kind])
         finally:
             gcli_cache.save_cache(ns.cache, cache)
-    finish_requests(db, forced)
+    finish_requests(db, forced, kinds)
     cancel_closed(db, open_set, full_kinds)
     for kind, number in db.reap():
         logger.warning("%s #%d re-queued: its worker died", kind, number)

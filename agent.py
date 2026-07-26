@@ -334,7 +334,10 @@ def finish_requests(db: filedb.Db, forced: dict[str, set[int]],
 
 def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
                   kinds: set[str]) -> None:
-    for state in ("queued", "reviewed"):
+    # attention tickets too: a merged PR's merge-ready/ci-blocked row
+    # would otherwise sit there forever (prune skips non-settled states)
+    for state in ("queued", "reviewed", "ci-blocked", "merge-ready",
+                  "awaiting-approver"):
         for kind, number in db.list_state(state):
             if kind in kinds and (kind, number) not in open_set:
                 # try_move: a claimed item's lock is held for the whole

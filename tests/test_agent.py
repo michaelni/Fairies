@@ -299,9 +299,11 @@ class ReuseTests(AgentCase):
 class LifecycleTests(AgentCase):
     def test_closed_item_is_cancelled(self) -> None:
         self.db.push("queued", "pr", 9, {"title": "gone"})
+        self.db.push("merge-ready", "pr", 8, {"title": "merged meanwhile"})
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", 9), "cancelled")
         self.assertEqual(self.db.get("cancelled", "pr", 9)["reason"], "not open")
+        self.assertEqual(self.db.find("pr", 8), "cancelled")  # attention too
 
     def test_request_forces_a_ticket_past_gates_and_limit(self) -> None:
         self.ns.limit = 1

@@ -100,6 +100,22 @@ class TicketRoutingTests(AgentCase):
         self.assertEqual(self.db.get("ci-blocked", "pr", 2)
                          ["cancelled_ci_contexts"], ["job1"])
 
+    def test_unchanged_gate_outcome_is_not_rewritten(self) -> None:
+        # a rewrite per scan would defeat the TUI's dir-mtime gate and
+        # re-stamp state_changed_at every pass
+        self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(
+            pr, "ci red", cancelled_ci_contexts=("job1",))
+        self.scan([make_pr(1)])
+        stamp = self.db.path("ci-blocked", "pr", 1).stat().st_mtime_ns
+        self.scan([make_pr(1)])
+        self.assertEqual(
+            self.db.path("ci-blocked", "pr", 1).stat().st_mtime_ns, stamp)
+        self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(
+            pr, "ci red", cancelled_ci_contexts=("job1", "job2"))
+        self.scan([make_pr(1)])  # outcome changed: must be rewritten
+        self.assertEqual(self.db.get("ci-blocked", "pr", 1)
+                         ["cancelled_ci_contexts"], ["job1", "job2"])
+
     def test_gate_skip_does_not_clobber_the_archive(self) -> None:
         self.db.push("posted", "pr", 1, {"posted": True})
         self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(pr)

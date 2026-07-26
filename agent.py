@@ -270,7 +270,16 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                                                 "skipped"):
                 if prior != "skipped" or (prior_data or {}).get("llm_at"):
                     continue
-            _route(db, kind, number, state, gate_ticket(prepared, item), prior)
+            ticket = gate_ticket(prepared, item)
+            if prior == state and prior_data is not None and ticket == {
+                    k: v for k, v in prior_data.items()
+                    if k != "state_changed_at"}:
+                # unchanged outcome: rewriting would churn hundreds of
+                # fsynced inodes per scan, bump the dir mtimes the TUI
+                # keys its cheap polls on, and destroy the "since when"
+                # meaning of state_changed_at for attention rows
+                continue
+            _route(db, kind, number, state, ticket, prior)
             continue
         if in_backoff_window:
             # updated_at moved during the wait, but only real activity

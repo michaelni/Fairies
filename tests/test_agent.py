@@ -359,6 +359,16 @@ def verdict_ticket(n: int, classification: str = "moderate_issues",
     return t
 
 
+class TicketDecisionTests(AgentCase):
+    def test_hand_edited_label_junk_cannot_raise(self) -> None:
+        d = agent.ticket_decision("pr", 1, {
+            "title": "t", "review": {
+                "classification": "moderate_issues", "message": "m",
+                "label_changes": [{"label": "ok", "op": "add"},
+                                  {"lable": "typo key"}, "not a dict"]}})
+        self.assertEqual([c.label for c in d.label_changes], ["ok", ""])
+
+
 class SendCase(AgentCase):
     def send(self, *, pr_ns=None, issue_ns=None, dry_run=False) -> None:
         with mock.patch.object(agent.gcli_cache, "load_cache",

@@ -376,8 +376,12 @@ def ticket_decision(kind: str, number: int, ticket: dict) -> fairy.Decision | No
     llm = fairy.LLMReview(
         classification=review["classification"],
         message=review.get("message", ""),
-        label_changes=tuple(fairy.LabelChange(**c)
-                            for c in review.get("label_changes") or ()))
+        # field-by-field, not **c: tickets are hand-editable and one
+        # typo'd key must not kill the TUI or wedge the agent loop
+        label_changes=tuple(
+            fairy.LabelChange(str(c.get("label") or ""), str(c.get("op") or ""),
+                              str(c.get("reason") or ""), bool(c.get("post")))
+            for c in review.get("label_changes") or () if isinstance(c, dict)))
     if kind == "pr":
         decision = fairy.decision_from_review(
             llm, number=number, title=ticket.get("title", ""),

@@ -263,12 +263,9 @@ class WrapperWorksetNoteTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.path = Path(self._tmp.name) / "pr-9.json"
-        now = "2026-07-20T00:00:00+00:00"
-        workset.save_item(self.path, workset.WorkItem(
-            kind="pr", forge_type="gitea", account="", owner="o", repo="r",
-            number=9, state=workset.WorkState.QUEUED,
-            created_at=now, state_changed_at=now,
-        ))
+        import json
+        self.path.write_text(json.dumps({"title": "t", "author": "a"}),
+                             encoding="utf-8")
         self.args = argparse.Namespace(workset_file=self.path)
 
     def _raw(self) -> dict:
@@ -282,9 +279,7 @@ class WrapperWorksetNoteTests(unittest.TestCase):
         data = self._raw()
         self.assertEqual(data["stage"], "triage")
         self.assertEqual(data["triage"], {"route": "engage", "reason": "r"})
-        # dict-level notes must not disturb the schema'd fields
-        self.assertEqual(workset.load_item(self.path).state,
-                         workset.WorkState.QUEUED)
+        self.assertEqual(data["title"], "t")  # ticket fields undisturbed
 
     def test_drafts_recorded_and_combine_stage_entered(self) -> None:
         drafts = [Review(

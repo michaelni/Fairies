@@ -685,9 +685,7 @@ def workset_note_stage(args: argparse.Namespace, stage: str) -> None:
 
     The wrapper owns the file while it runs (the caller blocks on the
     subprocess); it writes only the ``stage`` progress field -- the
-    final verdict travels on stdout and is persisted by the caller.
-    Dict-level on purpose: filedb tickets carry no ``state`` field and
-    would fail WorkItem validation."""
+    final verdict travels on stdout and is persisted by the caller."""
     if args.workset_file:
         def record(data: dict) -> None:
             data["stage"] = stage

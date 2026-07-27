@@ -27,17 +27,16 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Persistent per-item work files for the review pipeline.
+The filedb tickets' shared file plumbing.
 
-One JSON file per PR/issue at
-``{root}/{forge_type}~{account}~{owner}~{repo}/{kind}-{number}.json``,
-the durable record of pipeline state and review content. The operator
-may edit or delete a file at state REVIEWED or later; earlier states
-are owned by the running pipeline and may be overwritten at any time.
+The pipeline state itself lives in filedb (state = directory); what
+remains here is the path layout shared with the gcli caches and the
+sidecar-locked dict-level read-modify-write the wrapper (stage notes,
+cancel flag) and the TUI use on claimed tickets.
 
-What belongs here: the schema and the load/save/read-modify-write of
-these files. What does NOT belong: forge-fetched data (gcli_cache) and
-review or queue logic (fairy, issue_fairy, pr_review_wrapper).
+What belongs here: path layout and update_json. What does NOT belong:
+forge-fetched data (gcli_cache) and review or queue logic (fairy,
+issue_fairy, pr_review_wrapper).
 """
 from __future__ import annotations
 
@@ -45,97 +44,16 @@ import fcntl
 import json
 import logging
 import re
-from datetime import datetime
-from enum import IntEnum
 from pathlib import Path
-from typing import Callable, Literal
-
-# common's recursive JsonValue TypeAlias overflows pydantic's type
-# resolution; pydantic's own JsonValue is the schema-capable equivalent.
-from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
-
-from common import atomic_write_text, iso_to_dt
+from typing import Callable
 
 __all__ = [
-    "SCHEMA_VERSION",
-    "WorkState",
-    "LabelChange",
-    "ReviewResult",
-    "WorkItem",
     "repo_dir",
-    "item_path_in",
-    "item_path",
-    "load_item_result",
-    "load_item",
-    "save_item",
-    "update_item",
-    "prune",
+    "update_json",
     "logger",
 ]
 
 logger = logging.getLogger(__name__)
-SCHEMA_VERSION = 1
-
-
-class WorkState(IntEnum):
-    QUEUED = 1      # passed the gates, waiting for / heading into the wrapper
-    TRIAGE = 2      # wrapper: triage stage running
-    REVIEW = 3      # wrapper: main reviewer pass running
-    COMBINE = 4     # wrapper: combiner running, drafts recorded
-    REVIEWED = 5    # final verdict present; awaiting operator / auto-post
-    POSTED = 6
-    SKIPPED = 7     # operator answered skip
-    CANCELLED = 8   # operator threw it out
-    ERROR = 9       # LLM/pipeline failure; error text recorded, never reused
-
-
-class LabelChange(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    label: str
-    op: str  # "add" | "remove"
-    reason: str = ""
-    post: bool = False
-
-
-class ReviewResult(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    classification: str
-    message: str
-    label_changes: list[LabelChange] = []
-    model: str = ""
-
-
-class WorkItem(BaseModel):
-    # ``extra="forbid"``: a typo in a hand-edited file must not be dropped.
-    model_config = ConfigDict(extra="forbid")
-    schema_version: int = SCHEMA_VERSION
-    kind: Literal["pr", "issue"]
-    forge_type: str
-    account: str = ""
-    owner: str
-    repo: str
-    number: int
-    state: WorkState
-    created_at: str
-    state_changed_at: str
-    title: str = ""
-    html_url: str = ""
-    # Guard captured at review time: auto-posting is allowed only while
-    # the live PR/issue still matches (nobody acted since the review).
-    expected_updated_at: str | None = None
-    expected_head_ref: str | None = None
-    last_activity_iso: str | None = None
-    llm_at: str | None = None               # when the persisted verdict was produced
-    stage: Literal["triage", "review", "combine"] | None = None  # wrapper progress
-    consecutive_skip_count: int = 0         # LLM "skip" streak; drives the backoff gate
-    triage: dict[str, JsonValue] | None = None
-    drafts: list[ReviewResult] = []
-    review: ReviewResult | None = None
-    error: str | None = None
-
-    def set_state(self, state: WorkState, now: datetime) -> None:
-        self.state = state
-        self.state_changed_at = now.isoformat()
 
 
 def _segment(value: str) -> str:
@@ -147,88 +65,12 @@ def repo_dir(root: Path, *, forge_type: str, account: str, owner: str, repo: str
     return root / "~".join(parts)
 
 
-def item_path_in(d: Path, kind: str, number: int) -> Path:
-    """``kind`` is "pr" | "issue"."""
-    return d / f"{kind}-{number}.json"
-
-
-def item_path(
-    root: Path,
-    *,
-    forge_type: str,
-    account: str,
-    owner: str,
-    repo: str,
-    kind: str,  # "pr" | "issue"
-    number: int,
-) -> Path:
-    d = repo_dir(root, forge_type=forge_type, account=account, owner=owner, repo=repo)
-    return item_path_in(d, kind, number)
-
-
-def load_item_result(path: Path) -> tuple[WorkItem | None, str | None]:
-    """(item, None) on success, (None, reason) for an existing-but-invalid
-    file, (None, None) for a missing one. Invalid files are logged as
-    errors: they may be a hand-edit gone wrong and must not be silently
-    discarded."""
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        logger.debug("workset: no file %s", path)
-        return None, None
-    try:
-        item = WorkItem.model_validate_json(text)
-    except (ValidationError, ValueError) as exc:
-        logger.error("workset: invalid item file %s: %s", path, exc)
-        return None, str(exc)
-    if item.schema_version != SCHEMA_VERSION:
-        reason = f"schema_version {item.schema_version}, expected {SCHEMA_VERSION}"
-        logger.error("workset: %s has %s; ignoring", path, reason)
-        return None, reason
-    return item, None
-
-
-def load_item(path: Path) -> WorkItem | None:
-    return load_item_result(path)[0]
-
-
-def save_item(path: Path, item: WorkItem) -> None:
-    atomic_write_text(path, item.model_dump_json(indent=2) + "\n")
-    logger.debug("workset: wrote %s state=%s", path, item.state.name)
-
-
-_TERMINAL_STATES = (
-    WorkState.POSTED, WorkState.SKIPPED, WorkState.CANCELLED, WorkState.ERROR,
-)
-
-
-def prune(d: Path, kind: str, open_numbers: set[int], older_than: datetime) -> None:
-    """Delete finished item files (``_TERMINAL_STATES``) of ``kind`` whose
-    item is gone from the open listing and whose last transition predates
-    ``older_than``. REVIEWED files are never pruned: they are un-posted
-    work."""
-    for path in d.glob(f"{kind}-*.json"):
-        item = load_item(path)
-        if item is None or item.number in open_numbers:
-            continue
-        if item.state not in _TERMINAL_STATES:
-            continue
-        changed = iso_to_dt(item.state_changed_at)
-        if changed is None or changed >= older_than:
-            continue
-        path.unlink(missing_ok=True)
-        path.with_suffix(".lock").unlink(missing_ok=True)
-        logger.info(
-            "workset: pruned %s (state=%s since %s, item closed)",
-            path, item.state.name, item.state_changed_at,
-        )
-
-
 def update_json(path: Path, mutate: Callable[[dict], None]) -> dict | None:
-    """Schema-free sibling of ``update_item`` for filedb tickets, which
-    carry no ``state`` field and so cannot pass WorkItem validation.
-    Same flock convention; returns the saved dict, or None when the
-    file is missing/unparseable (the mutation is then not applied)."""
+    """Read-modify-write a ticket dict under an exclusive flock so
+    concurrent updaters (the wrapper's stage notes vs the TUI's cancel)
+    cannot lose each other's changes. Returns the saved dict, or None
+    when the file is missing/unparseable (the mutation is then not
+    applied)."""
     lock_path = path.with_suffix(".lock")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_path, "w") as lock_file:
@@ -243,20 +85,3 @@ def update_json(path: Path, mutate: Callable[[dict], None]) -> dict | None:
                        encoding="utf-8")
         tmp.replace(path)
         return data
-
-
-def update_item(path: Path, mutate: Callable[[WorkItem], None]) -> WorkItem | None:
-    """Read-modify-write ``path`` under an exclusive flock so concurrent
-    updaters (pipeline transition vs operator edit via the TUI) cannot
-    lose each other's changes. Returns the saved item, or None when the
-    file is missing/invalid (the mutation is then not applied)."""
-    lock_path = path.with_suffix(".lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "w") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
-        item = load_item(path)
-        if item is None:
-            return None
-        mutate(item)
-        save_item(path, item)
-        return item

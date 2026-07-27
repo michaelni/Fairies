@@ -476,7 +476,8 @@ def ticket_decision(kind: str, number, ticket: dict) -> fairy.Decision | None:
         decision = fairy.decision_from_review(
             llm, number=filedb.forge_number(number),
             title=ticket.get("title", ""),
-            author=ticket.get("author", ""), auto_merge="-",
+            author=ticket.get("author", ""),
+            auto_merge=ticket.get("auto_merge", "-"),
             last_activity=iso_to_dt(ticket.get("last_activity_iso")),
             base_reason="persisted review")
     else:

@@ -1554,6 +1554,10 @@ def manual_action_description(decision: Decision) -> str:
     parts: list[str] = []
     if decision.action in ACTIONABLE_DECISIONS:
         parts.append(decision.action.replace("_", "-"))
+        if decision.action == "approve" and decision.auto_merge == "merge":
+            # the y is heavier here: auto-merge is scheduled, so the
+            # approval merges the PR, not just comments on it
+            parts.append("auto-merge scheduled: approving MERGES the PR")
     if decision.label_changes:
         labels_part = (
             f"labels add={list(label_names(decision.label_changes, 'add'))!r} "

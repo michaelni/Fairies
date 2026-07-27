@@ -34,9 +34,10 @@ def queued_ticket(n: int, backoff: float = 0.0) -> dict:
 
 
 def decision(n: int, action: str = "comment", llm: str = "moderate_issues",
-             msg: str = "m", labels: tuple = ()) -> fairy.Decision:
-    return fairy.Decision(n, f"t{n}", "a", "-", action, "llm", None, llm, msg,
-                          label_changes=labels)
+             msg: str = "m", labels: tuple = (),
+             auto_merge: str = "-") -> fairy.Decision:
+    return fairy.Decision(n, f"t{n}", "a", auto_merge, action, "llm", None,
+                          llm, msg, label_changes=labels)
 
 
 class WorkerCase(unittest.TestCase):
@@ -73,6 +74,13 @@ class VerdictRoutingTests(WorkerCase):
         t = self.db.get("skipped", "pr", 5)
         self.assertEqual(t["skip_backoff_h"], 48)
         self.assertTrue(t["llm_at"])
+
+    def test_auto_merge_state_survives_into_the_verdict(self) -> None:
+        self.db.push("queued", "pr", 5, queued_ticket(5))
+        self.run_one(5, lambda ns, p: decision(5, action="approve",
+                                               auto_merge="merge"))
+        t = self.db.get("reviewed", "pr", 5)
+        self.assertEqual(t["auto_merge"], "merge")
 
     def test_skip_with_label_changes_is_operator_actionable(self) -> None:
         self.db.push("queued", "pr", 5, queued_ticket(5))

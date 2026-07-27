@@ -523,6 +523,16 @@ def verdict_ticket(n: int, classification: str = "moderate_issues",
 
 
 class TicketDecisionTests(AgentCase):
+    def test_auto_merge_rides_the_ticket_into_the_y_prompt(self) -> None:
+        d = agent.ticket_decision("pr", 1, dict(
+            verdict_ticket(1, "approve"), auto_merge="merge"))
+        self.assertEqual(d.auto_merge, "merge")
+        self.assertEqual(d.action, "approve")
+        self.assertIn("auto-merge scheduled: approving MERGES the PR",
+                      fairy.manual_action_description(d))
+        plain = agent.ticket_decision("pr", 2, verdict_ticket(2, "approve"))
+        self.assertNotIn("MERGES", fairy.manual_action_description(plain))
+
     def test_hand_edited_label_junk_cannot_raise(self) -> None:
         d = agent.ticket_decision("pr", 1, {
             "title": "t", "review": {

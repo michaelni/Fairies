@@ -18,9 +18,13 @@ handlers the fairy-ui pane tails, not just the process console.
 
 from __future__ import annotations
 
+import logging
+import subprocess
 import sys
 import unittest
+from datetime import datetime
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -61,6 +65,44 @@ class RunCmdStderrPumpTest(unittest.TestCase):
                     if r.getMessage().startswith("[child] ")]
         expected = [f"[child] line-{i:05d}" for i in range(n_lines)]
         self.assertEqual(observed, expected)
+
+
+class WireRelayTests(unittest.TestCase):
+    """A child logging in FAIRY_LOG_WIRE shape keeps level and time
+    through the relay: the pane colors wrapper errors red, and exactly
+    one timestamp (the child's own) survives per line."""
+
+    def test_wire_lines_keep_their_level_and_time(self) -> None:
+        script = (
+            "import sys\n"
+            "sys.stderr.write('2026-07-24T10:00:01 E it broke\\n')\n"
+            "sys.stderr.write('plain transcript line\\n')\n")
+        with self.assertLogs(forge_gcli.logger, level="DEBUG") as logs:
+            fairy.run_cmd([sys.executable, "-c", script],
+                          stderr_line_prefix="[w] ")
+        wire = next(r for r in logs.records if "it broke" in r.getMessage())
+        self.assertEqual(wire.levelno, logging.ERROR)
+        self.assertEqual(wire.getMessage(), "[w] it broke")
+        self.assertEqual(
+            datetime.fromtimestamp(wire.created).strftime("%Y-%m-%dT%H:%M:%S"),
+            "2026-07-24T10:00:01")
+        plain = next(r for r in logs.records
+                     if "transcript" in r.getMessage())
+        self.assertEqual(plain.levelno, logging.INFO)
+
+    def test_the_wrapper_child_is_asked_for_the_wire_format(self) -> None:
+        ns = fairy.parse_args(["--owner", "o", "--repo", "r",
+                               "--llm-review-cmd", "wrapper",
+                               "--patch-repo", "p"])
+        done = subprocess.CompletedProcess(
+            [], 0, stdout='{"classification": "skip", "message": ""}',
+            stderr="")
+        with mock.patch.object(fairy, "run_cmd", return_value=done) as rc:
+            fairy.invoke_llm_wrapper(
+                ns, {}, number=1,
+                allowed_classifications=frozenset({"skip"}),
+                label_allowlist=[])
+        self.assertEqual(rc.call_args.kwargs["env"]["FAIRY_LOG_WIRE"], "1")
 
 
 if __name__ == "__main__":

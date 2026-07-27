@@ -201,3 +201,26 @@ class ThreadPrefixTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WireFormatTests(unittest.TestCase):
+    """FAIRY_LOG_WIRE puts a piped wrapper into add_file_log's exact
+    shape so the relaying pump can recover level and time."""
+
+    def _captured(self, msg: str) -> str:
+        target = logging.getLogger("_wire_format_test")
+        target.handlers.clear()
+        import io
+        import os
+        fake_stderr = io.StringIO()
+        fake_stderr.isatty = lambda: False  # type: ignore[method-assign]
+        with patch.object(common.sys, "stderr", fake_stderr), \
+                patch.dict(os.environ, {"FAIRY_LOG_WIRE": "1"}):
+            common.setup_logging(target, False)
+            target.warning(msg)
+        return fake_stderr.getvalue()
+
+    def test_wire_lines_carry_iso_time_and_level_letter(self) -> None:
+        self.assertRegex(
+            self._captured("boom"),
+            r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d W boom\n$")

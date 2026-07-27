@@ -81,10 +81,12 @@ import argparse
 import json
 import logging
 import os
+import re
 import shlex
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from threading import Thread
 from urllib.parse import quote
@@ -150,6 +152,27 @@ def add_forge_repo_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+_WIRE_LINE = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d) ([DIWEC]) (.*)$")
+_WIRE_LEVELS = {"D": logging.DEBUG, "I": logging.INFO, "W": logging.WARNING,
+                "E": logging.ERROR, "C": logging.CRITICAL}
+
+
+def _relay_line(prefix: str, line: str) -> None:
+    """Re-log one relayed child line; a FAIRY_LOG_WIRE-shaped line keeps
+    its own level (the pane colors by it) and its own time (the record's
+    time IS the child's stamp, so no second timestamp appears)."""
+    match = _WIRE_LINE.match(line)
+    if match is None:
+        logger.info("%s%s", prefix, line)
+        return
+    stamp, letter, message = match.groups()
+    record = logger.makeRecord(logger.name, _WIRE_LEVELS[letter], __file__, 0,
+                               "%s%s", (prefix, message), None)
+    record.created = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S").timestamp()
+    record.msecs = 0.0
+    logger.handle(record)
+
+
 def run_cmd(
     cmd: list[str],
     *,
@@ -180,7 +203,8 @@ def run_cmd(
     # that concurrent wrapper invocations (several workers, one log)
     # remain attributable -- and so the lines reach the --log-file
     # handlers the fairy-ui pane tails; a raw sys.stderr write reached
-    # only the process console.
+    # only the process console. A child in FAIRY_LOG_WIRE format keeps
+    # its own level and time through the relay (_relay_line).
     #
     # Implementation note: we hand the child a raw pipe fd for stderr
     # (NOT ``subprocess.PIPE``). With a raw fd, ``Popen.stderr`` is
@@ -198,7 +222,7 @@ def run_cmd(
         try:
             with os.fdopen(read_fd, "r", encoding="utf-8", errors="replace") as src:
                 for line in src:
-                    logger.info("%s%s", stderr_line_prefix, line.rstrip("\n"))
+                    _relay_line(stderr_line_prefix, line.rstrip("\n"))
         except Exception:  # best-effort: never let the pump crash the review
             logger.exception("stderr pump failed for %s", shlex.join(cmd))
 

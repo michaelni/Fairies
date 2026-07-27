@@ -309,11 +309,20 @@ def setup_logging(
         use_color = True
     else:
         use_color = sys.stderr.isatty() and not os.environ.get("NO_COLOR")
-    formatter_cls = _ColorFormatter if use_color else logging.Formatter
-    formatter = formatter_cls(
-        fmt='%(asctime)s %(thread_prefix)s%(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-    )
+    if os.environ.get("FAIRY_LOG_WIRE"):
+        # a piped wrapper logs in add_file_log's exact shape so the
+        # relaying pump can recover level and time; color and thread
+        # prefixes would only litter the wire
+        formatter = logging.Formatter(
+            fmt='%(asctime)s %(levelname).1s %(message)s',
+            datefmt='%Y-%m-%dT%H:%M:%S',
+        )
+    else:
+        formatter_cls = _ColorFormatter if use_color else logging.Formatter
+        formatter = formatter_cls(
+            fmt='%(asctime)s %(thread_prefix)s%(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+        )
     thread_prefix_filter = _ThreadPrefixFilter()
 
     # INFO goes to stderr (not stdout) because several scripts that use

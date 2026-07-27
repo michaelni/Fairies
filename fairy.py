@@ -1904,6 +1904,7 @@ def invoke_llm_wrapper(
         cmd,
         verbose=args.verbose,
         verbose_threshold=2,
+        env={**os.environ, "FAIRY_LOG_WIRE": "1"},
         input_text=json.dumps(payload),
         timeout=args.llm_timeout,
         stderr_line_prefix=stderr_prefix,

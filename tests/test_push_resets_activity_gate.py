@@ -32,6 +32,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import gcli_cache  # noqa: E402
 import fairy  # noqa: E402
+import forge_gcli  # noqa: E402
 
 SELF = "Forgejo_Fairy"
 
@@ -89,7 +90,9 @@ def _call(*, timeline: list[dict], min_age_days: float = 0.25) -> object:
         fairy, "get_pr_discussion",
         return_value=([REQUEST_REVIEW], [FAIRY_COMMENT], []),
     ), patch.object(
-        fairy.gcli_cache, "get", return_value={"timeline": timeline},
+        fairy.gcli_cache, "get",
+        return_value={"timeline": [forge_gcli.project_timeline_event(e)
+                                  for e in timeline]},
     ), patch.object(
         fairy, "list_commit_statuses", return_value=[],
     ):

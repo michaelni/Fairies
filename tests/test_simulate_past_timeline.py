@@ -15,9 +15,9 @@ operator would have observed at the cutoff), and the unfiltered
 derivation must collapse to ``"no"`` (today's state).
 
 The auto-merge timeline events used here mirror Forgejo's typed comment
-shape (``type``, ``created_at``); see ``_AUTO_MERGE_SCHEDULE_EVENT`` /
-``_AUTO_MERGE_CANCEL_EVENT`` and the linked source-of-truth comment in
-``fairy.py``.
+shape (``type``, ``created_at``); see ``forge_gcli.AUTO_MERGE_SCHEDULE_EVENT`` /
+``AUTO_MERGE_CANCEL_EVENT`` and the linked source-of-truth comment in
+``forge_gcli.py``.
 """
 
 from __future__ import annotations

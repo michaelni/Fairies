@@ -39,6 +39,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import fairy  # noqa: E402
+import forge_gcli  # noqa: E402
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "forgejo_pr_timeline"
 
@@ -50,9 +51,14 @@ PR_23197_INITIAL_PUSH_AT = "2026-05-21T21:23:41Z"
 PR_23197_FORCE_PUSH_AT = "2026-05-25T21:46:48Z"
 
 
+def _project(events: list[dict]) -> list[dict]:
+    """Raw capture -> what ``forge_gcli.list_issue_timeline`` hands out."""
+    return [forge_gcli.project_timeline_event(e) for e in events]
+
+
 def _load_timeline(name: str) -> list[dict]:
     with (FIXTURES / name).open() as f:
-        return json.load(f)
+        return _project(json.load(f))
 
 
 class PushEventsFromTimelineTests(unittest.TestCase):
@@ -92,7 +98,7 @@ class PushEventsFromTimelineTests(unittest.TestCase):
             {"type": "label",   "created_at": "2026-04-02T00:00:00Z"},
             {"type": "review",  "created_at": "2026-04-03T00:00:00Z"},
         ]
-        self.assertEqual(fairy.push_events_from_timeline(timeline), [])
+        self.assertEqual(fairy.push_events_from_timeline(_project(timeline)), [])
 
     def test_malformed_push_body_is_skipped(self) -> None:
         # If Forgejo ever changes the body encoding we must not crash.
@@ -110,7 +116,7 @@ class PushEventsFromTimelineTests(unittest.TestCase):
              }),
              "user": {"login": "bob"}},
         ]
-        pushes = fairy.push_events_from_timeline(timeline)
+        pushes = fairy.push_events_from_timeline(_project(timeline))
         self.assertEqual(len(pushes), 1)
         self.assertEqual(pushes[0]["author"], "bob")
         self.assertEqual(pushes[0]["head_sha"], "deadbeef" * 5)

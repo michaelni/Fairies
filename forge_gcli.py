@@ -63,7 +63,10 @@ one degrades that feature rather than raising.
                             comments_count, stale, dismissed
 ``list_pr_review_comments`` id, body, user, created_at, updated_at,
                             path
-``list_issue_timeline``     id, type, body, user, created_at
+``list_issue_timeline``     id, type, body, user, created_at; a
+                            ``pull_push`` event whose payload was
+                            readable also carries is_force_push and
+                            commit_ids
 ``list_pr_commits``         sha, commit.message, author.{login,id},
                             commit.author.{name,email,date},
                             commit.committer.date
@@ -99,8 +102,11 @@ from urllib.parse import quote
 from common import JsonValue
 
 __all__ = [
+    "AUTO_MERGE_CANCEL_EVENT",
+    "AUTO_MERGE_SCHEDULE_EVENT",
     "KIND_ISSUE",
     "KIND_PR",
+    "PUSH_EVENT",
     "add_forge_repo_args",
     "apply_issue_label_changes",
     "build_repo_path",
@@ -115,6 +121,7 @@ __all__ = [
     "load_json",
     "norm_user",
     "post_issue_comment",
+    "project_timeline_event",
     "run_cmd",
 ]
 
@@ -623,23 +630,79 @@ def list_pr_review_comments(
     return out
 
 
+# Forgejo names the typed timeline comments for pushes and the
+# auto-merge actions. Source:
+# https://codeberg.org/forgejo/forgejo/src/branch/forgejo/models/issues/comment.go
+#   * ``CommentTypePRScheduledToAutoMerge`` (= 34, ``pull_scheduled_merge``)
+#   * ``CommentTypePRUnScheduledToAutoMerge`` (= 35,
+#     ``pull_cancel_scheduled_merge``)
+# First observed on Forgejo 15.0.x; expected to be stable across
+# releases since the constants are part of the public API enum and
+# Gitea uses the same names. The full set of event types is
+# forge-defined and open, so these are named constants rather than an
+# enum: an event this module does not name still passes through.
+PUSH_EVENT = "pull_push"
+AUTO_MERGE_SCHEDULE_EVENT = "pull_scheduled_merge"
+AUTO_MERGE_CANCEL_EVENT = "pull_cancel_scheduled_merge"
+
+
+def _push_fields(body: str) -> dict:
+    """Decode a push payload, which Forgejo ships as JSON text in ``body``.
+
+    Returns ``{}`` for a payload this module cannot read, which is how a
+    consumer tells "a push whose commits are unknown" (both keys absent)
+    from "a push that touched no listed commit" (``commit_ids == []``).
+    """
+    try:
+        decoded = json.loads(body)
+    except ValueError:
+        return {}
+    if not isinstance(decoded, dict):
+        return {}
+    commit_ids = decoded.get("commit_ids")
+    return {
+        "is_force_push": bool(decoded.get("is_force_push")),
+        "commit_ids": [c for c in commit_ids if isinstance(c, str) and c]
+                      if isinstance(commit_ids, list) else [],
+    }
+
+
+def project_timeline_event(event: dict) -> dict:
+    """Project one raw timeline event to the keys this module hands out."""
+    projected = {
+        "type": event.get("type"),
+        "id": event.get("id"),
+        "user": norm_user(event.get("user")),
+        "created_at": event.get("created_at"),
+        "body": event.get("body") or "",
+    }
+    if projected["type"] == PUSH_EVENT:
+        projected.update(_push_fields(projected["body"]))
+    return projected
+
+
 def list_issue_timeline(
     args: argparse.Namespace, owner: str, repo: str, number: int,
 ) -> list[dict]:
-    """Return the typed timeline events for ``owner/repo`` issue/PR ``number``.
+    """Return the timeline events for ``owner/repo`` issue/PR ``number``.
 
     The endpoint is ``/repos/{owner}/{repo}/issues/{n}/timeline`` for
     both issues and PRs (PRs are issues in the data model). PR
-    timelines additionally include typed events like ``pull_push``,
-    ``pull_scheduled_merge`` and ``pull_cancel_scheduled_merge`` that
-    the plain comments endpoint omits, which is why the bot's
-    auto-merge detection and push-event tracking source from this
-    feed rather than from ``/issues/{n}/comments``.
+    timelines additionally carry the typed events named above, which
+    the plain comments endpoint omits -- which is why auto-merge
+    detection and push tracking source from this feed rather than from
+    ``/issues/{n}/comments``.
+
+    Events are projected to ``type``, ``id``, ``user``, ``created_at``
+    and ``body``; ``pull_push`` events also carry ``is_force_push`` and
+    ``commit_ids``. Projecting here rather than at each consumer keeps
+    the decode in one place and keeps the per-event user object out of
+    the cache, which stores whatever this returns.
     """
-    return _list_repo_endpoint(
+    return [project_timeline_event(e) for e in _list_repo_endpoint(
         args, owner, repo, f"/issues/{number}/timeline",
         what=f"timeline for #{number}",
-    )
+    )]
 
 
 def list_pr_commits(

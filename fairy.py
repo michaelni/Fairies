@@ -99,6 +99,9 @@ from common import (
 )
 import forge_gcli
 from forge_gcli import (
+    AUTO_MERGE_CANCEL_EVENT,
+    AUTO_MERGE_SCHEDULE_EVENT,
+    PUSH_EVENT,
     add_forge_repo_args,
     apply_issue_label_changes,
     build_repo_path,
@@ -1230,19 +1233,7 @@ def get_pr_head_ref(pr: ApiObject) -> str | None:
     return None
 
 
-# Forgejo emits typed timeline comments for the "schedule auto-merge"
-# and "cancel scheduled auto-merge" actions. Source:
-# https://codeberg.org/forgejo/forgejo/src/branch/forgejo/models/issues/comment.go
-#   * ``CommentTypePRScheduledToAutoMerge`` (= 34, string
-#     ``"pull_scheduled_merge"``)
-#   * ``CommentTypePRUnScheduledToAutoMerge`` (= 35, string
-#     ``"pull_cancel_scheduled_merge"``)
-# Behavior first observed on Forgejo 15.0.x; expected to be stable
-# across releases since the constants are part of the public API
-# enum and Gitea uses the same names.
-_AUTO_MERGE_SCHEDULE_EVENT = "pull_scheduled_merge"
-_AUTO_MERGE_CANCEL_EVENT = "pull_cancel_scheduled_merge"
-_AUTO_MERGE_EVENTS = frozenset({_AUTO_MERGE_SCHEDULE_EVENT, _AUTO_MERGE_CANCEL_EVENT})
+_AUTO_MERGE_EVENTS = frozenset({AUTO_MERGE_SCHEDULE_EVENT, AUTO_MERGE_CANCEL_EVENT})
 
 
 def auto_merge_state_from_timeline(timeline: list[ApiObject]) -> str:
@@ -1275,7 +1266,7 @@ def auto_merge_state_from_timeline(timeline: list[ApiObject]) -> str:
         if latest_ts is None or ts > latest_ts:
             latest_ts = ts
             latest_type = ev_type
-    if latest_type == _AUTO_MERGE_SCHEDULE_EVENT:
+    if latest_type == AUTO_MERGE_SCHEDULE_EVENT:
         return "merge"
     return "no"
 
@@ -1320,54 +1311,30 @@ def get_auto_merge_info(
 def push_events_from_timeline(timeline: list[ApiObject]) -> list[DiscussionItem]:
     """Extract ``pull_push`` timeline entries as discussion-list items.
 
-    Forgejo/Gitea emit one ``pull_push`` timeline event per push to the
-    PR head branch. The interesting bit -- the new head SHA and the
-    force-push flag -- lives in a JSON-string ``body`` field on the
-    event, of the form
-    ``{"is_force_push": bool, "commit_ids": ["<sha>", ...]}``. We
-    surface those as synthetic ``kind="push"`` items so the triage and
-    main reviewer prompts can see "after my last comment, the author
-    pushed commit X" as a first-class signal, instead of having to
-    infer it from a SHA mentioned in a prior bot comment vs the
-    current ``head_sha`` (which the triager has been observed to
-    speculate around -- see PR #23197 in the bot history).
+    One event is emitted per push to the PR head branch. We surface
+    them as synthetic ``kind="push"`` items so the triage and main
+    reviewer prompts can see "after my last comment, the author pushed
+    commit X" as a first-class signal, instead of having to infer it
+    from a SHA mentioned in a prior fairy comment vs the current
+    ``head_sha`` (which the triager has been observed to speculate
+    around -- see PR #23197 in fairy's history).
 
-    Malformed ``body`` strings are skipped silently; a push event we
-    cannot decode is still better suppressed than turned into a hard
-    failure that would block the whole review.
+    A push whose payload the forge layer could not read carries no
+    ``commit_ids`` and is skipped: suppressing it beats blocking the
+    whole review on a hard failure.
     """
     items: list[DiscussionItem] = []
     for entry in timeline:
-        if entry.get("type") != "pull_push":
+        if entry.get("type") != PUSH_EVENT or "commit_ids" not in entry:
             continue
-        raw_body = entry.get("body")
-        if not isinstance(raw_body, str):
-            continue
-        try:
-            decoded = json.loads(raw_body)
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(decoded, dict):
-            continue
-        commit_ids = decoded.get("commit_ids")
-        if not isinstance(commit_ids, list):
-            commit_ids = []
-        commit_ids = [c for c in commit_ids if isinstance(c, str) and c]
-        is_force_push = bool(decoded.get("is_force_push"))
-        head_sha = commit_ids[-1] if commit_ids else None
+        commit_ids = entry["commit_ids"]
         user = entry.get("user") or {}
-        author = (
-            user.get("login")
-            or user.get("username")
-            or user.get("full_name")
-            or "?"
-        )
         items.append({
             "kind": "push",
-            "author": author,
+            "author": user.get("login") or user.get("full_name") or "?",
             "created_at": entry.get("created_at"),
-            "head_sha": head_sha,
-            "is_force_push": is_force_push,
+            "head_sha": commit_ids[-1] if commit_ids else None,
+            "is_force_push": bool(entry.get("is_force_push")),
             "commit_count": len(commit_ids),
         })
     return items

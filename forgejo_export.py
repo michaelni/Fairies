@@ -49,7 +49,7 @@ from common import (
     iso_to_dt,
     setup_logging,
 )
-from forge_gcli import add_forge_repo_args
+from forge_gcli import add_forge_repo_args, norm_user
 
 LOG = logging.getLogger("forgejo_export")
 MARKER = ".forgejo-exporter.json"
@@ -143,17 +143,6 @@ def utc_str(value: str | None) -> str | None:
 
 def now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-
-def norm_user(user: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not user:
-        return None
-    return {
-        "login": user.get("login"),
-        "id": user.get("id"),
-        "full_name": user.get("full_name"),
-        "html_url": user.get("html_url"),
-    }
 
 
 def user_str(user: dict[str, Any] | None) -> str:

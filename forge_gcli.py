@@ -113,6 +113,7 @@ __all__ = [
     "list_pr_review_comments",
     "list_pr_reviews",
     "load_json",
+    "norm_user",
     "post_issue_comment",
     "run_cmd",
 ]
@@ -525,6 +526,13 @@ def post_issue_comment(
             f"that backend in the way mail_fairy expects. Please "
             f"report or patch forge_gcli.post_issue_comment."
         )
+
+
+def norm_user(user: dict | None) -> dict | None:
+    """Thin a forge user object down to the keys this module hands out."""
+    if not user:
+        return None
+    return {k: user.get(k) for k in ("login", "id", "full_name", "html_url")}
 
 
 def build_repo_path(owner: str, repo: str, suffix: str) -> str:

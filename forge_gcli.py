@@ -465,7 +465,7 @@ def list_issue_comments(
     Raises ``NotImplementedError`` for unsupported backends with a
     message pointing the caller at where to add support.
     """
-    forge_type = (getattr(args, "forge_type", None) or "gitea")
+    forge_type = _forge_type(args)
     path = _comments_api_path(forge_type, owner, repo, number, kind)
     logger.debug(
         "list_issue_comments forge_type=%s kind=%s path=%s",
@@ -511,7 +511,7 @@ def post_issue_comment(
     message names the backend so failures on untested backends are
     immediately attributable.
     """
-    forge_type = (getattr(args, "forge_type", None) or "gitea")
+    forge_type = _forge_type(args)
     cmd = gcli_prefix(args) + [
         "comment",
         "-o", owner,
@@ -536,6 +536,11 @@ def post_issue_comment(
             f"that backend in the way mail_fairy expects. Please "
             f"report or patch forge_gcli.post_issue_comment."
         )
+
+
+def _forge_type(args: argparse.Namespace) -> str:
+    """The backend gcli will talk to; empty means gcli's own default."""
+    return (getattr(args, "forge_type", None) or "gitea").lower()
 
 
 def norm_user(user: dict | None) -> dict | None:
@@ -725,10 +730,48 @@ def _project_status_row(row: dict) -> dict:
     }
 
 
+def _check_run_as_status_row(run: dict) -> dict:
+    """Project a GitHub check run onto a commit-status row.
+
+    ``conclusion`` is null until a run completes, so an unfinished run
+    is reported by its ``status`` (``queued`` / ``in_progress``), which
+    the state vocabulary already reads as pending.
+    """
+    output = run.get("output") or {}
+    completed = run.get("status") == "completed"
+    return {
+        "context": run.get("name"),
+        "state": run.get("conclusion") if completed else run.get("status"),
+        "description": output.get("title") or "",
+        "target_url": run.get("html_url") or "",
+        "created_at": run.get("started_at"),
+        "updated_at": run.get("completed_at") or run.get("started_at"),
+    }
+
+
+def _list_check_runs(
+    args: argparse.Namespace, owner: str, repo: str, ref: str,
+) -> list[dict]:
+    """Fetch the check runs for ``ref``; the endpoint wraps them in an object."""
+    path = build_repo_path(owner, repo, f"/commits/{quote(ref, safe='')}/check-runs")
+    data = gcli_api(args, path, all_pages=True)
+    pages = data if isinstance(data, list) else [data]
+    return [run for page in pages if isinstance(page, dict)
+            for run in (page.get("check_runs") or []) if isinstance(run, dict)]
+
+
 def list_commit_statuses(
     args: argparse.Namespace, owner: str, repo: str, ref: str,
 ) -> list[dict]:
     """Return the CI status rows for ``owner/repo`` commit ``ref``.
+
+    GitHub Actions reports through the Checks API and posts nothing to
+    the commit-status endpoint, so on GitHub both are read and merged:
+    ``/commits/{sha}/statuses`` can return 0 rows while
+    ``/commits/{sha}/check-runs`` returns them all. Third-party CI still
+    posts to the status endpoint, so dropping it would lose those.
+    Forgejo and GitLab report everything through statuses and are left
+    at the single request.
 
     A response that is not a list yields no rows rather than raising:
     a PR whose CI cannot be read is skipped for want of CI, and that
@@ -736,9 +779,12 @@ def list_commit_statuses(
     """
     path = build_repo_path(owner, repo, f"/commits/{quote(ref, safe='')}/statuses")
     data = gcli_api(args, path, all_pages=True)
-    if not isinstance(data, list):
-        return []
-    return [_project_status_row(r) for r in data if isinstance(r, dict)]
+    rows = ([_project_status_row(r) for r in data if isinstance(r, dict)]
+            if isinstance(data, list) else [])
+    if _forge_type(args) == "github":
+        rows += [_check_run_as_status_row(r)
+                 for r in _list_check_runs(args, owner, repo, ref)]
+    return rows
 
 
 def list_pr_commits(

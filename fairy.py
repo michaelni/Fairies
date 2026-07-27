@@ -2634,11 +2634,16 @@ def prepare_pr(
         )
 
     failing_contexts = sorted(
-        ctx for ctx, (state, _) in commit_statuses.items() if state != "SUCCESS"
+        ctx for ctx, (state, _) in commit_statuses.items()
+        if state not in ("SUCCESS", "NEUTRAL")
     )
     # ``CANCELLED`` contexts are still in ``failing_contexts`` (they are
     # not ``SUCCESS``), so the PR is correctly NOT auto-approved when only
-    # cancelled jobs exist.
+    # cancelled jobs exist. ``NEUTRAL`` is excluded: it is the state of a
+    # job that did not run (GitHub reports a conditional or path-filtered
+    # job as ``skipped``, and most Actions workflows have one), and
+    # treating "did not run" as "not successful" would skip every such PR
+    # with no triage payload to explain why.
     if failing_contexts:
         preview = ", ".join(failing_contexts[:4])
         if len(failing_contexts) > 4:

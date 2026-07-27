@@ -38,34 +38,39 @@ already provides. ``args.gcli_account`` is allowed to be falsy (None
 or empty string), in which case ``gcli_prefix`` omits the ``-a``
 flag and gcli falls through to its own configured default account.
 
-What lives here:
+What belongs here: everything that knows a forge exists -- building
+the gcli command line, running it, parsing its JSON, and fetching
+each endpoint. This is the only module that branches on
+``args.forge_type`` to reach an API; ``mail_fairy`` owns the parallel
+notion for notification mail (``--forge-flavor``).
 
-- ``run_cmd``: ``subprocess.run`` wrapper with timestamped command
-  logging via ``logger.debug`` and an optional stderr line-prefix
-  pump. The pump is the workaround for a 45 % log-line loss bug we
-  hit under concurrent wrapper invocations: see the in-line note in
-  ``run_cmd`` for the ``communicate()``/``os.pipe()`` race details.
-- ``load_json``: tolerant JSON parser that copes with gcli's habit
-  of emitting multiple top-level objects when paginating.
-- ``gcli_prefix``: build the ``gcli -a <account> -t <type>`` command
-  prefix from argparse args.
-- ``gcli_api``: ``gcli api`` wrapper returning parsed JSON.
-- ``run_gcli_editor_submission``: invoke a gcli command that wants
-  ``EDITOR`` set, by writing the body to a temp file and pointing
-  the editor stub at it. Used for ``gcli comment`` and
-  ``gcli pulls ... approve``.
-- ``list_issue_comments``: fetch all comments on a PR/issue via the
-  ``/repos/{owner}/{repo}/issues/{N}/comments`` endpoint. Strict on
-  unexpected response shapes (raises rather than silently returning
-  an empty list) because the result is consumed by dedupe logic.
-- ``post_issue_comment``: post a comment on a PR/issue using
-  ``gcli comment``, routed through ``run_gcli_editor_submission``.
-- ``apply_issue_label_changes``: add/remove PR/issue labels via
-  ``gcli pulls/issues ... labels add/remove``.
+What does NOT belong: review policy, LLM plumbing, rendering. A
+caller that needs another field asks for it here rather than reaching
+past this module to ``gcli_api``.
 
-Plus the ``JsonValue`` / ``JsonPrimitive`` TypeAliases re-exported
-from ``common`` so callers can pick whichever entry point is closer
-to their import block without redeclaring the aliases.
+Returned payloads
+-----------------
+The keys below are what the tree relies on and what this module
+undertakes to keep supplying. The Forgejo/GitHub wire spellings
+behind them are private -- callers must not reach for a key that is
+not listed. Consumers read them with ``.get``, so a forge that omits
+one degrades that feature rather than raising.
+
+``list_issue_comments``     id, body, user, created_at, updated_at,
+                            html_url
+``list_pr_reviews``         id, state, body, user, submitted_at,
+                            updated_at, dismissed_at, commit_id,
+                            comments_count, stale, dismissed
+``list_pr_review_comments`` id, body, user, created_at, updated_at,
+                            path
+``list_issue_timeline``     id, type, body, user, created_at
+``list_pr_commits``         sha, commit.message, author.{login,id},
+                            commit.author.{name,email,date},
+                            commit.committer.date
+``list_pr_files``           filename, status, additions, deletions,
+                            changes, previous_filename
+
+A ``user`` sub-object carries login, id, full_name, html_url.
 
 Logging:
 This module owns its own ``logging.getLogger("forge_gcli")`` instance.
@@ -91,11 +96,26 @@ from pathlib import Path
 from threading import Thread
 from urllib.parse import quote
 
-# Re-exported for callers that do ``from forge_gcli import JsonValue``
-# (e.g. fairy). Single source of truth lives in common.py;
-# both forge_gcli and openai_common re-export the aliases so neither
-# subsystem has to depend on the other.
-from common import JsonPrimitive, JsonValue
+from common import JsonValue
+
+__all__ = [
+    "KIND_ISSUE",
+    "KIND_PR",
+    "add_forge_repo_args",
+    "apply_issue_label_changes",
+    "build_repo_path",
+    "gcli_api",
+    "gcli_prefix",
+    "list_issue_comments",
+    "list_issue_timeline",
+    "list_pr_commits",
+    "list_pr_files",
+    "list_pr_review_comments",
+    "list_pr_reviews",
+    "load_json",
+    "post_issue_comment",
+    "run_cmd",
+]
 
 
 logger = logging.getLogger("forge_gcli")

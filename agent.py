@@ -596,7 +596,8 @@ def log_summary(db: filedb.Db) -> None:
 def ask_pass(db: filedb.Db, kinds: set[str], retry=None) -> None:
     """--ask: the pre-TUI prompt flow. Print each actionable reviewed/
     verdict (URL, action, message) and ask; y hands it to the send
-    pass via outgoing/, s/x settle it, l(ater)/enter leaves it, r
+    pass via outgoing/, s skips one-shot (the next scan reconsiders),
+    S snoozes (>=24h doubling), x cancels, l(ater)/enter leaves it, r
     requeues it for a fresh review (``retry`` produces it inline and
     the fresh verdict is asked again; without an inline worker the
     request waits for one), q stops asking. Rows a worker holds are
@@ -620,18 +621,29 @@ def ask_pass(db: filedb.Db, kinds: set[str], retry=None) -> None:
             while True:
                 try:
                     choice = input(f"{kind} #{number}: post? [y]es/[s]kip/"
-                                   "[x] cancel/[r]etry/[l]ater/[q]uit ")
+                                   "[S]nooze/[x] cancel/[r]etry/[l]ater/[q]uit ")
                 except EOFError:
                     return
-                choice = choice.strip().lower()
+                raw = choice.strip()
+                choice = raw.lower()
                 if choice in ("y", "yes"):
                     db.try_move("reviewed", "outgoing", kind, number)
                     break
-                if choice in ("s", "skip"):
+                if raw == "S" or choice == "snooze":
                     db.try_move("reviewed", "skipped", kind, number,
                                 mutate=lambda d: d.update(
-                                    reason="operator skip",
+                                    reason="operator snooze",
                                     snoozed_at=datetime.now(timezone.utc).isoformat()))
+                    break
+                if raw == "s" or choice == "skip":
+
+                    def skip_now(d: dict) -> None:
+                        d["reason"] = "operator skip"
+                        d.pop("llm_at", None)
+                        d.pop("snoozed_at", None)
+
+                    db.try_move("reviewed", "skipped", kind, number,
+                                mutate=skip_now)
                     break
                 if choice in ("x", "cancel"):
                     db.try_move("reviewed", "cancelled", kind, number,
@@ -652,7 +664,7 @@ def ask_pass(db: filedb.Db, kinds: set[str], retry=None) -> None:
                     break
                 if choice in ("q", "quit"):
                     return
-                print("please answer y, s, x, r, l or q")
+                print("please answer y, s, S, x, r, l or q")
 
 
 def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
@@ -712,8 +724,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "up to N tickets concurrently (bare --drain: 1)")
     p.add_argument("--ask", action="store_true",
                    help="prompt per reviewed verdict before the send pass "
-                        "(the pre-TUI manual flow: y posts, s/x settle, "
-                        "r reruns the review, l defers, q stops)")
+                        "(the pre-TUI manual flow: y posts, s skips one-shot, "
+                        "S snoozes, x cancels, r reruns the review, l defers, "
+                        "q stops)")
     p.add_argument("--dry-run", action="store_true",
                    help="log what the send pass would post; post nothing")
     args = p.parse_args(argv)

@@ -810,7 +810,7 @@ class AgeColumnTests(DbCase):
 
 class StatsWrapTests(DbCase):
     def test_state_counts_wrap_to_the_pane_width(self) -> None:
-        states = ("ci-blocked", "merge-ready", "awaiting-approver",
+        states = ("ci-blocked", "merge-ready", "queued",
                   "posted", "skipped")
         for n, state in enumerate(states, 1):
             self.db.push(state, "pr", n, verdict(n))
@@ -818,13 +818,29 @@ class StatsWrapTests(DbCase):
         with self.model.lock:
             self.model.filter_mode = "all"
         ui = make_ui(self.model)
-        texts = ["".join(t for _, t in ln) for ln in ui.stats_lines(30)]
+        texts = ["".join(t for _, t in ln) for ln in ui.stats_lines(24)]
         for state in states:
             self.assertTrue(any(f"{state}=1" in t for t in texts), state)
         count_lines = [t for t in texts if "=1" in t]
         self.assertGreater(len(count_lines), 1)
         for t in count_lines:
-            self.assertLessEqual(len(t.rstrip()), 30, t)
+            self.assertLessEqual(len(t.rstrip()), 24, t)
+
+    def test_awaiting_approver_folds_into_merge_ready(self) -> None:
+        self.db.push("merge-ready", "pr", 1, verdict(1))
+        self.db.push("merge-ready", "pr", 2, verdict(2))
+        self.db.push("awaiting-approver", "pr", 3, verdict(3))
+        self.model.poll()
+        ui = make_ui(self.model)
+        joined = "\n".join("".join(t for _, t in ln)
+                           for ln in ui.stats_lines(80))
+        self.assertIn("merge-ready=2/1", joined)
+        self.assertNotIn("awaiting-approver", joined)
+        rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in ui.list_rows()]
+        approver_row = next(t for t in rows if "#3" in t)
+        self.assertIn("merge-ready*", approver_row)
+        self.assertNotIn("awaiting-approver", approver_row)
 
 
 class PaintSmokeTests(DbCase):

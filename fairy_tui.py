@@ -104,7 +104,10 @@ _SORT_STATES = {s: i for i, s in enumerate((
     "error", "posted", "skipped", "cancelled"))}
 assert set(_SORT_STATES) == set(filedb.STATES) | {INVALID}, \
     "every filedb state needs a sort priority"
-STATE_W = max(len(s) for s in _SORT_STATES)
+# awaiting-approver IS merge-ready, just approved by someone other
+# than fairy; the display folds them and the * marks the external case
+_STATE_DISP = {"awaiting-approver": "merge-ready*"}
+STATE_W = max(len(_STATE_DISP.get(s, s)) for s in _SORT_STATES)
 
 
 @dataclass
@@ -787,18 +790,23 @@ class UILoop:
             ]]
             by = Counter(it.state for it in group)
             if by:
+                counts: list[tuple[str, str]] = []
+                for s in (*filedb.STATES, INVALID):
+                    if s == "awaiting-approver":
+                        continue  # folded into merge-ready=N/M below
+                    if s == "merge-ready" and by["awaiting-approver"]:
+                        counts.append((s, f"{by[s]}/{by['awaiting-approver']}"))
+                    elif by[s]:
+                        counts.append((s, str(by[s])))
                 row: tui_core.StyledLine = [("text", "  ")]
                 used = 2
-                for s in (*filedb.STATES, INVALID):
-                    if not by[s]:
-                        continue
-                    part_len = len(s) + 1 + len(str(by[s])) + 2
+                for s, n in counts:
+                    part_len = len(s) + 1 + len(n) + 1
                     if used > 2 and used + part_len > width:
                         block.append(row)
                         row = [("text", "  ")]
                         used = 2
-                    row += [(f"st_{s}", f"{s}="),
-                            ("num", str(by[s])), ("text", "  ")]
+                    row += [(f"st_{s}", f"{s}="), ("num", n), ("text", " ")]
                     used += part_len
                 block.append(row)
             # what could be applied right now, by action -- distinct
@@ -854,10 +862,11 @@ class UILoop:
             act = _age(it.data.get("last_activity_iso")
                        or it.data.get("expected_updated_at"))
             title = it.data.get("title") or ""
+            state_disp = _STATE_DISP.get(it.state, it.state)
             if i == m.cursor:
                 rows.append(("cursor",
                              f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<6} "
-                             f"{it.state:<{STATE_W}} {llm:<9} {act:>4}  {title}"))
+                             f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  {title}"))
                 continue
             rows.append([
                 ("mark", mark),
@@ -865,7 +874,7 @@ class UILoop:
                  f"{_KIND_DISP[it.kind]:<5} "),
                 ("label", repo_col),
                 ("num", f"#{it.number:<6} "),
-                (f"st_{it.state}", f"{it.state:<{STATE_W}} "),
+                (f"st_{it.state}", f"{state_disp:<{STATE_W}} "),
                 ("llm", f"{llm:<9} "),
                 ("num", f"{act:>4}  "),
                 ("title", title),

@@ -141,8 +141,11 @@ class Claim:
         return dst
 
     def abort(self) -> None:
-        """Return the ticket to its source state (clean shutdown)."""
-        os.replace(self.path, self._db.path(self.src_state, self.kind, self.number))
+        """Return the ticket to its source state (clean shutdown); an
+        in-place claim just releases -- no rename, no watcher event."""
+        target = self._db.path(self.src_state, self.kind, self.number)
+        if target != self.path:
+            os.replace(self.path, target)
         self._release()
 
     def _release(self) -> None:
@@ -385,11 +388,19 @@ class Db:
             return None
         src = self.path(src_state, kind, number)
         dst = self.path(dst_state, kind, number)
-        try:
-            os.rename(src, dst)
-        except FileNotFoundError:
-            os.close(fd)
-            return None
+        if src == dst:
+            # an in-place claim must not rename: the no-op rename still
+            # fires a watcher event, and an agent watching the dir would
+            # wake itself in a loop
+            if not src.exists():
+                os.close(fd)
+                return None
+        else:
+            try:
+                os.rename(src, dst)
+            except FileNotFoundError:
+                os.close(fd)
+                return None
         return Claim(self, fd, kind, number, src_state, dst)
 
     def reap(self, state: str = "llm",

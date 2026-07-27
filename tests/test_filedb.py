@@ -156,6 +156,31 @@ class ReplaceTests(DbCase):
         self.assertEqual(self.db.find("pr", 6), "reviewed")
 
 
+class InPlaceClaimTests(DbCase):
+    """A same-state claim renames nothing: a no-op rename still fires a
+    watcher event, and an agent watching the dir would wake itself in
+    an endless loop (hit in production: --dry-run send + y)."""
+
+    def test_claim_and_abort_leave_the_dir_untouched(self) -> None:
+        import os as _os
+        self.db.push("outgoing", "pr", 5, {"title": "t"})
+        d = self.db.root / "outgoing"
+        _os.utime(d, (100.0, 100.0))
+        stamp = d.stat().st_mtime_ns
+        claim = self.db.claim("outgoing", "outgoing", "pr", 5)
+        self.assertEqual(claim.read()["title"], "t")
+        claim.abort()
+        self.assertEqual(d.stat().st_mtime_ns, stamp)
+        self.assertEqual(self.db.find("pr", 5), "outgoing")
+
+    def test_claiming_a_missing_file_in_place_returns_none(self) -> None:
+        self.assertIsNone(self.db.claim("outgoing", "outgoing", "pr", 5))
+        self.db.push("outgoing", "pr", 5, {})
+        claim = self.db.claim("outgoing", "outgoing", "pr", 5)
+        self.assertIsNotNone(claim)
+        claim.abort()
+
+
 class BasicOpsTests(DbCase):
     def test_push_get_pop_roundtrip(self) -> None:
         self.db.push("queued", "pr", 5, {"title": "t"})

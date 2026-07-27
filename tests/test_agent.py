@@ -613,6 +613,15 @@ class SendTests(SendCase):
         submit.assert_not_called()
         self.assertEqual(self.db.find("pr", 1), "outgoing")
 
+    def test_dry_run_send_fires_no_event_the_agent_would_wake_on(self) -> None:
+        import os as _os
+        self.db.push("outgoing", "pr", 1, verdict_ticket(1))
+        d = self.db.root / "outgoing"
+        _os.utime(d, (100.0, 100.0))
+        stamp = d.stat().st_mtime_ns
+        self.send(pr_ns=self.ns, dry_run=True)
+        self.assertEqual(d.stat().st_mtime_ns, stamp)  # else: wake loop
+
     def test_deleted_outgoing_file_is_never_posted(self) -> None:
         # the operator deleting the file IS the veto: an unclaimable
         # ticket cannot be posted, however stale the send pass's listing

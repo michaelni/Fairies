@@ -341,8 +341,8 @@ class Model:
                 self._advance_to_reviewed(key)
             elif action == "cancel" and item.state == "llm":
                 workset.update_json(db.path("llm", item.kind, item.number), lambda d: d.update(cancel=True, reason="operator cancel"))
-            elif action in ("skip", "cancel"):
-                dst = "skipped" if action == "skip" else "cancelled"
+            elif action in ("skip", "snooze", "cancel"):
+                dst = "cancelled" if action == "cancel" else "skipped"
                 if item.state in ("llm", INVALID) or item.state in HIDDEN_SETTLED:
                     logger.info("cannot %s %s in state %s%s", action, label,
                                 item.state,
@@ -350,10 +350,18 @@ class Model:
                                 if item.state == INVALID else "")
                     return
                 note = {"reason": "operator " + action}
-                if action == "skip":  # a real snooze even on old verdicts
+                if action == "snooze":  # a real snooze even on old verdicts
                     note["snoozed_at"] = datetime.now(timezone.utc).isoformat()
+
+                def mutate(d: dict) -> None:
+                    d.update(note)
+                    if action == "skip":
+                        # no timestamps: the next scan reconsiders it
+                        d.pop("llm_at", None)
+                        d.pop("snoozed_at", None)
+
                 if not db.try_move(item.state, dst, item.kind, item.number,
-                                   mutate=lambda d: d.update(note)):
+                                   mutate=mutate):
                     logger.info("%s is busy or changed; not %sed", label, action)
                     return
                 self.acted.add(key)
@@ -551,10 +559,10 @@ EXPORT_FULL_W = 200  # E: full exports reflow at this fixed width
 PANES = {"tl": "stats", "tr": "list", "bl": "logs", "br": "message"}
 PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
-ACTION_KEYS = {"y": "apply", "s": "skip", "r": "rerun", "f": "force",
-               "x": "cancel"}
-KEYMAP = (("q", "quit"), ("y", "apply"), ("s", "skip"), ("r", "rerun"),
-          ("f", "force"), ("x", "drop"), ("o", "edit msg"),
+ACTION_KEYS = {"y": "apply", "s": "skip", "S": "snooze", "r": "rerun",
+               "f": "force", "x": "cancel"}
+KEYMAP = (("q", "quit"), ("y", "apply"), ("s", "skip"), ("S", "snooze"),
+          ("r", "rerun"), ("f", "force"), ("x", "drop"), ("o", "edit msg"),
           ("a", "filter"), ("t", "sort"), ("/", "search"), ("e/E", "export"),
           ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
 

@@ -156,6 +156,13 @@ def llm_skip(backoff: float, updated: str = "2026-07-19T10:00:00Z",
 
 
 class BackoffTests(AgentCase):
+    def test_plain_operator_skip_is_reconsidered_next_scan(self) -> None:
+        self.db.push("skipped", "pr", 1,
+                     {"reason": "operator skip", "skip_backoff_h": 24})
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", 1), "queued")
+        self.assertEqual(self.db.get("queued", "pr", 1)["skip_backoff_h"], 24)
+
     def test_llm_skip_waits_out_its_backoff_untouched(self) -> None:
         self.db.push("skipped", "pr", 1, llm_skip(0))
         self.age("skipped", "pr", 1, hours=1)  # within the 24h minimum

@@ -238,7 +238,8 @@ class ActTests(DbCase):
         self.model.act("skip")
         skipped = self.db.get("skipped", "pr", 5)
         self.assertEqual(skipped["reason"], "operator skip")
-        self.assertTrue(skipped["snoozed_at"])  # the snooze starts at the press
+        self.assertNotIn("snoozed_at", skipped)  # one-shot: no snooze
+        self.assertNotIn("llm_at", skipped)  # next scan reconsiders it
         self.model.poll()
         with self.model.lock:
             keys = [(it.repo, it.kind, it.number) for it in self.model.visible()]
@@ -246,6 +247,14 @@ class ActTests(DbCase):
         self.model.act("cancel")
         self.assertEqual(self.db.get("cancelled", "pr", 6)["reason"],
                          "operator cancel")
+
+    def test_snooze_stamps_the_press_time(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
+        self.model.act("snooze")
+        skipped = self.db.get("skipped", "pr", 5)
+        self.assertEqual(skipped["reason"], "operator snooze")
+        self.assertTrue(skipped["snoozed_at"])  # the snooze starts at the press
 
     def test_x_on_a_running_review_requests_the_cancel(self) -> None:
         self.db.push("llm", "pr", 5, verdict(5))

@@ -268,6 +268,11 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # counts served waits, not bypasses
             backoff_h = float(prior_data.get("skip_backoff_h") or 0) \
                 if served else wait
+        elif prior == "skipped" and prior_data:
+            # a timestamp-less skip (operator s, send guard-fail) is
+            # re-gated now but keeps the LLM-skip escalation, which it
+            # says nothing about
+            backoff_h = float(prior_data.get("skip_backoff_h") or 0)
         if prior == "error" and prior_data and number not in forced_ns \
                 and _age_h(prior_data, now) < ERROR_RETRY_H:
             continue  # a persistently failing item must not burn spend every cycle

@@ -473,6 +473,21 @@ _TAIL_LEVELS = {"D": logging.DEBUG, "I": logging.INFO, "W": logging.WARNING,
                 "E": logging.ERROR, "C": logging.CRITICAL}
 
 
+def _age(iso: str | None, now: datetime | None = None) -> str:
+    """Compact age of an ISO timestamp: 12d for 12 days, 5h below a day."""
+    if not iso:
+        return ""
+    try:
+        then = datetime.fromisoformat(iso)
+    except ValueError:
+        return ""
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    seconds = max(0.0, ((now or datetime.now(timezone.utc)) - then).total_seconds())
+    return f"{int(seconds // 86400)}d" if seconds >= 86400 \
+        else f"{int(seconds // 3600)}h"
+
+
 def _line_level(line: str) -> int | None:
     """Level of an ``ISO8601 L message`` log line (add_file_log's shape),
     None for anything else."""
@@ -819,6 +834,8 @@ class UILoop:
     def _llm_col(self, it: Item) -> str:
         if it.state == "llm":
             return it.data.get("stage") or "llm"
+        if it.state == "merge-ready" and it.data.get("approved_at"):
+            return f"appr={_age(it.data['approved_at'])}"
         review = it.data.get("review") or {}
         if review.get("classification"):
             return fairy.format_llm_classification(review["classification"])
@@ -834,11 +851,13 @@ class UILoop:
             mark = "▶" if it.state == "reviewed" else " "
             repo_col = (f"{self._repo_disp[it.repo]:<{self._repo_w}} "
                         if self._repo_w else "")
+            act = _age(it.data.get("last_activity_iso")
+                       or it.data.get("expected_updated_at"))
             title = it.data.get("title") or ""
             if i == m.cursor:
                 rows.append(("cursor",
                              f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<6} "
-                             f"{it.state:<{STATE_W}} {llm:<9}  {title}"))
+                             f"{it.state:<{STATE_W}} {llm:<9} {act:>4}  {title}"))
                 continue
             rows.append([
                 ("mark", mark),
@@ -847,7 +866,8 @@ class UILoop:
                 ("label", repo_col),
                 ("num", f"#{it.number:<6} "),
                 (f"st_{it.state}", f"{it.state:<{STATE_W}} "),
-                ("llm", f"{llm:<9}  "),
+                ("llm", f"{llm:<9} "),
+                ("num", f"{act:>4}  "),
                 ("title", title),
             ])
         return rows

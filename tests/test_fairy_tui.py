@@ -780,6 +780,34 @@ class LogTailTests(unittest.TestCase):
         self.assertEqual(fairy_tui._tag_width([]), 0)
 
 
+class AgeColumnTests(DbCase):
+    def test_age_formats_days_and_hours(self) -> None:
+        from datetime import datetime, timezone
+        now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+        self.assertEqual(fairy_tui._age("2026-07-15T12:00:00+00:00", now), "12d")
+        self.assertEqual(fairy_tui._age("2026-07-27T07:00:00+00:00", now), "5h")
+        self.assertEqual(fairy_tui._age("2026-07-14T19:57:30Z", now), "12d")
+        self.assertEqual(fairy_tui._age(None, now), "")
+        self.assertEqual(fairy_tui._age("garbage", now), "")
+
+    def test_rows_show_activity_age_and_approval_age(self) -> None:
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        self.db.push("reviewed", "pr", 1, verdict(
+            1, last_activity_iso=(now - timedelta(hours=5)).isoformat()))
+        self.db.push("merge-ready", "pr", 2, {
+            "title": "t", "approved_at": (now - timedelta(days=12)).isoformat(),
+            "expected_updated_at": (now - timedelta(days=3)).isoformat()})
+        self.model.poll()
+        ui = make_ui(self.model)
+        texts = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                 for r in ui.list_rows()]
+        self.assertTrue(any(" 5h  " in t for t in texts), texts)
+        merge_row = next(t for t in texts if "merge-ready" in t)
+        self.assertIn("appr=12d", merge_row)
+        self.assertIn(" 3d  ", merge_row)
+
+
 class StatsWrapTests(DbCase):
     def test_state_counts_wrap_to_the_pane_width(self) -> None:
         states = ("ci-blocked", "merge-ready", "awaiting-approver",

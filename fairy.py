@@ -181,6 +181,9 @@ class Decision:
     # to keep the two summary lists disjoint.
     external_approvers: tuple[str, ...] = ()
     label_changes: tuple[LabelChange, ...] = ()
+    # For merge_ready: when fairy's approval review was submitted, so
+    # the operator surface can show how long the merge has waited.
+    approved_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -2307,6 +2310,7 @@ def prepare_pr(
         cancelled_ci_contexts: tuple[str, ...] = (),
         blocked_ci_contexts: tuple[str, ...] = (),
         merge_ready: bool = False,
+        approved_at: datetime | None = None,
     ) -> Decision:
         # Skip paths do NOT fetch auto-merge state -- this used to be
         # served from a stale disk cache to give the log line some
@@ -2326,6 +2330,7 @@ def prepare_pr(
             blocked_ci_contexts=blocked_ci_contexts,
             merge_ready=merge_ready,
             external_approvers=external_approvers,
+            approved_at=approved_at,
         )
 
     if is_marked_wip(pr, wip_re) and not is_forced:
@@ -2579,6 +2584,7 @@ def prepare_pr(
                 f"already approved by {self_login}",
                 last_activity_value=last_activity,
                 merge_ready=get_auto_merge() != "merge",
+                approved_at=self_state.when,
             )
 
     if last_activity is None:

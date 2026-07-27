@@ -87,7 +87,8 @@ class TicketRoutingTests(AgentCase):
     def test_gate_outcomes_land_in_their_directories(self) -> None:
         prs = [make_pr(n) for n in (1, 2, 3, 4)]
         outcomes = {
-            1: gate_skip(prs[0], "already approved", merge_ready=True),
+            1: gate_skip(prs[0], "already approved", merge_ready=True,
+                         approved_at=NOW - timedelta(days=12)),
             2: gate_skip(prs[1], "ci red", cancelled_ci_contexts=("job1",)),
             3: gate_skip(prs[2], "needs human", external_approvers=("dev",)),
             4: gate_skip(prs[3], "no activity"),
@@ -104,6 +105,8 @@ class TicketRoutingTests(AgentCase):
         # must ride on the ticket
         self.assertEqual(self.db.get("merge-ready", "pr", 1)["html_url"],
                          "https://forge/pr/1")
+        self.assertEqual(self.db.get("merge-ready", "pr", 1)["approved_at"],
+                         (NOW - timedelta(days=12)).isoformat())
 
     def test_pr_prepare_failure_is_a_paced_error_not_a_skip(self) -> None:
         # like the issue side: a row, a summary line, ERROR_RETRY_H --

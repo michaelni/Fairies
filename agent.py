@@ -131,6 +131,10 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
         "cancelled_ci_contexts": list(decision.cancelled_ci_contexts),
         "blocked_ci_contexts": list(decision.blocked_ci_contexts),
         "external_approvers": list(decision.external_approvers),
+        "last_activity_iso": (decision.last_activity.isoformat()
+                              if decision.last_activity else None),
+        "approved_at": (decision.approved_at.isoformat()
+                        if decision.approved_at else None),
     }
 
 

@@ -207,6 +207,26 @@ class DrainTests(WorkerCase):
             worker.drain(self.db, {"pr": self.ns})
         self.assertEqual(order, [3, 1, 2])
 
+    def test_arrivals_are_claimed_while_all_started_reviews_run(self) -> None:
+        """Production 2026-07-28: 10 queued, 1 in llm/, 2 slots idle --
+        wait(FIRST_COMPLETED) slept until the long review ended."""
+        import threading
+        release = threading.Event()
+
+        def fake_llm(ns, prepared):
+            if prepared.number == 1:
+                self.db.push("queued", "pr", 2, queued_ticket(2))
+                self.assertTrue(release.wait(10), "arrival never picked up")
+            else:
+                release.set()
+            return decision(prepared.number)
+
+        self.db.push("queued", "pr", 1, queued_ticket(1))
+        with mock.patch.object(fairy, "safe_apply_llm_review_to_prepared",
+                               side_effect=fake_llm):
+            done = worker.drain(self.db, {"pr": self.ns}, parallel=2)
+        self.assertEqual(done, 2)
+
     def test_broken_ticket_lands_in_error_and_does_not_starve(self) -> None:
         # A ticket the worker cannot even read must not return to
         # queued/: sorted first, it would be re-claimed on every pass

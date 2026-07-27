@@ -201,7 +201,10 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
                     in_flight.add(pool.submit(_review_claimed, sides, claim))
             if not in_flight:
                 return done
-            finished, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+            # bounded wait: tickets queued while every started review
+            # still runs must not wait for one to finish
+            finished, _ = wait(in_flight, timeout=1.0,
+                               return_when=FIRST_COMPLETED)
             for fut in finished:
                 in_flight.discard(fut)
                 if fut.result():

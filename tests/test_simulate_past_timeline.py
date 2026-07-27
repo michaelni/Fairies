@@ -95,11 +95,11 @@ class CommitStatusCutoffTests(unittest.TestCase):
         ]
         args = argparse.Namespace(owner="o", repo="r",
                                   simulate_past=datetime(2026, 7, 13, tzinfo=timezone.utc))
-        with mock.patch.object(fairy, "gcli_api", return_value=rows):
+        with mock.patch.object(fairy.forge_gcli, "gcli_api", return_value=rows):
             kept = fairy.list_commit_statuses(args, "sha")
         self.assertEqual(["old"], [s["context"] for s in kept])
         args.simulate_past = None
-        with mock.patch.object(fairy, "gcli_api", return_value=rows):
+        with mock.patch.object(fairy.forge_gcli, "gcli_api", return_value=rows):
             kept = fairy.list_commit_statuses(args, "sha")
         self.assertEqual(2, len(kept))
 

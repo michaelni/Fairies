@@ -81,7 +81,7 @@ from dataclasses import asdict as dataclasses_asdict, dataclass, replace as data
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, NamedTuple, TypeAlias
-from urllib.parse import quote, urlencode, urljoin
+from urllib.parse import urlencode, urljoin
 
 import ci_log
 import git_util
@@ -790,13 +790,10 @@ def get_pr_discussion(
 
 
 def list_commit_statuses(args: argparse.Namespace, ref: str) -> list[ApiObject]:
-    path = build_repo_path(args.owner, args.repo, f"/commits/{quote(ref, safe='')}/statuses")
-    data = gcli_api(args, path, all_pages=True)
-    if not isinstance(data, list):
-        return []
-    statuses = [s for s in data if isinstance(s, dict)]
+    """CI rows for ``ref``, less anything --simulate-past puts in the future."""
     return filter_activity_after(
-        statuses, getattr(args, "simulate_past", None), "created_at", "updated_at",
+        forge_gcli.list_commit_statuses(args, args.owner, args.repo, ref),
+        getattr(args, "simulate_past", None), "created_at", "updated_at",
     )
 
 
@@ -929,8 +926,8 @@ _BLOCKED_DESCRIPTION_RE = re.compile(
 def row_effective_state(row: ApiObject) -> str | None:
     """Canonical state of a single commit-status row.
 
-    Wraps ``normalize_status_state`` on the row's state/status field
-    and adds two description-based overrides for Forgejo Actions:
+    Wraps ``normalize_status_state`` on the row's ``state`` and adds
+    two description-based overrides for Forgejo Actions:
 
     - ``FAILURE`` / ``ERROR`` rows whose description matches
       ``_CANCELLED_DESCRIPTION_RE`` are reclassified as ``CANCELLED``.
@@ -942,11 +939,8 @@ def row_effective_state(row: ApiObject) -> str | None:
     cancelled / blocked / failing / pending" should call this rather
     than ``normalize_status_state`` directly.
     """
-    raw_state = row.get("state") or row.get("status")
-    state = normalize_status_state(raw_state)
-    description = row.get("description")
-    if not isinstance(description, str):
-        return state
+    state = normalize_status_state(row.get("state"))
+    description = row.get("description") or ""
     if state in ("FAILURE", "ERROR") and _CANCELLED_DESCRIPTION_RE.search(description):
         return "CANCELLED"
     if state == "PENDING" and _BLOCKED_DESCRIPTION_RE.search(description):
@@ -962,7 +956,7 @@ def effective_commit_statuses(statuses: list[ApiObject]) -> dict[str, tuple[str,
     )
     result: dict[str, tuple[str, datetime | None]] = {}
     for status in ordered:
-        context = status.get("context") or status.get("name") or status.get("target_url")
+        context = status.get("context")
         if not isinstance(context, str) or not context:
             continue
         state = row_effective_state(status)
@@ -989,7 +983,7 @@ def group_commit_statuses_by_context(statuses: list[ApiObject]) -> dict[str, lis
     for st in statuses:
         if not isinstance(st, dict):
             continue
-        context = st.get("context") or st.get("name") or st.get("target_url")
+        context = st.get("context")
         if not isinstance(context, str) or not context:
             continue
         groups.setdefault(context, []).append(st)
@@ -1078,12 +1072,8 @@ def build_ci_failure_details(
         first_row = streak[0]
         first_at = first_dt(first_row, "created_at", "updated_at")
         last_at = first_dt(last, "created_at", "updated_at")
-        desc = last.get("description")
-        if not isinstance(desc, str):
-            desc = ""
-        target = last.get("target_url")
-        if not isinstance(target, str):
-            target = ""
+        desc = last.get("description") or ""
+        target = last.get("target_url") or ""
         entry: dict[str, object] = {
             "context": context,
             "state": last_state or "",

@@ -72,6 +72,8 @@ one degrades that feature rather than raising.
                             commit.committer.date
 ``list_pr_files``           filename, status, additions, deletions,
                             changes, previous_filename
+``list_commit_statuses``    context, state, description, target_url,
+                            created_at, updated_at
 
 A ``user`` sub-object carries login, id, full_name, html_url.
 
@@ -112,6 +114,7 @@ __all__ = [
     "build_repo_path",
     "gcli_api",
     "gcli_prefix",
+    "list_commit_statuses",
     "list_issue_comments",
     "list_issue_timeline",
     "list_pr_commits",
@@ -703,6 +706,39 @@ def list_issue_timeline(
         args, owner, repo, f"/issues/{number}/timeline",
         what=f"timeline for #{number}",
     )]
+
+
+def _project_status_row(row: dict) -> dict:
+    """Project one CI status row to the keys this module hands out.
+
+    The ``name``/``status`` spellings are alternatives seen for the same
+    two fields, so the choice is made here once instead of at every
+    consumer.
+    """
+    return {
+        "context": row.get("context") or row.get("name") or row.get("target_url"),
+        "state": row.get("state") or row.get("status"),
+        "description": row.get("description") or "",
+        "target_url": row.get("target_url") or "",
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+def list_commit_statuses(
+    args: argparse.Namespace, owner: str, repo: str, ref: str,
+) -> list[dict]:
+    """Return the CI status rows for ``owner/repo`` commit ``ref``.
+
+    A response that is not a list yields no rows rather than raising:
+    a PR whose CI cannot be read is skipped for want of CI, and that
+    beats failing the review outright.
+    """
+    path = build_repo_path(owner, repo, f"/commits/{quote(ref, safe='')}/statuses")
+    data = gcli_api(args, path, all_pages=True)
+    if not isinstance(data, list):
+        return []
+    return [_project_status_row(r) for r in data if isinstance(r, dict)]
 
 
 def list_pr_commits(

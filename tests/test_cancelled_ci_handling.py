@@ -48,6 +48,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import fairy  # noqa: E402
+import forge_gcli  # noqa: E402
 
 
 def _row(
@@ -148,14 +149,13 @@ class RowEffectiveStateTests(unittest.TestCase):
 
     def test_status_field_alias_works_for_forgejo_shape(self) -> None:
         # Forgejo's actual API uses the field name ``status`` rather
-        # than ``state``. ``row_effective_state`` accepts both via the
-        # ``state or status`` fallback, mirroring the rest of the
-        # commit-status pipeline.
-        row = {
+        # than ``state``. The projection settles that spelling, so a
+        # row that arrives either way reaches the same verdict.
+        row = forge_gcli._project_status_row({
             "context": "/ run_fate",
             "status": "failure",
             "description": "Has been cancelled",
-        }
+        })
         self.assertEqual(
             fairy.row_effective_state(row), "CANCELLED",
         )
@@ -431,7 +431,7 @@ class ForgejoActionsRealStatusPayloadTests(unittest.TestCase):
       4 cancelled context names.
     """
 
-    SAMPLE = [
+    WIRE = [
         # Latest per context: 4 failures, all "Has been cancelled"
         {"id": 18, "status": "failure", "description": "Has been cancelled",
          "target_url": "/o/r/actions/runs/2705/jobs/0",
@@ -493,6 +493,7 @@ class ForgejoActionsRealStatusPayloadTests(unittest.TestCase):
          "created_at": "2025-08-17T05:10:00Z",
          "updated_at": "2025-08-17T05:10:00Z"},
     ]
+    SAMPLE = [forge_gcli._project_status_row(r) for r in WIRE]
 
     def test_effective_commit_statuses_classifies_cancellations_correctly(self) -> None:
         eff = fairy.effective_commit_statuses(self.SAMPLE)
@@ -560,7 +561,7 @@ class ForgejoActionsBlockedJobsPayloadTests(unittest.TestCase):
       asked to nag about a job that is gated on an admin action.
     """
 
-    SAMPLE = [
+    WIRE = [
         {"id": 1, "status": "pending",
          "description": "Blocked by required conditions",
          "context": "/ lint (pull_request)",
@@ -576,6 +577,7 @@ class ForgejoActionsBlockedJobsPayloadTests(unittest.TestCase):
          "created_at": "2025-08-17T05:10:09Z",
          "updated_at": "2025-08-17T05:10:09Z"},
     ]
+    SAMPLE = [forge_gcli._project_status_row(r) for r in WIRE]
 
     def test_effective_commit_statuses_classifies_blocked(self) -> None:
         eff = fairy.effective_commit_statuses(self.SAMPLE)

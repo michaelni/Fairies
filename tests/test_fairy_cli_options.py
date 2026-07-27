@@ -43,7 +43,7 @@ NEWER_HUMAN_COMMENT = {"user": {"login": "dev"},
                        "updated_at": "2026-06-03T00:00:00Z",
                        "body": "thanks, looking"}
 
-FAILING_CI = [{"context": "/ build", "status": "failure",
+FAILING_CI = [{"context": "/ build", "state": "failure",
                "description": "Tests failed in 2m13s",
                "target_url": "/o/r/actions/runs/1/jobs/0",
                "created_at": OLD, "updated_at": OLD}]

@@ -274,6 +274,21 @@ class LoopTests(unittest.TestCase):
 
 
 class ColorTests(unittest.TestCase):
+    def test_wrapper_stream_logger_joins_the_side_log_file(self) -> None:
+        """The pane tails the file; without forge_gcli's logger there the
+        whole live wrapper stream is invisible during a review."""
+        import forge_gcli
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        argv = ["worker.py", "--db-root", tmp.name, "--pr-args",
+                f"--owner o --repo r --log-file {tmp.name}/side.log"]
+        with mock.patch.object(worker, "add_file_log") as file_log, \
+                mock.patch.object(worker, "setup_logging"), \
+                mock.patch.object(worker, "drain"), \
+                mock.patch.object(sys, "argv", argv):
+            worker.main()
+        self.assertIn(forge_gcli.logger, file_log.call_args.args)
+
     def test_side_color_reaches_setup_logging(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

@@ -60,6 +60,7 @@ from pathlib import Path
 import agent
 import fairy
 import filedb
+import forge_gcli
 import issue_fairy
 import workset
 from common import add_file_log, setup_logging, watch_paths
@@ -240,10 +241,11 @@ def main() -> int:
         sides["issue"] = issue_fairy.parse_args(shlex.split(args.issue_args))
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
-                  logger, workset.logger, filedb.logger, color=lead.color)
+                  logger, workset.logger, filedb.logger, forge_gcli.logger,
+                  color=lead.color)
     for log_file in {ns.log_file for ns in sides.values() if ns.log_file}:
         add_file_log(log_file, fairy.logger, logger, workset.logger,
-                     filedb.logger)
+                     filedb.logger, forge_gcli.logger)
     db = filedb.Db(args.db_root or agent.db_root_for(lead))
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
     wake = Event()

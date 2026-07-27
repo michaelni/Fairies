@@ -11,16 +11,15 @@ value and silently vanished from the operator's log file.
 
 This test reproduces that race by spawning a subprocess that writes
 many short lines to stderr in a tight loop, and asserts that every
-single line emitted by the child is forwarded by ``run_cmd``'s
-pump.
+single line emitted by the child is forwarded by ``run_cmd``'s pump
+-- through the logger, so the lines also reach the ``--log-file``
+handlers the fairy-ui pane tails, not just the process console.
 """
 
 from __future__ import annotations
 
-import io
 import sys
 import unittest
-from contextlib import redirect_stderr
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import fairy  # noqa: E402
+import forge_gcli  # noqa: E402
 
 
 _CHILD_SCRIPT = (
@@ -44,10 +44,9 @@ _CHILD_SCRIPT = (
 
 
 class RunCmdStderrPumpTest(unittest.TestCase):
-    def test_no_lines_dropped_under_pump(self) -> None:
+    def test_no_lines_dropped_and_all_reach_the_logger(self) -> None:
         n_lines = 2000
-        captured = io.StringIO()
-        with redirect_stderr(captured):
+        with self.assertLogs(forge_gcli.logger, level="INFO") as logs:
             cp = fairy.run_cmd(
                 [sys.executable, "-c", _CHILD_SCRIPT, str(n_lines)],
                 input_text="hello-stdin\n",
@@ -58,7 +57,8 @@ class RunCmdStderrPumpTest(unittest.TestCase):
         self.assertEqual(cp.stdout, "hello-stdin\n")
         # Every stderr line emitted by the child was prefixed and
         # forwarded by the pump (no chunks lost to a racing reader).
-        observed = captured.getvalue().splitlines()
+        observed = [r.getMessage() for r in logs.records
+                    if r.getMessage().startswith("[child] ")]
         expected = [f"[child] line-{i:05d}" for i in range(n_lines)]
         self.assertEqual(observed, expected)
 

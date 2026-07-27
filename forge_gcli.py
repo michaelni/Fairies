@@ -175,10 +175,12 @@ def run_cmd(
             timeout=timeout,
         )
 
-    # stderr_line_prefix mode: live-stream the child's stderr to our own
-    # stderr with ``stderr_line_prefix`` prepended on every line so that
-    # concurrent wrapper invocations (several workers, one log) remain
-    # attributable in the combined operator log.
+    # stderr_line_prefix mode: live-stream the child's stderr through
+    # our logger with ``stderr_line_prefix`` prepended on every line so
+    # that concurrent wrapper invocations (several workers, one log)
+    # remain attributable -- and so the lines reach the --log-file
+    # handlers the fairy-ui pane tails; a raw sys.stderr write reached
+    # only the process console.
     #
     # Implementation note: we hand the child a raw pipe fd for stderr
     # (NOT ``subprocess.PIPE``). With a raw fd, ``Popen.stderr`` is
@@ -196,9 +198,7 @@ def run_cmd(
         try:
             with os.fdopen(read_fd, "r", encoding="utf-8", errors="replace") as src:
                 for line in src:
-                    sys.stderr.write(stderr_line_prefix + line if line.endswith("\n")
-                                     else stderr_line_prefix + line + "\n")
-                    sys.stderr.flush()
+                    logger.info("%s%s", stderr_line_prefix, line.rstrip("\n"))
         except Exception:  # best-effort: never let the pump crash the review
             logger.exception("stderr pump failed for %s", shlex.join(cmd))
 

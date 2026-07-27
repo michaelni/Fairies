@@ -739,8 +739,8 @@ class LogTailTests(unittest.TestCase):
             fh.write("2026-07-24T10:00:01 W look out\n")
         self.tail.poll()
         tags = {text: tag for tag, text in self.lines()}
-        self.assertEqual(tags["2026-07-24T10:00:00 I hello"], logging.INFO)
-        self.assertEqual(tags["2026-07-24T10:00:01 W look out"],
+        self.assertEqual(tags["agent: 2026-07-24T10:00:00 I hello"], logging.INFO)
+        self.assertEqual(tags["agent: 2026-07-24T10:00:01 W look out"],
                          logging.WARNING)
 
     def test_partial_line_is_withheld_until_complete(self) -> None:
@@ -751,15 +751,33 @@ class LogTailTests(unittest.TestCase):
             fh.write("lo\n")
         self.tail.poll()
         self.assertEqual([t for _, t in self.lines()],
-                         ["2026-07-24T10:00:00 I hello"])
+                         ["agent: 2026-07-24T10:00:00 I hello"])
 
     def test_truncation_restarts_from_the_top(self) -> None:
         self.path.write_text("2026-07-24T10:00:00 I one\n")
         self.tail.poll()
         self.path.write_text("2026-07-24T11:00:00 I 2\n")  # rotated, shorter
         self.tail.poll()
-        self.assertIn("2026-07-24T11:00:00 I 2",
+        self.assertIn("agent: 2026-07-24T11:00:00 I 2",
                       [t for _, t in self.lines()])
+
+    def test_source_tags_align_in_one_column(self) -> None:
+        base = self.path.parent
+        paths = [base / f"{n}.log" for n in ("web", "fateserver", "fairies")]
+        for p in paths:
+            p.write_text("2026-07-24T10:00:00 I hi\n")
+        tail = fairy_tui.LogTail(paths, self.sink)
+        tail.poll()
+        prefixes = {t.split(": ", 1)[0] for _, t in self.lines()}
+        self.assertEqual(prefixes, {"web    ", "fateser", "fairies"})
+
+    def test_tag_width_is_unique_prefix_plus_four_capped(self) -> None:
+        self.assertEqual(
+            fairy_tui._tag_width(["web", "fateserver", "fairies"]), 7)
+        self.assertEqual(
+            fairy_tui._tag_width(["ffmpeg", "fairies", "fairy_tui"]), 9)
+        self.assertEqual(fairy_tui._tag_width(["agent"]), 5)
+        self.assertEqual(fairy_tui._tag_width([]), 0)
 
 
 class StatsWrapTests(DbCase):

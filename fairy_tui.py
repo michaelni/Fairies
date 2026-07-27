@@ -482,6 +482,18 @@ def _line_level(line: str) -> int | None:
     return None
 
 
+def _tag_width(stems: list[str]) -> int:
+    """Column width for the tail-source tags: the shortest prefix that
+    keeps the stems distinct, plus 4, capped at the longest stem."""
+    if not stems:
+        return 0
+    longest = max(len(s) for s in stems)
+    for n in range(1, longest + 1):
+        if len({s[:n] for s in stems}) == len(set(stems)):
+            return min(n + 4, longest)
+    return longest
+
+
 class LogTail:
     """Merge appended lines of the agent/worker log files into the
     debug ring; the processes run and log independently, the UI only
@@ -494,6 +506,8 @@ class LogTail:
         self.paths = paths
         self.sink = sink
         self._pos: dict[Path, int] = {}
+        width = _tag_width([p.stem for p in paths])
+        self._tag = {p: f"{p.stem[:width]:<{width}}" for p in paths}
 
     def poll(self) -> None:
         for path in self.paths:
@@ -517,7 +531,8 @@ class LogTail:
                 continue
             self._pos[path] = pos + cut + 1
             for ln in chunk[:cut].decode("utf-8", "replace").splitlines():
-                self.sink.line(ln, _line_level(ln))
+                # four repos, one pane: "pr #7" alone names no repo
+                self.sink.line(f"{self._tag[path]}: {ln}", _line_level(ln))
 
 
 class StreamToRing:

@@ -559,13 +559,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "(default: ~/.fairy/pr_data_cache.pkl).",
     )
     p.add_argument(
-        "--workset-dir",
-        type=Path,
-        default=default_cache_path("workset"),
-        help="Root of the persistent per-item JSON work files "
-             "(default: ~/.fairy/workset).",
-    )
-    p.add_argument(
         "--workset-retention-days",
         type=float,
         default=14.0,
@@ -1900,10 +1893,8 @@ def invoke_llm_wrapper(
     if getattr(args, "simulate_past", None) is not None:
         cmd += [f"--simulate-past-cutoff={args.simulate_past.isoformat()}"]
     if number is not None:
-        # A filedb worker points the wrapper at its claimed ticket; the
-        # old-layout path is only computed when no override is set.
-        ws_path = getattr(args, "workset_file_override", None) \
-            or workset_path(args, stderr_tag, number)
+        # a filedb worker points the wrapper at its claimed ticket
+        ws_path = getattr(args, "workset_file_override", None)
         if ws_path is not None:
             cmd += [f"--workset-file={ws_path}"]
     if extra_cmd_args:
@@ -2880,38 +2871,6 @@ def safe_apply_llm_review_to_prepared(
             decision, external_approvers=prepared.external_approvers
         )
     return decision
-
-
-def workset_path(args: argparse.Namespace, kind: str, number: int) -> Path | None:
-    """Item file for this run's repo; ``kind`` is "pr" | "issue". None for
-    bare test namespaces without --workset-dir (all writes then no-op)."""
-    root = getattr(args, "workset_dir", None)
-    if not root:
-        return None
-    return workset.item_path(
-        Path(root),
-        forge_type=args.forge_type,
-        account=args.gcli_account or "",
-        owner=args.owner,
-        repo=args.repo,
-        kind=kind,
-        number=number,
-    )
-
-
-def workset_repo_dir(args: argparse.Namespace) -> Path | None:
-    """This run's per-repo workset directory; None without --workset-dir."""
-    root = getattr(args, "workset_dir", None)
-    if not root:
-        return None
-    return workset.repo_dir(
-        Path(root),
-        forge_type=args.forge_type,
-        account=args.gcli_account or "",
-        owner=args.owner,
-        repo=args.repo,
-    )
-
 
 
 if __name__ == "__main__":

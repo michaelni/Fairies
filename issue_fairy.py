@@ -255,13 +255,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "corrupt them.",
     )
     p.add_argument(
-        "--workset-dir",
-        type=Path,
-        default=default_cache_path("workset"),
-        help="Root of the persistent per-item JSON work files "
-             "(default: ~/.fairy/workset).",
-    )
-    p.add_argument(
         "--workset-retention-days",
         type=float,
         default=14.0,

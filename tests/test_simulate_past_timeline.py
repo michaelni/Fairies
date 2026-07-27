@@ -32,6 +32,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import fairy  # noqa: E402
+import forge_gcli  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+
+def _forgejo_auto_merge(timeline):
+    """The Forgejo path: state derived from the typed timeline entries."""
+    return forge_gcli.auto_merge_state(
+        SimpleNamespace(forge_type="gitea"), {}, timeline)
 
 
 IGNORE_AFTER = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -50,7 +58,7 @@ class SimulatePastTimelineTests(unittest.TestCase):
         # Sanity: without simulate_past the bot sees both events and the
         # latest (cancel) wins. This isn't the new behavior; pinning it
         # protects against a regression that flips the helper's polarity.
-        state = fairy.auto_merge_state_from_timeline(
+        state = _forgejo_auto_merge(
             [SCHEDULE_EVENT, CANCEL_EVENT]
         )
         self.assertEqual(state, "no")
@@ -60,13 +68,13 @@ class SimulatePastTimelineTests(unittest.TestCase):
             [SCHEDULE_EVENT, CANCEL_EVENT], IGNORE_AFTER, "created_at"
         )
         self.assertEqual(
-            fairy.auto_merge_state_from_timeline(filtered),
+            _forgejo_auto_merge(filtered),
             "merge",
         )
 
     def test_filtered_timeline_drops_only_the_cancel_event(self) -> None:
         # Asserting on the filter itself, not just the derived state, so
-        # a future change to ``auto_merge_state_from_timeline`` cannot
+        # a future change to ``forge_gcli.auto_merge_state`` cannot
         # mask a regression where the cutoff stops filtering.
         filtered = fairy.filter_activity_after(
             [SCHEDULE_EVENT, CANCEL_EVENT], IGNORE_AFTER, "created_at"

@@ -1223,42 +1223,6 @@ def get_pr_head_ref(pr: ApiObject) -> str | None:
     return None
 
 
-_AUTO_MERGE_EVENTS = frozenset({AUTO_MERGE_SCHEDULE_EVENT, AUTO_MERGE_CANCEL_EVENT})
-
-
-def auto_merge_state_from_timeline(timeline: list[ApiObject]) -> str:
-    """Derive the current auto-merge schedule state from the PR timeline.
-
-    Returns ``"merge"`` if the most recent of the two auto-merge events
-    is a schedule, ``"no"`` if it is a cancellation OR no such events
-    exist. Latest-event-wins, so a "scheduled, then canceled, then
-    re-scheduled" history correctly resolves to ``"merge"``.
-
-    The merge-vs-rebase distinction is intentionally collapsed.
-    Forgejo stores the merge style on a separate ``pull_auto_merge``
-    table that ``CreateAutoMergeComment`` does not copy onto the
-    typed comment, and Forgejo's HTTP API has no GET endpoint that
-    exposes the schedule (only ``DELETE /pulls/{n}/merge`` to cancel
-    -- see ``routers/api/v1/api.go``). Distinguishing merge from
-    rebase therefore has no API source; the value would only inform
-    a tally line in the end-of-run summary, which is not worth a
-    second round-trip per PR.
-    """
-    latest_ts: str | None = None
-    latest_type: str | None = None
-    for entry in timeline:
-        ev_type = entry.get("type")
-        if ev_type not in _AUTO_MERGE_EVENTS:
-            continue
-        ts = entry.get("created_at")
-        if not isinstance(ts, str):
-            continue
-        if latest_ts is None or ts > latest_ts:
-            latest_ts = ts
-            latest_type = ev_type
-    if latest_type == AUTO_MERGE_SCHEDULE_EVENT:
-        return "merge"
-    return "no"
 
 
 def get_auto_merge_info(
@@ -1295,7 +1259,7 @@ def get_auto_merge_info(
             )
             return "?"
     timeline = filter_activity_after(timeline, args.simulate_past, "created_at")
-    return auto_merge_state_from_timeline(timeline)
+    return forge_gcli.auto_merge_state(args, pr, timeline)
 
 
 def push_events_from_timeline(timeline: list[ApiObject]) -> list[DiscussionItem]:
@@ -1324,7 +1288,7 @@ def push_events_from_timeline(timeline: list[ApiObject]) -> list[DiscussionItem]
             "author": user.get("login") or user.get("full_name") or "?",
             "created_at": entry.get("created_at"),
             "head_sha": commit_ids[-1] if commit_ids else None,
-            "is_force_push": bool(entry.get("is_force_push")),
+            "is_force_push": entry.get("is_force_push"),
             "commit_count": len(commit_ids),
         })
     return items

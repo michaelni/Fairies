@@ -65,8 +65,8 @@ one degrades that feature rather than raising.
                             path
 ``list_issue_timeline``     id, type, body, user, created_at; a
                             ``pull_push`` event whose payload was
-                            readable also carries is_force_push and
-                            commit_ids
+                            readable also carries commit_ids, and
+                            is_force_push where the forge says
 ``list_pr_commits``         sha, commit.message, author.{login,id},
                             commit.author.{name,email,date},
                             commit.committer.date
@@ -110,6 +110,7 @@ __all__ = [
     "KIND_PR",
     "PUSH_EVENT",
     "add_forge_repo_args",
+    "auto_merge_state",
     "apply_issue_label_changes",
     "build_repo_path",
     "gcli_api",
@@ -654,6 +655,39 @@ AUTO_MERGE_SCHEDULE_EVENT = "pull_scheduled_merge"
 AUTO_MERGE_CANCEL_EVENT = "pull_cancel_scheduled_merge"
 
 
+_AUTO_MERGE_EVENTS = frozenset({AUTO_MERGE_SCHEDULE_EVENT, AUTO_MERGE_CANCEL_EVENT})
+
+
+def auto_merge_state(args: argparse.Namespace, pr: dict,
+                     timeline: list[dict]) -> str:
+    """Whether ``pr`` is queued to merge itself: merge / no / ? (unknown).
+
+    Forgejo publishes no endpoint for the schedule, so the answer is
+    read off the typed timeline entries, latest wins.
+
+    GitHub states it on the pull request as ``auto_merge``, null when
+    nothing is queued (observed 2026-07-28 on michaelni/testrepo #2),
+    and emits its own timeline entries which are NOT the Forgejo ones.
+    Deriving it from the timeline there would answer a confident "no"
+    to every GitHub PR -- and a wrong "no" is the dangerous direction:
+    the caller uses it to decide that approving is only a comment,
+    when on a queued PR an approval is what merges it.
+    """
+    if _forge_type(args) == "github":
+        return "merge" if pr.get("auto_merge") else "no"
+    latest_ts: str | None = None
+    latest_type: str | None = None
+    for entry in timeline:
+        if entry.get("type") not in _AUTO_MERGE_EVENTS:
+            continue
+        ts = entry.get("created_at")
+        if not isinstance(ts, str):
+            continue
+        if latest_ts is None or ts > latest_ts:
+            latest_ts, latest_type = ts, entry.get("type")
+    return "merge" if latest_type == AUTO_MERGE_SCHEDULE_EVENT else "no"
+
+
 def _push_fields(body: str) -> dict:
     """Decode a push payload, which Forgejo ships as JSON text in ``body``.
 
@@ -663,7 +697,7 @@ def _push_fields(body: str) -> dict:
     """
     try:
         decoded = json.loads(body)
-    except ValueError:
+    except (ValueError, TypeError):
         return {}
     if not isinstance(decoded, dict):
         return {}
@@ -689,6 +723,78 @@ def project_timeline_event(event: dict) -> dict:
     return projected
 
 
+# GitHub spells the entry kind ``event`` where Forgejo says ``type``,
+# and puts the actor under ``user`` (comments, reviews), ``actor``
+# (state changes) or ``author`` (a ``committed`` entry, which carries a
+# git identity with no forge login and dates the entry under
+# ``author.date`` instead of ``created_at``). Captured 2026-07-28 from
+_GITHUB_COMMIT_EVENT = "committed"
+
+
+def _github_commit_author(event: dict) -> dict | None:
+    author = event.get("author")
+    if not isinstance(author, dict):
+        return None
+    return {"login": None, "id": None,
+            "full_name": author.get("name"), "html_url": None}
+
+
+def _git_date(event: dict, key: str) -> str | None:
+    stamp = event.get(key)
+    return stamp.get("date") if isinstance(stamp, dict) else None
+
+
+def _project_github_event(event: dict) -> dict:
+    return {
+        "type": event.get("event"),
+        "id": event.get("id"),
+        "user": norm_user(event.get("user") or event.get("actor"))
+                or _github_commit_author(event),
+        # A commit entry carries two dates: when the change was written
+        # and when it was last applied to the branch. The second is the
+        # one near the push -- they can be days apart -- and a push is what the activity gate measures.
+        "created_at": event.get("created_at") or event.get("submitted_at")
+                      or _git_date(event, "committer") or _git_date(event, "author"),
+        "body": event.get("body") or "",
+    }
+
+
+def _project_github_timeline(events: list[dict]) -> list[dict]:
+    """Fold GitHub's timeline into the events this module hands out.
+
+    GitHub lists one ``committed`` entry per commit and does not mark
+    where one push ended and the next began, so a run of them with
+    nothing in between is reported as a single push. That grouping is a
+    reading of the order GitHub returned, not something GitHub states.
+
+    ``is_force_push`` is left absent: the run of commits looks the same
+    either way, and ``head_ref_force_pushed`` -- the entry that would
+    say so -- is not covered by a capture, so claiming ``False`` here
+    would tell the reviewing model something unverified.
+    """
+    out: list[dict] = []
+    run: list[dict] = []
+
+    def flush() -> None:
+        if not run:
+            return
+        last = run[-1]
+        out.append({**_project_github_event(last), "type": PUSH_EVENT,
+                    "id": None, "body": "",
+                    "commit_ids": [c["sha"] for c in run
+                                   if isinstance(c.get("sha"), str)]})
+        run.clear()
+
+    for event in events:
+        if event.get("event") == _GITHUB_COMMIT_EVENT:
+            run.append(event)
+            continue
+        flush()
+        out.append(_project_github_event(event))
+    flush()
+    return out
+
+
 def list_issue_timeline(
     args: argparse.Namespace, owner: str, repo: str, number: int,
 ) -> list[dict]:
@@ -707,10 +813,13 @@ def list_issue_timeline(
     the decode in one place and keeps the per-event user object out of
     the cache, which stores whatever this returns.
     """
-    return [project_timeline_event(e) for e in _list_repo_endpoint(
+    raw = _list_repo_endpoint(
         args, owner, repo, f"/issues/{number}/timeline",
         what=f"timeline for #{number}",
-    )]
+    )
+    if _forge_type(args) == "github":
+        return _project_github_timeline(raw)
+    return [project_timeline_event(e) for e in raw]
 
 
 def _project_status_row(row: dict) -> dict:

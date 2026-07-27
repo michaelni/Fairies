@@ -41,6 +41,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import fairy  # noqa: E402
+import forge_gcli  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+
+def _forgejo_auto_merge(timeline):
+    """The Forgejo path: state derived from the typed timeline entries."""
+    return forge_gcli.auto_merge_state(
+        SimpleNamespace(forge_type="gitea"), {}, timeline)
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "forgejo_pr_timeline"
 
@@ -84,18 +92,18 @@ class AutoMergeStateFromTimelineTests(unittest.TestCase):
     def test_scheduled_pr_resolves_to_merge(self) -> None:
         timeline = _load("ffmpeg_pr_22729_timeline.json")
         self.assertEqual(
-            fairy.auto_merge_state_from_timeline(timeline), "merge",
+            _forgejo_auto_merge(timeline), "merge",
         )
 
     def test_pr_without_auto_merge_events_resolves_to_no(self) -> None:
         timeline = _load("ffmpeg_pr_21226_timeline.json")
         self.assertEqual(
-            fairy.auto_merge_state_from_timeline(timeline), "no",
+            _forgejo_auto_merge(timeline), "no",
         )
 
     def test_empty_timeline_resolves_to_no(self) -> None:
         self.assertEqual(
-            fairy.auto_merge_state_from_timeline([]), "no",
+            _forgejo_auto_merge([]), "no",
         )
 
     def test_only_unrelated_event_types_resolves_to_no(self) -> None:
@@ -105,7 +113,7 @@ class AutoMergeStateFromTimelineTests(unittest.TestCase):
             {"type": "review",  "created_at": "2026-04-03T00:00:00Z"},
         ]
         self.assertEqual(
-            fairy.auto_merge_state_from_timeline(timeline), "no",
+            _forgejo_auto_merge(timeline), "no",
         )
 
     def test_scheduled_then_canceled_resolves_to_no(self) -> None:
@@ -119,7 +127,7 @@ class AutoMergeStateFromTimelineTests(unittest.TestCase):
              "created_at": "2026-04-01T11:00:00Z"},
         ]
         self.assertEqual(
-            fairy.auto_merge_state_from_timeline(timeline), "no",
+            _forgejo_auto_merge(timeline), "no",
         )
 
     def test_scheduled_then_canceled_then_rescheduled_resolves_to_merge(
@@ -136,7 +144,7 @@ class AutoMergeStateFromTimelineTests(unittest.TestCase):
              "created_at": "2026-04-01T12:00:00Z"},
         ]
         self.assertEqual(
-            fairy.auto_merge_state_from_timeline(timeline), "merge",
+            _forgejo_auto_merge(timeline), "merge",
         )
 
     def test_iso_timestamp_lex_sort_is_correct(self) -> None:
@@ -151,7 +159,7 @@ class AutoMergeStateFromTimelineTests(unittest.TestCase):
              "created_at": "2026-02-01T00:00:00Z"},
         ]
         self.assertEqual(
-            fairy.auto_merge_state_from_timeline(timeline), "no",
+            _forgejo_auto_merge(timeline), "no",
         )
 
     def test_event_with_missing_created_at_is_skipped(self) -> None:
@@ -165,7 +173,7 @@ class AutoMergeStateFromTimelineTests(unittest.TestCase):
              "created_at": "2026-04-01T11:00:00Z"},
         ]
         self.assertEqual(
-            fairy.auto_merge_state_from_timeline(timeline), "no",
+            _forgejo_auto_merge(timeline), "no",
         )
 
 

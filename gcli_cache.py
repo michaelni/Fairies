@@ -56,7 +56,7 @@ import forge_gcli
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MAX_REFETCH_ATTEMPTS = 3
 EDIT_PRONE = frozenset({"issue_comments", "reviews", "review_comments"})
 
@@ -112,10 +112,26 @@ _FETCH_ORDER = ("timeline", "issue_comments", "reviews", "review_comments",
 
 
 class EntryKey(NamedTuple):
+    """Identifies one cached PR or issue.
+
+    ``forge_type`` and ``account`` are part of the key because gcli's
+    ``-t``/``-a`` decide which forge instance an ``owner/repo`` pair
+    resolves on -- two forges can serve the same name, and their
+    payloads must not share a cache slot. ``workset.repo_dir`` keys its
+    directories on the same pair.
+    """
+    forge_type: str
+    account: str
     kind: str         # "pulls" or "issues"
     owner: str
     repo: str
     number: int
+
+
+def entry_key(args: argparse.Namespace, kind: str, owner: str, repo: str,
+              number: int) -> EntryKey:
+    return EntryKey((args.forge_type or "").lower(), args.gcli_account or "",
+                    kind, owner, repo, number)
 
 
 @dataclass
@@ -197,7 +213,7 @@ def get(
         raise ValueError(f"gcli_cache: unknown {kind} fields {bad}")
     if now is None:
         now = datetime.now(timezone.utc)
-    key = EntryKey(kind, owner, repo, n)
+    key = entry_key(args, kind, owner, repo, n)
     old = cache.entries.get(key)
 
     def fresh(name: str) -> bool:

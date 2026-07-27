@@ -708,7 +708,7 @@ def submit_decision_action(
     # run before the outer ``finally``-block save has a chance to execute.
     if cache is not None:
         cache.entries.pop(
-            gcli_cache.EntryKey("pulls", args.owner, args.repo, decision.pr_number),
+            gcli_cache.entry_key(args, "pulls", args.owner, args.repo, decision.pr_number),
             None,
         )
         try:

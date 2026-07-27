@@ -41,6 +41,7 @@ from gcli_cache import (  # noqa: E402
     MAX_REFETCH_ATTEMPTS,
     SCHEMA_VERSION,
     _list_pr_files_or_empty_on_500,
+    entry_key,
     get,
     load_cache,
     save_cache,
@@ -117,10 +118,14 @@ def patch_fetch(testcase, **overrides):
     return installed
 
 
+ARGS = SimpleNamespace(forge_type="gitea", gcli_account="")
+
+
 def call_get(cache, kind, fetchers, refetch, names, *,
-             n=1, owner="o", repo="r", live=LIVE, now=NOW, max_age=MAX_AGE):
+             n=1, owner="o", repo="r", live=LIVE, now=NOW, max_age=MAX_AGE,
+             args=ARGS):
     return get(
-        cache, SimpleNamespace(), kind, owner, repo, n, live,
+        cache, args, kind, owner, repo, n, live,
         *names, max_age=max_age, now=now, refetch=refetch,
     )
 
@@ -195,7 +200,7 @@ class ConstantsTests(unittest.TestCase):
     def test_schema_version_pinned(self) -> None:
         # Pinned so a bump is deliberate: mismatched version on disk
         # -> empty cache -> stable-fetch loop refills.
-        self.assertEqual(SCHEMA_VERSION, 3)
+        self.assertEqual(SCHEMA_VERSION, 4)
 
     def test_edit_prone_is_the_trio(self) -> None:
         # Adding here forces TTL refetches on data that doesn't need
@@ -246,13 +251,13 @@ class PersistenceTests(unittest.TestCase):
 
     def test_roundtrip_preserves_entries(self) -> None:
         cache = Cache()
-        cache.entries[EntryKey("pulls", "ffmpeg", "FFmpeg", 42)] = Entry(
+        cache.entries[EntryKey("gitea", "", "pulls", "ffmpeg", "FFmpeg", 42)] = Entry(
             updated_at=LIVE,
             fetched_at=LIVE,
             comments_fetched_at=LIVE,
             fields={"timeline": ({"x": 1},), "commits": ({"sha": "abc"},)},
         )
-        cache.entries[EntryKey("issues", "ffmpeg", "FFmpeg", 7)] = Entry(
+        cache.entries[EntryKey("gitea", "", "issues", "ffmpeg", "FFmpeg", 7)] = Entry(
             updated_at=utc("2026-05-20T00:00:00Z"),
             fetched_at=utc("2026-05-20T00:00:01Z"),
             comments_fetched_at=None,
@@ -262,11 +267,11 @@ class PersistenceTests(unittest.TestCase):
         loaded = load_cache(self.tmp)
 
         self.assertEqual(
-            loaded.entries[EntryKey("pulls", "ffmpeg", "FFmpeg", 42)].fields["commits"],
+            loaded.entries[EntryKey("gitea", "", "pulls", "ffmpeg", "FFmpeg", 42)].fields["commits"],
             ({"sha": "abc"},),
         )
         self.assertIsNone(
-            loaded.entries[EntryKey("issues", "ffmpeg", "FFmpeg", 7)].comments_fetched_at,
+            loaded.entries[EntryKey("gitea", "", "issues", "ffmpeg", "FFmpeg", 7)].comments_fetched_at,
         )
 
 
@@ -279,12 +284,46 @@ def _seed_entry(cache: Cache, fields: dict, *,
                 updated_at: datetime = LIVE,
                 comments_fetched_at: datetime | None = LIVE,
                 kind: str = "pulls", n: int = 1) -> None:
-    cache.entries[EntryKey(kind, "o", "r", n)] = Entry(
+    cache.entries[entry_key(ARGS, kind, "o", "r", n)] = Entry(
         updated_at=updated_at,
         fetched_at=updated_at,
         comments_fetched_at=comments_fetched_at,
         fields=fields,
     )
+
+
+class ForgeIdentityKeyTests(unittest.TestCase):
+    """A cache slot belongs to one forge endpoint, not to a bare name.
+
+    gcli's ``-t``/``-a`` decide which instance ``owner/repo`` resolves
+    on, so the same pair can name two unrelated repositories. Serving
+    one forge's payload for the other would hand fairy a foreign PR's
+    comments and reviews.
+    """
+
+    def test_other_forge_type_is_a_miss(self) -> None:
+        cache = Cache()
+        _seed_entry(cache, {"timeline": ({"t": 1},)})
+        fetchers = patch_fetch(self)
+        call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("timeline",),
+                 args=SimpleNamespace(forge_type="github", gcli_account=""))
+        self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 1)
+
+    def test_other_account_is_a_miss(self) -> None:
+        cache = Cache()
+        _seed_entry(cache, {"timeline": ({"t": 1},)})
+        fetchers = patch_fetch(self)
+        call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("timeline",),
+                 args=SimpleNamespace(forge_type="gitea", gcli_account="other"))
+        self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 1)
+
+    def test_forge_type_case_does_not_split_the_slot(self) -> None:
+        cache = Cache()
+        _seed_entry(cache, {"timeline": ({"t": 1},)})
+        fetchers = patch_fetch(self)
+        call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("timeline",),
+                 args=SimpleNamespace(forge_type="GITEA", gcli_account=""))
+        self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 0)
 
 
 class GetEndToEndTests(unittest.TestCase):
@@ -338,7 +377,7 @@ class GetEndToEndTests(unittest.TestCase):
         }, updated_at=LIVE)
         fetchers = patch_fetch(self, **{"pulls.timeline": [[{"new": True}]]})
         call_get(cache, "pulls", fetchers, make_refetch([new]), ("timeline",), live=new)
-        entry = cache.entries[EntryKey("pulls", "o", "r", 1)]
+        entry = cache.entries[entry_key(ARGS, "pulls", "o", "r", 1)]
         self.assertEqual(entry.updated_at, new)
         self.assertEqual(entry.fields["timeline"], ({"new": True},))
         self.assertNotIn("commits", entry.fields,
@@ -350,7 +389,7 @@ class GetEndToEndTests(unittest.TestCase):
                     comments_fetched_at=None)
         fetchers = patch_fetch(self)
         call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("timeline",))
-        entry = cache.entries[EntryKey("pulls", "o", "r", 1)]
+        entry = cache.entries[entry_key(ARGS, "pulls", "o", "r", 1)]
         self.assertEqual(entry.fields["commits"], ({"sha": "kept"},))
         self.assertIn("timeline", entry.fields)
         self.assertEqual(len(fetchers[("pulls", "commits")].calls), 0)
@@ -373,7 +412,7 @@ class GetEndToEndTests(unittest.TestCase):
         for k in PR_FIELDS - EDIT_PRONE:
             self.assertEqual(len(fetchers[("pulls", k)].calls), 0,
                              f"{k} refetched unexpectedly")
-        entry = cache.entries[EntryKey("pulls", "o", "r", 1)]
+        entry = cache.entries[entry_key(ARGS, "pulls", "o", "r", 1)]
         self.assertEqual(entry.fields["commits"], ({"sha": "abc"},))
         self.assertEqual(entry.fields["timeline"], ({"x": 1},))
         self.assertEqual(entry.comments_fetched_at, NOW)
@@ -448,7 +487,7 @@ class StableFetchTests(unittest.TestCase):
         call_get(cache, "pulls", fetchers, make_refetch([moved, moved]),
                  ("timeline",))
         self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 2)
-        entry = cache.entries[EntryKey("pulls", "o", "r", 1)]
+        entry = cache.entries[entry_key(ARGS, "pulls", "o", "r", 1)]
         self.assertEqual(entry.updated_at, moved)
         self.assertEqual(entry.fields["timeline"], ({"attempt": 2},))
 

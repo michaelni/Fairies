@@ -598,7 +598,7 @@ def submit_issue_decision(
         # Same eventual-consistency race as fairy's submit path: drop the
         # cached entry so the next run refetches the comment list.
         cache.entries.pop(
-            gcli_cache.EntryKey("issues", args.owner, args.repo, decision.pr_number),
+            gcli_cache.entry_key(args, "issues", args.owner, args.repo, decision.pr_number),
             None,
         )
         try:

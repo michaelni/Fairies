@@ -615,7 +615,17 @@ def list_pr_review_comments(
     are skipped so we don't fire an API call to confirm emptiness.
     Per-review fetch errors are logged and skipped, not raised: one
     bad review id should not block the rest of the discussion.
+
+    GitHub serves the whole PR's inline comments from one endpoint and
+    omits ``comments_count`` from its review objects, so the per-review walk would cost
+    one request per review with nothing to skip on -- against a budget
+    of 5000/hour. There it asks once instead.
     """
+    if _forge_type(args) == "github":
+        return _list_repo_endpoint(
+            args, owner, repo, f"/pulls/{pr_number}/comments",
+            what=f"review comments for PR #{pr_number}",
+        )
     out: list[dict] = []
     for review in reviews:
         review_id = review.get("id")

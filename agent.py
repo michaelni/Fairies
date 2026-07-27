@@ -340,8 +340,13 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                             mutate=lambda d: d.update(
                                 expected_updated_at=item.get("updated_at")))
                 continue
-        if limit and queued >= limit and number not in forced_ns:
-            continue  # nothing written: --limit never persists a skip
+        if limit and queued >= limit and number not in forced_ns \
+                and not getattr(prepared, "forced_review", False):
+            # nothing written: --limit never persists a skip -- but say
+            # so, or the deferral is invisible everywhere
+            logger.info("%s #%d eligible but over --limit; next pass retries",
+                        kind, number)
+            continue
         ticket = {
             "title": prepared.title,
             "author": prepared.author,

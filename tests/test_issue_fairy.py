@@ -213,6 +213,7 @@ class PrepareIssueGateTests(unittest.TestCase):
         self.assertEqual(d.reason, "not open")
         p = prepare(make_args(force_review_issues={23738}), issue, now=now)
         self.assertIsInstance(p, issue_fairy.PreparedIssue)
+        self.assertTrue(p.forced_review)  # the agent must not drop it at --limit
 
     def test_force_skip_wins(self) -> None:
         d = prepare(

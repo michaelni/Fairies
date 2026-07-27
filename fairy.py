@@ -216,6 +216,10 @@ class PreparedPR:
     # pre-check votes ``skip`` (see --force-review-skip). Travels as the
     # ``ignore_triage_skip`` field in the wrapper's stdin request.
     ignore_triage_skip: bool = False
+    # The review was forced (an @-mention, a Forgejo review request, or
+    # --force-review-pr): the agent must not drop it at --limit, or a
+    # human's explicit ask starves behind stale eligible items forever.
+    forced_review: bool = False
     # Stronger sibling of ``ignore_triage_skip`` (see --force-engage):
     # when True, the wrapper engages its full reviewer pass regardless of
     # the triage route (skip / reply_no_verdict) and even on CI-red PRs.
@@ -2553,6 +2557,7 @@ def prepare_pr(
             external_approvers=external_approvers,
             ignore_triage_skip=is_forced and args.force_review_skip,
             force_engage=is_forced and args.force_engage,
+            forced_review=True,
         )
 
     # ``states`` and ``has_blocker`` were computed earlier (right after

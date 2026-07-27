@@ -106,6 +106,9 @@ class PreparedIssue:
     base_reason: str
     discussion: list[ApiObject]
     reviewer_username: str | None
+    # Same contract as PreparedPR.forced_review: a mention or
+    # --force-review-issue must not be dropped at --limit.
+    forced_review: bool = False
 
 
 def prepared_issue_from_dict(data: dict) -> PreparedIssue:
@@ -460,6 +463,7 @@ def prepare_issue(
         base_reason=forced_reason or "stale enough for analysis",
         discussion=build_llm_discussion([], comments, [], timeline),
         reviewer_username=self_login,
+        forced_review=forced_reason is not None,
     )
 
 

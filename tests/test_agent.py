@@ -84,6 +84,17 @@ class TicketRoutingTests(AgentCase):
         self.assertEqual(self.db.list_state("queued"), [("pr", 1), ("pr", 2)])
         self.assertIsNone(self.db.find("pr", 3))
 
+    def test_forge_forced_review_bypasses_the_limit(self) -> None:
+        """A REQUEST_REVIEW / mention must not starve behind stale
+        eligible items filling --limit (production: FFmpeg #23896)."""
+        self.ns.limit = 1
+        self.prepare.side_effect = lambda ns, pr, **kw: (
+            dataclasses.replace(prepared_for(pr), forced_review=True)
+            if pr["number"] == 2 else prepared_for(pr))
+        self.scan([make_pr(1), make_pr(2)])
+        self.assertEqual(self.db.find("pr", 1), "queued")
+        self.assertEqual(self.db.find("pr", 2), "queued")
+
     def test_gate_outcomes_land_in_their_directories(self) -> None:
         prs = [make_pr(n) for n in (1, 2, 3, 4)]
         outcomes = {

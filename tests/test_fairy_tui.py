@@ -528,7 +528,7 @@ class DetailTests(DbCase):
             "cancelled_ci_contexts": ["job1"], "blocked_ci_contexts": []})
         self.model.poll()
         text = self._detail_text()
-        self.assertIn("reason ci red", text)
+        self.assertIn("reason: ci red", text)
         self.assertIn("cancelled ci contexts: job1", text)
 
     def test_send_blocked_note_is_shown(self) -> None:
@@ -893,20 +893,12 @@ class PaintSmokeTests(DbCase):
     def test_label_explanations_wrap_instead_of_clipping(self) -> None:
         reason = ("the reproduction requires a sample clip that the reporter "
                   "has not attached and cannot be synthesized locally")
-        with mock.patch.dict(os.environ, {"COLUMNS": "100", "LINES": "40"}):
-            term = blessed.Terminal(
-                kind="xterm-256color", stream=io.StringIO(), force_styling=True)
-            model = fairy_tui.Model()
-            model.add_candidates("PR", [{"number": 1, "title": "t"}])
-            d = fairy.Decision(
-                1, "t", "a", "-", "comment", "llm", None, "reply", "msg",
-                label_changes=(fairy.LabelChange(
-                    "needs sample", "add", reason, post=True),),
-            )
-            model.finish("PR", d)
-            ui = fairy_tui.UILoop(term, model, tui_core.RingBuffer(),
-                                  Path("."), ["PR"])
-            lines = ui.detail_lines(32)
+        self.db.push("reviewed", "pr", 1, verdict(
+            1, msg="msg", labels=[{"label": "needs sample", "op": "add",
+                                   "reason": reason, "post": True}]))
+        self.model.poll()
+        ui = make_ui(self.model)
+        lines = ui.detail_lines(32)
         text = " ".join("".join(t for _, t in ln) for ln in lines)
         for word in ("synthesized", "locally", "[posted]"):
             self.assertIn(word, text)

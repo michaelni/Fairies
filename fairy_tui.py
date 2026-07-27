@@ -905,14 +905,17 @@ class UILoop:
         review = data.get("review") or {}
         decision = agent.ticket_decision(item.kind, item.number, data)
         if decision is not None:
-            head.append([("bold", fairy.manual_action_description(decision)[:width])])
+            # render_markdown, not a clipped line: long apply
+            # descriptions and reasons must wrap, never silently vanish
+            head += tui_core.render_markdown(
+                fairy.manual_action_description(decision), width)
         status_line = f"state {item.state}"
         if review.get("classification"):
             status_line += ("   llm "
                             + fairy.format_llm_classification(review["classification"]))
-        if data.get("reason"):
-            status_line += f"   reason {data['reason']}"
         head += [[("text", status_line[:width])]]
+        if data.get("reason"):
+            head += tui_core.render_markdown(f"reason: {data['reason']}", width)
         for fieldname in ("cancelled_ci_contexts", "blocked_ci_contexts",
                           "external_approvers"):
             vals = data.get(fieldname) or []
@@ -922,12 +925,12 @@ class UILoop:
         head.append([])
         if not review:
             return head + [[("text", f"({item.state}: no review)")]]
-        labels = [
-            [("bullet", f"label {c.get('op')} {c.get('label')}"),
-             ("text", (f" ({c['reason']})" if c.get("reason") else "")
-                      + (" [posted]" if c.get("post") else ""))]
+        labels = tui_core.render_markdown("\n".join(
+            f"- {c.get('op')} **{c.get('label')}**"
+            + (f" — {c.get('reason')}" if c.get("reason") else "")
+            + (" *[posted]*" if c.get("post") else "")
             for c in review.get("label_changes") or []
-        ]
+            if isinstance(c, dict)), width)
         if labels:
             labels.append([])
         return head + labels + tui_core.render_markdown(

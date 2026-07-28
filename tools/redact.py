@@ -975,7 +975,7 @@ def main(argv: list[str] | None = None) -> int:
         for path in alien:
             print(f"{path}: not a capture ({' '.join(CAPTURE_SUFFIXES)}); "
                   "only --names reads other files", file=sys.stderr)
-        return 2
+        return 3
 
     if args.check:
         bad = 0

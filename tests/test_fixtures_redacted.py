@@ -203,7 +203,7 @@ class DetectorTests(unittest.TestCase):
         said = io.StringIO()
         with contextlib.redirect_stdout(said), contextlib.redirect_stderr(said):
             status = redact.main([__file__, "--check"])
-        self.assertEqual(2, status)
+        self.assertEqual(3, status)
         self.assertIn("not a capture", said.getvalue())
 
 if __name__ == "__main__":

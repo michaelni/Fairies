@@ -45,13 +45,31 @@ github
 gitlab
 forgejo
 
-# ---- accounts and repositories this deployment is -------------------
+# ---- the metasyntactic placeholders the tests write ------------------
+name
+addr
+a-list
+abc123
+some
+example
+
+# ---- accounts and repositories this deployment is --------------------
+# The owner's published identity, name and addresses included: listed
+# here, it ships verbatim anywhere, future captures too, the same way
+# michaelni always has. The license header of every file names the
+# owner already.
+Michael
+Niedermayer
 FFmpeg
 FFmpeg/FFmpeg
 ffmpeg-devel
 Forgejo_Fairy
+forgejo-fairy[bot]
+fairy
 michaelni
 michaelni/FFmpeg
+michael@niedermayer.cc
+michaelni@users.noreply.github.com
 main
 master
 
@@ -79,6 +97,10 @@ Cc
 From
 Subject
 Message-ID
+Return-Path
+Delivered-To
+Sender
+X-Original-From
 Message-ID-Hash
 In-Reply-To
 References
@@ -173,6 +195,7 @@ leave
 request
 join
 owner
+reporter
 help
 development
 discussions

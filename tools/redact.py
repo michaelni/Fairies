@@ -126,6 +126,8 @@ CAST = frozenset(
 
 
 
+CAPTURE_SUFFIXES = (".json", ".eml", ".txt")
+
 class FatalInternalFailure(RuntimeError):
     """The check found a token the redaction should have replaced."""
 
@@ -1016,6 +1018,13 @@ def main(argv: list[str] | None = None) -> int:
             bad += len(left)
         print(f"checked {len(given)} files, {bad} undrawn name(s)")
         return 1 if bad else 0
+
+    alien = [p for p in files if p.suffix not in CAPTURE_SUFFIXES]
+    if alien:
+        for path in alien:
+            print(f"{path}: not a capture ({' '.join(CAPTURE_SUFFIXES)}); "
+                  "only --names reads other files", file=sys.stderr)
+        return 2
 
     if args.check:
         bad = 0

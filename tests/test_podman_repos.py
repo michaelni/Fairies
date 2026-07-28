@@ -105,7 +105,7 @@ class RemoteProvisionTests(unittest.TestCase):
     # lock, so the loser of the race fails rc=128.
     _INIT_LOCK_STDERR = (
         b"error: could not lock config file "
-        b"/home/fairy/fairy-mirrors/ffmpeg.git/config: File exists"
+        b"/srv/fairy-mirrors/ffmpeg.git/config: File exists"
     )
 
     def test_ensure_remote_mirror_retries_config_lock_race(self) -> None:
@@ -154,7 +154,7 @@ class RemoteProvisionTests(unittest.TestCase):
     _LOST_RACE_ERROR = RuntimeError(
         "git push 08f56d4898eafcaddc19b3aac9263e066e82f0c0->refs/fairy/heads/ffmpeg "
         "to fairy@h:fairy-mirrors/ffmpeg.git from "
-        "/home/ai/cursor/forgejo_fairy/simpast-mirror/ffmpeg failed: "
+        "/srv/ffmpeg failed: "
         "remote: error: cannot lock ref 'refs/fairy/heads/ffmpeg': "
         "is at 08f56d4898eafcaddc19b3aac9263e066e82f0c0 but expected "
         "3e2ebba1c421b1a63d7cebcb27e1a0c93d1d1638"

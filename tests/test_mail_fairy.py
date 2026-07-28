@@ -32,7 +32,6 @@ from __future__ import annotations
 import re
 import sys
 import time
-import email.utils
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -773,9 +772,9 @@ class TestHumanReplyFixture(unittest.TestCase):
     def test_extract_author_picks_cc(self):
         reply = mail_fairy.read_headers(HUMAN_REPLY)
         name, addr = mail_fairy.extract_author(reply)
-        self.assertEqual(name, reply.from_raw.split(" via ")[0].strip())
-        self.assertIn(addr, [pair[1] for pair in
-                             email.utils.getaddresses([reply.cc_raw])])
+        expected = re.search(r"<[^>]*>,\s*(.+?)\s*<([^>]+)>",
+                             _header(HUMAN_REPLY, "Cc"))
+        self.assertEqual((name, addr), expected.groups())
 
     def test_body_cleanup_keeps_inline_lgtm(self):
         body = mail_fairy.read_body(HUMAN_REPLY)

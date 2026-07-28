@@ -33,10 +33,13 @@ import mail_fairy  # noqa: E402
 
 FIX = REPO_ROOT / "tests" / "fixtures" / "mail_fairy"
 MAIL_TS = 1776807758
-REPLY_MSGID = re.search(
-    r"^Message-ID:\s*<([^>]+)>",
-    (REPO_ROOT / "tests" / "fixtures" / "mail_fairy" /
-     "human_reply.eml").read_text(), re.M).group(1)
+def _msgid(path) -> str:
+    """Drawn by tools/redact.py, so read it out of the fixture."""
+    return re.search(r"^Message-ID:[ \t]*<(.+?)>", path.read_text(),
+                     re.M).group(1)
+
+
+REPLY_MSGID = _msgid(FIX / "human_reply.eml")
 FORGE_URL = "https://code.ffmpeg.org"
 NEVER_TOO_OLD = "100000"
 

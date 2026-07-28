@@ -11,9 +11,9 @@ import podman_host
 
 class ParseShellHostTest(unittest.TestCase):
     def test_bare_spec_gets_default_label_and_limits(self) -> None:
-        spec = podman_host.parse_shell_host("fairy@192.168.2.4")
+        spec = podman_host.parse_shell_host("fairy@192.0.2.4")
         self.assertEqual("x86_64", spec.label)
-        self.assertEqual("fairy@192.168.2.4", spec.host.ssh_dest)
+        self.assertEqual("fairy@192.0.2.4", spec.host.ssh_dest)
         self.assertEqual(podman_host.CONTAINER_CPUS, spec.cpus)
         self.assertEqual(podman_host.CONTAINER_MEMORY, spec.memory)
         self.assertIsNone(spec.gpu)
@@ -46,7 +46,7 @@ class ParseShellHostTest(unittest.TestCase):
         self.assertEqual("/k/id", spec.host.identity)
 
     def test_port_reaches_remote_host(self) -> None:
-        spec = podman_host.parse_shell_host("fairy@134.0.0.1,port=17022")
+        spec = podman_host.parse_shell_host("fairy@192.0.2.1,port=17022")
         self.assertEqual(17022, spec.host.port)
 
     def test_default_port_is_none(self) -> None:

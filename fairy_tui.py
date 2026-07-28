@@ -159,6 +159,7 @@ class Model:
     def __init__(self, sides: list[tuple[str, filedb.Db]]) -> None:
         self.lock = Lock()
         self.dirty = Event()
+        self.requested: set[tuple[str, str, int]] = set()
         self.sides = sides
         self.items: dict[tuple[str, str, int], Item] = {}
         self.order: list[tuple[str, str, int]] = []
@@ -193,6 +194,7 @@ class Model:
         stat per ticket."""
         now = time.time()
         found: dict[tuple[str, str, int], tuple[str, filedb.Db, bool]] = {}
+        requested: set[tuple[str, str, int]] = set()
         for repo, db in self.sides:
             for state in filedb.STATES:
                 try:
@@ -217,6 +219,8 @@ class Model:
                 for kind, number in listing:
                     # later directory wins: crash-remnant precedence
                     found[(repo, kind, number)] = (state, db, rescanned)
+                    if state == "requests":
+                        requested.add((repo, kind, number))
         updates: list[tuple[tuple[str, str, int], str, dict | None, str]] = []
         for key in sorted(found):
             state, db, rescanned = found[key]
@@ -240,9 +244,10 @@ class Model:
                 updates.append((key, state, None, str(exc)))
             self._read[key] = tag
         removed = [k for k in self.items if k not in found]
-        if not updates and not removed:
+        if not updates and not removed and requested == self.requested:
             return
         with self.lock, self._cursor_anchored():
+            self.requested = requested
             for key, state, data, error in updates:
                 item = self.items.get(key)
                 if item is None:
@@ -844,6 +849,8 @@ class UILoop:
     def _llm_col(self, it: Item) -> str:
         if it.state == "llm":
             return it.data.get("stage") or "llm"
+        if (it.repo, it.kind, it.number) in self.model.requested:
+            return "requested"
         if it.state == "merge-ready" and it.data.get("approved_at"):
             return f"appr={_age(it.data['approved_at'])}"
         review = it.data.get("review") or {}

@@ -1001,3 +1001,24 @@ class PaintSmokeTests(DbCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RequestedBadgeTests(DbCase):
+    def test_a_pending_rerun_request_shows_on_the_row(self) -> None:
+        """Production #20893: r created the request but the row was
+        pixel-identical until the agent's next full scan."""
+        self.db.push("skipped", "pr", 5, verdict(5, "skip"))
+        self.model.poll()
+        with self.model.lock:
+            self.model.filter_mode = "all"
+        ui = make_ui(self.model)
+        self.db.request("pr", 5, {"action": "rerun"})
+        self.model.poll()
+        rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in ui.list_rows()]
+        self.assertTrue(any("requested" in t for t in rows), rows)
+        self.db.pop("requests", "pr", 5)
+        self.model.poll()
+        rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in ui.list_rows()]
+        self.assertFalse(any("requested" in t for t in rows), rows)

@@ -52,7 +52,7 @@ from __future__ import annotations
 import argparse
 import logging
 import shlex
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from datetime import datetime, timezone
 from pathlib import Path
@@ -175,40 +175,56 @@ def _review_claimed(sides: dict[str, argparse.Namespace],
 
 
 def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
-          parallel: int = 1) -> int:
+          parallel: int = 1, wake: Event | None = None) -> int:
     """Claim and review every queued ticket of the configured kinds, up
-    to ``parallel`` at a time; returns the number reviewed. Slots top
-    up the moment a review finishes -- one slow review never idles the
-    others, and tickets arriving mid-drain are picked up immediately.
-    The claim protocol arbitrates, so threads and other worker
-    processes compose freely; per-provider rate limits stay with
-    concurrency.py inside the wrapper."""
+    to ``parallel`` at a time; returns the number reviewed. Purely
+    event-driven: a finished review and a new queued/ file both set
+    ``wake`` (the caller's queued/-watching event, or an own watch when
+    none is given), so slots refill the moment either happens and one
+    slow review never idles the others. Without the watchdog package a
+    1s poll is the fallback. The claim protocol arbitrates, so threads
+    and other worker processes compose freely; per-provider rate limits
+    stay with concurrency.py inside the wrapper."""
     slots = max(1, int(parallel or 1))
     done = 0
     in_flight: set = set()
-    with ThreadPoolExecutor(max_workers=slots) as pool:
-        while True:
-            for kind, number in sorted(db.list_state("queued"), key=lambda kn: not (db.get("queued", *kn) or {}).get("forced")):
-                if len(in_flight) >= slots:
-                    break
-                if kind not in sides:
-                    continue
-                # claiming here (not in the thread) removes the item
-                # from queued/ before the next listing: no window in
-                # which it could be picked twice
-                claim = db.claim("queued", "llm", kind, number)
-                if claim is not None:
-                    in_flight.add(pool.submit(_review_claimed, sides, claim))
-            if not in_flight:
-                return done
-            # bounded wait: tickets queued while every started review
-            # still runs must not wait for one to finish
-            finished, _ = wait(in_flight, timeout=1.0,
-                               return_when=FIRST_COMPLETED)
-            for fut in finished:
-                in_flight.discard(fut)
-                if fut.result():
-                    done += 1
+    watched = wake is not None
+    if wake is None:
+        wake = Event()
+    own_watch = None if watched else watch_paths([db.root / "queued"], wake.set)
+    try:
+        with ThreadPoolExecutor(max_workers=slots) as pool:
+            while True:
+                wake.clear()
+                for fut in [f for f in in_flight if f.done()]:
+                    in_flight.discard(fut)
+                    if fut.result():
+                        done += 1
+                claimed = False
+                for kind, number in sorted(
+                        db.list_state("queued"),
+                        key=lambda kn: not (db.get("queued", *kn)
+                                            or {}).get("forced")):
+                    if len(in_flight) >= slots:
+                        break
+                    if kind not in sides:
+                        continue
+                    # claiming here (not in the thread) removes the item
+                    # from queued/ before the next listing: no window in
+                    # which it could be picked twice
+                    claim = db.claim("queued", "llm", kind, number)
+                    if claim is not None:
+                        fut = pool.submit(_review_claimed, sides, claim)
+                        fut.add_done_callback(lambda _f: wake.set())
+                        in_flight.add(fut)
+                        claimed = True
+                if not in_flight and not claimed:
+                    return done
+                if in_flight:
+                    wake.wait(None if watched or own_watch else 1.0)
+    finally:
+        if own_watch is not None:
+            own_watch.stop()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -256,7 +272,7 @@ def main() -> int:
     watch_paths([db.root / "queued"], wake.set)
     while True:
         try:
-            drain(db, sides, parallel=args.parallel)
+            drain(db, sides, parallel=args.parallel, wake=wake)
         except Exception:
             # same contract as the agent loop: a transient error must
             # not kill the daemon; one-shot mode fails loudly

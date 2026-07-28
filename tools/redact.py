@@ -966,7 +966,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{path}: {item!r}", file=sys.stderr)
             bad += len(left)
         print(f"checked {len(given)} files, {bad} undrawn name(s)")
-        return 1 if bad else 0
+        if not args.check:
+            return 1 if bad else 0
+        names_bad = bad
 
     alien = [p for p in files if p.suffix not in CAPTURE_SUFFIXES]
     if alien:
@@ -989,7 +991,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{path}: {token!r}", file=sys.stderr)
             bad += len(left)
         print(f"checked {len(files)} files, {bad} tokens not from a pool")
-        return 1 if bad else 0
+        return 1 if bad or (args.names and names_bad) else 0
 
     produced: list[tuple[Path, str, str, str]] = []
     for path in files:

@@ -628,7 +628,7 @@ def gcli_approve(args: argparse.Namespace, pr_number: int, review_message: str =
                 tmp_path = tf.name
             cmd += ["-T", tmp_path]
 
-        cp = run_cmd(cmd, verbose=args.verbose)
+        cp = forge_gcli.run_gcli(args, cmd)
         if cp.returncode != 0:
             raise RuntimeError(
                 f"gcli approve failed for PR #{pr_number} with exit code {cp.returncode}:\n"

@@ -13,6 +13,7 @@ Exempt, because naming a forge IS their job:
 * ``mail_fairy.py``    -- owns the per-forge notification-mail flavors
 * ``forgejo_export.py``-- the exporter, named for what it exports
 * ``ci_log.py``        -- fetches a Forgejo Actions job log by URL shape
+* ``github_app.py``    -- GitHub App auth, named for the forge it serves
 * ``tools/capture_github_fixtures.py`` -- records the GitHub fixtures
 * ``llm_prompt.py``    -- prompt text, exempt under project-agnostic.mdc
 
@@ -36,6 +37,7 @@ OWNS_FORGE_KNOWLEDGE = {
     "forgejo_export.py",
     "ci_log.py",
     "llm_prompt.py",
+    "github_app.py",
     "tools/capture_github_fixtures.py",
 }
 BASELINE = 62  # lower this when cleaning existing mentions up

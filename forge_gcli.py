@@ -101,6 +101,7 @@ from pathlib import Path
 from threading import Thread
 from urllib.parse import quote
 
+import github_app
 from common import JsonValue
 
 __all__ = [
@@ -127,6 +128,7 @@ __all__ = [
     "post_issue_comment",
     "project_timeline_event",
     "run_cmd",
+    "run_gcli",
     "self_login",
 ]
 
@@ -141,6 +143,18 @@ def gcli_prefix(args: argparse.Namespace) -> list[str]:
     if args.forge_type:
         cmd += ["-t", args.forge_type]
     return cmd
+
+
+def run_gcli(args: argparse.Namespace, cmd: list[str], **kwargs):
+    """Run a gcli command with whatever credentials ``args`` select.
+
+    Every gcli invocation goes through here so App auth is arranged in
+    one place: ``github_app.gcli_env`` answers None for static-token
+    deployments, which is the inherited environment and today's
+    behavior.
+    """
+    return run_cmd(cmd, verbose=getattr(args, "verbose", 0),
+                   env=github_app.gcli_env(args), **kwargs)
 
 
 def add_forge_repo_args(parser: argparse.ArgumentParser) -> None:
@@ -180,6 +194,7 @@ def add_forge_repo_args(parser: argparse.ArgumentParser) -> None:
             "App installation token cannot."
         ),
     )
+    github_app.add_github_app_args(parser)
     parser.add_argument(
         "--forge-type",
         "--gcli-type",
@@ -363,7 +378,7 @@ def gcli_api(
     if all_pages:
         cmd.append("-a")
     cmd.append(path)
-    cp = run_cmd(cmd, verbose=args.verbose, verbose_threshold=verbose_threshold)
+    cp = run_gcli(args, cmd, verbose_threshold=verbose_threshold)
     if cp.returncode != 0:
         raise RuntimeError(
             f"gcli api failed for {path!r} with exit code {cp.returncode}:\n{cp.stderr.strip()}"
@@ -377,6 +392,7 @@ def run_gcli_editor_submission(
     message: str,
     verbose: int,
     timeout: int | None = None,
+    base_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="gcli-review-") as tmpdir:
         tmp = Path(tmpdir)
@@ -392,7 +408,7 @@ def run_gcli_editor_submission(
         )
         editor_path.chmod(0o700)
 
-        env = os.environ.copy()
+        env = dict(base_env if base_env is not None else os.environ)
         env["GIT_EDITOR"] = str(editor_path)
         env["VISUAL"] = str(editor_path)
         env["EDITOR"] = str(editor_path)
@@ -535,6 +551,7 @@ def post_issue_comment(
     )
     cp = run_gcli_editor_submission(
         cmd, message=body, verbose=getattr(args, "verbose", 0),
+        base_env=github_app.gcli_env(args),
     )
     if cp.returncode != 0:
         raise RuntimeError(
@@ -1026,7 +1043,7 @@ def apply_issue_label_changes(
         *label_args,
     ]
     logger.info("+ %s", shlex.join(cmd))
-    cp = run_cmd(cmd, verbose=args.verbose)
+    cp = run_gcli(args, cmd)
     if cp.returncode != 0:
         raise RuntimeError(
             f"gcli {subcommand} labels failed for {owner}/{repo}#{number} "

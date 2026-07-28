@@ -144,7 +144,7 @@ class ApproveMessageTests(unittest.TestCase):
                 body.append(Path(cmd[cmd.index("-T") + 1]).read_text())
             return argparse.Namespace(returncode=0, stderr="")
 
-        with mock.patch.object(fairy, "run_cmd", side_effect=fake_run_cmd):
+        with mock.patch.object(forge_gcli, "run_cmd", side_effect=fake_run_cmd):
             fairy.gcli_approve(pr_ns(flags), 1, review_message)
         return body[0] if body else None
 

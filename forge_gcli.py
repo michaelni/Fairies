@@ -796,6 +796,11 @@ def project_timeline_event(event: dict) -> dict:
 # git identity with no forge login and dates the entry under
 # ``author.date`` instead of ``created_at``). Captured 2026-07-28 from
 _GITHUB_COMMIT_EVENT = "committed"
+# GitHub marks a force-push with its own entry, listing the rewritten
+# commits first and then this marker. Captured 2026-07-28 on
+# michaelni/testrepo #2, where the marker's ``commit_id`` was the same
+# sha as the single preceding ``committed`` entry.
+_GITHUB_FORCE_PUSH_EVENT = "head_ref_force_pushed"
 
 
 def _github_commit_author(event: dict) -> dict | None:
@@ -830,31 +835,40 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
     """Fold GitHub's timeline into the events this module hands out.
 
     GitHub lists one ``committed`` entry per commit and does not mark
-    where one push ended and the next began, so a run of them with
-    nothing in between is reported as a single push. That grouping is a
-    reading of the order GitHub returned, not something GitHub states.
+    where an ordinary push ended and the next began, so a run of them
+    with nothing in between is reported as a single push. That grouping
+    is a reading of the order GitHub returned, not something GitHub
+    states.
 
-    ``is_force_push`` is left absent: the run of commits looks the same
-    either way, and ``head_ref_force_pushed`` -- the entry that would
-    say so -- is not covered by a capture, so claiming ``False`` here
-    would tell the reviewing model something unverified.
+    A force-push it does mark, with a ``head_ref_force_pushed`` entry
+    after the rewritten commits, so ``is_force_push`` is taken from
+    whether that marker closes the run. A marker with no commits before
+    it still yields a push, carrying the sha the marker names.
     """
     out: list[dict] = []
     run: list[dict] = []
 
-    def flush() -> None:
-        if not run:
+    def flush(marker: dict | None = None) -> None:
+        if not run and marker is None:
             return
-        last = run[-1]
-        out.append({**_project_github_event(last), "type": PUSH_EVENT,
+        commit_ids = [c["sha"] for c in run if isinstance(c.get("sha"), str)]
+        if marker is not None and not commit_ids:
+            sha = marker.get("commit_id")
+            commit_ids = [sha] if isinstance(sha, str) and sha else []
+        source = marker if marker is not None else run[-1]
+        out.append({**_project_github_event(source), "type": PUSH_EVENT,
                     "id": None, "body": "",
-                    "commit_ids": [c["sha"] for c in run
-                                   if isinstance(c.get("sha"), str)]})
+                    "is_force_push": marker is not None,
+                    "commit_ids": commit_ids})
         run.clear()
 
     for event in events:
-        if event.get("event") == _GITHUB_COMMIT_EVENT:
+        kind = event.get("event")
+        if kind == _GITHUB_COMMIT_EVENT:
             run.append(event)
+            continue
+        if kind == _GITHUB_FORCE_PUSH_EVENT:
+            flush(marker=event)
             continue
         flush()
         out.append(_project_github_event(event))

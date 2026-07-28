@@ -11,10 +11,13 @@ project's own scratch repository:
   case the push grouping exists for, and the ``author`` actor key that
   only a commit entry carries.
 
-GitHub has no equivalent of Forgejo's single ``pull_push`` entry: it
-lists each commit and never says where one push ended, so a run of them
-is read as one. What it does not say is whether the branch was
-force-pushed, so that flag is left absent rather than guessed.
+GitHub has no equivalent of Forgejo's single ``pull_push`` entry for an
+ordinary push: it lists each commit and never says where one push ended,
+so a run of them is read as one. A force-push it does mark, with a
+``head_ref_force_pushed`` entry closing the run, and in the capture that
+marker's ``commit_id`` is the same sha as the ``committed`` entry before
+it. The marker also dates the push -- the commit is stamped when it was
+written, which on a rewritten branch is the older time.
 """
 
 from __future__ import annotations
@@ -88,12 +91,29 @@ class PushGroupingTests(unittest.TestCase):
         self.assertEqual(len(pushes), 1)
         self.assertEqual(len(pushes[0]["commit_ids"]), 7)
 
-    def test_force_push_is_left_unknown_not_claimed_false(self) -> None:
+    def test_an_unmarked_run_of_commits_is_an_ordinary_push(self) -> None:
         push = [e for e in _github("testrepo_pr4_timeline.json")
                 if e["type"] == forge_gcli.PUSH_EVENT][0]
-        self.assertNotIn("is_force_push", push)
-        self.assertIsNone(
-            fairy.push_events_from_timeline([push])[0]["is_force_push"])
+        self.assertFalse(push["is_force_push"])
+
+    def test_a_marked_run_is_a_force_push(self) -> None:
+        pushes = [e for e in _github("testrepo_pr2_forcepush_timeline.json")
+                  if e["type"] == forge_gcli.PUSH_EVENT]
+        self.assertEqual(len(pushes), 1)
+        self.assertTrue(pushes[0]["is_force_push"])
+        self.assertEqual(
+            pushes[0]["commit_ids"],
+            ["ef072708722966f8997bb909d09b2b2c0e21d89a"])
+
+    def test_the_push_is_dated_and_attributed_by_the_marker(self) -> None:
+        # The commit is stamped 19:12:10, the force-push happened at
+        # 19:39:47; the activity gate must see the later one, and the
+        # pusher rather than the commit's author.
+        item = fairy.push_events_from_timeline(
+            _github("testrepo_pr2_forcepush_timeline.json"))[0]
+        self.assertEqual(item["created_at"], "2026-07-28T19:39:47Z")
+        self.assertEqual(item["author"], "michaelni")
+        self.assertTrue(item["is_force_push"])
 
     def test_the_push_reaches_fairy_as_a_discussion_item(self) -> None:
         items = fairy.push_events_from_timeline(

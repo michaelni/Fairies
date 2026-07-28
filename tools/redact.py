@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Replace the values in a captured fixture with values from fixed pools.
+"""
+Replace the values in a captured fixture with values from fixed pools.
 
 The pools are generated from a fixed seed, so they are the same on every
 run and a reader can enumerate them. Which pool member replaces a given
@@ -83,6 +84,10 @@ PHONE_RE = re.compile(r"[+(]?\d[\d ()./-]{5,17}\d\Z")
 COLOUR_RE = re.compile(r"[0-9a-fA-F]{6}\Z")
 WORD_RE = re.compile(r"[^\W\d_]+")
 TOKEN_RE = re.compile(r"[^\s]+")
+
+NAME_KEY_ALT = (r"(?:\w+_)?(login|username|user_name|full_name|realname|"
+                 r"display_name|nickname|author|committer|email)")
+NAME_KEY_TEST_RE = re.compile(NAME_KEY_ALT + r"\Z", re.I)
 
 
 class FatalInternalFailure(RuntimeError):
@@ -308,10 +313,13 @@ STRUCTURED = (Kind.URL, Kind.SSH, Kind.EMAIL, Kind.PATH, Kind.FILE,
               Kind.DOMAIN, Kind.MAILTO)
 
 
-def _decompose(kind: str, value: str) -> list[tuple[bool, str]]:
+LITERAL, DRAWN, NAMED = 0, 1, 2
+
+def _decompose(kind: str, value: str) -> list[tuple[int, str]]:
     """A structured value as literal and replaceable pieces. A number is a
     literal: inside a URL or a path it is an identifier, and a caller
-    parses it back out."""
+    parses it back out; the part before an address's @ is NAMED, and
+    the number rule does not reach it."""
     def segments(text: str) -> list[tuple[bool, str]]:
         out = []
         for index, piece in enumerate(text.split("/")):
@@ -330,9 +338,6 @@ def _decompose(kind: str, value: str) -> list[tuple[bool, str]]:
         pieces = [(True, scheme), (False, sep), (True, host)]
         if slash:
             pieces.append((False, slash))
-            # A fragment and a query name things of their own; splitting
-            # them off keeps "#issuecomment-<n>" readable as a route and
-            # a number rather than one unrecognisable word.
             for index, part in enumerate(re.split(r"([#?])", rest)):
                 if index % 2:
                     pieces.append((False, part))
@@ -342,8 +347,8 @@ def _decompose(kind: str, value: str) -> list[tuple[bool, str]]:
     if kind == Kind.SSH:
         user, at, rest = value.partition("@")
         host, colon, path = rest.partition(":")
-        return ([(True, user), (False, at), (True, host), (False, colon)]
-                + segments(path))
+        return ([(NAMED, user), (LITERAL, at), (DRAWN, host),
+                 (LITERAL, colon)] + segments(path))
     if kind == Kind.MAILTO:
         scheme, sep, rest = value.partition(":")
         address, mark, query = rest.partition("?")
@@ -357,16 +362,15 @@ def _decompose(kind: str, value: str) -> list[tuple[bool, str]]:
         pieces = []
         for index, part in enumerate(local.split(".")):
             if index:
-                pieces.append((False, "."))
-            pieces.append((True, part))
-        return pieces + [(False, at), (True, domain)]
+                pieces.append((LITERAL, "."))
+            pieces.append((NAMED, part))
+        return pieces + [(LITERAL, at), (DRAWN, domain)]
     if kind == Kind.FILE:
         stem, dot, ext = value.rpartition(".")
         return [(True, stem), (False, dot + ext)]
     if kind == Kind.PATH:
         return segments(value)
     return [(True, value)]
-
 
 class Redactor:
     """One run. A value seen twice gets the same replacement, so what the
@@ -390,10 +394,10 @@ class Redactor:
     KEPT = (Kind.DATE, Kind.DATE2822, Kind.DATEONLY, Kind.NUMBER,
             Kind.FLOAT)
 
-    def keeps(self, kind: str, value: str) -> bool:
+    def keeps(self, kind: str, value: str, named: bool = False) -> bool:
         if not value or value in self.exceptions:
             return True
-        if kind in self.KEPT:
+        if kind in self.KEPT and not named:
             return True
         nested = _as_json(value)
         if nested is not None:
@@ -403,7 +407,7 @@ class Redactor:
             pieces = _decompose(kind, value)
             if len(pieces) == 1 and pieces[0][0] and pieces[0][1] == value:
                 return self.pools.holds(kind, value)
-            return all(self.keeps(classify(p), p)
+            return all(self.keeps(classify(p), p, slot == NAMED)
                        for slot, p in pieces if slot)
         return self.pools.holds(kind, value)
 
@@ -412,17 +416,22 @@ class Redactor:
         not already a pool member or an exception move, each inside its own
         kind, so what a caller parses out of it still parses."""
         pieces = _decompose(kind, value)
-        if len(pieces) == 1 and pieces[0] == (True, value):
+        if len(pieces) == 1 and pieces[0] == (DRAWN, value):
             return self.draw(kind, value)
         out = []
         for slot, piece in pieces:
-            if not slot or self.keeps(classify(piece), piece):
-                self.spend(classify(piece), piece)
+            kind_p = classify(piece)
+            if not slot or self.keeps(kind_p, piece, slot == NAMED):
+                self.spend(kind_p, piece)
                 out.append(piece)
+            elif kind_p == Kind.TEXT:
+                out.append(self.draw(Kind.WORD, piece))
+            elif slot == NAMED:
+                if kind_p == Kind.PHONE or not self.pools.of(kind_p, piece):
+                    kind_p = Kind.NUMBER if piece.isdigit() else Kind.WORD
+                out.append(self.draw(kind_p, piece))
             else:
-                out.append(self.draw(Kind.WORD, piece)
-                           if classify(piece) == Kind.TEXT
-                           else self.token(piece))
+                out.append(self.token(piece))
         return "".join(out)
 
     def draw(self, kind: str, value: str) -> str:
@@ -455,6 +464,14 @@ class Redactor:
         if self.pools.holds(kind, value):
             self.taken.setdefault(kind, set()).add(value)
 
+    def name_value(self, value: str) -> str:
+        if classify(value) == Kind.NUMBER and value not in self.exceptions:
+            if self.pools.holds(Kind.NUMBER, value):
+                self.spend(Kind.NUMBER, value)
+                return value
+            return self.draw(Kind.NUMBER, value)
+        return self.token(value)
+
     def token(self, value: str) -> str:
         if value[:1] == "-" and classify(value) in (Kind.NUMBER, Kind.FLOAT):
             return "-" + self.token(value[1:])
@@ -465,7 +482,7 @@ class Redactor:
                            lambda v: (int(self.token(str(v)))
                                       if isinstance(v, int)
                                       else _float_token(self, v)),
-                           KEPT_FIELDS),
+                           KEPT_FIELDS, self.name_value),
                 separators=(",", ":"))
         kind = classify(value)
         if self.keeps(kind, value):
@@ -539,10 +556,11 @@ class Redactor:
         lead, display, rest = parts.groups()
         via = re.search(r"\s+via\s+\S+\s*\Z", display)
         stem = display[:via.start()] if via else display
+        addressed = ADDRESS_RE.search(rest)
         if not stem.strip() or all(self.keeps(Kind.WORD, w)
                                    for w in WORD_RE.findall(stem)):
             return lead + display + self.field(rest)
-        key = (Kind.NAME, stem)
+        key = (Kind.NAME, addressed.group() if addressed else stem)
         if key not in self.memo:
             self.memo[key] = self.text(stem)
         return (lead + self.memo[key] + (via.group() if via else "")
@@ -620,19 +638,27 @@ def _json_strings(tree, out, with_numbers=False, nested=False, keys=False,
     return out
 
 
-def _walk_kept(tree, visit, numbers, kept):
+def _walk_kept(tree, visit, numbers, kept, name_visit=None):
     if isinstance(tree, dict):
-        return {k: (v if k in kept and not isinstance(v, dict)
-                    else _walk_kept(v, visit, numbers, kept))
-                for k, v in tree.items()}
+        def one(k, v):
+            if k in kept and not isinstance(v, dict):
+                return v
+            if name_visit and NAME_KEY_TEST_RE.match(k):
+                if isinstance(v, str):
+                    return name_visit(v)
+                if isinstance(v, int) and not isinstance(v, bool):
+                    return int(name_visit(str(v)))
+            return _walk_kept(v, visit, numbers, kept, name_visit)
+
+        return {k: one(k, v) for k, v in tree.items()}
     if isinstance(tree, list):
-        return [_walk_kept(v, visit, numbers, kept) for v in tree]
+        return [_walk_kept(v, visit, numbers, kept, name_visit)
+                for v in tree]
     if isinstance(tree, str):
         return visit(tree)
     if isinstance(tree, (int, float)) and not isinstance(tree, bool):
         return numbers(tree)
     return tree
-
 
 def redact_json(tree, red: Redactor):
     """A number in a payload names an item as surely as a string does, so
@@ -647,8 +673,8 @@ def redact_json(tree, red: Redactor):
             raise FatalInternalFailure(f"no pool for the float {text}")
         return float(red.token(text))
 
-    return _walk_kept(tree, red.token, number, KEPT_FIELDS)
-
+    return _walk_kept(tree, red.token, number, KEPT_FIELDS,
+                      red.name_value)
 
 def redact_text(text: str, red: Redactor, lines: set | None = None) -> str:
     out = []

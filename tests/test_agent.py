@@ -982,6 +982,30 @@ class StartupValidationTests(unittest.TestCase):
         agent.validate_sides(self.pr("--forced-only --force-review-pr 5"), None)
 
 
+class RequestsPassTests(AgentCase):
+    """An r/f press must not rescan the whole forge (production: one
+    request cost a ~74s full pass); the requests pass fetches only the
+    named items."""
+
+    def test_only_the_requested_item_is_fetched(self) -> None:
+        self.db.push("requests", "pr", 7, {"action": "rerun"})
+        args = agent.parse_args(["--pr-args", "x"])
+        with mock.patch.object(fairy, "list_open_prs",
+                               side_effect=AssertionError("full listing")), \
+                mock.patch.object(fairy, "get_pr",
+                                  side_effect=lambda ns, n: make_pr(n)), \
+                mock.patch.object(fairy, "safe_prepare_pr", self.prepare), \
+                mock.patch.object(forge_gcli, "self_login",
+                                  return_value="fairy"), \
+                mock.patch.object(agent.gcli_cache, "load_cache",
+                                  return_value=mock.Mock()), \
+                mock.patch.object(agent.gcli_cache, "save_cache"):
+            agent.requests_pass(self.db, self.ns, None, args)
+        self.assertEqual(self.db.find("pr", 7), "queued")
+        self.assertIsNone(self.db.get("requests", "pr", 7))
+        self.assertFalse(self.ns.forced_only)  # the clone flips, not ours
+
+
 class ColorTests(unittest.TestCase):
     def test_side_color_reaches_setup_logging(self) -> None:
         tmp = tempfile.TemporaryDirectory()

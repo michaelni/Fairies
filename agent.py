@@ -821,6 +821,25 @@ def validate_sides(pr_ns: argparse.Namespace | None,
                 "--forced-only requires at least one --force-review-*")
 
 
+def _forced_only(ns: argparse.Namespace | None) -> argparse.Namespace | None:
+    if ns is None:
+        return None
+    clone = argparse.Namespace(**vars(ns))
+    clone.forced_only = True
+    return clone
+
+
+def requests_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
+                  issue_ns: argparse.Namespace | None,
+                  args: argparse.Namespace) -> None:
+    """Answer pending operator requests by fetching just the named
+    items (the --forced-only path). A full forge rescan per r/f press
+    is hammering, and it kept the press invisible for the length of a
+    scan (production: ~74s for one issue); the scheduled full scan
+    stays on its own clock."""
+    one_pass(db, _forced_only(pr_ns), _forced_only(issue_ns), args)
+
+
 def main() -> int:
     args = parse_args()
     pr_ns = fairy.parse_args(shlex.split(args.pr_args)) if args.pr_args else None
@@ -849,9 +868,11 @@ def main() -> int:
     next_scan = 0.0
     while True:
         try:
-            if time.monotonic() >= next_scan or db.list_state("requests"):
+            if time.monotonic() >= next_scan:
                 one_pass(db, pr_ns, issue_ns, args)
                 next_scan = time.monotonic() + args.loop
+            elif db.list_state("requests"):
+                requests_pass(db, pr_ns, issue_ns, args)
             else:
                 send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
         except Exception:

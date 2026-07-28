@@ -16,6 +16,7 @@ or an exception, and anything else is a fatal internal failure.
 
     tools/redact.py tests/fixtures/issue_fairy/*.json
     tools/redact.py --check tests/fixtures/issue_fairy/*.json
+    tools/redact.py --names $(git ls-files)
     tools/redact.py --lines 12,40-52 tests/fixtures/mail_fairy/a.eml
 
 Scope is values: in JSON the keys are structure and are not touched, and
@@ -33,7 +34,7 @@ import sys
 from pathlib import Path
 
 __all__ = ["Pools", "Redactor", "redact_json", "redact_text", "check_tokens",
-           "classify", "Kind", "FatalInternalFailure"]
+           "check_names", "classify", "Kind", "FatalInternalFailure"]
 
 POOL_SEED = 20260730
 POOL_SIZE = 4096
@@ -68,7 +69,8 @@ UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
                      r"[0-9a-f]{4}-[0-9a-f]{12}\Z", re.I)
 HEX_RE = re.compile(r"(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\Z")
 BASE32_RE = re.compile(r"[A-Z2-7]{26,}\Z")
-EMAIL_RE = re.compile(r"[\w.+%-]+@[\w.-]+\.[a-z]{2,}\Z", re.I)
+ADDRESS_PATTERN = r"[\w.+%-]+@[\w.-]+\.[a-z]{2,}"
+EMAIL_RE = re.compile(ADDRESS_PATTERN + r"\Z", re.I)
 URL_RE = re.compile(r"[a-z][a-z0-9+.-]*://[^\s<>()\[\]\"']+\Z", re.I)
 SSH_RE = re.compile(r"[\w.-]+@[\w.-]+:[\w./-]+\Z")
 IPV4_RE = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}\Z")
@@ -83,11 +85,45 @@ FLOAT_RE = re.compile(r"-?\d+\.\d+\Z")
 PHONE_RE = re.compile(r"[+(]?\d[\d ()./-]{5,17}\d\Z")
 COLOUR_RE = re.compile(r"[0-9a-fA-F]{6}\Z")
 WORD_RE = re.compile(r"[^\W\d_]+")
+WORDISH_RE = re.compile(r"[\w.'-]+")
 TOKEN_RE = re.compile(r"[^\s]+")
 
 NAME_KEY_ALT = (r"(?:\w+_)?(login|username|user_name|full_name|realname|"
                  r"display_name|nickname|author|committer|email)")
 NAME_KEY_TEST_RE = re.compile(NAME_KEY_ALT + r"\Z", re.I)
+NAME_KEY_RE = re.compile(
+    r"[\"']?\b" + NAME_KEY_ALT + r"\b[\"']?\]?[ \t]*(?:==|!=|[:=])[ \t]*"
+    r"([\"'])((?:(?!\2)[^\n]){1,120})\2", re.I)
+NAME_ATTR_RE = re.compile(
+    r"\.[ \t]*" + NAME_KEY_ALT + r"[ \t]*(?:==|!=|,)[ \t]*"
+    r"([\"'])((?:(?!\2)[^\n]){1,120})\2")
+NAME_REV_RE = re.compile(
+    r"assert\w*\([ \t]*"
+    r"([\"'])(?P<value>(?:(?!\1)[^\n]){1,120})\1[ \t]*,[ \t]*"
+    r"[^,()\n]*(?:\.|\[[\"'])[ \t]*(?P<key>" + NAME_KEY_ALT
+    + r")\b[\"']?\]?[ \t]*\)")
+NAME_GET_RE = re.compile(
+    r"\.get\([ \t]*[\"']" + NAME_KEY_ALT + r"[\"'][ \t]*"
+    r"\)[ \t]*(?:==|!=)[ \t]*"
+    r"([\"'])((?:(?!\2)[^\n]){1,120})\2")
+NAME_NEAR_RES = (
+    re.compile(r"[\"'](?:login|username|email)[\"'][^{}]{0,200}?"
+               r"[\"']name[\"'][ \t]*:[ \t]*"
+               r"([\"'])((?:(?!\1)[^\n]){1,120})\1", re.S),
+    re.compile(r"[\"']name[\"'][ \t]*:[ \t]*"
+               r"([\"'])((?:(?!\1)[^\n]){1,120})\1[^{}]{0,200}?"
+               r"[\"'](?:login|username|email)[\"']", re.S),
+)
+ADDRESS_RE = re.compile(ADDRESS_PATTERN, re.I)
+NAME_ADDR_RE = re.compile(
+    r"(?:\"([^\"\n]{1,80})\""
+    r"|((?:[\w.'-]{1,40},?[ \t]+){0,2}[\w.'-]{1,40}))"
+    r"[ \t]*<[^<>\s]+@[^<>\s]+>")
+
+CAST = frozenset(
+    "alice bob carol dave erin eve mallory trent oscar peggy victor walter "
+    "jane john doe roe dev bot".split())
+
 
 
 class FatalInternalFailure(RuntimeError):
@@ -701,7 +737,9 @@ SUMMARY_RE = re.compile(
     r"(\s*\d+ files? changed(?:, \d+ insertions?\(\+\))?"
     r"(?:, \d+ deletions?\(-\))?\s*)\Z")
 SIDE_RE = re.compile(r"([ab]/)(\S+)")
-NAME_HEADERS = ("From", "Cc", "To", "Reply-To")
+NAME_HEADERS = ("From", "Cc", "To", "Reply-To", "Sender",
+                "X-Original-From")
+ADDR_SPLIT_RE = re.compile(r",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)")
 DISPLAY_RE = re.compile(r"(\s*)(.*?)(\s*<[^>]*>\s*)\Z", re.S)
 PEEL = "<>()[]{}\"',;:!?#+-"
 
@@ -761,8 +799,6 @@ def _redact_line(line: str, red: Redactor) -> str:
         return line
     hunk = HUNK_RE.match(body)
     if hunk:
-        # The counts are tied to the body, which keeps its line count;
-        # the start lines name a place in the real file and do not.
         return (lead + hunk.group(1) + red.token(hunk.group(2))
                 + (hunk.group(3) or "") + hunk.group(4)
                 + red.token(hunk.group(5)) + (hunk.group(6) or "")
@@ -787,10 +823,8 @@ def _redact_line(line: str, red: Redactor) -> str:
         return line
     header = HEADER_RE.match(body)
     if header and header.group(1).rstrip(":") in NAME_HEADERS:
-        # The same person appears in From: and again in Cc:, and a reader
-        # of the mail matches the two, so a display name draws once.
         return lead + header.group(1) + header.group(2) + ",".join(
-            red.name(part) for part in header.group(3).split(","))
+            red.name(part) for part in ADDR_SPLIT_RE.split(header.group(3)))
     if header and header.group(1).rstrip(":") == "Date":
         value = header.group(3)
         return (lead + header.group(1) + header.group(2)
@@ -800,7 +834,6 @@ def _redact_line(line: str, red: Redactor) -> str:
         return lead + header.group(1) + header.group(2) + red.field(
             header.group(3))
     return lead + red.field(body)
-
 
 def check_tokens(text: str, red: Redactor, is_json: bool) -> list[str]:
     """Every token in scope must be a pool member or an exception."""
@@ -857,11 +890,105 @@ def parse_lines(spec: str) -> set:
     return numbers
 
 
+def check_names(text: str, red: Redactor) -> list[str]:
+    problems: list[str] = []
+    ok = CAST | {e.lower() for e in red.exceptions}
+    dates = (Kind.DATE, Kind.DATE2822, Kind.DATEONLY)
+
+    def address_ok(address: str) -> bool:
+        local, _, domain = address.rpartition("@")
+        if (all(p.lower() in ok for p in local.split("."))
+                and red.keeps(classify(domain), domain)):
+            return True
+        return red.keeps(Kind.EMAIL, address)
+
+    def undrawn(value: str, floor: int = 1) -> list[str]:
+        if classify(value.strip()) in dates:
+            return []
+        out = set()
+        for token in TOKEN_RE.findall(value):
+            core = _peel(token)[1]
+            kind = classify(core)
+            if kind in dates:
+                continue
+            if "@" in core:
+                local, _, host = core.rpartition("@")
+                if "." not in host:
+                    if len(local) <= 2 or all(
+                            p.lower() in ok for p in local.split(".")):
+                        continue
+                    out.add(core)
+                elif not address_ok(core):
+                    out.add(core)
+                continue
+            if (len(core) > floor and WORDISH_RE.fullmatch(core)
+                    and core.lower() not in ok
+                    and token.lower() not in ok
+                    and not red.keeps(kind, core, True)):
+                out.add(core)
+        return sorted(out)
+
+    for address in ADDRESS_RE.findall(text):
+        if not address_ok(address):
+            problems.append(f"address: {address}")
+    for quoted, bare in NAME_ADDR_RE.findall(text):
+        left = undrawn(quoted or bare, floor=2)
+        if left:
+            problems.append(f"name beside an address: {' '.join(left)}")
+    for regex in (NAME_KEY_RE, NAME_ATTR_RE, NAME_GET_RE):
+        for key, _, value in regex.findall(text):
+            left = undrawn(value)
+            if left:
+                problems.append(f"{key.lower()}: {' '.join(left)}")
+    for m in NAME_REV_RE.finditer(text):
+        left = undrawn(m.group("value"))
+        if left:
+            problems.append(f"{m.group('key').lower()}: {' '.join(left)}")
+    for regex in NAME_NEAR_RES:
+        for _, value in regex.findall(text):
+            left = undrawn(value)
+            if left:
+                problems.append(f"name: {' '.join(left)}")
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            sibling = any(k.lower() in ("email", "login", "username",
+                                        "user_name") for k in node)
+            for key, value in node.items():
+                if isinstance(value, str):
+                    nested = _as_json(value)
+                    if nested is not None:
+                        walk(nested)
+                    elif (NAME_KEY_TEST_RE.match(key)
+                          or (sibling and key.lower() == "name")):
+                        left = undrawn(value)
+                        if left:
+                            problems.append(
+                                f"{key.lower()}: {' '.join(left)}")
+                elif (isinstance(value, int) and not isinstance(value, bool)
+                        and NAME_KEY_TEST_RE.match(key)):
+                    left = undrawn(str(value))
+                    if left:
+                        problems.append(f"{key.lower()}: {value}")
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+
+    tree = _as_json(text.lstrip())
+    if tree is not None:
+        walk(tree)
+    return sorted(set(problems))
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("paths", nargs="+", type=Path)
     ap.add_argument("--check", action="store_true",
                     help="report tokens that are not pool members")
+    ap.add_argument("--names", action="store_true",
+                    help="report names, addresses and name-carrying fields "
+                         "that are not drawn, listed or conventional")
     ap.add_argument("--lines", help="only these 1-based lines (a,b-c)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
@@ -870,14 +997,35 @@ def main(argv: list[str] | None = None) -> int:
     tokens, exempt_paths, whole_lines = load_exceptions()
     red = Redactor(pools, tokens, whole_lines)
     lines = parse_lines(args.lines) if args.lines else None
-    files = [p for p in args.paths if p.is_file()
-             and not any(str(p).endswith(e) or e in str(p)
-                         for e in exempt_paths)]
+    given = [p for p in args.paths if p.is_file()]
+    files = [p for p in given
+             if not any(str(p).endswith(e) or e in str(p)
+                        for e in exempt_paths)]
+
+    if args.names:
+        bad = 0
+        for path in given:
+            data = path.read_bytes()
+            try:
+                text = data.decode()
+            except UnicodeDecodeError:
+                text = data.decode("latin-1")
+            left = check_names(text, red)
+            for item in left[:20]:
+                print(f"{path}: {item!r}", file=sys.stderr)
+            bad += len(left)
+        print(f"checked {len(given)} files, {bad} undrawn name(s)")
+        return 1 if bad else 0
 
     if args.check:
         bad = 0
         for path in files:
-            text = path.read_text()
+            try:
+                text = path.read_text()
+            except UnicodeDecodeError:
+                print(f"{path}: 'not decodable as UTF-8'", file=sys.stderr)
+                bad += 1
+                continue
             left = check_tokens(text, red, path.suffix == ".json")
             for token in left[:20]:
                 print(f"{path}: {token!r}", file=sys.stderr)
@@ -891,9 +1039,6 @@ def main(argv: list[str] | None = None) -> int:
         if path.suffix == ".json":
             out = _dump_like(text, redact_json(json.loads(text), red))
             if lines is not None:
-                # The serialisation is line-stable, so taking only the
-                # asked-for lines from the redacted form leaves the rest
-                # exactly as it was.
                 before, after = text.split("\n"), out.split("\n")
                 out = "\n".join(
                     after[i] if i + 1 in lines and i < len(after) else old
@@ -905,15 +1050,14 @@ def main(argv: list[str] | None = None) -> int:
             raise FatalInternalFailure(
                 f"{path}: still not from a pool after redacting: {left[:10]}")
         produced.append((path, text, out))
-    # Nothing is written until every file has passed, so a failure late in
-    # a run does not leave the earlier ones rewritten.
     for path, text, out in produced:
         path.write_text(out)
         if args.verbose:
             print(f"{path}: {len(text)} -> {len(out)} bytes")
+        for item in check_names(out, red):
+            print(f"{path}: left for review: {item!r}", file=sys.stderr)
     print(f"redacted {len(files)} files")
     return 0
-
 
 if __name__ == "__main__":
     try:

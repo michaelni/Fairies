@@ -11,7 +11,7 @@ side. Only a real round-trip can.
 Writes to whatever repo it is pointed at, so it skips unless told where:
 
     FAIRY_GITHUB_WRITE_REPO=michaelni/testrepo \\
-    FAIRY_GITHUB_WRITE_PR=1 \\
+    FAIRY_GITHUB_WRITE_ISSUE=1 \\        # or FAIRY_GITHUB_WRITE_PR=N
     FAIRY_GITHUB_ACCOUNT=<gcli account name> \\
     python3 -m unittest tests.test_github_write_live -v
 
@@ -42,11 +42,12 @@ import forge_gcli  # noqa: E402
 
 REPO = os.environ.get("FAIRY_GITHUB_WRITE_REPO")
 PR = os.environ.get("FAIRY_GITHUB_WRITE_PR")
+ISSUE = os.environ.get("FAIRY_GITHUB_WRITE_ISSUE")
 ACCOUNT = os.environ.get("FAIRY_GITHUB_ACCOUNT", "")
 APPROVE_PR = os.environ.get("FAIRY_GITHUB_APPROVE_PR")
 
 MARKER = f"fairy github write-path selftest pid={os.getpid()}"
-LABEL = "fairy-selftest"
+LABEL = os.environ.get("FAIRY_GITHUB_LABEL", "bug")
 
 ARGS = SimpleNamespace(forge_type="github", gcli_account=ACCOUNT, verbose=1,
                        approve_message="")
@@ -57,21 +58,27 @@ def _owner_repo() -> tuple[str, str]:
     return owner, repo
 
 
-@unittest.skipUnless(REPO and PR,
-                     "set FAIRY_GITHUB_WRITE_REPO and _PR to run")
+@unittest.skipUnless(REPO and (PR or ISSUE),
+                     "set FAIRY_GITHUB_WRITE_REPO and _PR or _ISSUE to run")
 class GitHubWritePathTests(unittest.TestCase):
+    """An issue and a PR take the same comment path and differ only in
+    the gcli subcommand labels go through, so either exercises both."""
+
+    KIND = forge_gcli.KIND_PR if PR else forge_gcli.KIND_ISSUE
 
     def test_a_comment_round_trips(self) -> None:
         owner, repo = _owner_repo()
-        number = int(PR)
-        forge_gcli.post_issue_comment(ARGS, owner, repo, number, MARKER)
+        number = int(PR or ISSUE)
+        forge_gcli.post_issue_comment(ARGS, owner, repo, number, MARKER,
+                                      kind=self.KIND)
         bodies = [c.get("body") for c in
-                  forge_gcli.list_issue_comments(ARGS, owner, repo, number)]
+                  forge_gcli.list_issue_comments(ARGS, owner, repo, number,
+                                                 kind=self.KIND)]
         self.assertIn(MARKER, bodies)
 
     def test_a_label_attaches_and_detaches(self) -> None:
         owner, repo = _owner_repo()
-        number = int(PR)
+        number = int(PR or ISSUE)
 
         def names() -> set[str]:
             pr = forge_gcli.gcli_api(ARGS, forge_gcli.build_repo_path(
@@ -79,14 +86,14 @@ class GitHubWritePathTests(unittest.TestCase):
             return {lbl["name"] for lbl in pr.get("labels") or []}
 
         forge_gcli.apply_issue_label_changes(
-            ARGS, owner, repo, number, [LABEL], [], names())
+            ARGS, owner, repo, number, [LABEL], [], names(), kind=self.KIND)
         attached = names()
         # The Gitea bug returned 200 and attached nothing, so assert on
         # the forge's own view of the PR rather than on the exit code.
         self.assertIn(LABEL, attached)
 
         forge_gcli.apply_issue_label_changes(
-            ARGS, owner, repo, number, [], [LABEL], attached)
+            ARGS, owner, repo, number, [], [LABEL], attached, kind=self.KIND)
         self.assertNotIn(LABEL, names())
 
 

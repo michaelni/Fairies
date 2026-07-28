@@ -30,12 +30,18 @@
 
 Re-record the GitHub fixtures under tests/fixtures/github/.
 
-The fixtures are captures of public GitHub API responses; ``MANIFEST``
-below is the record of which request produced each one, so a fixture can
-be refreshed instead of hand-edited when it drifts. Read-only: every path
-here is a GET on a public repository, and no token is required (GitHub
-allows 60 unauthenticated requests an hour, which is more than the
-handful used here).
+The fixtures are captures of GitHub API responses from the project's own
+scratch repository; ``MANIFEST`` below is the record of which request
+produced each one, so a fixture can be refreshed instead of hand-edited
+when it drifts. Read-only: every path here is a GET on a public
+repository, and no token is required.
+
+Two entries share a commit on purpose. ``testrepo_check_runs_running``
+was taken while the slow job was still going and ``_cancelled`` after
+the next push cancelled it. A run cannot be caught mid-flight twice, so
+that one is listed in ``POINT_IN_TIME``: ``--check`` reports it as
+skipped rather than drifted, because the state it holds is gone and
+comparing against a finished run would cry wolf on every call.
 
     tools/capture_github_fixtures.py --check     # compare shapes, write nothing
     tools/capture_github_fixtures.py --write     # re-record
@@ -61,7 +67,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from common import add_color_arg, setup_logging  # noqa: E402
 
-__all__ = ["MANIFEST", "capture", "shape_of"]
+__all__ = ["MANIFEST", "POINT_IN_TIME", "capture", "shape_of"]
 
 logger = logging.getLogger("capture_github_fixtures")
 
@@ -92,6 +98,12 @@ MANIFEST: dict[str, str] = {
     "testrepo_pr2_forcepush_timeline.json":
         "/repos/michaelni/testrepo/issues/2/timeline?per_page=100",
 }
+
+
+# Fixtures holding a state that cannot be observed again. Kept in
+# MANIFEST so their provenance is recorded and --write can still reach
+# the endpoint, but excluded from the drift comparison.
+POINT_IN_TIME = frozenset({"testrepo_check_runs_running.json"})
 
 
 def capture(path: str) -> object:
@@ -143,6 +155,9 @@ def main() -> int:
 
     drifted = []
     for name, path in MANIFEST.items():
+        if args.check and name in POINT_IN_TIME:
+            logger.info("skipped (point-in-time): %s", name)
+            continue
         live = capture(path)
         target = FIXTURES / name
         if args.write:
@@ -158,7 +173,8 @@ def main() -> int:
         logger.error("%d fixture(s) drifted; re-record with --write and "
                      "check the adapters still hold", len(drifted))
         return 1
-    logger.info("%d fixture(s) %s", len(MANIFEST),
+    logger.info("%d of %d fixture(s) %s", len(MANIFEST) - (
+                    len(POINT_IN_TIME) if args.check else 0), len(MANIFEST),
                 "written" if args.write else "match")
     return 0
 

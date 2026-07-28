@@ -794,7 +794,9 @@ def project_timeline_event(event: dict) -> dict:
 # and puts the actor under ``user`` (comments, reviews), ``actor``
 # (state changes) or ``author`` (a ``committed`` entry, which carries a
 # git identity with no forge login and dates the entry under
-# ``author.date`` instead of ``created_at``). Captured 2026-07-28 from
+# ``author.date`` instead of ``created_at``). First observed 2026-07-28
+# on two public repositories; the committed fixtures show the same
+# shapes on this project's own scratch repository.
 _GITHUB_COMMIT_EVENT = "committed"
 # GitHub marks a force-push with its own entry, listing the rewritten
 # commits first and then this marker. Captured 2026-07-28 on

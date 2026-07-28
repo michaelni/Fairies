@@ -19,6 +19,7 @@ import podman_host
 import review_pipeline
 from codex_reviewer import (
     CodexReviewer,
+    CodexTurnFailed,
     CodexUsageLimit,
     build_codex_exec_command,
     resolve_web_search,
@@ -462,6 +463,30 @@ class CodexReviewerRunTests(unittest.TestCase):
         with self.assertRaises(CodexUsageLimit):
             self._run(ctx=ctx, jsonl=jsonl, last_message=None)
         self.assertEqual([], poisoned)  # clean quota stop
+
+    # verbatim from the codex run on PR #23750, 2026-07-28: the provider
+    # refused mid-review and the containers were paused for forensics.
+    _REAL_REFUSAL = (
+        '{"message": "This content was flagged for possible cybersecurity '
+        'risk. If this seems wrong, try rephrasing your request. To get '
+        'authorized for security work, join the Trusted Access for Cyber '
+        'program: https://chatgpt.com/cyber", "type": "error"}\n'
+        '{"error": {"message": "This content was flagged for possible '
+        'cybersecurity risk. If this seems wrong, try rephrasing your '
+        'request. To get authorized for security work, join the Trusted '
+        'Access for Cyber program: https://chatgpt.com/cyber"}, '
+        '"type": "turn.failed"}\n'
+    )
+
+    def test_provider_refusal_does_not_poison(self) -> None:
+        self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        poisoned = []
+        ctx = _ctx(report_poisoned=poisoned.append)
+        with self.assertRaises(CodexTurnFailed):
+            self._run(ctx=ctx, jsonl=self._REAL_REFUSAL,
+                      last_message=None, returncode=1)
+        self.assertEqual([], poisoned)
 
     def test_shellless_context_omits_mcp(self) -> None:
         self._run(ctx=_ctx(open_shell=None))

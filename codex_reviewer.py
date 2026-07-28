@@ -73,6 +73,7 @@ __all__ = [
     "CODEX_EFFORTS",
     "CODEX_WEB_SEARCH_MODES",
     "CodexReviewer",
+    "CodexTurnFailed",
     "CodexUsageLimit",
     "build_codex_exec_command",
     "harden_codex_catalog",
@@ -122,6 +123,10 @@ def _resolve_codex_home(codex_home: str | None) -> str:
 
 class CodexUsageLimit(RuntimeError):
     """The usage window is exhausted; do not retry."""
+
+
+class CodexTurnFailed(RuntimeError):
+    """The provider ended the turn itself, so no final message exists."""
 
 
 def _is_code_mode(tool_mode: object) -> bool:
@@ -294,8 +299,9 @@ class CodexReviewer(Reviewer):
     ``run(ctx)`` builds the same role prompt as the API backends (inlining
     patch and source bundle as text, like Anthropic), runs the pinned
     codex binary against it and validates the schema-forced last message
-    with the role. Raises ``CodexUsageLimit`` on an exhausted plan window
-    and ``BadModelOutput`` when the final message fails validation.
+    with the role. Raises ``CodexUsageLimit`` on an exhausted plan window,
+    ``CodexTurnFailed`` when the provider ended the turn, and
+    ``BadModelOutput`` when the final message fails validation.
     """
 
     def __init__(
@@ -528,7 +534,12 @@ class CodexReviewer(Reviewer):
                 f"{CONTAINER_RUN_DIR}/last_message.json",
                 max_bytes=MAX_LAST_MESSAGE_BYTES) or "").strip()
             if not last_message:
-                raise RuntimeError(
+                # A ``turn.failed`` event means the provider ended the turn
+                # itself, which says nothing about the review containers.
+                # Observed 2026-07-28: gpt-5.6-sol was refused mid-review of
+                # PR #23750 with "flagged for possible cybersecurity risk".
+                raise (CodexTurnFailed if '"turn.failed"' in error_text
+                       else RuntimeError)(
                     f"{self.name}: codex exec produced no final message "
                     f"(rc={proc.returncode}); errors: "
                     f"{error_text or proc.stderr.strip()[-2000:] or '-'}"
@@ -544,8 +555,8 @@ class CodexReviewer(Reviewer):
                 verdict = result.get("classification") or result.get("route") or "-"
                 logger.debug("codex %s verdict=%s", self.role.name, verdict)
             return result
-        except CodexUsageLimit:
-            raise  # clean quota stop; the containers are not suspect
+        except (CodexUsageLimit, CodexTurnFailed):
+            raise  # clean provider-side stop; the containers are not suspect
         except BadModelOutput:
             raise  # codex ran fine, only the final JSON was malformed
         except Exception:

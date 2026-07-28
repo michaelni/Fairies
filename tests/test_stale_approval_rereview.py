@@ -126,7 +126,7 @@ class StaleExternalApprovalTests(unittest.TestCase):
     on the threshold skip, whose Decision carries ``external_approvers``.
     """
 
-    EXT = {"id": 1, "login": "kvog", "username": "kvog"}
+    EXT = {"id": 1, "login": "bob", "username": "bob"}
 
     def test_stale_external_approval_excluded(self) -> None:
         decision = _call({**REVIEW, "user": self.EXT}, min_age_days=365)
@@ -141,7 +141,7 @@ class StaleExternalApprovalTests(unittest.TestCase):
                 {**REVIEW, "user": self.EXT, "stale": False}, min_age_days=365,
             )
         self.assertEqual(decision.reason, "activity is newer than threshold")
-        self.assertEqual(decision.external_approvers, ("kvog",))
+        self.assertEqual(decision.external_approvers, ("bob",))
 
 
 if __name__ == "__main__":

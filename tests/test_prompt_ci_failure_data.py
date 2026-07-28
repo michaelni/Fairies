@@ -28,7 +28,7 @@ def _reviewer_prompt(*, ci_failures_present: bool) -> str:
         features=set(),
         repo_roots=[],
         container_repo_mounts=[],
-        reviewer_username="bot",
+        reviewer_username="fairy",
         ci_triage_mode=ci_failures_present,
     )
 

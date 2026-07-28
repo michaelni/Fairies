@@ -149,7 +149,7 @@ class TriagePromptShapeTests(unittest.TestCase):
 
     def test_make_triage_developer_prompt_includes_user_request_section(self) -> None:
         prompt = llm_prompt.make_triage_developer_prompt(
-            reviewer_username="bot",
+            reviewer_username="fairy",
             repo_roots=[],
             vector_store_search_enabled=False,
             web_search_enabled=False,
@@ -166,7 +166,7 @@ class TriagePromptShapeTests(unittest.TestCase):
         # no mention of the override fields so the LLM does not see
         # any conflicting instruction.
         prompt = llm_prompt.make_triage_developer_prompt(
-            reviewer_username="bot",
+            reviewer_username="fairy",
             repo_roots=[],
             vector_store_search_enabled=False,
             web_search_enabled=False,
@@ -186,7 +186,7 @@ class PodmanContainerLocationsPromptTests(unittest.TestCase):
 
     def test_podman_prompt_points_at_work_tree_locations(self) -> None:
         prompt = llm_prompt.make_developer_prompt(
-            source_bundle_attached=False, reviewer_username="bot", repo_roots=[],
+            source_bundle_attached=False, reviewer_username="fairy", repo_roots=[],
             vector_store_search_enabled=False, web_search_enabled=False,
             code_interpreter_enabled=False, podman_shell_enabled=True,
             container_repo_mounts=["/work/ffmpeg", "/work/all_ffmpeg"],

@@ -51,7 +51,7 @@ class LlmPrefixPromptTests(unittest.TestCase):
     def _prompt(self, role: str, model: str) -> str:
         return llm_prompt.generate_llm_prompt(
             role=role, vendor="openai", model=model, features=set(),
-            repo_roots=[], container_repo_mounts=[], reviewer_username="bot",
+            repo_roots=[], container_repo_mounts=[], reviewer_username="fairy",
         )
 
     def test_posted_roles_identify_with_the_llm_prefix(self) -> None:

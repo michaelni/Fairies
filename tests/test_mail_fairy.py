@@ -585,15 +585,15 @@ class TestExtractAuthor(unittest.TestCase):
     def test_picks_cc_match_for_via_list(self):
         h = mail_fairy.MailHeaders(
             path=Path("/tmp/x"), file_ts=0.0, file_size=0,
-            from_raw="Nicolas George via ffmpeg-devel <ffmpeg-devel@ffmpeg.org>",
+            from_raw="Jane Doe via ffmpeg-devel <ffmpeg-devel@ffmpeg.org>",
             cc_raw=(
-                "Marvin Scholz <code@ffmpeg.org>, "
-                "Nicolas George <george@nsup.org>"
+                "John Roe <code@ffmpeg.org>, "
+                "Jane Doe <jane@example.org>"
             ),
         )
         name, addr = mail_fairy.extract_author(h)
-        self.assertEqual(name, "Nicolas George")
-        self.assertEqual(addr, "george@nsup.org")
+        self.assertEqual(name, "Jane Doe")
+        self.assertEqual(addr, "jane@example.org")
 
     def test_falls_back_to_from_addr_without_cc_match(self):
         h = mail_fairy.MailHeaders(
@@ -609,14 +609,14 @@ class TestExtractAuthor(unittest.TestCase):
 class TestFormatAttributionLink(unittest.TestCase):
     def test_full_form(self):
         link = mail_fairy.format_attribution_link(
-            "Nicolas George",
-            "george@nsup.org",
+            "Jane Doe",
+            "jane@example.org",
             "2026-04-21 21:45 UTC",
-            "https://lists.ffmpeg.org/lore/ffmpeg-devel/aefv4SA0WeymGdZA@phare.normalesup.org/",
+            "https://lists.ffmpeg.org/lore/ffmpeg-devel/abc123@example.org/",
         )
         self.assertTrue(link.startswith("[Fw by mail-fairy"))
-        self.assertIn("Nicolas George", link)
-        self.assertIn(r"\<george@nsup.org\>", link)
+        self.assertIn("Jane Doe", link)
+        self.assertIn(r"\<jane@example.org\>", link)
         self.assertIn("2026-04-21 21:45 UTC", link)
         self.assertTrue(link.endswith(")"))
 

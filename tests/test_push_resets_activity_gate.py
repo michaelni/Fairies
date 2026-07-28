@@ -1,6 +1,6 @@
 """A silent force-push must count as activity for the re-review gates.
 
-Regression: FFmpeg #22961 (and the wider haasn cohort) sat skipped after
+Regression: FFmpeg #22961 (and the wider cohort) sat skipped after
 fairy had already left a review *comment* and the author then
 force-pushed new commits WITHOUT any accompanying comment. ``last_activity``
 was computed from discussion items only (``pr.updated_at`` is too noisy to
@@ -13,7 +13,7 @@ The fix folds the latest ``pull_push`` timeline event into
 
 * fairy's review is an *issue comment* (not an APPROVED review),
 * a ``REQUEST_REVIEW`` pseudo-entry (fairy is a requested reviewer),
-* a force-push by ``haasn`` dated AFTER fairy's comment.
+* a force-push by ``alice`` dated AFTER fairy's comment.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ FAIRY_COMMENT = {
 PUSH_TIMELINE = [{
     "type": "pull_push",
     "created_at": PUSH_AT,
-    "user": {"login": "haasn", "username": "haasn"},
+    "user": {"login": "alice", "username": "alice"},
     "body": json.dumps({"is_force_push": True, "commit_ids": [PRIOR_SHA, HEAD_SHA]}),
 }]
 

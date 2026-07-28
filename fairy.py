@@ -2392,7 +2392,7 @@ def prepare_pr(
     # the push time straight from the timeline's ``pull_push`` events so a
     # re-pushed PR is reconsidered instead of being frozen at fairy's last
     # comment by the "no activity since prior non-approval" gate below
-    # (FFmpeg #22961 and the wider haasn cohort sat skipped after silent
+    # (FFmpeg #22961 and the wider cohort sat skipped after silent
     # force-pushes). ``get_timeline`` is the same single live copy the
     # auto-merge / LLM-discussion consumers already read.
     latest_push = max_dt([

@@ -18,10 +18,6 @@ or an exception, and anything else is a fatal internal failure.
     tools/redact.py --check tests/fixtures/issue_fairy/*.json
     tools/redact.py --names $(git ls-files)
     tools/redact.py --lines 12,40-52 tests/fixtures/mail_fairy/a.eml
-
-Scope is values: in JSON the keys are structure and are not touched, and
-neither are JSON numbers. In a text file every token is in scope unless
-the exception list names it.
 """
 from __future__ import annotations
 
@@ -40,7 +36,6 @@ POOL_SEED = 20260730
 POOL_SIZE = 4096
 EXCEPTIONS_FILE = Path(__file__).with_name("redact_exceptions.txt")
 
-# RFC 2606 and RFC 5737 reserve these, so no pool member reaches anything.
 RESERVED_DOMAINS = ("example.com", "example.org", "example.net")
 RESERVED_NETS = ("192.0.2.", "198.51.100.", "203.0.113.")
 
@@ -49,9 +44,6 @@ VOWEL = "aeiou"
 COMMON = ("hi", "hello", "thanks", "lgtm", "ok", "ping", "nit", "oops",
           "yes", "no", "please", "sure", "done", "fixed", "agreed")
 
-# Values git or the forge has to be able to resolve, and the two fields
-# whose values come from a fixed vocabulary rather than free text. The
-# avatar digest is not among them: it is a digest of an address.
 KEPT_FIELDS = frozenset({"sha", "merge_base", "ref", "label", "commit_ids",
                          "pronouns", "language"})
 
@@ -79,9 +71,6 @@ DOMAIN_RE = re.compile(r"[a-z\d-]+(?:\.[a-z\d-]+)*\.[a-z]{2,}\Z", re.I)
 PATH_RE = re.compile(r"/?(?:[\w.+-]+/)+[\w.+-]*\Z")
 NUMBER_RE = re.compile(r"-?\d+\Z")
 FLOAT_RE = re.compile(r"-?\d+\.\d+\Z")
-# A run of digits on its own is an identifier or a count. One written the
-# way a telephone number is written -- a country prefix, or grouped by
-# spaces, dashes or brackets -- is not, and does not stay.
 PHONE_RE = re.compile(r"[+(]?\d[\d ()./-]{5,17}\d\Z")
 COLOUR_RE = re.compile(r"[0-9a-fA-F]{6}\Z")
 WORD_RE = re.compile(r"[^\W\d_]+")
@@ -124,13 +113,10 @@ CAST = frozenset(
     "alice bob carol dave erin eve mallory trent oscar peggy victor walter "
     "jane john doe roe dev bot".split())
 
-
-
 CAPTURE_SUFFIXES = (".json", ".eml", ".txt")
 
 class FatalInternalFailure(RuntimeError):
     """The check found a token the redaction should have replaced."""
-
 
 class Kind:
     DATE = "date"
@@ -156,14 +142,12 @@ class Kind:
     WORD = "word"
     TEXT = "text"
 
-
 def _is_phone(value: str) -> bool:
     if not PHONE_RE.match(value):
         return False
     digits = sum(c.isdigit() for c in value)
     groups = sum(not c.isdigit() for c in value)
     return 7 <= digits <= 15 and (value[0] in "+(" or groups >= 2)
-
 
 def classify(value: str) -> str:
     """The syntax a replacement has to keep."""
@@ -209,7 +193,6 @@ def classify(value: str) -> str:
         return Kind.WORD
     return Kind.TEXT
 
-
 class Pools:
     """Fixed seed, so every run offers the same members to choose from."""
 
@@ -217,8 +200,6 @@ class Pools:
         rng = random.Random(seed)
         self.words = tuple(dict.fromkeys(
             list(COMMON) + [self._word(rng) for _ in range(size)]))
-        # Sparse against a huge range: a member is shipped as it stands,
-        # so a pool holding every small integer would ship them all.
         self.numbers = tuple(dict.fromkeys(
             str(rng.randrange(10 ** 6, 10 ** 12)) for _ in range(size)))
         self.hex = {n: tuple(dict.fromkeys(
@@ -256,8 +237,6 @@ class Pools:
             repr(float("%d.%d" % (rng.randrange(10 ** 6, 10 ** 9),
                                   rng.randrange(1, 10 ** 5))))
             for _ in range(size)))
-        # Ranges reserved for fiction: NANP 555-0100..0199 and Ofcom's
-        # drama block, so no member can ring anybody.
         self.phones = tuple(dict.fromkeys(
             [f"+1 555 {100 + n:04d}" for n in range(100)]
             + [f"+44 7700 900{n:03d}" for n in range(1000)]))
@@ -327,7 +306,6 @@ class Pools:
                   for member in members if classify(member) != Kind.HEX]
         return wrong
 
-
 def load_exceptions(path: Path = EXCEPTIONS_FILE) -> tuple[frozenset, tuple]:
     """Tokens shipped verbatim, and whole paths left alone. Explicit and
     enumerable on purpose: this is the only way something survives."""
@@ -346,10 +324,8 @@ def load_exceptions(path: Path = EXCEPTIONS_FILE) -> tuple[frozenset, tuple]:
             tokens.add(line)
     return frozenset(tokens), tuple(paths), frozenset(whole)
 
-
 STRUCTURED = (Kind.URL, Kind.SSH, Kind.EMAIL, Kind.PATH, Kind.FILE,
               Kind.DOMAIN, Kind.MAILTO)
-
 
 LITERAL, DRAWN, NAMED = 0, 1, 2
 
@@ -425,10 +401,6 @@ class Redactor:
         self.runs = 0
         self.taken: dict[str, set] = {}
 
-    # A date, a time and a number are left exactly as they arrived. A
-    # drawn number is not plausible as what it replaced -- an id, a
-    # follower count, a pull request number -- and reading a fixture that
-    # says 389882671785 followers costs more than the number was worth.
     KEPT = (Kind.DATE, Kind.DATE2822, Kind.DATEONLY, Kind.NUMBER,
             Kind.FLOAT)
 
@@ -616,13 +588,11 @@ class Redactor:
         return " ".join(self.draw(Kind.WORD, f"{value}\0{self.runs}\0{i}")
                         for i in range(self.rng.randrange(1, 4)))
 
-
 def _float_token(red, value: float) -> float:
     text = repr(float(value))
     if classify(text) != Kind.FLOAT:
         raise FatalInternalFailure(f"no pool for the float {text}")
     return float(red.token(text))
-
 
 def _as_json(value: str):
     """A field can carry a payload of its own; it is structure, not prose."""
@@ -632,7 +602,6 @@ def _as_json(value: str):
         return json.loads(value)
     except ValueError:
         return None
-
 
 def _walk_json(tree, visit, numbers=None):
     if isinstance(tree, dict):
@@ -646,7 +615,6 @@ def _walk_json(tree, visit, numbers=None):
         return numbers(tree)
     return tree
 
-
 def _json_strings(tree, out, with_numbers=False, nested=False, keys=False,
                   keys_only=False):
     """Every leaf the check has to see. It must reach exactly what the
@@ -656,7 +624,7 @@ def _json_strings(tree, out, with_numbers=False, nested=False, keys=False,
             if keys or keys_only:
                 out.append(k)
             if k in KEPT_FIELDS and not isinstance(v, dict):
-                continue      # what the redaction skips, the check skips
+                continue
             _json_strings(v, out, with_numbers, nested, keys, keys_only)
     elif isinstance(tree, list):
         for v in tree:
@@ -674,7 +642,6 @@ def _json_strings(tree, out, with_numbers=False, nested=False, keys=False,
           and not isinstance(tree, bool)):
         out.append(str(tree))
     return out
-
 
 def _walk_kept(tree, visit, numbers, kept, name_visit=None):
     if isinstance(tree, dict):
@@ -723,14 +690,10 @@ def redact_text(text: str, red: Redactor, lines: set | None = None) -> str:
         out.append(_redact_line(line, red))
     return "\n".join(out)
 
-
 QUOTE_RE = re.compile(r"[>\s]*")
 HEADER_RE = re.compile(r"([A-Za-z][A-Za-z-]*:)(\s*)(.*)\Z", re.S)
-# git's own furniture: the hunk header has to keep its line numbers, and
-# the index line names two objects and a file mode.
 HUNK_RE = re.compile(r"(@@ -)(\d+)(,\d+)?( \+)(\d+)(,\d+)?( @@)(.*)\Z", re.S)
 INDEX_RE = re.compile(r"(index )([0-9a-f]+)(\.\.)([0-9a-f]+)(.*)\Z", re.S)
-# ``a/`` and ``b/`` are git's two sides of one file, not directories.
 GIT_PATH_RE = re.compile(r"(diff --git |--- |\+\+\+ )(.*)\Z", re.S)
 FORMAT_PATCH_RE = re.compile(
     r"(>?From )([0-9a-f]{7,40})( Mon Sep 17 00:00:00 2001)\Z")
@@ -745,14 +708,12 @@ ADDR_SPLIT_RE = re.compile(r",(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)")
 DISPLAY_RE = re.compile(r"(\s*)(.*?)(\s*<[^>]*>\s*)\Z", re.S)
 PEEL = "<>()[]{}\"',;:!?#+-"
 
-
 def _peel(token: str) -> tuple[str, str, str]:
     core = token.strip(PEEL)
     if not core:
         return "", token, ""
     start = token.index(core)
     return token[:start], core, token[start + len(core):]
-
 
 def line_tokens(line: str, whole: frozenset = frozenset()) -> list[str]:
     """What both the redaction and the check see, so the two cannot drift:
@@ -775,8 +736,6 @@ def line_tokens(line: str, whole: frozenset = frozenset()) -> list[str]:
     patch = FORMAT_PATCH_RE.match(body)
     if patch:
         return []
-    # A diffstat and its summary restate a body whose line count does not
-    # change, so their numbers are derivable from it and stay put.
     stat = DIFFSTAT_RE.match(body)
     if stat:
         return [stat.group(2)]
@@ -790,7 +749,6 @@ def line_tokens(line: str, whole: frozenset = frozenset()) -> list[str]:
                          body)
     stamps = RFC2822_ANY.findall(body)
     return calls + stamps + TOKEN_RE.findall(RFC2822_ANY.sub(" ", body))
-
 
 def _redact_line(line: str, red: Redactor) -> str:
     """A header keeps its name and its punctuation; only the values in it
@@ -846,9 +804,6 @@ def check_tokens(text: str, red: Redactor, is_json: bool) -> list[str]:
             nested = _as_json(value)
             values.extend(_json_strings(nested, [], True)
                           if nested is not None else [value])
-        # A key is schema, not a value, so it is not drawn from a pool --
-        # but nothing says a capture cannot key a map by an address, and
-        # that would otherwise pass unseen.
         problems.extend(
             f"address in a key: {k}" for k in _json_strings(
                 json.loads(text), [], keys_only=True)
@@ -858,12 +813,9 @@ def check_tokens(text: str, red: Redactor, is_json: bool) -> list[str]:
     else:
         tokens = [t for line in text.split("\n")
                   for t in line_tokens(line, red.whole_lines)]
-    # Peel only what needs peeling: a value that already stands on its
-    # own must not be broken open first.
     cores = [t if red.keeps(classify(t), t) else _peel(t)[1] for t in tokens]
     return problems + sorted(
         {c for c in cores if not red.keeps(classify(c), c)})
-
 
 def _dump_like(original: str, tree) -> str:
     for kw in ({"indent": 1}, {"indent": 2, "sort_keys": True},
@@ -874,12 +826,10 @@ def _dump_like(original: str, tree) -> str:
                 return post(json.dumps(tree, **kw))
     raise FatalInternalFailure("unrecognised JSON serialisation")
 
-
 def _go_escape(text: str) -> str:
     for ch in "<>&":
         text = text.replace(ch, "\\u%04x" % ord(ch))
     return text
-
 
 def parse_lines(spec: str) -> set:
     numbers = set()
@@ -890,7 +840,6 @@ def parse_lines(spec: str) -> set:
         elif part.strip():
             numbers.add(int(part))
     return numbers
-
 
 def check_names(text: str, red: Redactor) -> list[str]:
     problems: list[str] = []

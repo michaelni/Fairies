@@ -14,7 +14,9 @@ was not pointed at.
 """
 import contextlib
 import io
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -54,6 +56,29 @@ class FixtureValuesTests(unittest.TestCase):
             "or the Alice-and-Bob cast (alice, bob, jane doe, ...):\n"
             + said.getvalue(),
         )
+    def test_redaction_is_a_fixed_point_on_its_output(self) -> None:
+        names = _files(REPO_ROOT / "tests" / "fixtures")
+        self.assertTrue(names)
+        with tempfile.TemporaryDirectory() as tmp:
+            copies = []
+            for name in names:
+                dst = Path(tmp) / name.relative_to(REPO_ROOT)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(name, dst)
+                copies.append(dst)
+            before = {c: c.read_bytes() for c in copies}
+            said = io.StringIO()
+            with contextlib.redirect_stdout(said), \
+                    contextlib.redirect_stderr(said):
+                status = redact.main([str(c) for c in copies])
+            self.assertEqual(0, status, said.getvalue())
+            changed = [str(c) for c in copies
+                       if c.read_bytes() != before[c]]
+            self.assertEqual([], changed, said.getvalue())
+
+    def test_the_pools_classify_as_themselves(self) -> None:
+        self.assertEqual([], redact.Pools().misclassified())
+
 
 class DetectorTests(unittest.TestCase):
     @classmethod

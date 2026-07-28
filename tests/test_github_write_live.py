@@ -15,6 +15,9 @@ Writes to whatever repo it is pointed at, so it skips unless told where:
     FAIRY_GITHUB_ACCOUNT=<gcli account name> \\
     python3 -m unittest tests.test_github_write_live -v
 
+Set FAIRY_GITHUB_APP_ID and FAIRY_GITHUB_APP_KEY instead of configuring a
+gcli account to run the same checks as a GitHub App.
+
 Point it only at a scratch repo. Each test writes a marker carrying the
 PID so concurrent runs cannot read each other's, and removes what it
 added where GitHub allows it (comments are left in place; a scratch PR
@@ -49,8 +52,15 @@ APPROVE_PR = os.environ.get("FAIRY_GITHUB_APPROVE_PR")
 MARKER = f"fairy github write-path selftest pid={os.getpid()}"
 LABEL = os.environ.get("FAIRY_GITHUB_LABEL", "bug")
 
+APP_ID = os.environ.get("FAIRY_GITHUB_APP_ID")
+APP_KEY = os.environ.get("FAIRY_GITHUB_APP_KEY")
+
 ARGS = SimpleNamespace(forge_type="github", gcli_account=ACCOUNT, verbose=1,
-                       approve_message="")
+                       approve_message="", self_login=None,
+                       github_app_id=APP_ID,
+                       github_app_key=Path(APP_KEY) if APP_KEY else None,
+                       github_app_installation=os.environ.get(
+                           "FAIRY_GITHUB_APP_INSTALLATION"))
 
 
 def _owner_repo() -> tuple[str, str]:

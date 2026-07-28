@@ -566,11 +566,11 @@ class Redactor:
         lead, display, rest = parts.groups()
         via = re.search(r"\s+via\s+\S+\s*\Z", display)
         stem = display[:via.start()] if via else display
-        addressed = ADDRESS_RE.search(rest)
         if not stem.strip() or all(self.keeps(Kind.WORD, w)
                                    for w in WORD_RE.findall(stem)):
             return lead + display + self.field(rest)
-        key = (Kind.NAME, addressed.group() if addressed else stem)
+        words = " ".join(sorted(WORD_RE.findall(stem.lower())))
+        key = (Kind.NAME, words or stem)
         if key not in self.memo:
             self.memo[key] = self.text(stem)
         return (lead + self.memo[key] + (via.group() if via else "")

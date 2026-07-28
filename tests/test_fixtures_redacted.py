@@ -76,6 +76,22 @@ class FixtureValuesTests(unittest.TestCase):
                        if c.read_bytes() != before[c]]
             self.assertEqual([], changed, said.getvalue())
 
+    def test_a_display_name_draws_by_person_not_by_address(self) -> None:
+        red = redact.Redactor(redact.Pools(), *redact.load_exceptions()[::2])
+        mail = "\n".join([
+            "From: Zbqwx Vfrpl via list <%s>" % ("list@" "example.org"),
+            "From: Qwxbz Lprfv via list <%s>" % ("list@" "example.org"),
+            "Cc: Zbqwx Vfrpl <%s>" % ("zbqwx@" "example.org"),
+            'To: "Vfrpl, Zbqwx" <%s>' % ("zbqwx@" "example.org"),
+        ])
+        out_lines = redact.redact_text(mail, red).split("\n")
+        drawn = [line.split(":", 1)[1].split("<")[0]
+                 .replace(" via list", "").strip().strip('"')
+                 for line in out_lines]
+        self.assertNotEqual(drawn[0], drawn[1], out_lines)
+        self.assertEqual(drawn[0], drawn[2], out_lines)
+        self.assertEqual(drawn[2], drawn[3].replace(",", ""), out_lines)
+
     def test_the_pools_classify_as_themselves(self) -> None:
         self.assertEqual([], redact.Pools().misclassified())
 

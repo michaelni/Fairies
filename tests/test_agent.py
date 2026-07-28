@@ -1112,3 +1112,19 @@ class OnePassTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FinishRequestsUnderClaimTests(AgentCase):
+    def test_request_is_consumed_while_the_worker_holds_the_item(self) -> None:
+        """Production pr #23914: the lease made the request survive
+        every pass, re-forcing the item and destroying each fresh
+        verdict."""
+        self.db.push("requests", "pr", 5, {"action": "rerun"})
+        self.db.push("queued", "pr", 5, {"title": "t"})
+        claim = self.db.claim("queued", "llm", "pr", 5)
+        try:
+            agent.finish_requests(self.db, {"pr": {5}, "issue": set()},
+                                  {"pr"})
+            self.assertIsNone(self.db.get("requests", "pr", 5))
+        finally:
+            claim.abort()

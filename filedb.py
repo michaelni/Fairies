@@ -310,8 +310,11 @@ class Db:
     def try_pop(self, state: str, kind: str, number: int) -> dict | None:
         """Non-blocking ``pop``: None when absent or claimed (a worker
         holds the item's lease for its whole review; blocking callers
-        would stall that long)."""
-        if self._leased(kind, number):
+        would stall that long). requests/ is exempt like its writer:
+        a request must be consumable WHILE the review it caused runs,
+        or it re-forces the item every pass and destroys each fresh
+        verdict (production: pr #23914 in an endless re-review loop)."""
+        if state != "requests" and self._leased(kind, number):
             return None
         try:
             fd = self._lock_fd(kind, number, block=False)

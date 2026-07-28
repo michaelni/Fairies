@@ -117,15 +117,19 @@ class TornTicketTests(DbCase):
 
 
 class TryPopTests(DbCase):
-    def test_try_pop_refuses_claimed_items_instead_of_blocking(self) -> None:
-        self.db.push("requests", "pr", 5, {"action": "rerun"})
-        claim = self.db.claim("requests", "requests", "pr", 5)
+    def test_try_pop_refuses_claimed_items_but_not_requests(self) -> None:
+        """The requests exemption is production pr #23914: a request
+        that cannot be consumed while its review runs re-forces the
+        item every pass and destroys each fresh verdict."""
+        self.db.push("queued", "pr", 5, {"title": "t"})
+        claim = self.db.claim("queued", "llm", "pr", 5)
         try:
-            self.assertIsNone(self.db.try_pop("requests", "pr", 5))
+            self.assertIsNone(self.db.try_pop("llm", "pr", 5))
+            self.db.request("pr", 5, {"action": "rerun"})
+            self.assertEqual(self.db.try_pop("requests", "pr", 5)["action"],
+                             "rerun")
         finally:
             claim.abort()
-        self.assertEqual(self.db.try_pop("requests", "pr", 5)["action"],
-                         "rerun")
         self.assertIsNone(self.db.get("requests", "pr", 5))
 
 
@@ -178,6 +182,8 @@ class LeaseSplitTests(DbCase):
             self.assertLess(_t.monotonic() - start, 2.0)
             self.assertEqual(removed, 1)
             self.assertIsNone(self.db.try_pop("llm", "pr", 5))
+            self.db.request("pr", 5, {"action": "rerun"})
+            self.assertIsNotNone(self.db.try_pop("requests", "pr", 5))
         finally:
             claim.abort()
         self.assertEqual(self.db.find("pr", 5), "queued")

@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import agent  # noqa: E402
 import fairy  # noqa: E402
+import forge_gcli  # noqa: E402
 import filedb  # noqa: E402
 import issue_fairy  # noqa: E402
 
@@ -53,7 +54,7 @@ class AgentCase(unittest.TestCase):
                 mock.patch.object(fairy, "get_pr",
                                   side_effect=fetch or (lambda ns, n: make_pr(n))), \
                 mock.patch.object(fairy, "safe_prepare_pr", self.prepare), \
-                mock.patch.object(fairy, "get_self_login", return_value="fairy"), \
+                mock.patch.object(forge_gcli, "self_login", return_value="fairy"), \
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):
@@ -500,7 +501,7 @@ class LifecycleTests(AgentCase):
         with mock.patch.object(fairy, "list_open_prs", return_value=[]), \
                 mock.patch.object(issue_fairy, "list_open_issues",
                                   return_value=[]), \
-                mock.patch.object(fairy, "get_self_login",
+                mock.patch.object(forge_gcli, "self_login",
                                   return_value="fairy"), \
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
@@ -720,7 +721,7 @@ class ForcedOnlyTests(AgentCase):
         with mock.patch.object(fairy, "get_pr",
                                side_effect=lambda ns, n: make_pr(n)), \
                 mock.patch.object(fairy, "safe_prepare_pr", self.prepare), \
-                mock.patch.object(fairy, "get_self_login", return_value="fairy"), \
+                mock.patch.object(forge_gcli, "self_login", return_value="fairy"), \
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):
@@ -736,7 +737,7 @@ class ForcedOnlyTests(AgentCase):
                 mock.patch.object(fairy, "get_pr",
                                   side_effect=lambda ns, n: make_pr(n)), \
                 mock.patch.object(fairy, "safe_prepare_pr", self.prepare), \
-                mock.patch.object(fairy, "get_self_login", return_value="fairy"), \
+                mock.patch.object(forge_gcli, "self_login", return_value="fairy"), \
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):
@@ -833,7 +834,7 @@ class IssueSideScanTests(AgentCase):
                                return_value=issues), \
                 mock.patch.object(issue_fairy, "prepare_issue",
                                   side_effect=prepare) as self.prepare_issue, \
-                mock.patch.object(fairy, "get_self_login", return_value="fairy"), \
+                mock.patch.object(forge_gcli, "self_login", return_value="fairy"), \
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):

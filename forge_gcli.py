@@ -127,6 +127,7 @@ __all__ = [
     "post_issue_comment",
     "project_timeline_event",
     "run_cmd",
+    "self_login",
 ]
 
 
@@ -169,6 +170,14 @@ def add_forge_repo_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Optional gcli account override (passed as top-level -a/--account). "
             "When omitted gcli falls through to its own configured default."
+        ),
+    )
+    parser.add_argument(
+        "--self-login",
+        help=(
+            "Login fairy posts under. Normally read from the forge; "
+            "required when the token cannot answer /user, as a GitHub "
+            "App installation token cannot."
         ),
     )
     parser.add_argument(
@@ -542,6 +551,37 @@ def post_issue_comment(
 def _forge_type(args: argparse.Namespace) -> str:
     """The backend gcli will talk to; empty means gcli's own default."""
     return (getattr(args, "forge_type", None) or "gitea").lower()
+
+
+def self_login(args: argparse.Namespace) -> str | None:
+    """The login fairy posts under, or None if it cannot be determined.
+
+    A GitHub App installation token acts as the app rather than a user,
+    so ``/user`` answers 403 there (observed 2026-07-28 against the
+    forgejo-fairy app) and the identity is the app's ``<slug>[bot]``
+    login, which that token cannot look up. ``--self-login`` supplies
+    it. Returning None is not harmless -- the caller uses this to tell
+    its own comments apart from everyone else's -- so the failure is
+    logged rather than swallowed.
+    """
+    configured = getattr(args, "self_login", None)
+    if configured:
+        return configured
+    try:
+        data = gcli_api(args, "/user", all_pages=False)
+    except Exception as exc:
+        logger.warning(
+            "cannot determine own login: /user failed (%s). Pass "
+            "--self-login; without it fairy cannot recognise its own "
+            "comments and may post duplicates.", exc)
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in ("login", "username"):
+        value = data.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def norm_user(user: dict | None) -> dict | None:

@@ -78,7 +78,6 @@ from fairy import (
     get_item_author_login,
     get_last_activity,
     get_pr_author,
-    get_self_login,
     invoke_llm_wrapper,
     item_body_mentions_user,
     label_names,

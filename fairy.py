@@ -797,20 +797,6 @@ def list_commit_statuses(args: argparse.Namespace, ref: str) -> list[ApiObject]:
     )
 
 
-def get_self_login(args: argparse.Namespace) -> str | None:
-    try:
-        data = gcli_api(args, "/user", all_pages=False)
-    except Exception:
-        return None
-    if not isinstance(data, dict):
-        return None
-    for key in ("login", "username"):
-        value = data.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
-
-
 def normalize_review_state(state: str | None) -> str | None:
     if not state:
         return None

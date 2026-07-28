@@ -433,7 +433,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
             full_kinds.add(kind)
         cache = gcli_cache.load_cache(ns.cache)
         try:
-            self_login = fairy.get_self_login(ns)
+            self_login = forge_gcli.self_login(ns)
             open_set |= scan_side(db, ns, kind, now=now, cache=cache,
                                   self_login=self_login, forced=forced[kind])
         finally:

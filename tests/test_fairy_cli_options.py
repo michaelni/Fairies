@@ -24,6 +24,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import agent  # noqa: E402
 import fairy  # noqa: E402
+import forge_gcli  # noqa: E402
 import filedb  # noqa: E402
 import gcli_cache  # noqa: E402
 
@@ -172,7 +173,7 @@ class ScanCase(unittest.TestCase):
         with mock.patch.object(fairy, "list_open_prs", return_value=prs), \
                 mock.patch.object(fairy, "get_pr",
                                   side_effect=lambda ns, n: open_pr(n)), \
-                mock.patch.object(fairy, "get_self_login", return_value=None), \
+                mock.patch.object(forge_gcli, "self_login", return_value=None), \
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=gcli_cache.Cache()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"), \

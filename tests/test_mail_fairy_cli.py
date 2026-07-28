@@ -33,7 +33,10 @@ import mail_fairy  # noqa: E402
 
 FIX = REPO_ROOT / "tests" / "fixtures" / "mail_fairy"
 MAIL_TS = 1776807758
-REPLY_MSGID = "aefv4SA0WeymGdZA@phare.normalesup.org"
+REPLY_MSGID = re.search(
+    r"^Message-ID:\s*<([^>]+)>",
+    (REPO_ROOT / "tests" / "fixtures" / "mail_fairy" /
+     "human_reply.eml").read_text(), re.M).group(1)
 FORGE_URL = "https://code.ffmpeg.org"
 NEVER_TOO_OLD = "100000"
 

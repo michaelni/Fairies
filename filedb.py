@@ -208,11 +208,12 @@ class Db:
         finally:
             os.close(fd)
 
-    def _lock_path(self, kind: str, number) -> Path:
-        return self.root / _LOCKS / f"{kind}-{_token(number)}.lock"
+    def _lock_path(self, kind: str, number, suffix: str = "lock") -> Path:
+        return self.root / _LOCKS / f"{kind}-{_token(number)}.{suffix}"
 
-    def _lock_fd(self, kind: str, number: int, *, block: bool) -> int:
-        path = self._lock_path(kind, number)
+    def _lock_fd(self, kind: str, number: int, *, block: bool,
+                 suffix: str = "lock") -> int:
+        path = self._lock_path(kind, number, suffix)
         while True:
             fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o644)
             try:
@@ -289,6 +290,8 @@ class Db:
         blocking, and refused (False) when the item is claimed or no
         longer in ``expect`` -- any move under the caller's feet (a
         worker claim, an operator y/s/x) invalidates the decision."""
+        if self._leased(kind, number):
+            return False
         try:
             fd = self._lock_fd(kind, number, block=False)
         except OSError:
@@ -306,8 +309,10 @@ class Db:
 
     def try_pop(self, state: str, kind: str, number: int) -> dict | None:
         """Non-blocking ``pop``: None when absent or claimed (a worker
-        holds the item's lock for its whole review; blocking callers
+        holds the item's lease for its whole review; blocking callers
         would stall that long)."""
+        if self._leased(kind, number):
+            return None
         try:
             fd = self._lock_fd(kind, number, block=False)
         except OSError:
@@ -379,29 +384,42 @@ class Db:
     # ---- worker claim protocol ----
 
     def claim(self, src_state: str, dst_state: str, kind: str, number: int) -> Claim | None:
-        """Lock first, then rename: a claim that loses the rename race
-        releases and returns None; the flock held across the claim is
-        the worker's liveness signal."""
+        """Lease first, then rename under the transition lock: a claim
+        that loses the rename race releases and returns None. The
+        ``.claim`` flock held across the review is the worker's
+        liveness signal; it is a namespace of its own so the
+        micro-duration ``.lock`` transitions (push/pop/move/prune)
+        never block for a review's length."""
         try:
-            fd = self._lock_fd(kind, number, block=False)
+            fd = self._lock_fd(kind, number, block=False, suffix="claim")
         except OSError:
             return None
         src = self.path(src_state, kind, number)
         dst = self.path(dst_state, kind, number)
-        if src == dst:
-            # an in-place claim must not rename: the no-op rename still
-            # fires a watcher event, and an agent watching the dir would
-            # wake itself in a loop
-            if not src.exists():
-                os.close(fd)
-                return None
-        else:
-            try:
-                os.rename(src, dst)
-            except FileNotFoundError:
-                os.close(fd)
-                return None
+        with self.lock(kind, number):
+            if src == dst:
+                # an in-place claim must not rename: the no-op rename still
+                # fires a watcher event, and an agent watching the dir would
+                # wake itself in a loop
+                if not src.exists():
+                    os.close(fd)
+                    return None
+            else:
+                try:
+                    os.rename(src, dst)
+                except FileNotFoundError:
+                    os.close(fd)
+                    return None
         return Claim(self, fd, kind, number, src_state, dst)
+
+    def _leased(self, kind: str, number) -> bool:
+        """True while a live worker holds the item's review lease."""
+        try:
+            fd = self._lock_fd(kind, number, block=False, suffix="claim")
+        except OSError:
+            return True
+        os.close(fd)
+        return False
 
     def reap(self, state: str = "llm",
              to_state: str | None = "queued") -> list[tuple[str, int]]:
@@ -413,7 +431,7 @@ class Db:
         recovered = []
         for kind, number in self.list_state(state):
             try:
-                fd = self._lock_fd(kind, number, block=False)
+                fd = self._lock_fd(kind, number, block=False, suffix="claim")
             except OSError:
                 continue  # live claim
             try:
@@ -470,4 +488,5 @@ class Db:
                         # last trace gone: drop the item's lock file too,
                         # or locks/ grows one inode per item forever
                         self._lock_path(kind, number).unlink(missing_ok=True)
+                        self._lock_path(kind, number, "claim").unlink(missing_ok=True)
         return removed

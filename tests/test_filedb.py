@@ -156,6 +156,33 @@ class ReplaceTests(DbCase):
         self.assertEqual(self.db.find("pr", 6), "reviewed")
 
 
+class LeaseSplitTests(DbCase):
+    """A review lease (.claim) and the transition lock (.lock) are
+    separate: micro-duration ops must never wait out a review."""
+
+    def test_prune_does_not_block_on_a_live_claim(self) -> None:
+        import time as _t
+        from datetime import datetime, timedelta, timezone
+        self.db.push("posted", "pr", 5, {})
+        data = self.db.get("posted", "pr", 5)
+        data["state_changed_at"] = (
+            datetime.now(timezone.utc) - timedelta(days=99)).isoformat()
+        self.db._write(self.db.path("posted", "pr", 5), data)
+        self.db.push("queued", "pr", 5, {})
+        claim = self.db.claim("queued", "llm", "pr", 5)
+        try:
+            start = _t.monotonic()
+            removed = self.db.prune(
+                "posted", datetime.now(timezone.utc) - timedelta(days=14),
+                keep=set())
+            self.assertLess(_t.monotonic() - start, 2.0)
+            self.assertEqual(removed, 1)
+            self.assertIsNone(self.db.try_pop("llm", "pr", 5))
+        finally:
+            claim.abort()
+        self.assertEqual(self.db.find("pr", 5), "queued")
+
+
 class InPlaceClaimTests(DbCase):
     """A same-state claim renames nothing: a no-op rename still fires a
     watcher event, and an agent watching the dir would wake itself in

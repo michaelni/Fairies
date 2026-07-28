@@ -16,7 +16,7 @@ or an exception, and anything else is a fatal internal failure.
 
     tools/redact.py tests/fixtures/issue_fairy/*.json
     tools/redact.py --check tests/fixtures/issue_fairy/*.json
-    tools/redact.py --names $(git ls-files)
+    tools/redact.py --names $(find tests -type f)
     tools/redact.py --lines 12,40-52 tests/fixtures/mail_fairy/a.eml
 """
 from __future__ import annotations

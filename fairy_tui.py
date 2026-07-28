@@ -69,7 +69,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Event, Lock
+from queue import Empty, SimpleQueue
+from threading import Event, Lock, Thread
 
 import blessed
 
@@ -739,6 +740,7 @@ class UILoop:
         self._repo_w = (max(len(d) for d in self._repo_disp.values())
                         if len(repos) > 1 else 0)
         self.layout = tui_core.GridLayout()
+        self._keys: SimpleQueue = SimpleQueue()
         self.focus = "tr"
         self.scroll = {"tl": 0, "bl": 0, "br": 0}
         self.list_top = 0
@@ -1081,21 +1083,35 @@ class UILoop:
         self.tail.poll()
         self.model.dirty.set()
 
+    def _read_keys(self) -> None:
+        """Input thread: ``inkey(timeout=None)`` sits in select() and
+        returns the instant bytes arrive; each key lands in the queue
+        and wakes the main loop through ``dirty``. A daemon: at quit it
+        is blocked in the read and dies with the process."""
+        while not self.model.quit_flag:
+            ks = self.term.inkey(timeout=None)
+            if ks:
+                self._keys.put(ks)
+                self.model.dirty.set()
+
     def run(self) -> None:
+        Thread(target=self._read_keys, name="input", daemon=True).start()
         try:
             while not self.model.quit_flag:
-                ks = self.term.inkey(timeout=0.1)
-                while ks:
-                    self.dispatch(ks)
-                    ks = self.term.inkey(timeout=0)
+                # keys, watcher events and repaints wake this instantly;
+                # the 1s tick only keeps the clock and log tail moving
+                self.model.dirty.wait(1.0)
+                self.model.dirty.clear()
+                while True:
+                    try:
+                        self.dispatch(self._keys.get_nowait())
+                    except Empty:
+                        break
                 size = (self.term.width, self.term.height)
                 if size != self._last_size:
                     self._last_size = size
-                    self.model.dirty.set()
                 self._maybe_poll()
-                if self.model.dirty.is_set():
-                    self.model.dirty.clear()
-                    self.paint()
+                self.paint()
         except KeyboardInterrupt:
             pass
         self.model.quit_all()

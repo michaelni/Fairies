@@ -87,6 +87,7 @@ import ci_log
 import git_util
 import gcli_cache
 from common import (
+    EXIT_REVIEW_HALTED,
     JsonObject,
     add_color_arg,
     apply_config_file_defaults,
@@ -137,6 +138,10 @@ class LabelChange:
     op: str  # "add" | "remove"
     reason: str = ""
     post: bool = False
+
+
+class ReviewHalted(RuntimeError):
+    """A review container is suspect; this PR must not be retried."""
 
 
 @dataclass(frozen=True)
@@ -1920,6 +1925,11 @@ def invoke_llm_wrapper(
         timeout=args.llm_timeout,
         stderr_line_prefix=stderr_prefix,
     )
+    if cp.returncode == EXIT_REVIEW_HALTED:
+        raise ReviewHalted(
+            "LLM review halted: the wrapper flagged a review container as "
+            "suspect; inspect the paused container and the debug dumps"
+        )
     if cp.returncode != 0:
         raise RuntimeError(
             f"LLM review command failed with exit code {cp.returncode}; see stderr above"
@@ -1957,7 +1967,8 @@ def call_llm_with_retries(
     ``invoke`` receives the attempt's extra wrapper args (the
     flex->default service-tier fallback on the final attempt, else
     None; see ``flex_fallback_extra_args``). Re-raises the last error
-    when every attempt failed.
+    when every attempt failed, and ``ReviewHalted`` immediately: a PR
+    that left a container suspect must not be run again.
     """
     max_attempts = max(1, int(getattr(args, "llm_max_attempts", 1) or 1))
     retry_delay = max(0.0, float(getattr(args, "llm_retry_delay", 0.0) or 0.0))
@@ -1973,7 +1984,7 @@ def call_llm_with_retries(
             )
         try:
             review = invoke(extra_cmd_args)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, ReviewHalted):
             raise
         except Exception as exc:
             last_exc = exc

@@ -78,6 +78,7 @@ from typing import Sequence
 from openai import OpenAI
 
 from common import (
+    EXIT_REVIEW_HALTED,
     add_color_arg,
     apply_config_file_defaults,
     setup_logging,
@@ -1709,6 +1710,20 @@ def main() -> int:
             return EXIT_CONTAINER_UNHEALTHY
         except BadModelOutput:
             return EXIT_BAD_MODEL_OUTPUT
+        except Exception:
+            if not poisoned_session_ids:
+                raise
+        # A suspect container taints every draft of this run, including the
+        # ones that came back clean: post nothing and let the caller stop
+        # rather than re-run the same PR against a fresh container.
+        if poisoned_session_ids:
+            logger.error(
+                "review halted: %d container(s) flagged suspect; the debug "
+                "dumps are written, nothing is posted and this PR must not "
+                "be retried until they have been inspected",
+                len(poisoned_session_ids),
+            )
+            return EXIT_REVIEW_HALTED
 
         emit_review_stdout(
             review.classification, review.message,

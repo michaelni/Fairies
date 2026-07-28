@@ -56,6 +56,11 @@ JsonPrimitive: TypeAlias = None | bool | int | float | str
 JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
+# The review wrapper's "a container is suspect; do not run this PR again"
+# exit status, defined here so the wrapper and the fairy that spawns it
+# agree on it without either importing the other.
+EXIT_REVIEW_HALTED = 4
+
 
 def response_to_debug_json(response: object) -> JsonObject:
     """Best-effort JSON view of any SDK response object (OpenAI and

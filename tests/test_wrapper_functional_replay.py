@@ -380,13 +380,17 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
                  "--podman", "--shell-host", "fairy@h", "--no-source-bundle"],
             ),
             mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(request_obj))),
-            mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
+            mock.patch.object(wrapper.sys, "stdout", io.StringIO()) as stdout,
         ):
-            wrapper.main()
+            rc = wrapper.main()
 
         self.assertEqual(1, len(paused))
         self.assertEqual(1, len(stopped))
         self.assertNotIn(paused[0], stopped)
+        # The draft came back clean, but a suspect container taints it:
+        # halt without posting instead of handing fairy a verdict.
+        self.assertEqual(wrapper.EXIT_REVIEW_HALTED, rc)
+        self.assertEqual("", stdout.getvalue())
 
 
 class CodexOnlyNoOpenAIKeyTests(unittest.TestCase):

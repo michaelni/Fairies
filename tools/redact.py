@@ -991,9 +991,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"checked {len(files)} files, {bad} tokens not from a pool")
         return 1 if bad else 0
 
-    produced: list[tuple[Path, str, str]] = []
+    produced: list[tuple[Path, str, str, str]] = []
     for path in files:
-        text = path.read_text()
+        data = path.read_bytes()
+        try:
+            text, codec = data.decode(), "utf-8"
+        except UnicodeDecodeError:
+            text, codec = data.decode("latin-1"), "latin-1"
         if path.suffix == ".json":
             out = _dump_like(text, redact_json(json.loads(text), red))
             if lines is not None:
@@ -1007,9 +1011,9 @@ def main(argv: list[str] | None = None) -> int:
         if left:
             raise FatalInternalFailure(
                 f"{path}: still not from a pool after redacting: {left[:10]}")
-        produced.append((path, text, out))
-    for path, text, out in produced:
-        path.write_text(out)
+        produced.append((path, text, out, codec))
+    for path, text, out, codec in produced:
+        path.write_bytes(out.encode(codec))
         if args.verbose:
             print(f"{path}: {len(text)} -> {len(out)} bytes")
         for item in check_names(out, red):

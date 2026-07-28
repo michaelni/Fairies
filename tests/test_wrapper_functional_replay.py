@@ -355,9 +355,12 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
         def fake_open_review(spec, repo_specs, args, session_commands=()):
             return mock.Mock(name="handle"), mock.Mock(name="session"), ""
 
+        halted: list[bool] = []
+
         def fake_review_pr(ctx, reviewers, combiner, **kw):
             session, _ = ctx.open_shell("x86_64")   # opens+registers one
             ctx.report_poisoned(session)            # flag it suspect
+            halted.append(wrapper.shell_tool.halted())
             return wrapper.llm_review_api.Review(
                 classification="approve", message="")
 
@@ -373,6 +376,8 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
             mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
             mock.patch.object(wrapper.podman_host, "pause_container", paused.append),
             mock.patch.object(wrapper.podman_host, "stop_container", stopped.append),
+            # process-global, so restore it rather than halt the whole run
+            mock.patch.object(wrapper.shell_tool, "_halted", False),
             mock.patch.object(
                 wrapper.sys, "argv",
                 # anthropic: keeps the OpenAI patch-upload path out of the way
@@ -391,6 +396,7 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
         # halt without posting instead of handing fairy a verdict.
         self.assertEqual(wrapper.EXIT_REVIEW_HALTED, rc)
         self.assertEqual("", stdout.getvalue())
+        self.assertEqual([True], halted)  # siblings stop at their next shell call
 
 
 class CodexOnlyNoOpenAIKeyTests(unittest.TestCase):

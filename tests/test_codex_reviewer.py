@@ -488,6 +488,18 @@ class CodexReviewerRunTests(unittest.TestCase):
                       last_message=None, returncode=1)
         self.assertEqual([], poisoned)
 
+    def test_halted_run_does_not_poison(self) -> None:
+        self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        poisoned = []
+        ctx = _ctx(report_poisoned=poisoned.append)
+        with mock.patch.object(codex_reviewer.shell_tool, "_halted", True):
+            with self.assertRaises(RuntimeError):
+                self._run(ctx=ctx, last_message=None)
+        # A sibling already halted the run, so this crash is its consequence
+        # rather than fresh evidence about this container.
+        self.assertEqual([], poisoned)
+
     def test_shellless_context_omits_mcp(self) -> None:
         self._run(ctx=_ctx(open_shell=None))
         self.assertFalse(any("mcp_servers" in c for c in self.container.cmd))

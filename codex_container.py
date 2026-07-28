@@ -249,7 +249,8 @@ class CodexShellRelay:
                            max_timeout_s=self.max_timeout_s,
                            shells=self._shells)
         except SystemExit:
-            logger.warning("operator cancelled; stopping the codex container")
+            logger.warning("run stopped (operator cancel or halted review); "
+                           "stopping the codex container")
             self.container.stop()
 
     def _drain_stderr(self) -> None:

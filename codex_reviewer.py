@@ -562,6 +562,9 @@ class CodexReviewer(Reviewer):
         except Exception:
             if shell_tool.cancelled():
                 raise SystemExit("operator cancelled")
+            if shell_tool.halted():
+                raise  # a sibling's halt tore this run down; not evidence
+
             # An abnormal exit may mean a PR-derived command tampered with the
             # review containers, so mark them for forensics rather than removal.
             if ctx.report_poisoned is not None and relay is not None:

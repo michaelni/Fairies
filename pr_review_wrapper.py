@@ -1372,6 +1372,7 @@ def main() -> int:
             "review container flagged as poisoned (codex run crashed); it "
             "will be paused for forensics instead of removed"
         )
+        shell_tool.halt()
 
     uploaded_file_ids: list[str] = []
     try:

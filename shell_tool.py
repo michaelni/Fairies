@@ -48,7 +48,7 @@ import os
 import threading
 from typing import Callable, Sequence
 
-from common import JsonObject
+from common import EXIT_REVIEW_HALTED, JsonObject
 from podman_host import ContainerShellSession
 from shell_bridge_client import (  # noqa: F401
     SHELL_TOOL_DESCRIPTION,
@@ -62,6 +62,8 @@ __all__ = [
     "cancelled",
     "exec_machine_call",
     "exec_shell_call",
+    "halt",
+    "halted",
     "run_session_commands",
 ]
 
@@ -70,6 +72,22 @@ logger = logging.getLogger(__name__)
 DEFAULT_SHELL_TIMEOUT_S = 120.0
 CANCEL_FILE: str | None = None
 _cancel_state = (0, False)
+_halted = False
+
+
+def halt() -> None:
+    """Stop every reviewer in this process at its next shell call.
+
+    Called when one reviewer leaves a container suspect: the siblings
+    share the run's fate, so letting them keep driving containers only
+    spends tokens on a verdict that will not be posted.
+    """
+    global _halted
+    _halted = True
+
+
+def halted() -> bool:
+    return _halted
 
 
 def cancelled() -> bool:
@@ -101,6 +119,10 @@ def exec_shell_call(
     """
     if cancelled():
         raise SystemExit("operator cancelled")
+    # SystemExit, not a plain raise: the codex dispatch loop turns any
+    # Exception into a tool-error payload and lets the model carry on.
+    if _halted:
+        raise SystemExit(EXIT_REVIEW_HALTED)
     if not isinstance(args, dict):
         return {"error": "arguments must be a JSON object"}
     command = args.get("command")

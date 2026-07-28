@@ -40,9 +40,10 @@ handful used here).
     tools/capture_github_fixtures.py --check     # compare shapes, write nothing
     tools/capture_github_fixtures.py --write     # re-record
 
-``--check`` compares the key sets rather than the bytes: timestamps,
-counters and avatar URLs churn constantly, while a renamed or dropped key
-is what would actually break the adapters.
+``--check`` compares the key structure rather than the bytes: timestamps,
+counters, avatar URLs and which optional fields happen to be null all
+churn constantly, while a renamed or dropped key is what would actually
+break the adapters.
 """
 
 from __future__ import annotations
@@ -103,12 +104,29 @@ def capture(path: str) -> object:
 
 
 def shape_of(obj: object) -> object:
-    """The key structure of a payload, with the churning values dropped."""
+    """The key structure of a payload, with the values dropped.
+
+    Scalars all collapse to one marker rather than to their type name:
+    GitHub nulls an optional field whenever the data has nothing to put
+    there -- ``start_line`` on a single-line review comment, ``commit_id``
+    on an entry that names no commit -- so comparing types reports drift
+    every time the underlying rows differ. A renamed or dropped key still
+    shows, which is what an adapter actually breaks on.
+    """
     if isinstance(obj, dict):
         return {k: shape_of(v) for k, v in sorted(obj.items())}
     if isinstance(obj, list):
-        return shape_of(obj[0]) if obj else None
-    return type(obj).__name__
+        # Merge every element: a timeline holds several entry kinds, and
+        # reading only the first would miss a change in any of the rest.
+        merged: dict = {}
+        for item in obj:
+            shape = shape_of(item)
+            if isinstance(shape, dict):
+                merged.update(shape)
+            elif shape is not None:
+                merged[shape] = shape
+        return merged or None
+    return "scalar"
 
 
 def main() -> int:

@@ -25,13 +25,15 @@ sys.path.insert(0, str(REPO_ROOT / "tools"))
 import redact  # noqa: E402
 
 
-def _files(root: Path) -> list[Path]:
+def _files(root: Path, suffixes: tuple) -> list[Path]:
     return sorted(p for p in root.rglob("*")
-                  if p.is_file() and "__pycache__" not in p.parts)
+                  if p.is_file() and p.suffix in suffixes
+                  and "__pycache__" not in p.parts)
 
 class FixtureValuesTests(unittest.TestCase):
     def test_fixtures_carry_drawn_values(self) -> None:
-        names = _files(REPO_ROOT / "tests" / "fixtures")
+        names = _files(REPO_ROOT / "tests" / "fixtures",
+                       redact.CAPTURE_SUFFIXES)
         self.assertTrue(names, "no fixtures found to check")
 
         said = io.StringIO()
@@ -45,7 +47,8 @@ class FixtureValuesTests(unittest.TestCase):
         )
 
     def test_names_are_drawn_or_conventional(self) -> None:
-        names = _files(REPO_ROOT / "tests")
+        names = _files(REPO_ROOT / "tests",
+                       (".py",) + redact.CAPTURE_SUFFIXES)
         self.assertTrue(names)
         said = io.StringIO()
         with contextlib.redirect_stdout(said), contextlib.redirect_stderr(said):
@@ -57,7 +60,8 @@ class FixtureValuesTests(unittest.TestCase):
             + said.getvalue(),
         )
     def test_redaction_is_a_fixed_point_on_its_output(self) -> None:
-        names = _files(REPO_ROOT / "tests" / "fixtures")
+        names = _files(REPO_ROOT / "tests" / "fixtures",
+                       redact.CAPTURE_SUFFIXES)
         self.assertTrue(names)
         with tempfile.TemporaryDirectory() as tmp:
             copies = []

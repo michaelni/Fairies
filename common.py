@@ -381,12 +381,18 @@ def setup_logging(
             target.addHandler(debug_handler)
 
 
-def watch_paths(paths: list[Path], callback) -> object | None:
+def watch_paths(paths: list[Path], callback,
+                recursive: bool = False) -> object | None:
     """Fire ``callback()`` (from the observer thread; keep it to setting
     an Event) on any change under the given directories. Returns the
     started watchdog observer, or None when the watchdog package is not
     installed or a path cannot be watched -- callers keep their
-    interval fallback and merely react slower."""
+    interval fallback and merely react slower.
+
+    Each path costs one inotify instance, of which a user gets 128 by
+    default (``fs.inotify.max_user_instances``) across every program
+    they run; a recursive watch on the parent costs one instead of one
+    per child and spends watch descriptors, which are plentiful."""
     try:
         from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
@@ -402,7 +408,7 @@ def watch_paths(paths: list[Path], callback) -> object | None:
     handler = _Handler()
     for path in paths:
         try:
-            observer.schedule(handler, str(path))
+            observer.schedule(handler, str(path), recursive=recursive)
         except OSError as exc:
             logging.getLogger(__name__).debug("cannot watch %s: %s", path, exc)
     observer.start()

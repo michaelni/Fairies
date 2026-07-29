@@ -642,6 +642,40 @@ class FsWatchTests(DbCase):
         (Path(tmp.name) / "pr-1.json").write_text("{}", encoding="utf-8")
         self.assertTrue(fired.wait(2.0), "no event within 2s")
 
+    def test_a_state_directory_is_seen_through_its_root(self) -> None:
+        """Watching each state directory cost one inotify instance per
+        state per side -- 85 for seven sides, against the 128 a user
+        gets for every program they run, which is what
+        ``fs.inotify.max_user_instances`` refused. One recursive watch
+        on the db root has to see the same change for that to hold."""
+        import common
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        for state in filedb.STATES:
+            (root / state).mkdir()
+        fired = Event()
+        observer = common.watch_paths([root], fired.set, recursive=True)
+        if observer is None:
+            self.skipTest("watchdog not installed")
+        self.addCleanup(observer.stop)
+        (root / "queued" / "pr-1.json").write_text("{}", encoding="utf-8")
+        self.assertTrue(fired.wait(2.0), "no event within 2s")
+
+    def test_without_recursion_the_root_sees_nothing_below_it(self) -> None:
+        import common
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        (root / "queued").mkdir()
+        fired = Event()
+        observer = common.watch_paths([root], fired.set)
+        if observer is None:
+            self.skipTest("watchdog not installed")
+        self.addCleanup(observer.stop)
+        (root / "queued" / "pr-1.json").write_text("{}", encoding="utf-8")
+        self.assertFalse(fired.wait(1.0))
+
     def test_needs_poll_triggers_an_immediate_refresh(self) -> None:
         import time
         ui = make_ui(self.model)

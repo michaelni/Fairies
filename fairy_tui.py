@@ -1425,9 +1425,8 @@ def main() -> int:
     # File changes repaint within one 100ms input tick instead of the
     # 1s fallback rescan; without watchdog only the fallback remains.
     watch_paths(
-        [db.root / state for _, db in sides for state in filedb.STATES]
-        + sorted({t.parent for t in tails}),
-        ui.needs_poll.set)
+        [db.root for _, db in sides] + sorted({t.parent for t in tails}),
+        ui.needs_poll.set, recursive=True)
     with term.fullscreen(), term.cbreak(), term.hidden_cursor(), \
             term.mouse_enabled(report_drag=True, timeout=0.2), \
             captured_output(sink):

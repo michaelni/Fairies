@@ -682,7 +682,7 @@ class FilterToggleTests(DbCase):
         self.model.poll()
         expect = {
             "relevant": [1, 2, 3, 4, 6, 7],   # settled posted/ hidden
-            "review": [1, 7],                 # llm: reviewable in minutes
+            "review": [1, 6, 7],              # queued/llm: on their way
             "merge": [2, 4],                  # merge-ready and merge-ready*
             "ci": [3],
             "actionable": [1, 2, 3, 4],

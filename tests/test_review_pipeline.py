@@ -33,7 +33,8 @@ if "anthropic" not in sys.modules:
     sys.modules["anthropic"] = fake
 
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
-from llm_review_api import Review, ReviewContext, Reviewer, Z_AI_ANTHROPIC_URL  # noqa: E402
+from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
+                            ProviderTurnFailed, Z_AI_ANTHROPIC_URL)
 import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
 import workset  # noqa: E402
@@ -76,6 +77,25 @@ class _FailingReviewer(Reviewer):
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
         raise RuntimeError(f"{self.name}: simulated provider failure")
+
+
+class _FlaggedReviewer(Reviewer):
+    """ProviderTurnFailed on the first ``fail_times`` calls, then a draft."""
+
+    def __init__(self, name: str, review: Review, fail_times: int) -> None:
+        self.name = name
+        self._review = review
+        self.fail_times = fail_times
+        self.calls = 0
+
+    def run(self, ctx: ReviewContext) -> dict[str, object]:
+        raise NotImplementedError
+
+    def review(self, ctx: ReviewContext) -> Review:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise ProviderTurnFailed(f"{self.name}: content flagged")
+        return self._review
 
 
 class MakeReviewerTests(unittest.TestCase):
@@ -202,6 +222,38 @@ class ReviewPrTests(unittest.TestCase):
         self.assertEqual(
             ["zai:glm-5.2: zai:glm-5.2: simulated provider failure"],
             ctx.failed_reviewers)
+
+    def test_a_provider_ended_turn_is_retried_once_and_recovers(self) -> None:
+        """gpt-5.6-sol's "possible cybersecurity risk" flag on PR #23901:
+        transient, so one retry -- of that reviewer alone -- recovers the
+        full ensemble."""
+        ctx = _ctx()
+        d1 = Review("minor_issues_approve", "ok", model="glm")
+        d2 = Review("major_issues", "found it", model="gpt")
+        flagged = _FlaggedReviewer("codex:gpt", d2, fail_times=1)
+        merged = Review("major_issues", "verified", model="combiner")
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_pipeline.review_pr(
+                ctx, [_FakeReviewer("zai:glm", d1), flagged],
+                _FakeReviewer("combiner", merged))
+        self.assertIs(out, merged)
+        self.assertEqual([d1, d2], ctx.drafts)
+        self.assertEqual(2, flagged.calls)
+        self.assertEqual([], ctx.failed_reviewers)
+
+    def test_a_twice_flagged_reviewer_is_dropped_and_named(self) -> None:
+        ctx = _ctx()
+        d1 = Review("minor_issues_approve", "ok", model="glm")
+        flagged = _FlaggedReviewer("codex:gpt", d1, fail_times=2)
+        merged = Review("minor_issues_approve", "verified", model="combiner")
+        with self.assertLogs("llm_review_api", level="ERROR"):
+            out = review_pipeline.review_pr(
+                ctx, [_FakeReviewer("zai:glm", d1), flagged],
+                _FakeReviewer("combiner", merged))
+        self.assertIs(out, merged)
+        self.assertEqual(2, flagged.calls)
+        self.assertEqual(["codex:gpt: codex:gpt: content flagged"],
+                         ctx.failed_reviewers)
 
     def test_single_reviewer_with_combiner_still_combines(self) -> None:
         ctx = _ctx()

@@ -65,7 +65,8 @@ from codex_container import (
 import concurrency
 from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
-from llm_review_api import BadModelOutput, ReviewContext, Reviewer, RoleSpec
+from llm_review_api import (BadModelOutput, ProviderTurnFailed, ReviewContext,
+                            Reviewer, RoleSpec)
 from podman_host import ShellHostSpec
 import shell_tool
 
@@ -125,7 +126,7 @@ class CodexUsageLimit(RuntimeError):
     """The usage window is exhausted; do not retry."""
 
 
-class CodexTurnFailed(RuntimeError):
+class CodexTurnFailed(ProviderTurnFailed):
     """The provider ended the turn itself, so no final message exists."""
 
 

@@ -212,6 +212,14 @@ class SchemaError(ValueError):
     """
 
 
+class ProviderTurnFailed(RuntimeError):
+    """The provider ended the reviewer's turn itself (e.g. gpt-5.6-sol's
+    "possible cybersecurity risk" content flag on a security patch);
+    nothing on our side is suspect and the flag has been observed not to
+    reproduce, so ``run_parallel`` retries such a reviewer once before
+    dropping it."""
+
+
 class SelfReportedViolation(Exception):
     """The model itself flagged that a material issue rests on invalid
     evidence (``head_vs_branch_diff_evidence``).
@@ -748,7 +756,9 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
 
     A reviewer that raises (provider outage, exhausted quota, ...) is
     dropped with a logged traceback so the surviving drafts still produce
-    a review; only when every reviewer fails is the run aborted.
+    a review; only when every reviewer fails is the run aborted. The one
+    exception: a ``ProviderTurnFailed`` reviewer is retried once -- alone,
+    inline -- before being dropped.
 
     Each reviewer opens its own shells via ``ctx.open_shell`` so concurrent
     runs never share a container working tree. Results are gathered only
@@ -766,17 +776,31 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
         futures = [executor.submit(r.review, ctx) for r in reviewers]
     drafts: list[Review] = []
     failed: list[str] = []
+
+    def drop(reviewer: Reviewer, exc: Exception) -> None:
+        failed.append(reviewer.name)
+        reason = (str(exc).splitlines() or [exc.__class__.__name__])[0]
+        ctx.failed_reviewers.append(f"{reviewer.name}: {reason[:160]}")
+        logger.exception(
+            "reviewer %s failed; continuing with the surviving drafts",
+            reviewer.name,
+        )
+
     for reviewer, future in zip(reviewers, futures):
         try:
             drafts.append(future.result())
-        except Exception as exc:
-            failed.append(reviewer.name)
-            reason = (str(exc).splitlines() or [exc.__class__.__name__])[0]
-            ctx.failed_reviewers.append(f"{reviewer.name}: {reason[:160]}")
-            logger.exception(
-                "reviewer %s failed; continuing with the surviving drafts",
+        except ProviderTurnFailed as exc:
+            logger.warning(
+                "reviewer %s: provider ended the turn (%s); retrying once",
                 reviewer.name,
+                (str(exc).splitlines() or ["-"])[0][:160],
             )
+            try:
+                drafts.append(reviewer.review(ctx))
+            except Exception as exc2:
+                drop(reviewer, exc2)
+        except Exception as exc:
+            drop(reviewer, exc)
     if not drafts:
         raise RuntimeError(f"all reviewers failed: {', '.join(failed)}")
     return drafts

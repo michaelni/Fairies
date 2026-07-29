@@ -104,6 +104,14 @@ class TokenAtTests(unittest.TestCase):
         self.assertIsNone(tui_core.token_at(text, 0))
         self.assertIsNone(tui_core.token_at(text, text.index("PR")))
 
+    def test_byline_author_and_branch_values_are_copyable(self) -> None:
+        text = "author michaelni   branch ff-tmp-pgssubdec-4"
+        self.assertEqual(tui_core.token_at(text, text.index("michaelni")),
+                         "michaelni")
+        self.assertEqual(tui_core.token_at(text, text.index("ff-tmp") + 3),
+                         "ff-tmp-pgssubdec-4")
+        self.assertIsNone(tui_core.token_at(text, text.index("branch")))
+
 
 class RenderMarkdownTests(unittest.TestCase):
     def test_constructs(self) -> None:

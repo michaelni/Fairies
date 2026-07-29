@@ -70,11 +70,14 @@ def sanitize(text: str) -> str:
     return _CONTROL_RE.sub("", text.replace("\t", " "))
 
 
-# Copyable things, most specific first: URLs, git hashes, #numbers.
+# Copyable things, most specific first: URLs, git hashes, #numbers,
+# and the values behind the detail byline's author/branch labels.
 _TOKEN_RES = (
     re.compile(r"https?://[^\s│()\[\]>\"']+"),
     re.compile(r"\b[0-9a-f]{7,40}\b"),
     re.compile(r"#\d+"),
+    re.compile(r"(?<=\bauthor )[^\s│]+"),
+    re.compile(r"(?<=\bbranch )[^\s│]+"),
 )
 
 

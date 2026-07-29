@@ -93,7 +93,7 @@ class _FakeCodexContainer:
         self.stopped = True
 
 ROLE = RoleSpec(
-    name="reviewer",
+    name="review",
     schema={"name": "review", "strict": True, "schema": {
         "type": "object",
         "properties": {"classification": {"type": "string"},
@@ -328,7 +328,7 @@ class CodexReviewerRunTests(unittest.TestCase):
                          set(payload))
         response = payload["response"]
         self.assertEqual(response["id"], path.name.removesuffix(".jsonl"))
-        self.assertRegex(response["id"], r"^codex-\d{8}-\d{6}-reviewer$")
+        self.assertRegex(response["id"], r"^codex-\d{8}-\d{6}-review$")
         self.assertEqual(
             [json.loads(line) for line in self._REAL_EVENTS.splitlines()],
             response["events"])

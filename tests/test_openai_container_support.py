@@ -423,9 +423,9 @@ class OpenAIContainerSupportTests(unittest.TestCase):
         # Built from forge data only: upload file_ids change per retry and
         # must never enter the key.
         self.assertEqual(
-            "fairy:reviewer:22290:32486a55dc96",
+            "fairy:review:22290:32486a55dc96",
             openai_reviewer.prompt_cache_key_for(
-                "reviewer",
+                "review",
                 {"pull_request": {"number": 22290,
                                   "head_sha": "32486a55dc96e1e177ddc58f2f4971785f138554"}}),
         )
@@ -433,7 +433,7 @@ class OpenAIContainerSupportTests(unittest.TestCase):
             "fairy:issue_investigator:7",
             openai_reviewer.prompt_cache_key_for("issue_investigator", {"issue": {"number": 7}}),
         )
-        self.assertIsNone(openai_reviewer.prompt_cache_key_for("reviewer", {}))
+        self.assertIsNone(openai_reviewer.prompt_cache_key_for("review", {}))
 
     def test_build_response_include_omits_code_interpreter_for_podman_shell(self) -> None:
         inc = openai_reviewer.build_response_include(

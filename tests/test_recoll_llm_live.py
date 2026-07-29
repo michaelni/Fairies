@@ -92,7 +92,7 @@ class RecollLiveLLMTests(unittest.TestCase):
     def _ask(self, question: str) -> tuple[str, list]:
         """Run one tool-loop conversation; return (final text, shell calls)."""
         cookbook = llm_prompt.generate_llm_prompt(
-            role="reviewer", vendor="openai", model=MODEL,
+            role="review", vendor="openai", model=MODEL,
             features={"podman_shell"}, repo_roots=self.repo_roots,
             container_repo_mounts=self.mounts, reviewer_username="fairy",
             machines=[self.machine],

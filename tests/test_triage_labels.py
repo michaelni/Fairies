@@ -128,7 +128,7 @@ class RoleWithLabelsTests(unittest.TestCase):
         self.assertEqual([c["label"] for c in result["label_changes"]], ["stale"])
 
     def test_reviewer_and_combiner_prompts_gain_label_section(self) -> None:
-        for role in ("reviewer", "combiner"):
+        for role in ("review", "combiner"):
             with self.subTest(role=role):
                 kwargs = dict(
                     role=role, vendor="openai", model="m", features=set(),

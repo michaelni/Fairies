@@ -25,7 +25,7 @@ def _prompt(
     machines: list[podman_host.ShellHostSpec] | None = None,
 ) -> str:
     return llm_prompt.generate_llm_prompt(
-        role="reviewer", vendor="openai", model="m",
+        role="review", vendor="openai", model="m",
         features={"podman_shell"},
         repo_roots=[Path("/x") / name for name in repo_names],
         container_repo_mounts=[f"/work/{name}" for name in repo_names],
@@ -88,7 +88,7 @@ class RepoCookbookTests(unittest.TestCase):
         self.assertIn("does not reflect anything you check out", text)
         self.assertIn("not regexes or substrings", text)
         bare = llm_prompt.generate_llm_prompt(
-            role="reviewer", vendor="openai", model="m",
+            role="review", vendor="openai", model="m",
             features={"podman_shell"}, repo_roots=[],
             container_repo_mounts=[], reviewer_username="fairy",
             machines=[_machine()],

@@ -22,7 +22,7 @@ import llm_prompt  # noqa: E402
 
 def _reviewer_prompt(*, ci_failures_present: bool) -> str:
     return llm_prompt.generate_llm_prompt(
-        role="reviewer",
+        role="review",
         vendor="openai",
         model="m",
         features=set(),

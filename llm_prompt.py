@@ -76,17 +76,21 @@ def model_label(model: str) -> str:
     return (model or "unknown").rpartition(":")[2].upper()
 
 
+# The main review pass's prompt, spelled on --model / --extra-model.
+REVIEW_PROMPTS = ("review", "code_review", "design_review")
+
+
 @dataclass(frozen=True)
 class PromptFor:
     """Whom a prompt addresses; every prompt-section function takes it."""
-    role: str    # "reviewer" | "combiner" | "triager" | issue_*
+    role: str    # a REVIEW_PROMPTS member | "combiner" | "triager" | issue_*
     model: str
 
     subject      = property(lambda s: "issue" if s.role.startswith("issue_") else "PR")
     subject_long = property(lambda s: "pull request" if s.subject == "PR" else "issue")
     persona      = property(lambda s: "investigator" if s.subject == "issue" else "reviewer")
     combiner     = property(lambda s: s.role.endswith("combiner"))
-    draft        = property(lambda s: s.role == "reviewer")  # feeds the combiner, which posts
+    draft        = property(lambda s: s.role in REVIEW_PROMPTS)  # feeds the combiner, which posts
 
 
 def prompt_general_rules(ctx: PromptFor) -> str:
@@ -1196,7 +1200,7 @@ def load_project_facts(path: Path) -> str:
 
 def generate_llm_prompt(
     *,
-    role: str,                          # "reviewer" | "combiner" | "triager"
+    role: str,                          # a REVIEW_PROMPTS member | "combiner" | "triager"
     vendor: str,                        # "openai" | "anthropic" | "codex" | "local"
     model: str,                         # e.g. "gpt-5.5"; informational
     features: set[str] | frozenset[str],
@@ -1224,7 +1228,7 @@ def generate_llm_prompt(
     del vendor  # reserved; see docstring
     ctx = PromptFor(role, model)
 
-    if role == "reviewer":
+    if role in REVIEW_PROMPTS:
         return make_developer_prompt(
             "source_bundle"        in features,
             reviewer_username,
@@ -1323,7 +1327,7 @@ def make_session_transcript_texts(ctx: ReviewContext) -> list[str]:
 # prompt: the role id ``generate_llm_prompt`` resolves plus the user-text
 # builders above; schema and validator come from llm_review_api.
 REVIEWER_ROLE = RoleSpec(
-    name="reviewer",
+    name="review",
     schema=REVIEW_SCHEMA,
     user_texts=lambda ctx: [
         make_user_text(ctx.request, ctx.source_notes, ctx.source_files, ctx.patch_truncated),

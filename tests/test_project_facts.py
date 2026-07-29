@@ -26,7 +26,7 @@ class ProjectFactsTests(unittest.TestCase):
 
     def test_facts_appear_in_every_role_prompt(self) -> None:
         facts = "##Testproject facts:\nthe build tool is frobnicate\n\n"
-        for role in ("reviewer", "combiner", "triager"):
+        for role in ("review", "combiner", "triager"):
             with self.subTest(role=role):
                 prompt = llm_prompt.generate_llm_prompt(
                     role=role, vendor="openai", model="m", features=set(),

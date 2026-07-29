@@ -32,7 +32,9 @@ class ModelLabelTests(unittest.TestCase):
 class PromptForTests(unittest.TestCase):
     def test_derived_identity_facts(self) -> None:
         for role, subject, persona, combiner, draft in (
-            ("reviewer",           "PR",    "reviewer",     False, True),
+            ("review",             "PR",    "reviewer",     False, True),
+            ("code_review",        "PR",    "reviewer",     False, True),
+            ("design_review",      "PR",    "reviewer",     False, True),
             ("combiner",           "PR",    "reviewer",     True,  False),
             ("triager",            "PR",    "reviewer",     False, False),
             ("issue_investigator", "issue", "investigator", False, False),
@@ -66,9 +68,10 @@ class LlmPrefixPromptTests(unittest.TestCase):
             self.assertIn(f'Include "{label}"', prompt, role)
 
     def test_draft_reviewer_identifies_with_the_bare_label(self) -> None:
-        prompt = self._prompt("reviewer", "zai:glm-5.2")
-        self.assertIn('Include "GLM-5.2"', prompt)
-        self.assertNotIn('Include "LLM-', prompt)
+        for role in llm_prompt.REVIEW_PROMPTS:
+            prompt = self._prompt(role, "zai:glm-5.2")
+            self.assertIn('Include "GLM-5.2"', prompt, role)
+            self.assertNotIn('Include "LLM-', prompt, role)
 
     def test_combiner_user_text_uses_the_same_labels(self) -> None:
         text = llm_prompt.make_combiner_user_text([

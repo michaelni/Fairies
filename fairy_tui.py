@@ -133,9 +133,10 @@ SORT_MODES = ("arrival", "status", "repo", "number")
 # them, and everything
 FILTER_MODES = ("relevant", "review", "merge", "ci", "actionable", "all")
 _FILTER_STATES = {
-    # queued/llm rows are not reviewable yet, but they are on their way:
-    # the review lens shows what the next y-session will hold
-    "review": ("reviewed", INVALID, "llm", "queued"),
+    # queued/llm rows are not reviewable yet, but they are on their way,
+    # and a y-approved row stays as outgoing/ until the send: the review
+    # lens shows the whole y-session, its near future and its aftermath
+    "review": ("reviewed", INVALID, "llm", "queued", "outgoing"),
     "merge": ("merge-ready", "awaiting-approver"),
     "ci": ("ci-blocked",),
     "actionable": ("reviewed", INVALID, "merge-ready", "ci-blocked",

@@ -676,17 +676,17 @@ class FilterToggleTests(DbCase):
     def test_a_cycles_the_lenses_and_each_shows_its_states(self) -> None:
         fixtures = (("reviewed", 1), ("merge-ready", 2), ("ci-blocked", 3),
                     ("awaiting-approver", 4), ("posted", 5), ("queued", 6),
-                    ("llm", 7))
+                    ("llm", 7), ("outgoing", 8))
         for state, n in fixtures:
             self.db.push(state, "pr", n, verdict(n))
         self.model.poll()
         expect = {
-            "relevant": [1, 2, 3, 4, 6, 7],   # settled posted/ hidden
-            "review": [1, 6, 7],              # queued/llm: on their way
+            "relevant": [1, 2, 3, 4, 6, 7, 8],  # settled posted/ hidden
+            "review": [1, 6, 7, 8],           # pipeline around reviewed/
             "merge": [2, 4],                  # merge-ready and merge-ready*
             "ci": [3],
             "actionable": [1, 2, 3, 4],
-            "all": [1, 2, 3, 4, 5, 6, 7],
+            "all": [1, 2, 3, 4, 5, 6, 7, 8],
         }
         for mode in fairy_tui.FILTER_MODES[1:] + ("relevant",):
             self.assertEqual(self.model.cycle_filter(), mode)

@@ -1665,8 +1665,9 @@ def main() -> int:
         # The final verdict author owns the labels: the combiner whenever
         # one is configured (it runs even on a single draft), else the
         # single reviewer.
-        n_reviewers = len(requested_models) if requested_models else 1 + len(args.extra_model)
-        reviewer_labels = [] if n_reviewers > 1 or args.combine_model else triage_label_allowlist
+        main_specs = requested_models or [args.model, *args.extra_model]
+        reviewer_labels = (
+            [] if len(main_specs) > 1 or args.combine_model else triage_label_allowlist)
         base_reviewer_role, base_combiner_role = (
             (ISSUE_INVESTIGATOR_ROLE, ISSUE_COMBINER_ROLE) if args.task == "issue"
             else (REVIEWER_ROLE, COMBINER_ROLE)
@@ -1674,19 +1675,10 @@ def main() -> int:
         reviewer_role = role_with_labels(base_reviewer_role, reviewer_labels)
         combiner_role = role_with_labels(base_combiner_role, triage_label_allowlist)
 
-        if requested_models:
-            model_reviewers = [
-                make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose, default_effort=requested_effort)
-                for spec in requested_models
-            ]
-        else:
-            model_reviewers = [
-                make_reviewer(args.model, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose, default_effort=requested_effort)
-            ]
-            for spec in args.extra_model:
-                model_reviewers.append(
-                    make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose, default_effort=requested_effort)
-                )
+        model_reviewers = [
+            make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose, default_effort=requested_effort)
+            for spec in main_specs
+        ]
         combiner = (
             make_reviewer(args.combine_model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose, default_effort=requested_effort)
             if args.combine_model

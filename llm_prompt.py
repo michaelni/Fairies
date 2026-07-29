@@ -1371,6 +1371,12 @@ ISSUE_COMBINER_ROLE = RoleSpec(
 )
 
 
+def review_role(role: RoleSpec, prompt: str | None) -> RoleSpec:
+    """``role`` running ``prompt``, a ``REVIEW_PROMPTS`` member. ``None``
+    keeps the role's own prompt, which is what the issue roles need."""
+    return role if prompt is None else replace(role, name=prompt)
+
+
 def role_with_labels(role: RoleSpec, allowed_labels: list[str]) -> RoleSpec:
     """A verdict role (reviewer/combiner/issue_investigator/issue_combiner) that
     additionally owns the labels: its schema and prompt gain

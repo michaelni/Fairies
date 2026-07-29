@@ -71,6 +71,56 @@ class ModelEnsembleOptionTests(unittest.TestCase):
             parse("--combine-model", "codex:gpt-5.6-sol")
 
 
+class MainPassPromptTests(unittest.TestCase):
+    """The optional PROMPT= on --model / --extra-model. main() reads
+    args.main_prompts positionally against [model, *extra_model] to give
+    each reviewer its role; everything else must still see a bare spec."""
+
+    def test_no_prefix_leaves_the_prompt_to_the_task(self) -> None:
+        args = parse("--extra-model", "zai:glm-5.2",
+                     "--combine-model", "openai:gpt-5.4")
+        self.assertEqual([None, None], args.main_prompts)
+
+    def test_prefix_is_split_off_and_kept_in_order(self) -> None:
+        with mock.patch.object(wrapper.sys, "argv", [
+            "pr_review_wrapper.py",
+            "--model", "code_review=openai:gpt-5.4",
+            "--extra-model", "design_review=zai:glm-5.2@high",
+            "--extra-model", "code_review=openai:gpt-5.4",
+            "--combine-model", "openai:gpt-5.4",
+        ]):
+            args = wrapper.parse_args()
+        self.assertEqual(["code_review", "design_review", "code_review"],
+                         args.main_prompts)
+        self.assertEqual("openai:gpt-5.4", args.model)
+        self.assertEqual(["zai:glm-5.2@high", "openai:gpt-5.4"], args.extra_model)
+
+    def test_unknown_prompt_is_a_cli_error(self) -> None:
+        """Caught here it costs nothing; caught at review time it has
+        already billed the reviewers that parsed."""
+        with self.assertRaises(SystemExit) as ctx:
+            parse("--model", "code_reviw=openai:gpt-5.4")
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_the_other_model_flags_take_no_prompt(self) -> None:
+        for flag in ("--triage-model", "--combine-model", "--allowed-model"):
+            with self.subTest(flag=flag), self.assertRaises(SystemExit):
+                parse(flag, "code_review=openai:gpt-5.4")
+
+    def test_an_issue_run_takes_no_prompt(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse("--task", "issue", "--model", "code_review=openai:gpt-5.4")
+
+    def test_a_prefixed_codex_model_still_needs_a_codex_host(self) -> None:
+        """The provider scans read args.model after the split; a prefix
+        left on it would silently disable them."""
+        with self.assertRaises(SystemExit):
+            parse("--model", "code_review=codex:gpt-5.6-sol")
+        args = parse("--model", "code_review=codex:gpt-5.6-sol",
+                     "--codex-host", "fairy@codexbox")
+        self.assertEqual("codex:gpt-5.6-sol", args.model)
+
+
 class ReviewBudgetOptionTests(unittest.TestCase):
     """--max-output-tokens and --top-p are read by openai_reviewer when
     it builds the Responses call; --openai-timeout-seconds bounds the

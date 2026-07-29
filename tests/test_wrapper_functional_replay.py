@@ -134,6 +134,7 @@ def _run_wrapper_with_stubbed_triage(
     request_obj: dict,
     triage_result: dict,
     review_pr_stub: object = None,
+    model_args: list[str] | None = None,
 ) -> tuple[int | None, str, bool]:
     """Run ``wrapper.main()`` with external services mocked and the triage
     stage stubbed to ``triage_result``.
@@ -174,7 +175,8 @@ def _run_wrapper_with_stubbed_triage(
         mock.patch.object(openai_reviewer, "call_with_rate_limit_retry", side_effect=sentinel_create),
         mock.patch.object(
             wrapper.sys, "argv",
-            ["pr_review_wrapper.py", "--model", "openai:gpt-5.4", "--no-source-bundle", "--triage-model", "openai:gpt-x"],
+            ["pr_review_wrapper.py", *(model_args or ["--model", "openai:gpt-5.4"]),
+             "--no-source-bundle", "--triage-model", "openai:gpt-x"],
         ),
         mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(request_obj))),
         mock.patch.object(wrapper.sys, "stdout", stdout_buffer),
@@ -306,6 +308,36 @@ class EngageLabelOwnershipTests(unittest.TestCase):
         (reviewer,) = seen["reviewers"]
         self.assertIn("label_changes", reviewer.role.schema["schema"]["properties"])
         self.assertIsNone(seen["combiner"])
+
+
+class MainPassPromptWiringTests(unittest.TestCase):
+    """Each --model / --extra-model prompt reaches that reviewer's RoleSpec.
+
+    The same model under two prompts is the case the wiring exists for, so
+    it is the one pinned here: nothing but the role tells the two apart.
+    """
+
+    def test_each_reviewer_runs_the_prompt_its_spec_named(self) -> None:
+        seen: dict[str, object] = {}
+
+        def stub(ctx: object, reviewers: list, combiner: object, **kw: object) -> Review:
+            seen["roles"] = [r.role.name for r in reviewers]
+            seen["names"] = [r.name for r in reviewers]
+            seen["combiner_role"] = combiner.role.name
+            return Review("skip", "", model="openai:gpt-5.4")
+
+        exit_code, _out, _reached = _run_wrapper_with_stubbed_triage(
+            _fixture_request(),
+            {"route": "engage", "reason": "worth a look", "label_changes": []},
+            review_pr_stub=stub,
+            model_args=["--model", "code_review=openai:gpt-5.4",
+                        "--extra-model", "design_review=openai:gpt-5.4",
+                        "--combine-model", "openai:gpt-5.4"],
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(["code_review", "design_review"], seen["roles"])
+        self.assertEqual(["openai:gpt-5.4", "openai:gpt-5.4"], seen["names"])
+        self.assertEqual("combiner", seen["combiner_role"])
 
 
 class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):

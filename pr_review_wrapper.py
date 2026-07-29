@@ -105,9 +105,11 @@ from llm_prompt import (
     COMBINER_ROLE,
     ISSUE_COMBINER_ROLE,
     ISSUE_INVESTIGATOR_ROLE,
+    REVIEW_PROMPTS,
     REVIEWER_ROLE,
     load_project_facts,
     make_triager_role,
+    review_role,
     role_with_labels,
 )
 import openai_common
@@ -199,17 +201,21 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--model",
         required=True,
-        metavar="PROVIDER:MODEL[@EFFORT]",
-        help="Reviewer for the main review pass, e.g. 'openai:gpt-5.4' or 'anthropic:claude-opus-4'.",
+        metavar="[PROMPT=]PROVIDER:MODEL[@EFFORT]",
+        help="Reviewer for the main review pass, e.g. 'openai:gpt-5.4' or "
+             "'code_review=anthropic:claude-opus-4'. 'PROMPT=' picks the prompt "
+             f"it runs ({', '.join(REVIEW_PROMPTS)}, default {REVIEW_PROMPTS[0]}); "
+             "--task issue takes no prompt.",
     )
     p.add_argument(
         "--extra-model",
         action="append",
         default=[],
-        metavar="PROVIDER:MODEL[@EFFORT]",
+        metavar="[PROMPT=]PROVIDER:MODEL[@EFFORT]",
         help=(
             "Add another reviewer to the ensemble, e.g. 'anthropic:claude-opus-4' "
-            "or 'zai:glm-5.2'. Repeat for more. All reviewers (--model plus each "
+            "or 'design_review=zai:glm-5.2'. Repeat for more; the same model may "
+            "appear again under another prompt. All reviewers (--model plus each "
             "--extra-model) run on the same PR; with more than one "
             "you must pass --combine-model to merge their drafts. '@EFFORT' sets "
             "that reviewer's effort: an OpenAI reasoning effort, or off/low/"
@@ -664,6 +670,28 @@ def parse_args() -> argparse.Namespace:
                 codex_host_spec, identity=args.podman_ssh_identity)
         except ValueError as exc:
             p.error(str(exc))
+    # Strip the optional PROMPT= before the provider-prefix scans below read
+    # these specs. args.main_prompts stays parallel to [model, *extra_model].
+    args.main_prompts = []
+    bare_specs = []
+    for flag, spec in (("--model", args.model),
+                       *(("--extra-model", s) for s in args.extra_model)):
+        prompt, sep, rest = spec.partition("=")
+        if not sep:
+            prompt, rest = None, spec
+        elif args.task != "pr":
+            p.error(f"{flag} {spec!r}: a prompt can only be chosen for --task pr")
+        elif prompt not in REVIEW_PROMPTS:
+            p.error(f"{flag} {spec!r}: unknown prompt {prompt!r} "
+                    f"(use {', '.join(REVIEW_PROMPTS)})")
+        args.main_prompts.append(prompt)
+        bare_specs.append(rest)
+    args.model, args.extra_model = bare_specs[0], bare_specs[1:]
+    for flag, spec in (("--triage-model", args.triage_model),
+                       ("--combine-model", args.combine_model),
+                       *(("--allowed-model", s) for s in args.allowed_model)):
+        if spec and "=" in spec:
+            p.error(f"{flag} {spec!r}: the prompt of this pass is fixed by the flag")
     codex_specs = [
         s for s in (args.model, *args.extra_model, args.combine_model,
                     args.triage_model, *args.allowed_model)
@@ -1666,18 +1694,21 @@ def main() -> int:
         # one is configured (it runs even on a single draft), else the
         # single reviewer.
         main_specs = requested_models or [args.model, *args.extra_model]
+        # A user request names models only, so each runs the task's own prompt.
+        main_prompts = [None] * len(requested_models) if requested_models else args.main_prompts
         reviewer_labels = (
             [] if len(main_specs) > 1 or args.combine_model else triage_label_allowlist)
         base_reviewer_role, base_combiner_role = (
             (ISSUE_INVESTIGATOR_ROLE, ISSUE_COMBINER_ROLE) if args.task == "issue"
             else (REVIEWER_ROLE, COMBINER_ROLE)
         )
-        reviewer_role = role_with_labels(base_reviewer_role, reviewer_labels)
         combiner_role = role_with_labels(base_combiner_role, triage_label_allowlist)
 
         model_reviewers = [
-            make_reviewer(spec, args=args, resources=openai_resources, role=reviewer_role, verbose=args.verbose, default_effort=requested_effort)
-            for spec in main_specs
+            make_reviewer(spec, args=args, resources=openai_resources,
+                          role=role_with_labels(review_role(base_reviewer_role, prompt), reviewer_labels),
+                          verbose=args.verbose, default_effort=requested_effort)
+            for spec, prompt in zip(main_specs, main_prompts, strict=True)
         ]
         combiner = (
             make_reviewer(args.combine_model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose, default_effort=requested_effort)

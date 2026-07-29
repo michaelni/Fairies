@@ -19,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import llm_prompt  # noqa: E402
 import llm_review_api  # noqa: E402
 
 # Real production output (message trimmed) that slipped past strict mode.
@@ -123,7 +124,7 @@ class ValidateReviewTests(unittest.TestCase):
         # Real bogus verdict (PR #23553, resp_0b30b334ceafa773...): the
         # blocking issue rested on diffing the PR head against the master tip.
         class _Fixed(llm_review_api.Reviewer):
-            role = None
+            role = llm_prompt.REVIEWER_ROLE
 
             def run(self, ctx):
                 return llm_review_api.validate_review({

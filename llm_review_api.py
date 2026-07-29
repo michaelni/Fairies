@@ -637,14 +637,17 @@ class Review:
     """One reviewer's verdict.
 
     ``classification`` is a ``CLASSIFICATIONS`` member, or ``ENGAGE`` for a
-    triager that wants the pipeline to continue. ``model`` records which
-    reviewer produced it, for the combine stage and debug logs.
+    triager that wants the pipeline to continue. ``model`` and ``prompt``
+    record which reviewer produced it and under which prompt, for the
+    combine stage and debug logs; the two together identify a draft, since
+    one model can review the same PR under several prompts.
     """
 
     classification: str
     message: str = ""
     label_changes: tuple[JsonObject, ...] = ()
     model: str = ""
+    prompt: str = ""
 
     @property
     def terminal(self) -> bool:
@@ -748,6 +751,7 @@ class Reviewer(ABC):
             message=result["message"],
             label_changes=tuple(result.get("label_changes") or ()),
             model=self.name,
+            prompt=self.role.name,
         )
 
 

@@ -739,7 +739,8 @@ def workset_note_drafts(args: argparse.Namespace, drafts, *,
     def record(data: dict) -> None:
         data["drafts"] = [
             {"classification": d.classification, "message": d.message,
-             "label_changes": list(d.label_changes), "model": d.model}
+             "label_changes": list(d.label_changes), "model": d.model,
+             "prompt": d.prompt}
             for d in drafts
         ]
         if failed:

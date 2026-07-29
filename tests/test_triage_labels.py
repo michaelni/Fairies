@@ -94,6 +94,7 @@ class ReviewLabelSchemaTests(unittest.TestCase):
         # Review so the pipeline / wrapper can emit them.
         class _R(llm_review_api.Reviewer):
             name = "fake:m"
+            role = llm_prompt.REVIEWER_ROLE
 
             def run(self, ctx: object) -> dict[str, object]:
                 return {

@@ -81,6 +81,24 @@ class LlmPrefixPromptTests(unittest.TestCase):
         self.assertIn("Draft review from GPT-5.4", text)
         self.assertIn("Draft review from GLM-5.2", text)
 
+    def test_combiner_user_text_separates_one_model_two_prompts(self) -> None:
+        """Without the prompt in the header the combiner cannot attribute
+        an issue to the draft that raised it, nor tell the two apart."""
+        text = llm_prompt.make_combiner_user_text([
+            Review("minor_issues_approve", "a", model="codex:gpt-5.6-sol",
+                   prompt="code_review"),
+            Review("major_issues", "b", model="codex:gpt-5.6-sol",
+                   prompt="design_review"),
+        ])
+        self.assertIn("Draft code review from GPT-5.6-SOL", text)
+        self.assertIn("Draft design review from GPT-5.6-SOL", text)
+
+    def test_an_issue_draft_keeps_the_bare_review_header(self) -> None:
+        text = llm_prompt.make_combiner_user_text([
+            Review("reply", "a", model="zai:glm-5.2", prompt="issue_investigator"),
+        ])
+        self.assertIn("Draft review from GLM-5.2", text)
+
 
 if __name__ == "__main__":
     unittest.main()

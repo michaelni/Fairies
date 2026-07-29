@@ -1173,7 +1173,12 @@ def make_combiner_user_text(drafts: list[Review]) -> str:
         # "Draft 2" instead of the model name. The draft's classification
         # is withheld: the combiner grades from the verified issues, not
         # by averaging the drafts' (historically weak) grades.
-        parts.append(f"----- Draft review from {model_label(draft.model)} -----\n")
+
+        # Only the prompt tells two drafts of one model apart; the issue
+        # investigator has no review prompt and keeps the bare "review".
+        kind = draft.prompt if draft.prompt in REVIEW_PROMPTS else "review"
+        parts.append(
+            f"----- Draft {kind.replace('_', ' ')} from {model_label(draft.model)} -----\n")
         parts.append(f"message:\n{draft.message}\n\n")
     return "".join(parts)
 

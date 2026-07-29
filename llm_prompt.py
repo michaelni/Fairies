@@ -297,6 +297,9 @@ def crt_prompt_issue_policy(ctx: PromptFor) -> str:
     return f"""
 For classifying the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
 
+Non issues:
+* partly fixing a bug that cannot be fully fixed. Example an OOM fix using the filesize is not invalid with an argument "the filesize is not always known" if theres no better way to do it.
+
 Additional Minor issues:
 * Unrelated changes should be in separate patches.
 * Commit messages should explain what is changed and why it is changed.

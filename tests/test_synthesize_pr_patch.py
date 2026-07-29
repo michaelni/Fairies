@@ -76,6 +76,23 @@ class SynthesizePRPatchTests(unittest.TestCase):
             )
         self.assertIn(str(self.repo), str(ctx.exception))
 
+    def test_a_head_pushed_after_the_last_mirror_fetch_self_heals(self) -> None:
+        """A retry right after a push must not stay broken until the
+        next scheduled mirror fetch: the missing head triggers one
+        fetch and a second format-patch try."""
+        mirror = Path(self._tmp.name) / "mirror"
+        _git(Path(self._tmp.name), "clone", "--quiet",
+             str(self.repo), str(mirror))
+        (self.repo / "f.c").write_text("int f(void){return 3;}\n")
+        _git(self.repo, "commit", "-am", "pushed after fetch", "--quiet")
+        new_head = _git(self.repo, "rev-parse", "HEAD").strip()
+        args = SimpleNamespace(patch_repo=mirror)
+        text, truncated = fairy.fetch_patch_for_llm(
+            args, self.head_sha, new_head, 10_000,
+        )
+        self.assertIn(f"From {new_head}", text)
+        self.assertFalse(truncated)
+
     def test_fetch_patch_for_llm_truncates_and_flags(self) -> None:
         args = SimpleNamespace(patch_repo=self.repo)
         text, truncated = fairy.fetch_patch_for_llm(

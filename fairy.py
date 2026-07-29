@@ -1745,7 +1745,15 @@ def patch_shas_for_run(
 def fetch_patch_for_llm(
     args: argparse.Namespace, base_sha: str, head_sha: str, max_bytes: int,
 ) -> tuple[str, bool]:
-    data = git_util.git_format_patch_series(args.patch_repo, base_sha, head_sha)
+    """A review right after a push races the mirror's fetch schedule:
+    the new head is not locally reachable yet, so a failed format-patch
+    is answered by one fetch of the patch repo and a second try
+    (production: pr #23903 stayed unretryable for hours)."""
+    try:
+        data = git_util.git_format_patch_series(args.patch_repo, base_sha, head_sha)
+    except RuntimeError:
+        git_util.git_fetch_all(args.patch_repo)
+        data = git_util.git_format_patch_series(args.patch_repo, base_sha, head_sha)
     truncated = len(data) > max_bytes
     if truncated:
         data = data[:max_bytes]

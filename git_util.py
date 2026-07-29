@@ -133,6 +133,20 @@ def git_format_patch_series(
     return cp.stdout
 
 
+def git_fetch_all(repo_root: Path) -> None:
+    """``git fetch --all`` -- the same refresh fairy_fetch_git.sh runs
+    on its schedule; a failed fetch raises rather than reading as
+    success."""
+    cp = subprocess.run(
+        ["git", "-C", str(repo_root), "fetch", "--all", "--quiet"],
+        check=False, text=True, capture_output=True,
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"git fetch --all in {repo_root} failed: {cp.stderr.strip()}"
+        )
+
+
 def git_push_refspecs(
     repo_root: Path,
     remote_url: str,

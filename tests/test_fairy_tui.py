@@ -648,6 +648,15 @@ class DetailTests(DbCase):
         self.assertIn("reason: ci red", text)
         self.assertIn("cancelled ci contexts: job1", text)
 
+    def test_failed_reviewers_are_shown(self) -> None:
+        """Production #23901: the GPT reviewer died (provider content
+        flag), the verdict silently came from GLM alone."""
+        self.db.push("reviewed", "pr", 5, verdict(
+            5, failed_reviewers=["codex:gpt-5.6-sol: content flagged"]))
+        self.model.poll()
+        self.assertIn("reviewer failed: codex:gpt-5.6-sol: content flagged",
+                      self._detail_text())
+
     def test_send_blocked_note_is_shown(self) -> None:
         self.db.push("reviewed", "pr", 5,
                      verdict(5, send_blocked="PR updated_at changed"))

@@ -700,9 +700,11 @@ def workset_note_triage(args: argparse.Namespace, triage_result: dict[str, objec
         workset.update_json(args.workset_file, record)
 
 
-def workset_note_drafts(args: argparse.Namespace, drafts, *, combining: bool) -> None:
+def workset_note_drafts(args: argparse.Namespace, drafts, *,
+                        combining: bool, failed: list[str] = ()) -> None:
     """``drafts`` are ``Review``s; the stage moves to "combine" when a
-    combiner runs next."""
+    combiner runs next. ``failed`` names the reviewers whose draft is
+    missing, so the operator surface can say the verdict is partial."""
     if not args.workset_file:
         return
 
@@ -712,6 +714,8 @@ def workset_note_drafts(args: argparse.Namespace, drafts, *, combining: bool) ->
              "label_changes": list(d.label_changes), "model": d.model}
             for d in drafts
         ]
+        if failed:
+            data["failed_reviewers"] = list(failed)
         if combining:
             data["stage"] = "combine"
 
@@ -1702,7 +1706,8 @@ def main() -> int:
             review = review_pr(
                 review_ctx, model_reviewers, combiner,
                 on_drafts=lambda drafts: workset_note_drafts(
-                    args, drafts, combining=combiner is not None),
+                    args, drafts, combining=combiner is not None,
+                    failed=review_ctx.failed_reviewers),
             )
         except OpenAIContainerUnhealthy:
             # The outer ``finally`` still releases the lease; mark it

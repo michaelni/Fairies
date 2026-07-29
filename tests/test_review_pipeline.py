@@ -199,6 +199,9 @@ class ReviewPrTests(unittest.TestCase):
         self.assertIs(out, merged)
         self.assertEqual([survivor], ctx.drafts)
         self.assertEqual([survivor], combiner.seen_drafts)
+        self.assertEqual(
+            ["zai:glm-5.2: zai:glm-5.2: simulated provider failure"],
+            ctx.failed_reviewers)
 
     def test_single_reviewer_with_combiner_still_combines(self) -> None:
         ctx = _ctx()
@@ -293,6 +296,13 @@ class WrapperWorksetNoteTests(unittest.TestCase):
         self.assertEqual(data["drafts"][0]["message"], "d1")
         self.assertEqual(data["drafts"][0]["model"], "a")
         self.assertEqual(data["drafts"][0]["label_changes"][0]["label"], "l")
+
+    def test_failed_reviewers_land_on_the_ticket(self) -> None:
+        pr_review_wrapper.workset_note_drafts(
+            self.args, [], combining=True,
+            failed=["codex:gpt-5.6-sol: content flagged"])
+        self.assertEqual(self._raw()["failed_reviewers"],
+                         ["codex:gpt-5.6-sol: content flagged"])
 
     def test_notes_work_on_a_stateless_filedb_ticket(self) -> None:
         self.path.write_text('{"title": "t"}\n', encoding="utf-8")

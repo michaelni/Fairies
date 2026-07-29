@@ -656,7 +656,9 @@ class ReviewContext:
     registered for wrapper-owned cleanup. ``None`` means no podman shell
     is configured (the OpenAI solo path uses its native tools instead).
     The pipeline -- not the
-    reviewers -- appends to ``drafts``.
+    reviewers -- appends to ``drafts``; ``run_parallel`` records dropped
+    reviewers in ``failed_reviewers`` so the verdict can say who is
+    missing from it.
     """
 
     request: JsonObject
@@ -675,6 +677,7 @@ class ReviewContext:
     open_shell: Callable[[str], tuple[ContainerShellSession, str]] | None = None
     report_poisoned: Callable[[ContainerShellSession], None] | None = None
     drafts: list[Review] = field(default_factory=list)
+    failed_reviewers: list[str] = field(default_factory=list)
 
     def review_drafts(self) -> list[Review]:
         """Prior drafts that are real review verdicts (excluding triage
@@ -766,8 +769,10 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     for reviewer, future in zip(reviewers, futures):
         try:
             drafts.append(future.result())
-        except Exception:
+        except Exception as exc:
             failed.append(reviewer.name)
+            reason = (str(exc).splitlines() or [exc.__class__.__name__])[0]
+            ctx.failed_reviewers.append(f"{reviewer.name}: {reason[:160]}")
             logger.exception(
                 "reviewer %s failed; continuing with the surviving drafts",
                 reviewer.name,

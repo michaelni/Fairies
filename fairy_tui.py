@@ -989,6 +989,8 @@ class UILoop:
                            else f"error: {data['error']}")[:width])])
         if data.get("send_blocked"):
             head.append([("log_warn", f"send blocked: {data['send_blocked']}"[:width])])
+        for failed in data.get("failed_reviewers") or []:
+            head.append([("log_warn", f"reviewer failed: {failed}"[:width])])
         review = data.get("review") or {}
         decision = agent.ticket_decision(item.kind, item.number, data)
         if decision is not None:

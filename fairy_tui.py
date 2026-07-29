@@ -500,6 +500,19 @@ def _age(iso: str | None, now: datetime | None = None) -> str:
         else f"{int(seconds // 3600)}h"
 
 
+def _when(iso: str | None) -> str:
+    """``2026-07-29 06:15 (3h ago)`` in local time; '' without a stamp."""
+    if not iso:
+        return ""
+    try:
+        then = datetime.fromisoformat(iso)
+    except ValueError:
+        return ""
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    return f"{then.astimezone().strftime('%Y-%m-%d %H:%M')} ({_age(iso)} ago)"
+
+
 def _line_level(line: str) -> int | None:
     """Level of an ``ISO8601 L message`` log line (add_file_log's shape),
     None for anything else."""
@@ -906,6 +919,9 @@ class UILoop:
             return "requested"
         if it.state == "merge-ready" and it.data.get("approved_at"):
             return f"appr={_age(it.data['approved_at'])}"
+        if it.state == "error":
+            age = _age(it.data.get("llm_at") or it.data.get("state_changed_at"))
+            return f"err={age}" if age else ""
         review = it.data.get("review") or {}
         if review.get("classification"):
             return fairy.format_llm_classification(review["classification"])
@@ -966,7 +982,10 @@ class UILoop:
         if item.error:
             head.append([("log_err", f"file invalid: {item.error}"[:width])])
         if data.get("error"):
-            head.append([("log_err", f"error: {data['error']}"[:width])])
+            when = _when(data.get("llm_at") or data.get("state_changed_at"))
+            head.append([("log_err",
+                          (f"error {when}: {data['error']}" if when
+                           else f"error: {data['error']}")[:width])])
         if data.get("send_blocked"):
             head.append([("log_warn", f"send blocked: {data['send_blocked']}"[:width])])
         review = data.get("review") or {}

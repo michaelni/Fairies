@@ -503,6 +503,19 @@ class SortTests(DbCase):
         self.assertIn("sort:status", stream.getvalue())
 
 
+class ErrorAgeColumnTests(DbCase):
+    def test_error_rows_show_the_errors_age_in_the_llm_column(self) -> None:
+        from datetime import datetime, timedelta, timezone
+        stamp = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        self.db.push("error", "pr", 5, {"title": "t", "error": "boom",
+                                        "llm_at": stamp})
+        self.model.poll()
+        ui = make_ui(self.model)
+        rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in ui.list_rows()]
+        self.assertTrue(any("err=2d" in t for t in rows), rows)
+
+
 class PauseTests(DbCase):
     """p freezes the session's agents/workers; a second p thaws them."""
 
@@ -586,10 +599,16 @@ class DetailTests(DbCase):
         self.assertIn("author a", text)
         self.assertIn("branch fix-lavc", text)
 
-    def test_error_ticket_shows_reason(self) -> None:
-        self.db.push("error", "pr", 5, {"title": "t", "error": "LLM exploded"})
+    def test_error_ticket_shows_reason_and_its_age(self) -> None:
+        """An error without a date reads as current; the operator must
+        see whether it predates their retry (production: #23903)."""
+        self.db.push("error", "pr", 5, {
+            "title": "t", "error": "LLM exploded",
+            "llm_at": "2026-07-27T04:15:00+00:00"})
         self.model.poll()
-        self.assertIn("error: LLM exploded", self._detail_text())
+        text = self._detail_text()
+        self.assertIn("ago): LLM exploded", text)
+        self.assertIn("2026-07-27", text)
 
     def test_gate_ticket_shows_attention_context(self) -> None:
         self.db.push("ci-blocked", "pr", 5, {

@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import logging
 import os
+import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -499,6 +501,66 @@ class SortTests(DbCase):
         self.assertEqual(self.model.cursor, 0)
         ui.paint()
         self.assertIn("sort:status", stream.getvalue())
+
+
+class PauseTests(DbCase):
+    """p freezes the session's agents/workers; a second p thaws them."""
+
+    def test_session_pids_finds_marked_siblings_with_children(self) -> None:
+        child = subprocess.Popen(
+            [sys.executable, "-c",
+             "import subprocess, sys, time\n"
+             "p = subprocess.Popen([sys.executable, '-c',"
+             " 'import time; time.sleep(30)'])\n"
+             "print(p.pid, flush=True)\n"
+             "time.sleep(30)",
+             "agent.py"],
+            stdout=subprocess.PIPE, text=True)
+        self.addCleanup(child.kill)
+        self.addCleanup(child.stdout.close)
+        grandchild = int(child.stdout.readline())
+        self.addCleanup(lambda: os.kill(grandchild, signal.SIGKILL))
+        other = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(other.kill)
+        pids = fairy_tui.session_pids(parent=os.getpid())
+        self.assertIn(child.pid, pids)
+        self.assertIn(grandchild, pids)
+        self.assertNotIn(other.pid, pids)
+        self.assertNotIn(os.getpid(), pids)
+
+    def test_p_stops_the_tree_and_a_second_p_continues_it(self) -> None:
+        ui = make_ui(self.model)
+        sent: list[tuple[int, int]] = []
+        with mock.patch.object(fairy_tui, "session_pids",
+                               return_value=[111, 222]), \
+                mock.patch.object(fairy_tui.os, "kill",
+                                  side_effect=lambda p, s: sent.append((p, s))):
+            ui.dispatch(Key("p"))
+            self.assertEqual(sent, [(111, signal.SIGSTOP),
+                                    (222, signal.SIGSTOP)])
+            self.assertEqual(ui.paused, [111, 222])
+            self.assertIn("PAUSED",
+                          fairy_tui._plain(ui.stats_lines(80)))
+            sent.clear()
+            ui.dispatch(Key("p"))
+            self.assertEqual(sent, [(111, signal.SIGCONT),
+                                    (222, signal.SIGCONT)])
+            self.assertEqual(ui.paused, [])
+
+    def test_quit_thaws_paused_processes(self) -> None:
+        """A frozen daemon never sees the launcher's exit-trap SIGTERM,
+        so quitting the TUI while paused must thaw first."""
+        ui = make_ui(self.model)
+        ui.paused = [111]
+        self.model.quit_all()
+        sent: list[tuple[int, int]] = []
+        with mock.patch.object(fairy_tui, "Thread"), \
+                mock.patch.object(fairy_tui.os, "kill",
+                                  side_effect=lambda p, s: sent.append((p, s))):
+            ui.run()
+        self.assertEqual(sent, [(111, signal.SIGCONT)])
+        self.assertEqual(ui.paused, [])
 
 
 class DetailTests(DbCase):

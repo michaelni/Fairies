@@ -59,6 +59,7 @@ import json
 import logging
 import os
 import shlex
+import signal
 import shutil
 import subprocess
 import sys
@@ -604,8 +605,52 @@ ACTION_KEYS = {"y": "apply", "s": "skip", "S": "snooze", "r": "rerun",
                "f": "force", "x": "cancel"}
 KEYMAP = (("q", "quit"), ("y", "apply"), ("s", "skip"), ("S", "snooze"),
           ("r", "rerun"), ("f", "force"), ("x", "drop"), ("o", "edit msg"),
-          ("a", "filter"), ("t", "sort"), ("/", "search"), ("e/E", "export"),
-          ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
+          ("p", "pause"), ("a", "filter"), ("t", "sort"), ("/", "search"),
+          ("e/E", "export"), ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
+
+
+def _proc_children(pid: int) -> list[int]:
+    kids: list[int] = []
+    for task in Path(f"/proc/{pid}/task").iterdir():
+        kids += [int(c) for c in (task / "children").read_text().split()]
+    return kids
+
+
+def _proc_tree(pid: int) -> list[int]:
+    out, todo = [], [pid]
+    while todo:
+        p = todo.pop()
+        out.append(p)
+        try:
+            todo += _proc_children(p)
+        except OSError:
+            pass
+    return out
+
+
+def session_pids(parent: int | None = None) -> list[int]:
+    """This session's agent/worker processes plus their whole subprocess
+    trees (wrappers, ssh, podman clients). The launcher shell is our own
+    parent, so its children whose command line names agent.py or
+    worker.py are exactly the daemons started next to us; anything else
+    sharing the parent (an unrelated job under an interactive shell)
+    never matches."""
+    me = os.getpid()
+    pids: list[int] = []
+    try:
+        siblings = _proc_children(os.getppid() if parent is None else parent)
+    except OSError:
+        return []
+    for pid in siblings:
+        if pid == me:
+            continue
+        try:
+            argv = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
+        except OSError:
+            continue
+        if "agent.py" in argv or "worker.py" in argv:
+            pids += _proc_tree(pid)
+    return pids
 
 
 def _styles(t: blessed.Terminal) -> dict:
@@ -758,6 +803,7 @@ class UILoop:
         self.search_mode = False
         self.search_buf = ""
         self.last_search = ""
+        self.paused: list[int] = []
         self._build_status()
 
     def _build_status(self) -> None:
@@ -765,9 +811,12 @@ class UILoop:
         current sort mode."""
         key = self.styles.get("key") or (lambda s: s)
         label = self.styles.get("label") or (lambda s: s)
-        self._status_mode = (self.model.sort_mode, self.model.filter_mode)
+        self._status_mode = (self.model.sort_mode, self.model.filter_mode,
+                             bool(self.paused))
         pairs = [(k, f"sort:{self.model.sort_mode}" if k == "t"
-                  else f"filter:{self.model.filter_mode}" if k == "a" else d)
+                  else f"filter:{self.model.filter_mode}" if k == "a"
+                  else ("resume" if self.paused else "pause") if k == "p"
+                  else d)
                  for k, d in KEYMAP]
         self._status_plain = "  ".join(f"{k} {d}" for k, d in pairs)
         self._status_styled = "  ".join(f"{key(k)} {label(d)}" for k, d in pairs)
@@ -787,6 +836,8 @@ class UILoop:
             ("label", "   reviewed, awaiting you "),
             ("st_reviewed" if actionable else "num", str(actionable)),
         ]
+        if self.paused:
+            header[:0] = [("log_err", "PAUSED   ")]
         blocks: list[list[tui_core.StyledLine]] = []
         for repo, _db in m.sides:
             group = [it for it in items if it.repo == repo]
@@ -985,7 +1036,8 @@ class UILoop:
         buf.append(t.move_xy(0, row) + divider("─" * w))
         for col in {col_t, col_b}:
             buf.append(t.move_xy(col, row) + divider("┼"))
-        if self._status_mode != (self.model.sort_mode, self.model.filter_mode):
+        if self._status_mode != (self.model.sort_mode, self.model.filter_mode,
+                                 bool(self.paused)):
             self._build_status()
         note = f" ▶ {nact} reviewed  " if nact else " "
         if self.search_mode:
@@ -1114,7 +1166,42 @@ class UILoop:
                 self.paint()
         except KeyboardInterrupt:
             pass
+        if self.paused:
+            self.toggle_pause()
         self.model.quit_all()
+
+    def toggle_pause(self) -> None:
+        """p: freeze this session's agents and workers (SIGSTOP on their
+        whole subprocess trees); the next press thaws them (SIGCONT).
+        Stopping sweeps until no new pid appears, or a process forking
+        between the scan and its stop would leak a running child.
+        run() thaws before exiting: a stopped process never sees the
+        launcher's exit-trap SIGTERM and would stay frozen forever."""
+        if self.paused:
+            for pid in self.paused:
+                try:
+                    os.kill(pid, signal.SIGCONT)
+                except OSError:
+                    pass
+            logger.info("resumed %d paused processes", len(self.paused))
+            self.paused = []
+            return
+        stopped: list[int] = []
+        while True:
+            new = [p for p in session_pids() if p not in stopped]
+            if not new:
+                break
+            for pid in new:
+                try:
+                    os.kill(pid, signal.SIGSTOP)
+                    stopped.append(pid)
+                except OSError:
+                    pass
+        if stopped:
+            logger.info("paused %d processes; p resumes them", len(stopped))
+        else:
+            logger.info("no agent/worker processes found to pause")
+        self.paused = stopped
 
     def _scroll_pane(self, pane: str, delta: int) -> None:
         if pane == "tr":
@@ -1235,6 +1322,8 @@ class UILoop:
         elif str(ks) in ACTION_KEYS:
             self.count_buf = ""
             self.model.act(ACTION_KEYS[str(ks)])
+        elif ks == "p":
+            self.toggle_pause()
         elif ks == "/":
             self.search_mode = True
             self.search_buf = ""

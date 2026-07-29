@@ -1209,6 +1209,11 @@ def get_pr_head_ref(pr: ApiObject) -> str | None:
     return None
 
 
+def get_pr_head_branch(pr: ApiObject) -> str | None:
+    head = pr.get("head")
+    if isinstance(head, dict) and isinstance(head.get("ref"), str):
+        return head["ref"] or None
+    return None
 
 
 def get_auto_merge_info(

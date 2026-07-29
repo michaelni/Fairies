@@ -896,6 +896,13 @@ class UILoop:
         ]
         if data.get("html_url"):
             head.append([("link", str(data["html_url"])[:width])])
+        if data.get("author") or data.get("head_branch"):
+            byline = [("label", "author "),
+                      ("text", str(data.get("author") or "?"))]
+            if data.get("head_branch"):
+                byline += [("label", "   branch "),
+                           ("text", str(data["head_branch"])[:width])]
+            head.append(byline)
         if item.error:
             head.append([("log_err", f"file invalid: {item.error}"[:width])])
         if data.get("error"):

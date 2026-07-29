@@ -517,6 +517,13 @@ class DetailTests(DbCase):
         self.assertIn("state reviewed", text)
         self.assertIn("comment", text)  # rebuilt decision's action
 
+    def test_author_and_branch_are_shown(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5, head_branch="fix-lavc"))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("author a", text)
+        self.assertIn("branch fix-lavc", text)
+
     def test_error_ticket_shows_reason(self) -> None:
         self.db.push("error", "pr", 5, {"title": "t", "error": "LLM exploded"})
         self.model.poll()

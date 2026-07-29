@@ -122,6 +122,7 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
     return {
         "title": decision.title,
         "author": decision.author,
+        "head_branch": fairy.get_pr_head_branch(item),
         "action": decision.action,
         "reason": decision.reason,
         # the attention rows exist to be acted on in the forge web UI
@@ -350,6 +351,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
         ticket = {
             "title": prepared.title,
             "author": prepared.author,
+            "head_branch": fairy.get_pr_head_branch(item),
             # queued/error tickets need the guard too, or an operator x
             # on them cannot stick until new activity
             "expected_updated_at": item.get("updated_at"),

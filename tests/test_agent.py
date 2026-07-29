@@ -25,7 +25,8 @@ NOW = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
 
 def make_pr(n: int) -> dict:
     return {"number": n, "title": f"t{n}", "user": {"login": "a"},
-            "updated_at": "2026-07-19T10:00:00Z", "head": {"sha": f"h{n}"},
+            "updated_at": "2026-07-19T10:00:00Z",
+            "head": {"sha": f"h{n}", "ref": f"b{n}"},
             "html_url": f"https://forge/pr/{n}"}
 
 
@@ -342,8 +343,15 @@ class ReuseTests(AgentCase):
         self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(
             pr, "ci red", cancelled_ci_contexts=("job1",))
         self.scan([make_pr(1)])
-        self.assertEqual(self.db.get("ci-blocked", "pr", 1)
-                         ["expected_updated_at"], "2026-07-19T10:00:00Z")
+        ticket = self.db.get("ci-blocked", "pr", 1)
+        self.assertEqual(ticket["expected_updated_at"], "2026-07-19T10:00:00Z")
+        self.assertEqual(ticket["head_branch"], "b1")
+
+    def test_queued_ticket_carries_author_and_head_branch(self) -> None:
+        self.scan([make_pr(1)])
+        ticket = self.db.get("queued", "pr", 1)
+        self.assertEqual(ticket["author"], "a")
+        self.assertEqual(ticket["head_branch"], "b1")
 
     def test_stale_reviewed_verdict_is_requeued(self) -> None:
         self.db.push("reviewed", "pr", 1, {

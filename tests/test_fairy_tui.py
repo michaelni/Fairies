@@ -503,6 +503,35 @@ class SortTests(DbCase):
         self.assertIn("sort:status", stream.getvalue())
 
 
+class CopyMessageTests(DbCase):
+    def test_clicking_the_message_title_copies_the_raw_message(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5, msg="full **body**"))
+        self.model.poll()
+        stream = io.StringIO()
+        ui = make_ui(self.model, stream)
+        ui.paint()
+        self.assertIn("⧉", stream.getvalue())
+        rect = ui._shown["br"][0]
+        sent: list[str] = []
+        with mock.patch.object(ui, "_to_clipboard",
+                               side_effect=lambda t, d: sent.append(t)):
+            ui._copy_click("br", rect.x + 2, rect.y)
+        self.assertEqual(sent, ["full **body**"])
+
+    def test_an_error_ticket_copies_the_plain_pane_text(self) -> None:
+        self.db.push("error", "pr", 5, {"title": "t", "error": "boom"})
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.paint()
+        rect = ui._shown["br"][0]
+        sent: list[str] = []
+        with mock.patch.object(ui, "_to_clipboard",
+                               side_effect=lambda t, d: sent.append(t)):
+            ui._copy_click("br", rect.x + 2, rect.y)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("boom", sent[0])
+
+
 class ErrorAgeColumnTests(DbCase):
     def test_error_rows_show_the_errors_age_in_the_llm_column(self) -> None:
         from datetime import datetime, timedelta, timezone

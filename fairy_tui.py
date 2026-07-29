@@ -1104,6 +1104,8 @@ class UILoop:
         title = f" {PANE_GLYPHS[pane]} {PANES[pane]} "
         if pane == "tr":
             title += f"[{self.model.filter_mode}] "
+        elif pane == "br":
+            title += "⧉ "
         bar = title[:rect.w].ljust(rect.w)
         bar_fn = self.styles.get("bar_focus" if pane == self.focus else "bar_blur") \
             or (t.reverse if pane == self.focus else (lambda s: s))
@@ -1427,19 +1429,41 @@ class UILoop:
         if rect is None:
             return
         row, col = y - rect.y - 1, x - rect.x - gutter
+        if row == -1 and pane == "br":
+            self._copy_message()
+            return
         if not (0 <= row < len(rows)) or col < 0:
             return
         token = tui_core.token_at(rows[row], col)
         if token is None:
             return
+        self._to_clipboard(token, repr(token))
+
+    def _copy_message(self) -> None:
+        """A click on the message pane's title bar (the ⧉ glyph
+        advertises it) copies the cursor item's raw review message --
+        the markdown source, not the rendered pane -- ready to paste
+        into a mail or forge comment; without a review the plain pane
+        text (error and reason lines) is copied instead."""
+        with self.model.lock:
+            key = self.model._cursor_key()
+            item = self.model.items.get(key) if key else None
+        if item is None:
+            return
+        text = ((item.data.get("review") or {}).get("message")
+                or "\n".join(self._shown["br"][2]).rstrip())
+        self._to_clipboard(
+            text, f"{item.kind} #{item.number} message ({len(text)} chars)")
+
+    def _to_clipboard(self, text: str, desc: str) -> None:
         if self._clip_cmd is not None:
             try:
                 subprocess.run(
-                    self._clip_cmd, input=token.encode(), timeout=2, check=True,
+                    self._clip_cmd, input=text.encode(), timeout=2, check=True,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 )
-                logger.info("copied %r via %s (primary selection)",
-                            token, self._clip_cmd[0])
+                logger.info("copied %s via %s (primary selection)",
+                            desc, self._clip_cmd[0])
                 return
             except Exception as exc:
                 logger.debug("clipboard helper %s failed (%s); trying OSC 52",
@@ -1447,9 +1471,9 @@ class UILoop:
         # Display-less fallback stays on the c (clipboard) target: no
         # PRIMARY reaches the local end of a plain ssh session and several
         # terminals ignore 52;p.
-        b64 = base64.b64encode(token.encode()).decode()
+        b64 = base64.b64encode(text.encode()).decode()
         print(f"\x1b]52;c;{b64}\x07", end="", flush=True, file=self.term.stream)
-        logger.info("copied %r to the clipboard (OSC 52)", token)
+        logger.info("copied %s to the clipboard (OSC 52)", desc)
 
     def export(self, full: bool) -> None:
         pane = self.focus

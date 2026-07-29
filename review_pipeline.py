@@ -46,6 +46,7 @@ from typing import Callable
 from llm_review_api import (
     Z_AI_ANTHROPIC_URL,
     BadModelOutput,
+    ProviderTurnFailed,
     Review,
     ReviewContext,
     Reviewer,
@@ -224,6 +225,8 @@ def review_pr(
     (configured or surviving) draft: since its prompt diverged from the
     reviewer's, its verification and grading are no longer redundant.
     Without a combiner exactly one model reviewer is required.
+    A provider-ended combiner turn is retried once; failing again it
+    propagates, costing the caller's full-pipeline retry as before.
     """
     if len(model_reviewers) == 1:
         drafts = [model_reviewers[0].review(ctx)]
@@ -240,4 +243,11 @@ def review_pr(
         return drafts[0]
 
     logger.info("combine stage: %s merging %d draft(s)", combiner.name, len(drafts))
-    return combiner.review(ctx)
+    try:
+        return combiner.review(ctx)
+    except ProviderTurnFailed as exc:
+        logger.warning(
+            "combiner %s: provider ended the turn (%s); retrying once",
+            combiner.name, (str(exc).splitlines() or ["-"])[0][:160],
+        )
+        return combiner.review(ctx)

@@ -241,6 +241,29 @@ class ReviewPrTests(unittest.TestCase):
         self.assertEqual(2, flagged.calls)
         self.assertEqual([], ctx.failed_reviewers)
 
+    def test_a_flagged_combiner_is_retried_once(self) -> None:
+        ctx = _ctx()
+        d1 = Review("moderate_issues", "issue", model="glm")
+        merged = Review("moderate_issues", "verified", model="combiner")
+        combiner = _FlaggedReviewer("codex:gpt", merged, fail_times=1)
+        with self.assertLogs("review_pipeline", level="WARNING"):
+            out = review_pipeline.review_pr(
+                ctx, [_FakeReviewer("zai:glm", d1)], combiner)
+        self.assertIs(out, merged)
+        self.assertEqual(2, combiner.calls)
+
+    def test_a_twice_flagged_combiner_propagates(self) -> None:
+        """The caller's full-pipeline retry (and error pacing) owns the
+        persistent case; no in-pipeline looping."""
+        ctx = _ctx()
+        d1 = Review("moderate_issues", "issue", model="glm")
+        combiner = _FlaggedReviewer("codex:gpt", d1, fail_times=2)
+        with self.assertRaises(ProviderTurnFailed), \
+                self.assertLogs("review_pipeline", level="WARNING"):
+            review_pipeline.review_pr(
+                ctx, [_FakeReviewer("zai:glm", d1)], combiner)
+        self.assertEqual(2, combiner.calls)
+
     def test_a_twice_flagged_reviewer_is_dropped_and_named(self) -> None:
         ctx = _ctx()
         d1 = Review("minor_issues_approve", "ok", model="glm")

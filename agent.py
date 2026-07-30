@@ -139,8 +139,8 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
     }
 
 
-def _route(db: filedb.Db, kind: str, number: int, state: str, data: dict,
-           prior: str | None) -> None:
+def _route(db: filedb.Db, kind: str, number: filedb.TicketId, state: str,
+           data: dict, prior: str | None) -> None:
     """Scan-time routing: dst-first, and refused when the item moved at
     all (worker claim, operator y/s/x) during the seconds the prepare
     took -- the scan's decision was made against ``prior`` and is stale
@@ -152,7 +152,7 @@ def _route(db: filedb.Db, kind: str, number: int, state: str, data: dict,
 
 def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
               now: datetime, cache, self_login,
-              forced: set[str]) -> set[tuple[str, int]]:
+              forced: set[filedb.TicketId]) -> set[tuple[str, int]]:
     """One gate pass over the side's open items; returns the open set."""
     if kind == "pr":
         fetch_one, list_open, forced_ns = fairy.get_pr, fairy.list_open_prs, \
@@ -375,16 +375,16 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                     backoff_h, queued, limit or "inf")
 
 
-def consume_requests(db: filedb.Db) -> dict[str, set[str]]:
+def consume_requests(db: filedb.Db) -> dict[str, set[filedb.TicketId]]:
     """Requests force a fresh gate-bypassing ticket; they are deleted
     only after the ticket exists (at-least-once)."""
-    forced: dict[str, set[str]] = {"pr": set(), "issue": set()}
+    forced: dict[str, set[filedb.TicketId]] = {"pr": set(), "issue": set()}
     for kind, number in db.list_state("requests"):
         forced[kind].add(number)
     return forced
 
 
-def finish_requests(db: filedb.Db, forced: dict[str, set[str]],
+def finish_requests(db: filedb.Db, forced: dict[str, set[filedb.TicketId]],
                     kinds: set[str]) -> None:
     """Drop the requests this pass consumed, but only once some ticket
     exists for the item (at-least-once: a crashed pass retries). A
@@ -524,7 +524,8 @@ def post_decision(ns: argparse.Namespace, kind: str, decision: fairy.Decision,
     return fairy.apply_triage_labels(ns, decision, decision, skip_guard=False)
 
 
-def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str, number: int, *,
+def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
+             number: filedb.TicketId, *,
              cache, counts: dict[str, int], dry_run: bool) -> str | None:
     """Post one outgoing/ item under its claim lock; returns the state
     it ended in (None: not claimed, or dry run)."""

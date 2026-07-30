@@ -64,8 +64,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-__all__ = ["Db", "Claim", "STATES", "KINDS", "forge_number",
-           "is_base", "logger"]
+__all__ = ["Db", "Claim", "STATES", "KINDS", "TicketId",
+           "forge_number", "is_base", "logger"]
 
 logger = logging.getLogger(__name__)
 
@@ -83,25 +83,26 @@ _LOCKS = "locks"
 # item; only the base ticket takes part in scanning, gating and
 # posting by default.
 _TOKEN_RE = re.compile(r"(\d+)(?:s\d+)?(?:r\d+)?")
+TicketId = str
 
 
-def _token(number: str) -> str:
+def _token(number: TicketId) -> str:
     if not _TOKEN_RE.fullmatch(number):
         raise ValueError(f"invalid ticket token {number!r}")
     return number
 
 
-def forge_number(number) -> int:
+def forge_number(number: TicketId) -> int:
     """The forge item number behind any ticket token."""
     return int(_TOKEN_RE.fullmatch(_token(number)).group(1))
 
 
-def is_base(number: str) -> bool:
+def is_base(number: TicketId) -> bool:
     """True for the plain per-item ticket (no sample/review suffix)."""
     return number.isdigit()
 
 
-def _name(kind: str, number) -> str:
+def _name(kind: str, number: TicketId) -> str:
     if kind not in KINDS:
         raise ValueError(f"unknown kind {kind!r}")
     return f"{kind}-{_token(number)}.json"
@@ -115,7 +116,7 @@ class Claim:
     recognizable by its acquirable lock and reaped back to the source
     state."""
 
-    def __init__(self, db: "Db", fd: int, kind: str, number: int,
+    def __init__(self, db: "Db", fd: int, kind: str, number: TicketId,
                  src_state: str, path: Path) -> None:
         self._db = db
         self._fd = fd
@@ -161,7 +162,7 @@ class Db:
         for d in (*STATES, _TMP, _LOCKS):
             (self.root / d).mkdir(parents=True, exist_ok=True)
 
-    def path(self, state: str, kind: str, number: int) -> Path:
+    def path(self, state: str, kind: str, number: TicketId) -> Path:
         if state not in STATES:
             raise ValueError(f"unknown state {state!r}")
         return self.root / state / _name(kind, number)
@@ -196,7 +197,7 @@ class Db:
             raise
         return dst
 
-    def _write_state(self, state: str, kind: str, number: int, data: dict) -> Path:
+    def _write_state(self, state: str, kind: str, number: TicketId, data: dict) -> Path:
         dst = self.path(state, kind, number)
         stripped = {k: v for k, v in data.items() if k != "state_changed_at"}
         current = self._load(dst)
@@ -210,7 +211,7 @@ class Db:
                                  datetime.now(timezone.utc).isoformat()})
 
     @contextmanager
-    def lock(self, kind: str, number: int):
+    def lock(self, kind: str, number: TicketId):
         """Exclusive per-item transition lock (blocking)."""
         fd = self._lock_fd(kind, number, block=True)
         try:
@@ -218,10 +219,10 @@ class Db:
         finally:
             os.close(fd)
 
-    def _lock_path(self, kind: str, number, suffix: str = "lock") -> Path:
+    def _lock_path(self, kind: str, number: TicketId, suffix: str = "lock") -> Path:
         return self.root / _LOCKS / f"{kind}-{_token(number)}.{suffix}"
 
-    def _lock_fd(self, kind: str, number: int, *, block: bool,
+    def _lock_fd(self, kind: str, number: TicketId, *, block: bool,
                  suffix: str = "lock") -> int:
         path = self._lock_path(kind, number, suffix)
         while True:
@@ -243,14 +244,14 @@ class Db:
 
     # ---- basic operations (all atomic; readers lock-free) ----
 
-    def push(self, state: str, kind: str, number: int, data: dict) -> Path:
+    def push(self, state: str, kind: str, number: TicketId, data: dict) -> Path:
         with self.lock(kind, number):
             return self._write_state(state, kind, number, data)
 
-    def get(self, state: str, kind: str, number: int) -> dict | None:
+    def get(self, state: str, kind: str, number: TicketId) -> dict | None:
         return self._load(self.path(state, kind, number))
 
-    def replace(self, state: str, kind: str, number: int, data: dict,
+    def replace(self, state: str, kind: str, number: TicketId, data: dict,
                 *, expect: str | None) -> bool:
         """Put the item into ``state`` wherever it currently is: dst is
         written FIRST, then the old file dropped, so a crash leaves a
@@ -275,7 +276,7 @@ class Db:
         finally:
             os.close(fd)
 
-    def try_pop(self, state: str, kind: str, number: int) -> dict | None:
+    def try_pop(self, state: str, kind: str, number: TicketId) -> dict | None:
         """Non-blocking ``pop``: None when absent or claimed (a worker
         holds the item's lease for its whole review; blocking callers
         would stall that long). requests/ is exempt like its writer:
@@ -301,7 +302,7 @@ class Db:
         finally:
             os.close(fd)
 
-    def try_move(self, src_state: str, dst_state: str, kind: str, number: int,
+    def try_move(self, src_state: str, dst_state: str, kind: str, number: TicketId,
                  mutate=None) -> bool:
         """Non-blocking ``move`` for interactive callers: False when the
         item is absent from ``src_state`` or its lock is held (a worker
@@ -321,14 +322,14 @@ class Db:
         c.finish(dst_state, data)
         return True
 
-    def request(self, kind: str, number: int, data: dict) -> Path:
+    def request(self, kind: str, number: TicketId, data: dict) -> Path:
         """Create an operator request. Deliberately lock-free: the
         per-item lock is held for the whole review while the item is
         claimed, and a request against a busy item must not block the
         operator (the write itself is atomic)."""
         return self._write_state("requests", kind, number, data)
 
-    def list_state(self, state: str) -> list[tuple[str, str]]:
+    def list_state(self, state: str) -> list[tuple[str, TicketId]]:
         out = []
         for p in (self.root / state).glob("*.json"):
             kind, _, num = p.stem.partition("-")
@@ -336,7 +337,7 @@ class Db:
                 out.append((kind, num))
         return sorted(out, key=lambda kn: (kn[0], forge_number(kn[1]), kn[1]))
 
-    def find(self, kind: str, number: int) -> str | None:
+    def find(self, kind: str, number: TicketId) -> str | None:
         """The item's state; with crash remnants, the latest one."""
         found = None
         for state in STATES:
@@ -346,7 +347,8 @@ class Db:
 
     # ---- worker claim protocol ----
 
-    def claim(self, src_state: str, dst_state: str, kind: str, number: int) -> Claim | None:
+    def claim(self, src_state: str, dst_state: str, kind: str,
+              number: TicketId) -> Claim | None:
         """Lease first, then rename under the transition lock: a claim
         that loses the rename race releases and returns None. The
         ``.claim`` flock held across the review is the worker's
@@ -375,7 +377,7 @@ class Db:
                     return None
         return Claim(self, fd, kind, number, src_state, dst)
 
-    def _leased(self, kind: str, number) -> bool:
+    def _leased(self, kind: str, number: TicketId) -> bool:
         """True while a live worker holds the item's review lease."""
         try:
             fd = self._lock_fd(kind, number, block=False, suffix="claim")
@@ -385,7 +387,7 @@ class Db:
         return False
 
     def reap(self, state: str = "llm",
-             to_state: str | None = "queued") -> list[tuple[str, str]]:
+             to_state: str | None = "queued") -> list[tuple[str, TicketId]]:
         """Recover items whose claim holder died: acquirable lock + file
         still in ``state``. A remnant whose item also exists in a later
         state is deleted instead of re-queued; ``to_state=None`` only
@@ -421,7 +423,7 @@ class Db:
         return recovered
 
     def prune(self, state: str, before: datetime,
-              keep: set[tuple[str, str]] = frozenset(),
+              keep: set[tuple[str, TicketId]] = frozenset(),
               key=None, kinds=None) -> int:
         """Delete ``state`` items whose last transition predates
         ``before``, except those whose ``key((kind, number))`` (default:

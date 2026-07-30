@@ -207,8 +207,8 @@ class Db:
             # bump (viewers key cheap polls on it), and state_changed_at
             # keeps meaning "when did this actually change"
             return dst
-        data["state_changed_at"] = datetime.now(timezone.utc).isoformat()
-        return self._write(dst, data)
+        return self._write(dst, {**stripped, "state_changed_at":
+                                 datetime.now(timezone.utc).isoformat()})
 
     @contextmanager
     def lock(self, kind: str, number: int):

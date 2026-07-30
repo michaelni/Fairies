@@ -246,6 +246,12 @@ class BasicOpsTests(DbCase):
         self.assertIn("state_changed_at", data)
         self.assertEqual(self.db.find("pr", 5), "queued")
 
+    def test_the_callers_dict_is_not_stamped(self) -> None:
+        data = {"title": "t"}
+        self.db.push("queued", "pr", 5, data)
+        self.assertEqual(data, {"title": "t"})
+        self.assertIn("state_changed_at", self.db.get("queued", "pr", 5))
+
     def test_try_move_mutates_and_returns_false_when_racing(self) -> None:
         self.db.push("skipped", "pr", 7, {"skip_backoff": 2})
         moved = self.db.try_move("skipped", "queued", "pr", 7,

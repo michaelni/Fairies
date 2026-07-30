@@ -444,10 +444,15 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     cancel_closed(db, open_set, full_kinds)
     for kind, number in db.reap():
         logger.warning("%s #%s re-queued: its worker died", kind, number)
-    # a crash between finish's dst-write and src-unlink can leave a
-    # reviewed/ remnant behind an outgoing/posted file; without this it
-    # would be re-promoted and could re-post the verdict
-    db.reap("reviewed", None)
+    # A crash between a transition's dst-write and src-unlink leaves the
+    # item in two states, and the shadowed file stays live bait: a
+    # reviewed/ one behind outgoing/ re-posts the verdict, a queued/ one
+    # behind an archive state buys an LLM run whose verdict find() then
+    # hides. requests/ is a command channel that coexists by design;
+    # llm/ was just reaped with its re-queue.
+    for state in filedb.STATES:
+        if state not in ("requests", "llm"):
+            db.reap(state, None)
     if full_kinds == kinds:  # prune's keep-set is kind-blind
         for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
             if ns is None:

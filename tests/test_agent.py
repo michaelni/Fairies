@@ -404,6 +404,19 @@ class LifecycleTests(AgentCase):
         self.assertEqual(self.db.get("cancelled", "pr", 9)["reason"], "not open")
         self.assertEqual(self.db.find("pr", 8), "cancelled")  # attention too
 
+    def test_crash_remnant_is_swept_in_every_state(self) -> None:
+        # reviving an archived item writes queued/ and then unlinks
+        # posted/; a crash between the two leaves the worker a ticket
+        # for an item find() reports as posted, and the review it runs
+        # lands in a reviewed/ file the same precedence hides
+        self.db.push("posted", "pr", 9, {"title": "sent"})
+        self.db.push("queued", "pr", 9, {"title": "revived"})
+        self.prepare.side_effect = lambda ns, pr, **kw: (
+            gate_skip(pr) if pr["number"] == 9 else prepared_for(pr))
+        self.scan([make_pr(1), make_pr(9)])
+        self.assertIsNone(self.db.get("queued", "pr", 9))
+        self.assertEqual(self.db.find("pr", 9), "posted")
+
     def test_request_forces_a_ticket_past_gates_and_limit(self) -> None:
         self.ns.limit = 1
         self.db.push("requests", "pr", 3, {"action": "rerun"})

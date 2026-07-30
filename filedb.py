@@ -37,11 +37,11 @@ stable per-item sidecar lock in ``locks/`` (content writes replace the
 inode, so the payload file itself can never carry a lock). Readers
 need no locks. A crash between the two steps of a transition leaves
 the item in two directories; the later pipeline state wins
-(``find()`` precedence). Remnants are deliberately NOT deleted
-eagerly -- they are crash evidence: ``reap()`` recovers llm/ claims
-whose worker died, the agent clears reviewed/ remnants that shadow a
-later state, and everything else is resolved by precedence until
-retention pruning.
+(``find()`` precedence), so a crashed transition towards an earlier
+state (skipped/ -> queued/) reverts and its caller decides again.
+``reap()`` recovers llm/ claims whose worker died; with
+``to_state=None`` it deletes the shadowed file, which is what the
+agent sweeps every state for after a scan.
 
 What belongs here: the per-repo directory layout, atomic push/get/
 replace/try_move/try_pop, the worker claim protocol (lock -> rename ->

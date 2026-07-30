@@ -167,6 +167,20 @@ class Db:
             raise ValueError(f"unknown state {state!r}")
         return self.root / state / _name(kind, number)
 
+    def _load(self, path: Path) -> dict | None:
+        """The decoded ticket at ``path``; ``path`` need not exist.
+
+        None when the file is absent, unreadable or not valid JSON:
+        none of those raise, and everything but absence is logged.
+        Callers take None as no-prior-data."""
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            logger.error("unreadable %s: %s", path, exc)
+            return None
+
     def _write(self, dst: Path, data: dict) -> Path:
         fd, tmp = tempfile.mkstemp(dir=self.root / _TMP, suffix=".json")
         try:
@@ -186,10 +200,7 @@ class Db:
     def _write_state(self, state: str, kind: str, number: int, data: dict) -> Path:
         dst = self.path(state, kind, number)
         stripped = {k: v for k, v in data.items() if k != "state_changed_at"}
-        try:
-            current = json.loads(dst.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            current = None
+        current = self._load(dst)
         if current is not None and stripped == {
                 k: v for k, v in current.items() if k != "state_changed_at"}:
             # identical content: no write -- no fsync churn, no dir-mtime
@@ -238,26 +249,14 @@ class Db:
             return self._write_state(state, kind, number, data)
 
     def get(self, state: str, kind: str, number: int) -> dict | None:
-        try:
-            return json.loads(self.path(state, kind, number).read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return None
-        except ValueError as exc:
-            # a torn or hand-broken ticket must degrade (callers treat
-            # None as no-prior-data), not wedge every pass that reads it
-            logger.error("unreadable %s/%s-%s: %s", state, kind, number, exc)
-            return None
+        return self._load(self.path(state, kind, number))
 
     def pop(self, state: str, kind: str, number: int) -> dict | None:
         """Read and delete; None when absent."""
         with self.lock(kind, number):
             path = self.path(state, kind, number)
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except FileNotFoundError:
-                return None
-            except ValueError as exc:
-                logger.error("unreadable %s/%s-%s: %s", state, kind, number, exc)
+            data = self._load(path)
+            if data is None:
                 return None
             path.unlink()
             return data
@@ -268,13 +267,8 @@ class Db:
         when the item is not in ``src_state`` (lost a race: fine)."""
         with self.lock(kind, number):
             src = self.path(src_state, kind, number)
-            try:
-                data = json.loads(src.read_text(encoding="utf-8"))
-            except FileNotFoundError:
-                return False
-            except ValueError as exc:
-                logger.error("unreadable %s/%s-%s: %s",
-                             src_state, kind, number, exc)
+            data = self._load(src)
+            if data is None:
                 return False
             if mutate is not None:
                 mutate(data)
@@ -322,15 +316,10 @@ class Db:
             return None
         try:
             path = self.path(state, kind, number)
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except FileNotFoundError:
-                return None
-            except ValueError as exc:
+            data = self._load(path)
+            if data is None:
                 # a torn command file carries no recoverable intent:
                 # consuming it beats wedging every pass on it
-                logger.error("unreadable %s/%s-%s: %s; discarding",
-                             state, kind, number, exc)
                 path.unlink(missing_ok=True)
                 return None
             path.unlink()

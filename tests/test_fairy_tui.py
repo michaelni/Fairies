@@ -460,13 +460,9 @@ class SortTests(DbCase):
         self.model.sort_mode = "number"
         self.assertEqual(self._numbers(), [3, 5, 7, 9])
 
-    def test_a_poll_reorder_leaves_the_cursor_index_alone(self) -> None:
-        """The item-chasing anchor was removed on request (2026-07-30):
-        whenever a background change reshuffled the list it teleported
-        the cursor to an arrival-order neighbour -- visually random
-        under status sort. A stationary index under the operator's
-        fingers won; every poll repaints, so what is highlighted is
-        what y acts on."""
+    def test_cursor_follows_its_item_when_a_poll_reorders(self) -> None:
+        """The cursor IS a key, not an index: a status flip elsewhere
+        must never move the selection off its PR."""
         self.db.push("queued", "pr", 1, verdict(1))
         self.db.push("reviewed", "pr", 2, verdict(2))
         self.model.poll()
@@ -477,8 +473,28 @@ class SortTests(DbCase):
         self.db.move("queued", "reviewed", "pr", 1)  # bubbles above #2
         self.model.poll()
         with self.model.lock:
-            self.assertEqual(self.model.cursor, 0)
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+            self.assertEqual(self.model.cursor, 1)
+
+    def test_cursor_returns_after_a_transient_rename_blip(self) -> None:
+        """The production annoyance: a poll racing a rename can see the
+        item in no state dir for one tick, and the old per-mutation
+        anchor then adopted a neighbour for good -- the cursor hopped
+        to a random row while its PR was still (again) on screen. The
+        sticky key must survive the blip."""
+        self.db.push("reviewed", "pr", 1, verdict(1))
+        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.model.poll()
+        with self.model.lock:
+            self.model._move_cursor_to((R1, "pr", 2))
+        self.db.pop("reviewed", "pr", 2)
+        self.model.poll()
+        with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 1))
+        self.db.push("llm", "pr", 2, verdict(2))
+        self.model.poll()
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
 
     def test_cycle_wraps_back_to_arrival(self) -> None:
         for expected in ("status", "repo", "number", "arrival"):

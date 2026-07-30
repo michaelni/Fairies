@@ -31,17 +31,52 @@ The file database: one JSON ticket per PR/issue, state = directory name.
 
 A ticket's state is encoded ONLY by the directory it sits in (English
 words, ``mv`` is a state change); the JSON content never carries the
-state. Every operation is atomic on a local filesystem: writes go
-through tmp-file + rename, transitions and claims serialize on a
-stable per-item sidecar lock in ``locks/`` (content writes replace the
-inode, so the payload file itself can never carry a lock). Readers
-need no locks. A crash between the two steps of a transition leaves
-the item in two directories; the later pipeline state wins
-(``find()`` precedence), so a crashed transition towards an earlier
-state (skipped/ -> queued/) reverts and its caller decides again.
-``reap()`` recovers llm/ claims whose worker died; with
-``to_state=None`` it deletes the shadowed file, which is what the
-agent sweeps every state for after a scan.
+state. Everything below assumes one filesystem for the whole root,
+whose renames and unlinks are atomic, whose completed operations are
+visible to every other reader at once, and whose locks are honoured
+by every participant.
+
+Guarantees:
+
+  a ticket file  A reader sees the whole previous ticket or the whole
+                 new one, never a mixture. One it cannot read at all
+                 is a crash or a hand edit, and reads as absent.
+  a transition   Not atomic. A reader can observe the item in both
+                 the old and the new state -- and when the new state
+                 is earlier in the pipeline, in neither.
+  one item       Every operation on the same ticket serialises,
+                 across threads and processes alike.
+  across items   Nothing serialises: no listing or count is a
+                 consistent snapshot of the db.
+  readers        Never block, are never blocked, need no lock.
+
+A caller needs no mutex of its own, but get() then push() is a lost
+update: read-modify-write goes through claim/finish, or replace(...,
+expect=<state>), which refuses when the item moved under it.
+
+Waiting: try_move/try_pop refuse instead of waiting while a review
+holds the item; push waits at most for another write, never for a
+review; claim holds the item until finish/abort or the holder's death.
+
+After a crash: a completed transition can be lost -- the ticket
+reverts to its previous state -- but a ticket is never torn. An
+interrupted transition leaves the item in two states, which find()
+resolves by pipeline order; that is the newer file only for a forward
+transition, so an interrupted backward transition reverts and its
+caller decides again. ``reap(state, None)`` deletes the shadowed
+file, and the agent sweeps every state with it after a scan -- except
+requests/, a command channel that coexists with any state by design.
+
+Which operation:
+
+    claim/finish  work that spans a whole review
+    replace       a decision that is stale as soon as the item moves
+    try_move      a transition that must refuse, not wait, while a
+                  review holds the item; try_pop consumes the file
+    request       an operator command; lock-free, so a claimed item
+                  can still be sent one
+    push          a plain write, the only one that blocks -- for the
+                  length of the write, never a review
 
 What belongs here: the per-repo directory layout, atomic push/get/
 replace/try_move/try_pop, the worker claim protocol (lock -> rename ->

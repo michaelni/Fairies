@@ -120,6 +120,13 @@ class LlmPrefixPromptTests(unittest.TestCase):
             self.assertIn("- approve: no substantive issues", prompt, role)
             self.assertEqual(1, prompt.count("- review / check each commit."), role)
 
+    def test_the_combiner_may_not_drop_a_design_point_as_style(self) -> None:
+        """It has no design mandate of its own and is told twice to drop
+        stylistic preferences, so a draft made of design findings would
+        otherwise be the easiest thing in its input to discard."""
+        self.assertIn("not a stylistic preference",
+                      self._prompt("combiner", "gpt-5.4"))
+
     def test_an_issue_draft_keeps_the_bare_review_header(self) -> None:
         text = llm_prompt.make_combiner_user_text([
             Review("reply", "a", model="zai:glm-5.2", prompt="issue_investigator"),

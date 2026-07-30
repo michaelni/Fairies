@@ -135,7 +135,7 @@ as well as senior developers to make the final decision to merge, wait or reject
 
 CR_PROMPT_CLAIM_VERIFICATION = """- Do not report a bug based only on a quick mental calculation.
 - When arithmetic, bounds, integer behavior, bit operations, indexing, or similar details are material to a claim, verify them with inspected code, specifications, or the python tool as appropriate.
-- Do not present stylistic preferences or unsupported speculation as issues.
+- Do not present stylistic preferences or unsupported speculation as issues. A design, maintainability or performance point is not a stylistic preference once its cost or benefit is argued from the code.
 - Do not state non-local assumptions as fact. Claims about earlier validation, reachability, helper guarantees, or project-wide invariants must be verified from inspected code or tools. Otherwise state them explicitly as unverified and conditional, and do not present them as blocking facts.
 """
 

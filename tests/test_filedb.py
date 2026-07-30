@@ -112,8 +112,7 @@ class TornTicketTests(DbCase):
         self.db.push("skipped", "pr", 5, {"a": 1})
         self.db.path("skipped", "pr", 5).write_text("{ torn")
         self.assertIsNone(self.db.get("skipped", "pr", 5))
-        self.assertIsNone(self.db.pop("skipped", "pr", 5))
-        self.assertFalse(self.db.move("skipped", "queued", "pr", 5))
+        self.assertIsNone(self.db.try_pop("skipped", "pr", 5))
 
 
 class TryPopTests(DbCase):
@@ -215,25 +214,22 @@ class InPlaceClaimTests(DbCase):
 
 
 class BasicOpsTests(DbCase):
-    def test_push_get_pop_roundtrip(self) -> None:
+    def test_push_get_roundtrip(self) -> None:
         self.db.push("queued", "pr", 5, {"title": "t"})
         data = self.db.get("queued", "pr", 5)
         self.assertEqual(data["title"], "t")
         self.assertIn("state_changed_at", data)
         self.assertEqual(self.db.find("pr", 5), "queued")
-        self.assertEqual(self.db.pop("queued", "pr", 5), data)
-        self.assertIsNone(self.db.get("queued", "pr", 5))
-        self.assertIsNone(self.db.pop("queued", "pr", 5))
 
-    def test_move_mutates_and_returns_false_when_racing(self) -> None:
+    def test_try_move_mutates_and_returns_false_when_racing(self) -> None:
         self.db.push("skipped", "pr", 7, {"skip_backoff": 2})
-        moved = self.db.move("skipped", "queued", "pr", 7,
-                             mutate=lambda d: d.update(
-                                 skip_backoff=d["skip_backoff"] * 2))
+        moved = self.db.try_move("skipped", "queued", "pr", 7,
+                                 mutate=lambda d: d.update(
+                                     skip_backoff=d["skip_backoff"] * 2))
         self.assertTrue(moved)
         self.assertEqual(self.db.get("queued", "pr", 7)["skip_backoff"], 4)
         self.assertIsNone(self.db.get("skipped", "pr", 7))
-        self.assertFalse(self.db.move("skipped", "queued", "pr", 7))
+        self.assertFalse(self.db.try_move("skipped", "queued", "pr", 7))
 
     def test_list_state_and_kinds(self) -> None:
         self.db.push("queued", "pr", 2, {})

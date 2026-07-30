@@ -43,9 +43,9 @@ whose worker died, the agent clears reviewed/ remnants that shadow a
 later state, and everything else is resolved by precedence until
 retention pruning.
 
-What belongs here: the per-repo directory layout, atomic push/get/pop/
-move, the worker claim protocol (lock -> rename -> work -> finish),
-reaping dead workers' claims, and retention pruning.
+What belongs here: the per-repo directory layout, atomic push/get/
+replace/try_move/try_pop, the worker claim protocol (lock -> rename ->
+work -> finish), reaping dead workers' claims, and retention pruning.
 
 What does NOT belong: ticket schemas and validation (workset), gates,
 forge access, review logic, and any policy about which state an item
@@ -250,31 +250,6 @@ class Db:
 
     def get(self, state: str, kind: str, number: int) -> dict | None:
         return self._load(self.path(state, kind, number))
-
-    def pop(self, state: str, kind: str, number: int) -> dict | None:
-        """Read and delete; None when absent."""
-        with self.lock(kind, number):
-            path = self.path(state, kind, number)
-            data = self._load(path)
-            if data is None:
-                return None
-            path.unlink()
-            return data
-
-    def move(self, src_state: str, dst_state: str, kind: str, number: int,
-             mutate=None) -> bool:
-        """Transition src -> dst, optionally mutating the content; False
-        when the item is not in ``src_state`` (lost a race: fine)."""
-        with self.lock(kind, number):
-            src = self.path(src_state, kind, number)
-            data = self._load(src)
-            if data is None:
-                return False
-            if mutate is not None:
-                mutate(data)
-            self._write_state(dst_state, kind, number, data)
-            src.unlink(missing_ok=True)
-            return True
 
     def replace(self, state: str, kind: str, number: int, data: dict,
                 *, expect: str | None) -> bool:

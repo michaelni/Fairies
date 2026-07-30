@@ -90,7 +90,7 @@ class PollTests(DbCase):
         self.assertEqual(item.state, "queued")
         self.assertEqual(item.data["title"], "from disk")
         self.assertNotIn("prepared", item.data)  # multi-MB, never shown
-        self.db.move("queued", "llm", "pr", 5,
+        self.db.try_move("queued", "llm", "pr", 5,
                      mutate=lambda d: d.update(stage="triage"))
         self.model.poll()
         self.assertEqual(item.state, "llm")
@@ -116,7 +116,7 @@ class PollTests(DbCase):
     def test_removed_file_drops_the_row_after_the_grace_polls(self) -> None:
         self.db.push("reviewed", "pr", 5, verdict(5))
         self.model.poll()
-        self.db.pop("reviewed", "pr", 5)
+        self.db.try_pop("reviewed", "pr", 5)
         for _ in range(fairy_tui.GONE_POLLS - 1):
             self.model.poll()
         self.assertIn((R1, "pr", 5), self.model.items)  # still shown
@@ -127,7 +127,7 @@ class PollTests(DbCase):
     def test_a_reappearing_ticket_resets_the_miss_counter(self) -> None:
         self.db.push("reviewed", "pr", 5, verdict(5))
         self.model.poll()
-        self.db.pop("reviewed", "pr", 5)
+        self.db.try_pop("reviewed", "pr", 5)
         for _ in range(fairy_tui.GONE_POLLS - 1):
             self.model.poll()
         self.db.push("llm", "pr", 5, verdict(5))
@@ -138,7 +138,7 @@ class PollTests(DbCase):
     def test_a_missing_ticket_is_marked_in_the_list(self) -> None:
         self.db.push("reviewed", "pr", 5, verdict(5))
         self.model.poll()
-        self.db.pop("reviewed", "pr", 5)
+        self.db.try_pop("reviewed", "pr", 5)
         self.model.poll()
         ui = make_ui(self.model)
         rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
@@ -169,7 +169,7 @@ class PollTests(DbCase):
         # would vanish the moment the verdict lands in skipped/.
         self.db.push("llm", "pr", 5, verdict(5))
         self.model.poll()
-        self.db.move("llm", "skipped", "pr", 5)
+        self.db.try_move("llm", "skipped", "pr", 5)
         self.model.poll()
         self.assertEqual(self.model.items[(R1, "pr", 5)].state, "skipped")
         self.assertIn((R1, 5), self.keys())
@@ -205,7 +205,7 @@ class DirMtimeGateTests(DbCase):
         self.db.push("reviewed", "pr", 5, verdict(5))
         self.age_dirs()
         self.model.poll()
-        self.db.move("reviewed", "outgoing", "pr", 5)  # bumps both dirs
+        self.db.try_move("reviewed", "outgoing", "pr", 5)  # bumps both dirs
         self.model.poll()
         self.assertEqual(self.model.items[(R1, "pr", 5)].state, "outgoing")
 
@@ -252,8 +252,8 @@ class ActTests(DbCase):
         self.model.act("rerun")
         self.assertEqual(self.db.get("requests", "pr", 5), mock.ANY)
         self.assertEqual(self.db.get("requests", "pr", 5)["action"], "rerun")
-        self.db.pop("requests", "pr", 5)
-        self.db.move("reviewed", "queued", "pr", 5)
+        self.db.try_pop("requests", "pr", 5)
+        self.db.try_move("reviewed", "queued", "pr", 5)
         self.model.poll()
         self.model.act("rerun")
         self.assertIsNone(self.db.get("requests", "pr", 5))
@@ -307,7 +307,7 @@ class ActTests(DbCase):
         self.db.push("reviewed", "pr", 5, verdict(5))
         self.model.poll()
         self.model.act("apply")
-        self.db.move("outgoing", "posted", "pr", 5)  # the agent's send pass
+        self.db.try_move("outgoing", "posted", "pr", 5)  # the agent's send pass
         self.model.poll()
         self.assertEqual(self.model.items[(R1, "pr", 5)].state, "posted")
         self.assertIn((R1, 5), self.keys())
@@ -493,7 +493,7 @@ class SortTests(DbCase):
         with self.model.lock:
             self.model._move_cursor_to((R1, "pr", 2))
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
-        self.db.move("queued", "reviewed", "pr", 1)  # bubbles above #2
+        self.db.try_move("queued", "reviewed", "pr", 1)  # bubbles above #2
         self.model.poll()
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
@@ -508,7 +508,7 @@ class SortTests(DbCase):
         self.model.poll()
         with self.model.lock:
             self.model._move_cursor_to((R1, "pr", 2))
-        self.db.pop("reviewed", "pr", 2)
+        self.db.try_pop("reviewed", "pr", 2)
         self.model.poll()
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
@@ -925,7 +925,7 @@ class CountAndSearchTests(DbCase):
 
     def test_search_over_an_empty_list_reports_no_match(self) -> None:
         for n in (1, 2, 3):
-            self.db.pop("reviewed", "pr", n)
+            self.db.try_pop("reviewed", "pr", n)
         self.model.poll()
         for ch in "/11":
             self.ui.dispatch(Key(ch))
@@ -1208,7 +1208,7 @@ class RequestedBadgeTests(DbCase):
         rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
                 for r in ui.list_rows()]
         self.assertTrue(any("requested" in t for t in rows), rows)
-        self.db.pop("requests", "pr", 5)
+        self.db.try_pop("requests", "pr", 5)
         self.model.poll()
         rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
                 for r in ui.list_rows()]

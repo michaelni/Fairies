@@ -403,15 +403,19 @@ class Db:
                 continue  # live claim
             try:
                 path = self.path(state, kind, number)
-                later = [s for s in STATES[STATES.index(state) + 1:]
-                         if self.path(s, kind, number).exists()]
-                if later:
-                    path.unlink(missing_ok=True)
-                    logger.info("reaped crash remnant %s/%s-%s (item is in %s)",
-                                state, kind, number, later[-1])
-                elif to_state is not None and path.exists():
-                    os.rename(path, self.path(to_state, kind, number))
-                    recovered.append((kind, number))
+                # the transition lock too: a writer's dst-write and
+                # src-unlink are one step, and a reap between them takes
+                # the file just written for a remnant
+                with self.lock(kind, number):
+                    later = [s for s in STATES[STATES.index(state) + 1:]
+                             if self.path(s, kind, number).exists()]
+                    if later:
+                        path.unlink(missing_ok=True)
+                        logger.info("reaped crash remnant %s/%s-%s (item is in %s)",
+                                    state, kind, number, later[-1])
+                    elif to_state is not None and path.exists():
+                        os.rename(path, self.path(to_state, kind, number))
+                        recovered.append((kind, number))
                 # a dead worker also leaves the wrapper's sidecar lock
                 # and tmp next to the claimed file
                 for suffix in (".lock", ".tmp"):

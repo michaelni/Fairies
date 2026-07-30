@@ -7,6 +7,7 @@ import os
 import signal
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -72,6 +73,30 @@ class ReapRemnantOnlyTests(DbCase):
         self.assertIsNotNone(self.db.get("reviewed", "pr", 1))
         self.assertIsNone(self.db.get("reviewed", "pr", 2))
         self.assertIsNotNone(self.db.get("outgoing", "pr", 2))
+
+    def test_reap_waits_for_a_transition_in_progress(self) -> None:
+        """replace() writes dst and only then unlinks src, both under the
+        transition lock; a reap in that window sees the two files of a
+        crash remnant and would delete the freshly written one."""
+        self.db.push("skipped", "pr", 5, {"t": "old"})
+        mid_transition = threading.Event()
+
+        def backward_move() -> None:
+            with self.db.lock("pr", 5):
+                self.db._write_state("queued", "pr", 5, {"t": "new"})
+                mid_transition.set()
+                time.sleep(0.3)
+                self.db.path("skipped", "pr", 5).unlink()
+
+        writer = threading.Thread(target=backward_move)
+        writer.start()
+        try:
+            self.assertTrue(mid_transition.wait(10))
+            self.db.reap("queued", None)
+        finally:
+            writer.join(timeout=10)
+        self.assertTrue(self.db.path("queued", "pr", 5).exists())
+        self.assertIsNone(self.db.get("skipped", "pr", 5))
 
 
 class TokenTests(DbCase):

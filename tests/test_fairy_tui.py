@@ -113,12 +113,37 @@ class PollTests(DbCase):
         self.assertEqual(item.state, "reviewed")
         self.assertEqual(item.error, "")
 
-    def test_removed_file_drops_the_row(self) -> None:
+    def test_removed_file_drops_the_row_after_the_grace_polls(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
+        self.db.pop("reviewed", "pr", 5)
+        for _ in range(fairy_tui.GONE_POLLS - 1):
+            self.model.poll()
+        self.assertIn((R1, "pr", 5), self.model.items)  # still shown
+        with self.assertLogs("fairy_tui", level="INFO"):
+            self.model.poll()
+        self.assertNotIn((R1, "pr", 5), self.model.items)
+
+    def test_a_reappearing_ticket_resets_the_miss_counter(self) -> None:
+        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.model.poll()
+        self.db.pop("reviewed", "pr", 5)
+        for _ in range(fairy_tui.GONE_POLLS - 1):
+            self.model.poll()
+        self.db.push("llm", "pr", 5, verdict(5))
+        self.model.poll()
+        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "llm")
+        self.assertNotIn((R1, "pr", 5), self.model.missing)
+
+    def test_a_missing_ticket_is_marked_in_the_list(self) -> None:
         self.db.push("reviewed", "pr", 5, verdict(5))
         self.model.poll()
         self.db.pop("reviewed", "pr", 5)
         self.model.poll()
-        self.assertNotIn((R1, "pr", 5), self.model.items)
+        ui = make_ui(self.model)
+        rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in ui.list_rows()]
+        self.assertTrue(any("reviewed?" in t for t in rows), rows)
 
     def test_crash_remnant_shows_the_later_state(self) -> None:
         self.db.push("queued", "pr", 5, verdict(5))
@@ -476,12 +501,10 @@ class SortTests(DbCase):
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
             self.assertEqual(self.model.cursor, 1)
 
-    def test_cursor_returns_after_a_transient_rename_blip(self) -> None:
-        """The production annoyance: a poll racing a rename can see the
-        item in no state dir for one tick, and the old per-mutation
-        anchor then adopted a neighbour for good -- the cursor hopped
-        to a random row while its PR was still (again) on screen. The
-        sticky key must survive the blip."""
+    def test_cursor_stays_through_a_transient_rename_blip(self) -> None:
+        """A poll racing a rename can see the item in no state dir for
+        a tick; the grace polls keep the row alive and the sticky key
+        keeps the cursor on it -- it never visits a neighbour."""
         self.db.push("reviewed", "pr", 1, verdict(1))
         self.db.push("reviewed", "pr", 2, verdict(2))
         self.model.poll()
@@ -490,11 +513,12 @@ class SortTests(DbCase):
         self.db.pop("reviewed", "pr", 2)
         self.model.poll()
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 1))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
         self.db.push("llm", "pr", 2, verdict(2))
         self.model.poll()
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+            self.assertEqual(self.model.items[(R1, "pr", 2)].state, "llm")
 
     def test_cycle_wraps_back_to_arrival(self) -> None:
         for expected in ("status", "repo", "number", "arrival"):

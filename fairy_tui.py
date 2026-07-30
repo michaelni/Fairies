@@ -97,6 +97,11 @@ LIVE_STATES = ("requests", "queued", "llm", "outgoing")
 # What the relevant filter hides -- unless the row was acted on or
 # seen live this session.
 HIDDEN_SETTLED = ("posted", "skipped", "cancelled")
+# A ticket found in no state dir is almost always a poll racing a
+# rename (the destination dir listed before the write, the source
+# after the unlink); a row only dies after GONE_POLLS consecutive
+# misses, marked '?' in the list meanwhile.
+GONE_POLLS = 10
 _KIND_DISP = {"pr": "PR", "issue": "issue"}
 # status sort: operator-actionable rows first, then the live pipeline
 # states, then attention, then the settled ones
@@ -180,6 +185,7 @@ class Model:
         self.seen_live: set[tuple[str, str, int]] = set()
         self.cursor = 0
         self.cursor_key: tuple[str, str, int] | None = None
+        self.missing: dict[tuple[str, str, int], int] = {}
         self.quit_flag = False
         self.started = time.monotonic()
 
@@ -247,7 +253,21 @@ class Model:
             except (OSError, ValueError) as exc:
                 updates.append((key, state, None, str(exc)))
             self._read[key] = tag
-        removed = [k for k in self.items if k not in found]
+        removed = []
+        for key in self.items:
+            if key in found:
+                self.missing.pop(key, None)
+                continue
+            misses = self.missing[key] = self.missing.get(key, 0) + 1
+            if misses == 1:
+                logger.debug("%s %s#%s is in no state dir; keeping the row "
+                             "for %d grace polls", key[1], key[0], key[2],
+                             GONE_POLLS)
+            if misses >= GONE_POLLS:
+                logger.info("%s %s#%s found nowhere for %d consecutive "
+                            "polls; dropping the row", key[1], key[0],
+                            key[2], misses)
+                removed.append(key)
         if not updates and not removed and requested == self.requested:
             return
         with self.lock:
@@ -268,6 +288,11 @@ class Model:
                 del self.items[key]
                 self.order.remove(key)
                 self._read.pop(key, None)
+                self.missing.pop(key, None)
+                if key == self.cursor_key:
+                    # a dead key must not teleport the cursor back if
+                    # the item is re-ticketed hours later
+                    self.cursor_key = None
         self.dirty.set()
 
     # ---- UI-thread side ----
@@ -959,6 +984,8 @@ class UILoop:
                        or it.data.get("expected_updated_at"))
             title = it.data.get("title") or ""
             state_disp = _STATE_DISP.get(it.state, it.state)
+            if (it.repo, it.kind, it.number) in m.missing:
+                state_disp += "?"
             if i == m.cursor:
                 rows.append(("cursor",
                              f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<6} "

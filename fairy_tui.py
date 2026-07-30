@@ -249,7 +249,7 @@ class Model:
         removed = [k for k in self.items if k not in found]
         if not updates and not removed and requested == self.requested:
             return
-        with self.lock, self._cursor_anchored():
+        with self.lock:
             self.requested = requested
             for key, state, data, error in updates:
                 item = self.items.get(key)
@@ -428,20 +428,6 @@ class Model:
             if best < order_pos[k] <= pos:
                 best = order_pos[k]
                 self.cursor = i
-
-    @contextmanager
-    def _cursor_anchored(self):
-        """Keep the cursor on its item across a mutation: any status or
-        membership change can reorder the sorted visible list, and a
-        bare index would silently land on a different row. Caller holds
-        ``lock``."""
-        key = self._cursor_key()
-        try:
-            yield
-        finally:
-            if key is not None:
-                self._move_cursor_to(key)
-
 
 class OutputSink:
     """Fan-in for every captured line: the debug-pane ring buffer, an

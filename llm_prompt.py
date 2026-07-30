@@ -137,7 +137,7 @@ CR_PROMPT_CLAIM_VERIFICATION = """- Do not report a bug based only on a quick me
 - Do not state non-local assumptions as fact. Claims about earlier validation, reachability, helper guarantees, or project-wide invariants must be verified from inspected code or tools. Otherwise state them explicitly as unverified and conditional, and do not present them as blocking facts.
 """
 
-R_PROMPT_REVIEWER_ROLE = """##In your Code Reviewer role
+R_PROMPT_CODE_REVIEWER_ROLE = """##In your Code Reviewer role
 - review / check each commit.
 - ignore harmless style nits unless they materially affect maintainability or correctness.
 - include all verified issues in the message, even moderate and minor, and also include any material conditional concerns.
@@ -150,12 +150,16 @@ R_PROMPT_REVIEWER_ROLE = """##In your Code Reviewer role
 - do not claim something has no issue unless you carefully verified that.
 - state the scope and depth of the review: is it exhaustive over every change or deep on a specific change or both.
 
-##In your Design Reviewer role
+"""
+
+R_PROMPT_DESIGN_REVIEWER_ROLE = """##In your Design Reviewer role
 - review design, maintainability, reviewability, simplicity, performance and license compatibility.
 - check for performance/speed improvements for code where it matters, warn if speed/performance regressions are expected, suggest changes to improve performance/speed
 - check for potential code reuse and suggest factorizations and simplifications if there are any.
 - Check if this project is the right place for any fix/workaround, and if not say so clearly.
-""" + CR_PROMPT_WORKAROUND_LANGUAGE + "\n" + CR_PROMPT_CLASSIFICATION_AUDIENCE + """##In your project assistant role.
+""" + CR_PROMPT_WORKAROUND_LANGUAGE + "\n"
+
+R_PROMPT_PROJECT_ASSISTANT_ROLE = """##In your project assistant role.
 - Determine all reasons blocking and slowing down advancing this Pull request. (is there a misunderstanding?, does someone need some information? do people need more time, does the PR need a review?, it is approved and needs to be applied?, ...) With some of these you can help, with others you cannot, but it still makes sense to recognize what is holding a pull request up.
 - Prioritize the issues, and help resolve those you can resolve from the available evidence and tools.
 - If the main blocker is a misunderstanding or missing process information, prefer a reply_no_verdict over a review-style comment.
@@ -704,7 +708,10 @@ def make_developer_prompt(
         "You are an expert software engineer reviewing a pull request.\n\n"
         + prompt_general_rules(ctx)
         + _prompt_identity(ctx, reviewer_username)
-        + R_PROMPT_REVIEWER_ROLE
+        + R_PROMPT_CODE_REVIEWER_ROLE
+        + R_PROMPT_DESIGN_REVIEWER_ROLE
+        + CR_PROMPT_CLASSIFICATION_AUDIENCE
+        + R_PROMPT_PROJECT_ASSISTANT_ROLE
         + _prompt_attached_context_and_tools(
             ctx,
             source_bundle_attached=source_bundle_attached,

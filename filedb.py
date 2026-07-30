@@ -161,6 +161,8 @@ class Claim:
         self.path = path  # the claimed file, owned by this claim holder
 
     def read(self) -> dict:
+        """The claimed ticket. Raises when it is unreadable: the holder
+        owns the file, so a torn one is corruption, not a race."""
         return json.loads(self.path.read_text(encoding="utf-8"))
 
     def write(self, data: dict) -> None:
@@ -198,6 +200,9 @@ class Db:
             (self.root / d).mkdir(parents=True, exist_ok=True)
 
     def path(self, state: str, kind: str, number: TicketId) -> Path:
+        """Where the item's ticket lives while in ``state``; the file
+        need not exist. ValueError for an unknown state, kind or
+        token."""
         if state not in STATES:
             raise ValueError(f"unknown state {state!r}")
         return self.root / state / _name(kind, number)
@@ -280,10 +285,16 @@ class Db:
     # ---- basic operations (all atomic; readers lock-free) ----
 
     def push(self, state: str, kind: str, number: TicketId, data: dict) -> Path:
+        """Write ``data`` as the item's ticket in ``state`` and return
+        its path; a copy of the item in any other state is left where
+        it is. Content equal to what is already there is not written,
+        so the ticket keeps its state_changed_at and its mtime."""
         with self.lock(kind, number):
             return self._write_state(state, kind, number, data)
 
     def get(self, state: str, kind: str, number: TicketId) -> dict | None:
+        """The item's ticket in ``state``; None when it is not there or
+        cannot be read."""
         return self._load(self.path(state, kind, number))
 
     def replace(self, state: str, kind: str, number: TicketId, data: dict,
@@ -365,6 +376,8 @@ class Db:
         return self._write_state("requests", kind, number, data)
 
     def list_state(self, state: str) -> list[tuple[str, TicketId]]:
+        """Every ticket in ``state`` as (kind, token), ordered by kind
+        then forge number."""
         out = []
         for p in (self.root / state).glob("*.json"):
             kind, _, num = p.stem.partition("-")

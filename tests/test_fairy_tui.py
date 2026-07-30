@@ -84,61 +84,61 @@ class PollTests(DbCase):
     """poll() drives rows purely from the state directories."""
 
     def test_rows_are_files_and_state_is_the_directory(self) -> None:
-        self.db.push("queued", "pr", 5, dict(verdict(5), prepared={"pr": {}}))
+        self.db.push("queued", "pr", "5", dict(verdict(5), prepared={"pr": {}}))
         self.model.poll()
-        item = self.model.items[(R1, "pr", 5)]
+        item = self.model.items[(R1, "pr", "5")]
         self.assertEqual(item.state, "queued")
         self.assertEqual(item.data["title"], "from disk")
         self.assertNotIn("prepared", item.data)  # multi-MB, never shown
-        self.db.try_move("queued", "llm", "pr", 5,
+        self.db.try_move("queued", "llm", "pr", "5",
                      mutate=lambda d: d.update(stage="triage"))
         self.model.poll()
         self.assertEqual(item.state, "llm")
         self.assertEqual(item.data["stage"], "triage")
 
     def test_invalid_file_flags_the_row_and_recovers(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
-        path = self.db.path("reviewed", "pr", 5)
+        path = self.db.path("reviewed", "pr", "5")
         path.write_text("{ broken", encoding="utf-8")
         os.utime(path, (200.0, 200.0))
         self.model.poll()
-        item = self.model.items[(R1, "pr", 5)]
+        item = self.model.items[(R1, "pr", "5")]
         self.assertEqual(item.state, fairy_tui.INVALID)
         self.assertTrue(item.error)
         self.assertEqual(item.data["review"]["message"], "m")  # last good parse
-        self.assertIn((R1, 5), self.keys())
-        self.db.push("reviewed", "pr", 5, verdict(5))  # operator fixed it
+        self.assertIn((R1, "5"), self.keys())
+        self.db.push("reviewed", "pr", "5", verdict(5))  # operator fixed it
         self.model.poll()
         self.assertEqual(item.state, "reviewed")
         self.assertEqual(item.error, "")
 
     def test_removed_file_drops_the_row_after_the_grace_polls(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
-        self.db.try_pop("reviewed", "pr", 5)
+        self.db.try_pop("reviewed", "pr", "5")
         for _ in range(fairy_tui.GONE_POLLS - 1):
             self.model.poll()
-        self.assertIn((R1, "pr", 5), self.model.items)  # still shown
+        self.assertIn((R1, "pr", "5"), self.model.items)  # still shown
         with self.assertLogs("fairy_tui", level="INFO"):
             self.model.poll()
-        self.assertNotIn((R1, "pr", 5), self.model.items)
+        self.assertNotIn((R1, "pr", "5"), self.model.items)
 
     def test_a_reappearing_ticket_resets_the_miss_counter(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
-        self.db.try_pop("reviewed", "pr", 5)
+        self.db.try_pop("reviewed", "pr", "5")
         for _ in range(fairy_tui.GONE_POLLS - 1):
             self.model.poll()
-        self.db.push("llm", "pr", 5, verdict(5))
+        self.db.push("llm", "pr", "5", verdict(5))
         self.model.poll()
-        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "llm")
-        self.assertNotIn((R1, "pr", 5), self.model.missing)
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "llm")
+        self.assertNotIn((R1, "pr", "5"), self.model.missing)
 
     def test_a_missing_ticket_is_marked_in_the_list(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
-        self.db.try_pop("reviewed", "pr", 5)
+        self.db.try_pop("reviewed", "pr", "5")
         self.model.poll()
         ui = make_ui(self.model)
         rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
@@ -146,33 +146,33 @@ class PollTests(DbCase):
         self.assertTrue(any("reviewed?" in t for t in rows), rows)
 
     def test_crash_remnant_shows_the_later_state(self) -> None:
-        self.db.push("queued", "pr", 5, verdict(5))
-        self.db.push("posted", "pr", 5, verdict(5))
+        self.db.push("queued", "pr", "5", verdict(5))
+        self.db.push("posted", "pr", "5", verdict(5))
         self.model.poll()
-        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "posted")
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "posted")
 
     def test_relevant_filter_hides_only_unseen_settled_rows(self) -> None:
-        self.db.push("skipped", "pr", 1, verdict(1, "skip"))   # old backlog
-        self.db.push("posted", "pr", 2, verdict(2))            # old backlog
-        self.db.push("ci-blocked", "pr", 3, verdict(3))        # attention
-        self.db.push("reviewed", "pr", 4, verdict(4))
-        self.db.push("error", "pr", 6, {"error": "boom"})
+        self.db.push("skipped", "pr", "1", verdict(1, "skip"))   # old backlog
+        self.db.push("posted", "pr", "2", verdict(2))            # old backlog
+        self.db.push("ci-blocked", "pr", "3", verdict(3))        # attention
+        self.db.push("reviewed", "pr", "4", verdict(4))
+        self.db.push("error", "pr", "6", {"error": "boom"})
         self.model.poll()
-        self.assertEqual(self.keys(), [(R1, 3), (R1, 4), (R1, 6)])
+        self.assertEqual(self.keys(), [(R1, "3"), (R1, "4"), (R1, "6")])
         with self.model.lock:
             self.model.filter_mode = "all"
-        self.assertEqual(self.keys(), [(R1, 1), (R1, 2), (R1, 3), (R1, 4), (R1, 6)])
+        self.assertEqual(self.keys(), [(R1, "1"), (R1, "2"), (R1, "3"), (R1, "4"), (R1, "6")])
 
     def test_a_row_seen_live_stays_listed_after_it_settles(self) -> None:
         # The operator watched this item head into the LLM and wants to
         # inspect why it skipped; without the session memory the row
         # would vanish the moment the verdict lands in skipped/.
-        self.db.push("llm", "pr", 5, verdict(5))
+        self.db.push("llm", "pr", "5", verdict(5))
         self.model.poll()
-        self.db.try_move("llm", "skipped", "pr", 5)
+        self.db.try_move("llm", "skipped", "pr", "5")
         self.model.poll()
-        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "skipped")
-        self.assertIn((R1, 5), self.keys())
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "skipped")
+        self.assertIn((R1, "5"), self.keys())
 
 
 class DirMtimeGateTests(DbCase):
@@ -195,25 +195,25 @@ class DirMtimeGateTests(DbCase):
         return calls
 
     def test_unchanged_aged_dirs_skip_the_rescan(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.age_dirs()
         self.model.poll()  # caches every (old enough) dir listing
         self.assertEqual(self.listing_calls(), [])
-        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "reviewed")
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "reviewed")
 
     def test_renames_are_seen_through_the_gate(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.age_dirs()
         self.model.poll()
-        self.db.try_move("reviewed", "outgoing", "pr", 5)  # bumps both dirs
+        self.db.try_move("reviewed", "outgoing", "pr", "5")  # bumps both dirs
         self.model.poll()
-        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "outgoing")
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "outgoing")
 
     def test_a_recently_modified_dir_is_never_trusted(self) -> None:
         # Coarse file timestamps: a rename in the same clock tick as the
         # scan can leave the dir mtime unchanged, so fresh mtimes must
         # not enter the cache.
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()  # dir mtimes are "now": nothing may be cached
         self.assertIn("reviewed", self.listing_calls())
 
@@ -222,121 +222,121 @@ class ActTests(DbCase):
     """y/s/x/r/f are file operations on the cursor row's db."""
 
     def test_apply_moves_reviewed_to_outgoing(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
         self.model.act("apply")
-        self.assertEqual(self.db.find("pr", 5), "outgoing")
-        self.assertIn((R1, "pr", 5), self.model.acted)
+        self.assertEqual(self.db.find("pr", "5"), "outgoing")
+        self.assertIn((R1, "pr", "5"), self.model.acted)
 
     def test_apply_on_a_skip_verdict_says_nothing_to_post(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5, "skip"))
+        self.db.push("reviewed", "pr", "5", verdict(5, "skip"))
         self.model.poll()
         with self.assertLogs(fairy_tui.logger, level="INFO") as logs:
             self.model.act("apply")
-        self.assertEqual(self.db.find("pr", 5), "reviewed")
+        self.assertEqual(self.db.find("pr", "5"), "reviewed")
         self.assertTrue(any("nothing to post" in ln for ln in logs.output))
 
     def test_apply_refused_while_a_worker_holds_the_item(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
-        claim = self.db.claim("reviewed", "reviewed", "pr", 5)
+        claim = self.db.claim("reviewed", "reviewed", "pr", "5")
         try:
             self.model.act("apply")
         finally:
             claim.abort()
-        self.assertEqual(self.db.find("pr", 5), "reviewed")
+        self.assertEqual(self.db.find("pr", "5"), "reviewed")
 
     def test_rerun_writes_a_request_and_respects_in_flight(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
         self.model.act("rerun")
-        self.assertEqual(self.db.get("requests", "pr", 5), mock.ANY)
-        self.assertEqual(self.db.get("requests", "pr", 5)["action"], "rerun")
-        self.db.try_pop("requests", "pr", 5)
-        self.db.try_move("reviewed", "queued", "pr", 5)
+        self.assertEqual(self.db.get("requests", "pr", "5"), mock.ANY)
+        self.assertEqual(self.db.get("requests", "pr", "5")["action"], "rerun")
+        self.db.try_pop("requests", "pr", "5")
+        self.db.try_move("reviewed", "queued", "pr", "5")
         self.model.poll()
         self.model.act("rerun")
-        self.assertIsNone(self.db.get("requests", "pr", 5))
+        self.assertIsNone(self.db.get("requests", "pr", "5"))
 
     def test_skip_and_cancel_move_with_a_reason(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
-        self.db.push("merge-ready", "pr", 6, {"title": "t"})
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("merge-ready", "pr", "6", {"title": "t"})
         self.model.poll()
         self.model.act("skip")
-        skipped = self.db.get("skipped", "pr", 5)
+        skipped = self.db.get("skipped", "pr", "5")
         self.assertEqual(skipped["reason"], "operator skip")
         self.assertNotIn("snoozed_at", skipped)  # one-shot: no snooze
         self.assertNotIn("llm_at", skipped)  # next scan reconsiders it
         self.model.poll()
         with self.model.lock:
-            self.model._move_cursor_to((R1, "pr", 6))
+            self.model._move_cursor_to((R1, "pr", "6"))
         self.model.act("cancel")
-        self.assertEqual(self.db.get("cancelled", "pr", 6)["reason"],
+        self.assertEqual(self.db.get("cancelled", "pr", "6")["reason"],
                          "operator cancel")
 
     def test_snooze_stamps_the_press_time(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
         self.model.act("snooze")
-        skipped = self.db.get("skipped", "pr", 5)
+        skipped = self.db.get("skipped", "pr", "5")
         self.assertEqual(skipped["reason"], "operator snooze")
         self.assertTrue(skipped["snoozed_at"])  # the snooze starts at the press
 
     def test_x_on_a_running_review_requests_the_cancel(self) -> None:
-        self.db.push("llm", "pr", 5, verdict(5))
+        self.db.push("llm", "pr", "5", verdict(5))
         self.model.poll()
         self.model.act("cancel")
-        t = self.db.get("llm", "pr", 5)
+        t = self.db.get("llm", "pr", "5")
         self.assertTrue(t["cancel"])
         self.assertEqual(t["reason"], "operator cancel")
-        self.assertEqual(self.db.find("pr", 5), "llm")
+        self.assertEqual(self.db.find("pr", "5"), "llm")
 
     def test_act_advances_to_the_next_reviewed_row(self) -> None:
-        self.db.push("reviewed", "pr", 1, verdict(1))
-        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.db.push("reviewed", "pr", "1", verdict(1))
+        self.db.push("reviewed", "pr", "2", verdict(2))
         self.model.poll()
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 1))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "1"))
         self.model.act("apply")
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
 
     def test_applied_row_stays_listed_through_posted(self) -> None:
         # After y the agent moves the file to posted/; the row must not
         # vanish, or the operator cannot verify the post landed.
-        self.db.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
         self.model.act("apply")
-        self.db.try_move("outgoing", "posted", "pr", 5)  # the agent's send pass
+        self.db.try_move("outgoing", "posted", "pr", "5")  # the agent's send pass
         self.model.poll()
-        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "posted")
-        self.assertIn((R1, 5), self.keys())
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "posted")
+        self.assertIn((R1, "5"), self.keys())
 
 
 class MultiSideTests(DbCase):
     """N repos: items are keyed per repo and actions stay side-local."""
 
     def test_same_number_in_two_repos_is_two_rows(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
-        self.db2.push("queued", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db2.push("queued", "pr", "5", verdict(5))
         self.model.poll()
-        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "reviewed")
-        self.assertEqual(self.model.items[(R2, "pr", 5)].state, "queued")
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "reviewed")
+        self.assertEqual(self.model.items[(R2, "pr", "5")].state, "queued")
 
     def test_act_works_on_the_cursor_rows_db(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
-        self.db2.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db2.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
         with self.model.lock:
-            self.model._move_cursor_to((R2, "pr", 5))
+            self.model._move_cursor_to((R2, "pr", "5"))
         self.model.act("apply")
-        self.assertEqual(self.db2.find("pr", 5), "outgoing")
-        self.assertEqual(self.db.find("pr", 5), "reviewed")
+        self.assertEqual(self.db2.find("pr", "5"), "outgoing")
+        self.assertEqual(self.db.find("pr", "5"), "reviewed")
 
     def test_stats_show_what_could_be_applied(self) -> None:
-        self.db.push("reviewed", "pr", 5, dict(verdict(5), action="comment"))
-        self.db.push("reviewed", "pr", 6, dict(verdict(6), action="approve"))
-        self.db.push("reviewed", "pr", 7, verdict(7, "skip"))  # not appliable
+        self.db.push("reviewed", "pr", "5", dict(verdict(5), action="comment"))
+        self.db.push("reviewed", "pr", "6", dict(verdict(6), action="approve"))
+        self.db.push("reviewed", "pr", "7", verdict(7, "skip"))  # not appliable
         self.model.poll()
         ui = make_ui(self.model)
         with self.model.lock:
@@ -344,8 +344,8 @@ class MultiSideTests(DbCase):
         self.assertIn("awaiting you: approve=1, comment=1", text)
 
     def test_stats_tile_one_block_per_repo(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
-        self.db2.push("queued", "issue", 7, verdict(7))
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db2.push("queued", "issue", "7", verdict(7))
         self.model.poll()
         ui = make_ui(self.model)
         with self.model.lock:
@@ -365,8 +365,8 @@ class MultiSideTests(DbCase):
         return fairy_tui._plain(rows).split("\n")
 
     def test_repo_column_only_when_sides_span_repos(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
-        self.db2.push("reviewed", "pr", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db2.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
         rows = self._rows_text(self.model)
         self.assertIn("PR    r  #5", rows[0])   # short name, padded to "r2"
@@ -385,8 +385,8 @@ class MultiSideTests(DbCase):
     def test_visible_stats_export_matches_the_painted_pane(self) -> None:
         # e must export what is on screen: the tiled layout depends on
         # the pane width, which the draggable divider controls.
-        self.db.push("reviewed", "pr", 5, verdict(5))
-        self.db2.push("queued", "pr", 7, verdict(7))
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db2.push("queued", "pr", "7", verdict(7))
         self.model.poll()
         save = tempfile.TemporaryDirectory()
         self.addCleanup(save.cleanup)
@@ -403,11 +403,11 @@ class MultiSideTests(DbCase):
         self.assertEqual(out.read_text().rstrip("\n").split("\n"), expected)
 
     def test_pr_and_issue_kinds_share_one_db(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5))
-        self.db.push("queued", "issue", 5, verdict(5))
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("queued", "issue", "5", verdict(5))
         self.model.poll()
-        self.assertEqual(self.model.items[(R1, "pr", 5)].state, "reviewed")
-        self.assertEqual(self.model.items[(R1, "issue", 5)].state, "queued")
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "reviewed")
+        self.assertEqual(self.model.items[(R1, "issue", "5")].state, "queued")
 
 
 class SideBuildTests(unittest.TestCase):
@@ -452,18 +452,18 @@ class SideBuildTests(unittest.TestCase):
 class SortTests(DbCase):
     """t cycles the visible-list sort; sorts are stable over arrival."""
 
-    def _numbers(self) -> list[int]:
+    def _numbers(self) -> list[filedb.TicketId]:
         return [n for _, n in self.keys()]
 
     def test_status_sort_bubbles_actionable_rows_stably(self) -> None:
         for n, state in ((1, "queued"), (2, "reviewed"),
                          (3, "queued"), (4, "reviewed")):
-            self.db.push(state, "pr", n, verdict(n))
+            self.db.push(state, "pr", str(n), verdict(n))
         self.model.poll()
-        self.assertEqual(self._numbers(), [1, 2, 3, 4])
+        self.assertEqual(self._numbers(), ["1", "2", "3", "4"])
         self.assertEqual(self.model.cycle_sort(), "status")
         # reviewed first; arrival order preserved within equal status.
-        self.assertEqual(self._numbers(), [2, 4, 1, 3])
+        self.assertEqual(self._numbers(), ["2", "4", "1", "3"])
 
     def test_repo_and_number_modes(self) -> None:
         # "z/AA" sorts last by raw owner/repo but its displayed short
@@ -472,51 +472,51 @@ class SortTests(DbCase):
         self.addCleanup(tmp3.cleanup)
         db3 = filedb.Db(Path(tmp3.name))
         self.model.sides.append(("z/AA", db3))
-        self.db.push("queued", "pr", 5, verdict(5))
-        self.db.push("queued", "pr", 9, verdict(9))
-        self.db2.push("queued", "pr", 7, verdict(7))
-        db3.push("queued", "pr", 3, verdict(3))
+        self.db.push("queued", "pr", "5", verdict(5))
+        self.db.push("queued", "pr", "9", verdict(9))
+        self.db2.push("queued", "pr", "7", verdict(7))
+        db3.push("queued", "pr", "3", verdict(3))
         self.model.poll()
         self.model.sort_mode = "repo"
         self.assertEqual(self.keys(),
-                         [("z/AA", 3), (R1, 5), (R1, 9), (R2, 7)])
+                         [("z/AA", "3"), (R1, "5"), (R1, "9"), (R2, "7")])
         self.model.sort_mode = "number"
-        self.assertEqual(self._numbers(), [3, 5, 7, 9])
+        self.assertEqual(self._numbers(), ["3", "5", "7", "9"])
 
     def test_cursor_follows_its_item_when_a_poll_reorders(self) -> None:
         """The cursor IS a key, not an index: a status flip elsewhere
         must never move the selection off its PR."""
-        self.db.push("queued", "pr", 1, verdict(1))
-        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.db.push("queued", "pr", "1", verdict(1))
+        self.db.push("reviewed", "pr", "2", verdict(2))
         self.model.poll()
         self.model.sort_mode = "status"
         with self.model.lock:
-            self.model._move_cursor_to((R1, "pr", 2))
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
-        self.db.try_move("queued", "reviewed", "pr", 1)  # bubbles above #2
+            self.model._move_cursor_to((R1, "pr", "2"))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
+        self.db.try_move("queued", "reviewed", "pr", "1")  # bubbles above #2
         self.model.poll()
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
             self.assertEqual(self.model.cursor, 1)
 
     def test_cursor_stays_through_a_transient_rename_blip(self) -> None:
         """A poll racing a rename can see the item in no state dir for
         a tick; the grace polls keep the row alive and the sticky key
         keeps the cursor on it -- it never visits a neighbour."""
-        self.db.push("reviewed", "pr", 1, verdict(1))
-        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.db.push("reviewed", "pr", "1", verdict(1))
+        self.db.push("reviewed", "pr", "2", verdict(2))
         self.model.poll()
         with self.model.lock:
-            self.model._move_cursor_to((R1, "pr", 2))
-        self.db.try_pop("reviewed", "pr", 2)
+            self.model._move_cursor_to((R1, "pr", "2"))
+        self.db.try_pop("reviewed", "pr", "2")
         self.model.poll()
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
-        self.db.push("llm", "pr", 2, verdict(2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
+        self.db.push("llm", "pr", "2", verdict(2))
         self.model.poll()
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
-            self.assertEqual(self.model.items[(R1, "pr", 2)].state, "llm")
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
+            self.assertEqual(self.model.items[(R1, "pr", "2")].state, "llm")
 
     def test_cycle_wraps_back_to_arrival(self) -> None:
         for expected in ("status", "repo", "number", "arrival"):
@@ -529,8 +529,8 @@ class SortTests(DbCase):
                          set(filedb.STATES) | {fairy_tui.INVALID})
 
     def test_t_key_keeps_the_cursor_on_its_row_and_labels_the_bar(self) -> None:
-        self.db.push("queued", "pr", 1, verdict(1))
-        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.db.push("queued", "pr", "1", verdict(1))
+        self.db.push("reviewed", "pr", "2", verdict(2))
         self.model.poll()
         stream = io.StringIO()
         ui = make_ui(self.model, stream, cols=160)
@@ -538,7 +538,7 @@ class SortTests(DbCase):
         ui.dispatch(Key("t"))            # -> status sort: #2 is first
         self.assertEqual(self.model.sort_mode, "status")
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
         self.assertEqual(self.model.cursor, 0)
         ui.paint()
         self.assertIn("sort:status", stream.getvalue())
@@ -546,7 +546,7 @@ class SortTests(DbCase):
 
 class CopyMessageTests(DbCase):
     def test_clicking_the_message_title_copies_the_raw_message(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5, msg="full **body**"))
+        self.db.push("reviewed", "pr", "5", verdict(5, msg="full **body**"))
         self.model.poll()
         stream = io.StringIO()
         ui = make_ui(self.model, stream)
@@ -560,7 +560,7 @@ class CopyMessageTests(DbCase):
         self.assertEqual(sent, ["full **body**"])
 
     def test_an_error_ticket_copies_the_plain_pane_text(self) -> None:
-        self.db.push("error", "pr", 5, {"title": "t", "error": "boom"})
+        self.db.push("error", "pr", "5", {"title": "t", "error": "boom"})
         self.model.poll()
         ui = make_ui(self.model)
         ui.paint()
@@ -577,7 +577,7 @@ class ErrorAgeColumnTests(DbCase):
     def test_error_rows_show_the_errors_age_in_the_llm_column(self) -> None:
         from datetime import datetime, timedelta, timezone
         stamp = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
-        self.db.push("error", "pr", 5, {"title": "t", "error": "boom",
+        self.db.push("error", "pr", "5", {"title": "t", "error": "boom",
                                         "llm_at": stamp})
         self.model.poll()
         ui = make_ui(self.model)
@@ -655,7 +655,7 @@ class DetailTests(DbCase):
             return fairy_tui._plain(ui.detail_lines(100))
 
     def test_reviewed_ticket_renders_message_and_action(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5, msg="persisted body"))
+        self.db.push("reviewed", "pr", "5", verdict(5, msg="persisted body"))
         self.model.poll()
         text = self._detail_text()
         self.assertIn("persisted body", text)
@@ -663,7 +663,7 @@ class DetailTests(DbCase):
         self.assertIn("comment", text)  # rebuilt decision's action
 
     def test_author_and_branch_are_shown(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5, head_branch="fix-lavc"))
+        self.db.push("reviewed", "pr", "5", verdict(5, head_branch="fix-lavc"))
         self.model.poll()
         text = self._detail_text()
         self.assertIn("author a", text)
@@ -672,7 +672,7 @@ class DetailTests(DbCase):
     def test_error_ticket_shows_reason_and_its_age(self) -> None:
         """An error without a date reads as current; the operator must
         see whether it predates their retry (production: #23903)."""
-        self.db.push("error", "pr", 5, {
+        self.db.push("error", "pr", "5", {
             "title": "t", "error": "LLM exploded",
             "llm_at": "2026-07-27T04:15:00+00:00"})
         self.model.poll()
@@ -681,7 +681,7 @@ class DetailTests(DbCase):
         self.assertIn("2026-07-27", text)
 
     def test_gate_ticket_shows_attention_context(self) -> None:
-        self.db.push("ci-blocked", "pr", 5, {
+        self.db.push("ci-blocked", "pr", "5", {
             "title": "t", "reason": "ci red",
             "cancelled_ci_contexts": ["job1"], "blocked_ci_contexts": []})
         self.model.poll()
@@ -692,21 +692,21 @@ class DetailTests(DbCase):
     def test_failed_reviewers_are_shown(self) -> None:
         """Production #23901: the GPT reviewer died (provider content
         flag), the verdict silently came from GLM alone."""
-        self.db.push("reviewed", "pr", 5, verdict(
+        self.db.push("reviewed", "pr", "5", verdict(
             5, failed_reviewers=["codex:gpt-5.6-sol: content flagged"]))
         self.model.poll()
         self.assertIn("reviewer failed: codex:gpt-5.6-sol: content flagged",
                       self._detail_text())
 
     def test_send_blocked_note_is_shown(self) -> None:
-        self.db.push("reviewed", "pr", 5,
+        self.db.push("reviewed", "pr", "5",
                      verdict(5, send_blocked="PR updated_at changed"))
         self.model.poll()
         self.assertIn("send blocked: PR updated_at changed",
                       self._detail_text())
 
     def test_invalid_file_shows_reason(self) -> None:
-        self.db.path("reviewed", "pr", 5).write_text("{ broken",
+        self.db.path("reviewed", "pr", "5").write_text("{ broken",
                                                      encoding="utf-8")
         self.model.poll()
         self.assertIn("file invalid:", self._detail_text())
@@ -714,7 +714,7 @@ class DetailTests(DbCase):
 
 class EditReviewTests(DbCase):
     def test_o_key_round_trips_the_message_through_the_editor(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5, msg="original"))
+        self.db.push("reviewed", "pr", "5", verdict(5, msg="original"))
         self.model.poll()
 
         def fake_call(cmd, **kw):
@@ -727,11 +727,11 @@ class EditReviewTests(DbCase):
                                   side_effect=fake_call) as call:
             ui.edit_review()
         self.assertEqual(call.call_args.args[0][0], "myeditor")
-        self.assertEqual(self.db.get("reviewed", "pr", 5)["review"]["message"],
+        self.assertEqual(self.db.get("reviewed", "pr", "5")["review"]["message"],
                          "edited body")
 
     def test_edit_refused_while_a_worker_holds_the_item(self) -> None:
-        self.db.push("reviewed", "pr", 5, verdict(5, msg="original"))
+        self.db.push("reviewed", "pr", "5", verdict(5, msg="original"))
         self.model.poll()
 
         def fake_call(cmd, **kw):
@@ -739,7 +739,7 @@ class EditReviewTests(DbCase):
             return 0
 
         ui = make_ui(self.model)
-        claim = self.db.claim("reviewed", "reviewed", "pr", 5)
+        claim = self.db.claim("reviewed", "reviewed", "pr", "5")
         try:
             with mock.patch.dict(os.environ, {"EDITOR": "e"}), \
                     mock.patch.object(fairy_tui.subprocess, "call",
@@ -747,34 +747,34 @@ class EditReviewTests(DbCase):
                 ui.edit_review()
         finally:
             claim.abort()
-        self.assertEqual(self.db.get("reviewed", "pr", 5)["review"]["message"],
+        self.assertEqual(self.db.get("reviewed", "pr", "5")["review"]["message"],
                          "original")
 
 
 class FilterToggleTests(DbCase):
     def test_a_cycles_the_lenses_and_each_shows_its_states(self) -> None:
-        fixtures = (("reviewed", 1), ("merge-ready", 2), ("ci-blocked", 3),
-                    ("awaiting-approver", 4), ("posted", 5), ("queued", 6),
-                    ("llm", 7), ("outgoing", 8))
+        fixtures = (("reviewed", "1"), ("merge-ready", "2"), ("ci-blocked", "3"),
+                    ("awaiting-approver", "4"), ("posted", "5"), ("queued", "6"),
+                    ("llm", "7"), ("outgoing", "8"))
         for state, n in fixtures:
-            self.db.push(state, "pr", n, verdict(n))
+            self.db.push(state, "pr", str(n), verdict(n))
         self.model.poll()
         expect = {
-            "relevant": [1, 2, 3, 4, 6, 7, 8],  # settled posted/ hidden
-            "review": [1, 6, 7, 8],           # pipeline around reviewed/
-            "merge": [2, 4],                  # merge-ready and merge-ready*
-            "ci": [3],
-            "actionable": [1, 2, 3, 4],
-            "all": [1, 2, 3, 4, 5, 6, 7, 8],
+            "relevant": ["1", "2", "3", "4", "6", "7", "8"],  # settled posted/ hidden
+            "review": ["1", "6", "7", "8"],           # pipeline around reviewed/
+            "merge": ["2", "4"],                  # merge-ready and merge-ready*
+            "ci": ["3"],
+            "actionable": ["1", "2", "3", "4"],
+            "all": ["1", "2", "3", "4", "5", "6", "7", "8"],
         }
         for mode in fairy_tui.FILTER_MODES[1:] + ("relevant",):
             self.assertEqual(self.model.cycle_filter(), mode)
             self.assertEqual([n for _, n in self.keys()], expect[mode], mode)
 
     def test_cursor_follows_selection_across_the_a_lens_cycle(self) -> None:
-        self.db.push("skipped", "pr", 1, verdict(1, "skip"))
-        self.db.push("reviewed", "pr", 2, verdict(2))
-        self.db.push("skipped", "pr", 3, verdict(3, "skip"))
+        self.db.push("skipped", "pr", "1", verdict(1, "skip"))
+        self.db.push("reviewed", "pr", "2", verdict(2))
+        self.db.push("skipped", "pr", "3", verdict(3, "skip"))
         self.model.poll()
         self.model.filter_mode = "all"
         ui = make_ui(self.model)
@@ -783,20 +783,20 @@ class FilterToggleTests(DbCase):
             self.model.select_index(1)   # on #2 in the "all" view
         ui.dispatch(Key("a"))            # all -> relevant: only #2 visible
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
         self.assertEqual(self.model.cursor, 0)
         ui.dispatch(Key("a"))            # relevant -> review lens: #2 remains
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
 
     def test_a_lens_hiding_the_key_hides_the_cursor_until_it_returns(self) -> None:
         """The invariant: the highlight only ever sits on the key's own
         row. A lens that hides the key shows NO cursor, actions refuse,
         and the key survives to be highlighted again -- never a
         neighbour."""
-        self.db.push("skipped", "pr", 1, verdict(1, "skip"))
-        self.db.push("reviewed", "pr", 2, verdict(2))
-        self.db.push("skipped", "pr", 3, verdict(3, "skip"))
+        self.db.push("skipped", "pr", "1", verdict(1, "skip"))
+        self.db.push("reviewed", "pr", "2", verdict(2))
+        self.db.push("skipped", "pr", "3", verdict(3, "skip"))
         self.model.poll()
         self.model.filter_mode = "all"
         ui = make_ui(self.model)
@@ -807,15 +807,15 @@ class FilterToggleTests(DbCase):
             self.assertIsNone(self.model._cursor_key())
             self.assertFalse(self.model.cursor_shown)
         self.model.act("apply")
-        self.assertEqual(self.db.find("pr", 2), "reviewed")
+        self.assertEqual(self.db.find("pr", "2"), "reviewed")
         for _ in range(len(fairy_tui.FILTER_MODES) - 1):
             ui.dispatch(Key("a"))
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 3))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "3"))
 
     def test_arrow_summons_a_hidden_cursor_at_its_old_spot(self) -> None:
-        self.db.push("skipped", "pr", 1, verdict(1, "skip"))
-        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.db.push("skipped", "pr", "1", verdict(1, "skip"))
+        self.db.push("reviewed", "pr", "2", verdict(2))
         self.model.poll()
         self.model.filter_mode = "all"
         ui = make_ui(self.model)
@@ -824,7 +824,7 @@ class FilterToggleTests(DbCase):
         ui.dispatch(Key("a"))
         ui.dispatch(NamedKey("KEY_DOWN"))
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
 
 
 class FsWatchTests(DbCase):
@@ -891,7 +891,7 @@ class CountAndSearchTests(DbCase):
     def setUp(self) -> None:
         super().setUp()
         for n, title in ((1, "hevc sao fix"), (2, "rtp muxer"), (3, "lut parse")):
-            self.db.push("reviewed", "pr", n, verdict(n, msg=title, title=title))
+            self.db.push("reviewed", "pr", str(n), verdict(n, msg=title, title=title))
         self.model.poll()
         self.ui = make_ui(self.model)
 
@@ -914,7 +914,7 @@ class CountAndSearchTests(DbCase):
         self.ui.dispatch(Key("0"))
         self.ui.dispatch(NamedKey("KEY_BACKSPACE"))
         self.ui.dispatch(Key("r"))  # count 1: plain rerun of the row
-        self.assertEqual([n for k, n in self.db.list_state("requests")], [1])
+        self.assertEqual([n for k, n in self.db.list_state("requests")], ["1"])
 
     def test_count_scrolls_by_n_lines(self) -> None:
         self.ui.focus = "tr"
@@ -925,7 +925,7 @@ class CountAndSearchTests(DbCase):
 
     def test_search_over_an_empty_list_reports_no_match(self) -> None:
         for n in (1, 2, 3):
-            self.db.try_pop("reviewed", "pr", n)
+            self.db.try_pop("reviewed", "pr", str(n))
         self.model.poll()
         for ch in "/11":
             self.ui.dispatch(Key(ch))
@@ -938,7 +938,7 @@ class CountAndSearchTests(DbCase):
             self.ui.dispatch(Key(ch))
         self.ui.dispatch(NamedKey("KEY_ENTER"))
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 3))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "3"))
 
     def test_search_jumps_and_n_repeats(self) -> None:
         self.model.cursor = 0
@@ -946,10 +946,10 @@ class CountAndSearchTests(DbCase):
             self.ui.dispatch(Key(ch))
         self.ui.dispatch(NamedKey("KEY_ENTER"))
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 3))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "3"))
         self.ui.dispatch(Key("n"))  # wraps: only one match, stays
         with self.model.lock:
-            self.assertEqual(self.model._cursor_key(), (R1, "pr", 3))
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "3"))
 
 
 class LogTailTests(unittest.TestCase):
@@ -1026,9 +1026,9 @@ class AgeColumnTests(DbCase):
     def test_rows_show_activity_age_and_approval_age(self) -> None:
         from datetime import datetime, timedelta, timezone
         now = datetime.now(timezone.utc)
-        self.db.push("reviewed", "pr", 1, verdict(
+        self.db.push("reviewed", "pr", "1", verdict(
             1, last_activity_iso=(now - timedelta(hours=5)).isoformat()))
-        self.db.push("merge-ready", "pr", 2, {
+        self.db.push("merge-ready", "pr", "2", {
             "title": "t", "approved_at": (now - timedelta(days=12)).isoformat(),
             "expected_updated_at": (now - timedelta(days=3)).isoformat()})
         self.model.poll()
@@ -1046,7 +1046,7 @@ class StatsWrapTests(DbCase):
         states = ("ci-blocked", "merge-ready", "queued",
                   "posted", "skipped")
         for n, state in enumerate(states, 1):
-            self.db.push(state, "pr", n, verdict(n))
+            self.db.push(state, "pr", str(n), verdict(n))
         self.model.poll()
         with self.model.lock:
             self.model.filter_mode = "all"
@@ -1060,9 +1060,9 @@ class StatsWrapTests(DbCase):
             self.assertLessEqual(len(t.rstrip()), 24, t)
 
     def test_awaiting_approver_folds_into_merge_ready(self) -> None:
-        self.db.push("merge-ready", "pr", 1, verdict(1))
-        self.db.push("merge-ready", "pr", 2, verdict(2))
-        self.db.push("awaiting-approver", "pr", 3, verdict(3))
+        self.db.push("merge-ready", "pr", "1", verdict(1))
+        self.db.push("merge-ready", "pr", "2", verdict(2))
+        self.db.push("awaiting-approver", "pr", "3", verdict(3))
         self.model.poll()
         ui = make_ui(self.model)
         joined = "\n".join("".join(t for _, t in ln)
@@ -1078,7 +1078,7 @@ class StatsWrapTests(DbCase):
 
 class PaintSmokeTests(DbCase):
     def test_paint_one_frame_headless(self) -> None:
-        self.db.push("reviewed", "pr", 1,
+        self.db.push("reviewed", "pr", "1",
                      verdict(1, msg="# Head\n**bold** and `code`",
                              title="hello title"))
         self.model.poll()
@@ -1099,7 +1099,7 @@ class PaintSmokeTests(DbCase):
                              set(fairy_tui._styles(term)))
 
     def test_paint_strips_hostile_escape_sequences(self) -> None:
-        self.db.push("reviewed", "pr", 2,
+        self.db.push("reviewed", "pr", "2",
                      verdict(2, msg="body\x1b]0;pwned\x07text",
                              title="evil\x1b]0;pwned\x07title"))
         self.model.poll()
@@ -1125,7 +1125,7 @@ class PaintSmokeTests(DbCase):
     def test_label_explanations_wrap_instead_of_clipping(self) -> None:
         reason = ("the reproduction requires a sample clip that the reporter "
                   "has not attached and cannot be synthesized locally")
-        self.db.push("reviewed", "pr", 1, verdict(
+        self.db.push("reviewed", "pr", "1", verdict(
             1, msg="msg", labels=[{"label": "needs sample", "op": "add",
                                    "reason": reason, "post": True}]))
         self.model.poll()
@@ -1198,17 +1198,17 @@ class RequestedBadgeTests(DbCase):
     def test_a_pending_rerun_request_shows_on_the_row(self) -> None:
         """Production #20893: r created the request but the row was
         pixel-identical until the agent's next full scan."""
-        self.db.push("skipped", "pr", 5, verdict(5, "skip"))
+        self.db.push("skipped", "pr", "5", verdict(5, "skip"))
         self.model.poll()
         with self.model.lock:
             self.model.filter_mode = "all"
         ui = make_ui(self.model)
-        self.db.request("pr", 5, {"action": "rerun"})
+        self.db.request("pr", "5", {"action": "rerun"})
         self.model.poll()
         rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
                 for r in ui.list_rows()]
         self.assertTrue(any("requested" in t for t in rows), rows)
-        self.db.try_pop("requests", "pr", 5)
+        self.db.try_pop("requests", "pr", "5")
         self.model.poll()
         rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
                 for r in ui.list_rows()]

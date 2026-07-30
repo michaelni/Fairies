@@ -85,11 +85,10 @@ _LOCKS = "locks"
 _TOKEN_RE = re.compile(r"(\d+)(?:s\d+)?(?:r\d+)?")
 
 
-def _token(number) -> str:
-    token = str(number)
-    if not _TOKEN_RE.fullmatch(token):
+def _token(number: str) -> str:
+    if not _TOKEN_RE.fullmatch(number):
         raise ValueError(f"invalid ticket token {number!r}")
-    return token
+    return number
 
 
 def forge_number(number) -> int:
@@ -97,9 +96,9 @@ def forge_number(number) -> int:
     return int(_TOKEN_RE.fullmatch(_token(number)).group(1))
 
 
-def is_base(number) -> bool:
+def is_base(number: str) -> bool:
     """True for the plain per-item ticket (no sample/review suffix)."""
-    return str(number).isdigit()
+    return number.isdigit()
 
 
 def _name(kind: str, number) -> str:
@@ -329,16 +328,13 @@ class Db:
         operator (the write itself is atomic)."""
         return self._write_state("requests", kind, number, data)
 
-    def list_state(self, state: str) -> list[tuple[str, int]]:
+    def list_state(self, state: str) -> list[tuple[str, str]]:
         out = []
         for p in (self.root / state).glob("*.json"):
             kind, _, num = p.stem.partition("-")
             if kind in KINDS and _TOKEN_RE.fullmatch(num):
-                # plain numbers stay ints (callers sort and compare
-                # them); suffixed tokens pass through as strings
-                out.append((kind, int(num) if num.isdigit() else num))
-        return sorted(out, key=lambda kn: (kn[0], forge_number(kn[1]),
-                                           str(kn[1])))
+                out.append((kind, num))
+        return sorted(out, key=lambda kn: (kn[0], forge_number(kn[1]), kn[1]))
 
     def find(self, kind: str, number: int) -> str | None:
         """The item's state; with crash remnants, the latest one."""
@@ -389,7 +385,7 @@ class Db:
         return False
 
     def reap(self, state: str = "llm",
-             to_state: str | None = "queued") -> list[tuple[str, int]]:
+             to_state: str | None = "queued") -> list[tuple[str, str]]:
         """Recover items whose claim holder died: acquirable lock + file
         still in ``state``. A remnant whose item also exists in a later
         state is deleted instead of re-queued; ``to_state=None`` only
@@ -425,7 +421,7 @@ class Db:
         return recovered
 
     def prune(self, state: str, before: datetime,
-              keep: set[tuple[str, int]] = frozenset(),
+              keep: set[tuple[str, str]] = frozenset(),
               key=None, kinds=None) -> int:
         """Delete ``state`` items whose last transition predates
         ``before``, except those whose ``key((kind, number))`` (default:

@@ -151,7 +151,8 @@ def _route(db: filedb.Db, kind: str, number: int, state: str, data: dict,
 
 
 def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
-              now: datetime, cache, self_login, forced: set[int]) -> set[tuple[str, int]]:
+              now: datetime, cache, self_login,
+              forced: set[str]) -> set[tuple[str, int]]:
     """One gate pass over the side's open items; returns the open set."""
     if kind == "pr":
         fetch_one, list_open, forced_ns = fairy.get_pr, fairy.list_open_prs, \
@@ -174,7 +175,7 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
     # a samples-only request force-prepares the base as the payload
     # template but must not queue a base evaluation nobody asked for
     template_only = {b for b in evals
-                     if b not in forced and b not in forced_ns}
+                     if str(b) not in forced and b not in forced_ns}
     if ns.forced_only:  # --forced-only: no open listing, just the named items
         items = []
         missing = sorted(forced_ns | forced_base)
@@ -193,8 +194,8 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
             # an error ticket marks the request consumed and puts the
             # failure on screen; an existing ticket already does both
             # (find() reporting the request file itself counts as none)
-            if db.find(kind, n) in (None, "requests"):
-                db.push("error", kind, n,
+            if db.find(kind, str(n)) in (None, "requests"):
+                db.push("error", kind, str(n),
                         {"error": f"forced fetch failed: {exc}"})
     # Request-forced numbers bypass the gates through the same ns set
     # the gates read; the addition is undone after the pass so a
@@ -225,10 +226,11 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
     for item in sorted(items, key=lambda i: (int(i["number"]) not in forced_ns,
                                              int(i["number"]))):
         number = int(item["number"])
-        prior = db.find(kind, number)
+        token = str(number)
+        prior = db.find(kind, token)
         if prior in IN_FLIGHT:
             continue
-        prior_data = db.get(prior, kind, number) if prior else None
+        prior_data = db.get(prior, kind, token) if prior else None
         if prior == "reviewed" and number not in forced_ns and prior_data:
             # Any guard-matching verdict stands -- including skips that
             # carry label changes: they sit in reviewed/ awaiting the
@@ -296,7 +298,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 # line and ERROR_RETRY_H pacing; the archive and a
                 # standing verdict outrank it
                 if prior not in ("posted", "cancelled", "reviewed"):
-                    _route(db, kind, number, "error", {
+                    _route(db, kind, token, "error", {
                         "title": str(item.get("title") or ""),
                         "html_url": str(item.get("html_url") or ""),
                         "error": f"prepare failed: {exc}",
@@ -316,7 +318,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 if prior in ("posted", "cancelled", "reviewed"):
                     continue  # never clobber archive or a standing verdict
                 ticket["error"] = prepared.reason
-            _route(db, kind, number, state, ticket, prior)
+            _route(db, kind, token, state, ticket, prior)
             for token in evals.get(number, ()):
                 # a requested evaluation of a gate-skipped item cannot
                 # be built (no payload); the error ticket consumes the
@@ -337,7 +339,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             if last_iso == prior_data.get("last_activity_iso") \
                     and (kind != "pr" or prior_data.get("expected_head_ref")
                          == fairy.get_pr_head_ref(item)):
-                db.try_move("skipped", "skipped", kind, number,
+                db.try_move("skipped", "skipped", kind, token,
                             mutate=lambda d: d.update(
                                 expected_updated_at=item.get("updated_at")))
                 continue
@@ -361,7 +363,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             "prepared": fairy.prepared_to_dict(prepared),
         }
         if number not in template_only:
-            _route(db, kind, number, "queued", ticket, prior)
+            _route(db, kind, token, "queued", ticket, prior)
         for token in evals.get(number, ()):
             # one prepare, one payload copy per requested evaluation;
             # samples never re-enter via gates/backoff (scan keys on
@@ -373,16 +375,16 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                     backoff_h, queued, limit or "inf")
 
 
-def consume_requests(db: filedb.Db) -> dict[str, set[int]]:
+def consume_requests(db: filedb.Db) -> dict[str, set[str]]:
     """Requests force a fresh gate-bypassing ticket; they are deleted
     only after the ticket exists (at-least-once)."""
-    forced: dict[str, set[int]] = {"pr": set(), "issue": set()}
+    forced: dict[str, set[str]] = {"pr": set(), "issue": set()}
     for kind, number in db.list_state("requests"):
         forced[kind].add(number)
     return forced
 
 
-def finish_requests(db: filedb.Db, forced: dict[str, set[int]],
+def finish_requests(db: filedb.Db, forced: dict[str, set[str]],
                     kinds: set[str]) -> None:
     """Drop the requests this pass consumed, but only once some ticket
     exists for the item (at-least-once: a crashed pass retries). A

@@ -181,12 +181,12 @@ class IssueWorksetRetentionDaysTests(IssueScanCase):
     """On an issue-only agent the issue side owns the prune horizon."""
 
     def settled_survives(self, flags: str, age_days: float) -> bool:
-        self.db.push("posted", "issue", 99, {"title": "long closed"})
-        data = self.db.get("posted", "issue", 99)
+        self.db.push("posted", "issue", "99", {"title": "long closed"})
+        data = self.db.get("posted", "issue", "99")
         data["state_changed_at"] = (NOW - timedelta(days=age_days)).isoformat()
-        self.db._write(self.db.path("posted", "issue", 99), data)
+        self.db._write(self.db.path("posted", "issue", "99"), data)
         self.scan(issue_ns(flags), [])
-        return self.db.get("posted", "issue", 99) is not None
+        return self.db.get("posted", "issue", "99") is not None
 
     def test_a_ticket_older_than_the_retention_is_pruned(self) -> None:
         self.assertFalse(self.settled_survives(

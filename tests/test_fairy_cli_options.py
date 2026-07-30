@@ -197,16 +197,16 @@ class WipPrefixTests(ScanCase):
 
     def test_a_custom_prefix_skips_the_pr_before_any_fetch(self) -> None:
         self.scan(pr_ns("--wip-prefix SPIKE:"), [open_pr(1, "SPIKE: try this")])
-        self.assertEqual(self.db.get("skipped", "pr", 1)["reason"],
+        self.assertEqual(self.db.get("skipped", "pr", "1")["reason"],
                          "marked WIP/draft")
 
     def test_an_unknown_prefix_is_not_a_gate(self) -> None:
         self.scan(pr_ns(), [open_pr(1, "SPIKE: try this")])
-        self.assertIn(PAST_GATES, self.db.get("error", "pr", 1)["error"])
+        self.assertIn(PAST_GATES, self.db.get("error", "pr", "1")["error"])
 
     def test_the_builtin_prefixes_survive_a_custom_one(self) -> None:
         self.scan(pr_ns("--wip-prefix SPIKE:"), [open_pr(1, "WIP: try this")])
-        self.assertEqual(self.db.get("skipped", "pr", 1)["reason"],
+        self.assertEqual(self.db.get("skipped", "pr", "1")["reason"],
                          "marked WIP/draft")
 
 
@@ -233,13 +233,13 @@ class WorksetRetentionDaysTests(ScanCase):
     settled tickets of items that left the open listing."""
 
     def settled_survives(self, flags: str, age_days: float) -> bool:
-        self.db.push("posted", "pr", 99, {"title": "long merged"})
-        data = self.db.get("posted", "pr", 99)
+        self.db.push("posted", "pr", "99", {"title": "long merged"})
+        data = self.db.get("posted", "pr", "99")
         data["state_changed_at"] = (
             NOW - timedelta(days=age_days)).isoformat()
-        self.db._write(self.db.path("posted", "pr", 99), data)
+        self.db._write(self.db.path("posted", "pr", "99"), data)
         self.scan(pr_ns(flags), [])
-        return self.db.get("posted", "pr", 99) is not None
+        return self.db.get("posted", "pr", "99") is not None
 
     def test_a_ticket_older_than_the_retention_is_pruned(self) -> None:
         self.assertFalse(self.settled_survives(

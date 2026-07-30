@@ -121,7 +121,7 @@ STATE_W = max(len(_STATE_DISP.get(s, s)) for s in _SORT_STATES)
 class Item:
     repo: str            # side repo label, "owner/repo"
     kind: str            # filedb kind: "pr" | "issue"
-    number: int | str  # ticket token; see filedb
+    number: str
     state: str           # filedb directory name, or "invalid"
     data: dict = field(default_factory=dict)  # last good ticket content
     error: str = ""      # why the current file fails to parse
@@ -153,7 +153,7 @@ _SORT_KEYS = {
     # rows would look unsorted whenever owners differ.
     "repo": lambda it: (_repo_short(it.repo).casefold(), it.repo, it.kind),
     # tokens sort with their base item, samples/reviews after it
-    "number": lambda it: (filedb.forge_number(it.number), str(it.number)),
+    "number": lambda it: (filedb.forge_number(it.number), it.number),
 }
 
 
@@ -174,7 +174,7 @@ class Model:
         self._read: dict[tuple[str, str, int], tuple[Path, float]] = {}
         # (repo, state) -> (dir mtime, listing): an unchanged state dir
         # is not re-listed and its files are not re-stat'ed.
-        self._dirs: dict[tuple[str, str], tuple[float, list[tuple[str, int]]]] = {}
+        self._dirs: dict[tuple[str, str], tuple[float, list[tuple[str, str]]]] = {}
         self.filter_mode = FILTER_MODES[0]
         self.sort_mode = SORT_MODES[0]
         # Rows the operator acted on (y/s/x) and rows seen in a live

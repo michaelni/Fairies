@@ -269,8 +269,7 @@ class ActTests(DbCase):
         self.assertNotIn("llm_at", skipped)  # next scan reconsiders it
         self.model.poll()
         with self.model.lock:
-            keys = [(it.repo, it.kind, it.number) for it in self.model.visible()]
-            self.model.cursor = keys.index((R1, "pr", 6))
+            self.model._move_cursor_to((R1, "pr", 6))
         self.model.act("cancel")
         self.assertEqual(self.db.get("cancelled", "pr", 6)["reason"],
                          "operator cancel")
@@ -329,8 +328,7 @@ class MultiSideTests(DbCase):
         self.db2.push("reviewed", "pr", 5, verdict(5))
         self.model.poll()
         with self.model.lock:
-            keys = [(it.repo, it.kind, it.number) for it in self.model.visible()]
-            self.model.cursor = keys.index((R2, "pr", 5))
+            self.model._move_cursor_to((R2, "pr", 5))
         self.model.act("apply")
         self.assertEqual(self.db2.find("pr", 5), "outgoing")
         self.assertEqual(self.db.find("pr", 5), "reviewed")
@@ -781,19 +779,50 @@ class FilterToggleTests(DbCase):
         self.model.filter_mode = "all"
         ui = make_ui(self.model)
 
-        self.model.cursor = 1            # on #2 in the "all" view
+        with self.model.lock:
+            self.model.select_index(1)   # on #2 in the "all" view
         ui.dispatch(Key("a"))            # all -> relevant: only #2 visible
-        self.assertEqual(self.model.cursor, 0)
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
+        self.assertEqual(self.model.cursor, 0)
         ui.dispatch(Key("a"))            # relevant -> review lens: #2 remains
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
 
+    def test_a_lens_hiding_the_key_hides_the_cursor_until_it_returns(self) -> None:
+        """The invariant: the highlight only ever sits on the key's own
+        row. A lens that hides the key shows NO cursor, actions refuse,
+        and the key survives to be highlighted again -- never a
+        neighbour."""
+        self.db.push("skipped", "pr", 1, verdict(1, "skip"))
+        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.db.push("skipped", "pr", 3, verdict(3, "skip"))
+        self.model.poll()
+        self.model.filter_mode = "all"
+        ui = make_ui(self.model)
         with self.model.lock:
-            self.model.filter_mode = "all"
-        self.model.cursor = 2            # on filtered-out #3
-        ui.dispatch(Key("a"))            # nearest preceding visible: #2
+            self.model.select_index(2)
+        ui.dispatch(Key("a"))
+        with self.model.lock:
+            self.assertIsNone(self.model._cursor_key())
+            self.assertFalse(self.model.cursor_shown)
+        self.model.act("apply")
+        self.assertEqual(self.db.find("pr", 2), "reviewed")
+        for _ in range(len(fairy_tui.FILTER_MODES) - 1):
+            ui.dispatch(Key("a"))
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", 3))
+
+    def test_arrow_summons_a_hidden_cursor_at_its_old_spot(self) -> None:
+        self.db.push("skipped", "pr", 1, verdict(1, "skip"))
+        self.db.push("reviewed", "pr", 2, verdict(2))
+        self.model.poll()
+        self.model.filter_mode = "all"
+        ui = make_ui(self.model)
+        with self.model.lock:
+            self.model.select_index(0)
+        ui.dispatch(Key("a"))
+        ui.dispatch(NamedKey("KEY_DOWN"))
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", 2))
 

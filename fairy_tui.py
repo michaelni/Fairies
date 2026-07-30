@@ -185,6 +185,7 @@ class Model:
         self.seen_live: set[tuple[str, str, int]] = set()
         self.cursor = 0
         self.cursor_key: tuple[str, str, int] | None = None
+        self.cursor_shown = False
         self.missing: dict[tuple[str, str, int], int] = {}
         self.quit_flag = False
         self.started = time.monotonic()
@@ -334,6 +335,11 @@ class Model:
             key = self._cursor_key()
             item = self.items.get(key) if key else None
             if item is None:
+                if self.cursor_key is not None:
+                    logger.info("%s %s#%s is outside this lens; no action "
+                                "taken -- move the cursor to select a row",
+                                self.cursor_key[1], self.cursor_key[0],
+                                self.cursor_key[2])
                 return
             db = self.db(item)
             label = f"{_KIND_DISP[item.kind]} {item.repo}#{item.number}"
@@ -433,32 +439,25 @@ class Model:
                 or key in self.acted or key in self.seen_live)
 
     def _sync_cursor(self) -> list[Item]:
-        """Derive the highlight index from the sticky ``cursor_key`` and
-        return the visible list; caller holds ``lock``. The KEY is the
-        cursor -- the operator's chosen PR/issue; the index is only
-        where it paints this frame. A key the lens hides, or one gone
-        for a tick while its rename is mid-flight, highlights the
-        nearest preceding visible row WITHOUT giving up the key, so
-        the cursor is back on its item the moment it reappears."""
+        """The KEY is the cursor; the index is only where it paints
+        this frame. Invariant: the highlight is ONLY ever drawn on the
+        key's own row -- when the lens does not show the key, no row is
+        highlighted and actions refuse, never landing on a ticket the
+        operator did not pick. ``cursor`` keeps the last shown index
+        purely as the landing spot for the next arrow press. Without
+        any key (startup, or the key's item was dropped) the first
+        listed ticket is adopted. Caller holds ``lock``; returns the
+        visible list."""
         vis = self.visible()
         if not vis:
-            self.cursor = 0
+            self.cursor_shown = False
             return vis
         keys = [(it.repo, it.kind, it.number) for it in vis]
-        if self.cursor_key in keys:
+        if self.cursor_key is None:
+            self.cursor_key = keys[0]
+        self.cursor_shown = self.cursor_key in keys
+        if self.cursor_shown:
             self.cursor = keys.index(self.cursor_key)
-            return vis
-        order_pos = {k: i for i, k in enumerate(self.order)}
-        pos = order_pos.get(self.cursor_key)
-        if pos is None:
-            self.cursor = max(0, min(self.cursor, len(vis) - 1))
-            return vis
-        self.cursor = 0
-        best = -1
-        for i, k in enumerate(keys):
-            if best < order_pos.get(k, -1) <= pos:
-                best = order_pos[k]
-                self.cursor = i
         return vis
 
     def select_index(self, i: int) -> None:
@@ -467,22 +466,21 @@ class Model:
         vis = self.visible()
         if not vis:
             self.cursor, self.cursor_key = 0, None
+            self.cursor_shown = False
             return
         self.cursor = max(0, min(i, len(vis) - 1))
         it = vis[self.cursor]
         self.cursor_key = (it.repo, it.kind, it.number)
+        self.cursor_shown = True
 
     def _cursor_key(self) -> tuple[str, str, int] | None:
         vis = self._sync_cursor()
-        if not vis:
+        if not self.cursor_shown:
             return None
         it = vis[self.cursor]
         return (it.repo, it.kind, it.number)
 
     def _move_cursor_to(self, key: tuple[str, str, int]) -> None:
-        """Cursor onto ``key``; if the filter hides it, the nearest
-        preceding visible row is highlighted while ``key`` stays the
-        cursor."""
         self.cursor_key = key
         self._sync_cursor()
 
@@ -986,7 +984,7 @@ class UILoop:
             state_disp = _STATE_DISP.get(it.state, it.state)
             if (it.repo, it.kind, it.number) in m.missing:
                 state_disp += "?"
-            if i == m.cursor:
+            if i == m.cursor and m.cursor_shown:
                 rows.append(("cursor",
                              f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<6} "
                              f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  {title}"))
@@ -1006,7 +1004,9 @@ class UILoop:
 
     def detail_lines(self, width: int) -> list[tui_core.StyledLine]:
         m = self.model
-        key = m._cursor_key()
+        # an off-lens cursor still has a key: keep showing its ticket,
+        # so the operator sees where it went (e.g. "state posted")
+        key = m._cursor_key() or m.cursor_key
         item = m.items.get(key) if key else None
         if item is None:
             return [[("text", "(no item selected)")]]
@@ -1136,10 +1136,11 @@ class UILoop:
 
     def _list_window(self, rows: list, inner_h: int) -> list:
         cursor = self.model.cursor
-        if cursor < self.list_top:
-            self.list_top = cursor
-        if inner_h > 0 and cursor >= self.list_top + inner_h:
-            self.list_top = cursor - inner_h + 1
+        if self.model.cursor_shown:
+            if cursor < self.list_top:
+                self.list_top = cursor
+            if inner_h > 0 and cursor >= self.list_top + inner_h:
+                self.list_top = cursor - inner_h + 1
         self.list_top = max(0, min(self.list_top, max(0, len(rows) - inner_h)))
         return rows[self.list_top:self.list_top + inner_h]
 
@@ -1275,7 +1276,11 @@ class UILoop:
         if pane == "tr":
             with self.model.lock:
                 self.model._sync_cursor()
-                self.model.select_index(self.model.cursor + delta)
+                # a hidden cursor is summoned back to its last screen
+                # spot by the first press; only then do arrows move it
+                self.model.select_index(
+                    self.model.cursor + (delta if self.model.cursor_shown
+                                         else 0))
         elif pane == "bl":
             # offset counts back from the newest line; 0 follows the tail
             self.scroll["bl"] = max(0, self.scroll["bl"] - delta)
@@ -1374,17 +1379,11 @@ class UILoop:
             self.model.quit_all()
         elif ks == "a":
             with self.model.lock:
-                key = self.model._cursor_key()
                 mode = self.model.cycle_filter()
-                if key is not None:
-                    self.model._move_cursor_to(key)
             logger.info("list filter: %s", mode)
         elif ks == "t":
             with self.model.lock:
-                key = self.model._cursor_key()
                 mode = self.model.cycle_sort()
-                if key is not None:
-                    self.model._move_cursor_to(key)
             logger.info("list sort: %s", mode)
         elif str(ks) in ("r", "f"):
             self.model.act(ACTION_KEYS[str(ks)], self._take_count())

@@ -93,6 +93,33 @@ class LlmPrefixPromptTests(unittest.TestCase):
         self.assertIn("Draft code review from GPT-5.6-SOL", text)
         self.assertIn("Draft design review from GPT-5.6-SOL", text)
 
+    def test_each_split_prompt_carries_only_its_own_role(self) -> None:
+        code = self._prompt("code_review", "gpt-5.4")
+        design = self._prompt("design_review", "gpt-5.4")
+        both = self._prompt("review", "gpt-5.4")
+        for text in (code, both):
+            self.assertIn("##In your Code Reviewer role", text)
+            self.assertIn("Suggest to add tests", text)
+        for text in (design, both):
+            self.assertIn("##In your Design Reviewer role", text)
+            self.assertIn("suggest factorizations", text)
+        self.assertNotIn("##In your Design Reviewer role", code)
+        self.assertNotIn("##In your Code Reviewer role", design)
+        self.assertNotIn("Suggest to add tests", design)
+
+    def test_the_split_prompts_keep_the_shared_bullets(self) -> None:
+        """The design reviewer has no code reviewer section to carry them,
+        so they must be spliced into its own."""
+        for role in llm_prompt.REVIEW_PROMPTS:
+            prompt = self._prompt(role, "gpt-5.4")
+            self.assertIn("Do not present stylistic preferences", prompt, role)
+            self.assertIn("state the scope and depth of the review", prompt, role)
+            self.assertIn("##In your project assistant role.", prompt, role)
+            self.assertIn("Inspect related parts of specifications", prompt, role)
+            self.assertIn("Additional Major issues:", prompt, role)
+            self.assertIn("- approve: no substantive issues", prompt, role)
+            self.assertEqual(1, prompt.count("- review / check each commit."), role)
+
     def test_an_issue_draft_keeps_the_bare_review_header(self) -> None:
         text = llm_prompt.make_combiner_user_text([
             Review("reply", "a", model="zai:glm-5.2", prompt="issue_investigator"),

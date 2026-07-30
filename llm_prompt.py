@@ -91,6 +91,8 @@ class PromptFor:
     persona      = property(lambda s: "investigator" if s.subject == "issue" else "reviewer")
     combiner     = property(lambda s: s.role.endswith("combiner"))
     draft        = property(lambda s: s.role in REVIEW_PROMPTS)  # feeds the combiner, which posts
+    reviews_code   = property(lambda s: s.role in ("review", "code_review"))
+    reviews_design = property(lambda s: s.role in ("review", "design_review"))
 
 
 def prompt_general_rules(ctx: PromptFor) -> str:
@@ -160,7 +162,7 @@ R_PROMPT_DESIGN_REVIEWER_ROLE = """##In your Design Reviewer role
 - check for performance/speed improvements for code where it matters, warn if speed/performance regressions are expected, suggest changes to improve performance/speed
 - check for potential code reuse and suggest factorizations and simplifications if there are any.
 - Check if this project is the right place for any fix/workaround, and if not say so clearly.
-""" + CR_PROMPT_WORKAROUND_LANGUAGE + "\n"
+""" + CR_PROMPT_WORKAROUND_LANGUAGE
 
 R_PROMPT_PROJECT_ASSISTANT_ROLE = """##In your project assistant role.
 - Determine all reasons blocking and slowing down advancing this Pull request. (is there a misunderstanding?, does someone need some information? do people need more time, does the PR need a review?, it is approved and needs to be applied?, ...) With some of these you can help, with others you cannot, but it still makes sense to recognize what is holding a pull request up.
@@ -711,8 +713,10 @@ def make_developer_prompt(
         "You are an expert software engineer reviewing a pull request.\n\n"
         + prompt_general_rules(ctx)
         + _prompt_identity(ctx, reviewer_username)
-        + R_PROMPT_CODE_REVIEWER_ROLE
-        + R_PROMPT_DESIGN_REVIEWER_ROLE
+        + R_PROMPT_CODE_REVIEWER_ROLE * ctx.reviews_code
+        # Without a code reviewer section the shared bullets have no carrier.
+        + (R_PROMPT_DESIGN_REVIEWER_ROLE
+           + R_PROMPT_REVIEW_DISCIPLINE * (not ctx.reviews_code) + "\n") * ctx.reviews_design
         + CR_PROMPT_CLASSIFICATION_AUDIENCE
         + R_PROMPT_PROJECT_ASSISTANT_ROLE
         + _prompt_attached_context_and_tools(

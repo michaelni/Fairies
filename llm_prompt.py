@@ -211,6 +211,11 @@ State what you saw in ``reason``. Otherwise set it to false.
 """
 
 
+#this asked for a sample on a nnet related PR, we belive due to ommx model or so (unreasonable)
+#        "Label: needs sample, if a sample exists and we do not have it and it has not been provided and it would be usefull for testing this bug/feature\n"
+
+# should be set when the PR adds user-visible behavior or API that lacks the matching documentation update\n"
+
 # Single source of truth: label name -> the one-line meaning shown to
 # the triager. Only definitions for labels in the active allowlist are
 # emitted (see the ``## Labels`` section of ``generate_llm_prompt``);

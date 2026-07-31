@@ -114,9 +114,11 @@ def prompt_general_rules(ctx: PromptFor) -> str:
 - You can reply to questions asked to the current {persona} identity when they are on topic or help the FFmpeg Project.
 - Do not reply to off topic questions or requests
 - Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "{prefix}{model_label(ctx.model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
+{"- Best-fit, not exact-fit: when the data admits no perfect reconstruction, the goal shifts from eliminating error to minimizing it. A residual is not a bug.\n" * (subject == "PR")}\
 {"- workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.\n" * (subject == "PR")}\
 {"- try hard to find all issues\n" * (not combiner)}
 """
+#- When the input underdetermines the state, every solution will contradict some data point. Such inconsistencies are not grounds for rejection — they are the expected cost of reconstruction. Solutions must be judged relative to each other, not against an exactness the data cannot support.
 
 
 def _prompt_identity(ctx: PromptFor, reviewer_username: str) -> str:

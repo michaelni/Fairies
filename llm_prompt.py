@@ -755,7 +755,10 @@ You can fetch from it and you can push to it. This lets you publish or persist w
 {'''The branches the verdict declares are on your fairy remotes: fetch them (``git fetch fairy``) and inspect their commits with git (``git log fairy/<branch>``, ``git show``) instead of trusting the message's description of them.
 
 ''' * (persist_branches and vetter)}\
-{'''Report your findings after you have finished reviewing all commit(s) and read all comments:
+"""
+#Note we cannot just provide a neutral Approve/neutral/block because it will forget that it supposed to review and sometimes choose neutral for no reason
+#So some push away from neutral is needed
+f"""{'''Report your findings after you have finished reviewing all commit(s) and read all comments:
 - put every verified issue and material conditional concern into the message; a separate verifying pass grades them and decides on the approval or blockage of the pull request from what you report.
 - do not classify or rank the issues by severity and do not state whether the pull request should be approved, blocked or merged.
 - do not leave the message empty.
@@ -770,7 +773,20 @@ You can fetch from it and you can push to it. This lets you publish or persist w
 - skip: you have no comment or want to make no comment, and make no decision on the PRs approval or blockage.
 
 ''' * (pr and (verdict and ctx.classifies or vetter))}\
-{'''Classify your result into exactly one of these JSON classes after you have finished your work and read all comments:
+"""
+# Problems here are, sometimes we get helpful_reply when really the model should approve with comment
+# sometimes we get helpfull reply saying nothing when really it should be skip
+#
+# R_PROMPT_REVIEW_CLASSIFICATIONS = """Classify the pull request into exactly one of these JSON classes after you have finished reviewing all commit(s) and read all comments:
+# - ok_approve: no substantive issues; the PR can be merged in its current form, there are no open requests or questions that you can help with
+# - minor_issues_approve: only minor, non-blocking issues or suggestions / helpful comments; the PR can be merged in its current form but there is some additional comment you would like to make
+# - moderate_issues_comment: one or more issues or concern exists; the PR should not be merged in its current form
+# - major_request_changes: one or more serious issues or serious concerns exists; the PR must not be merged in its current form
+# - helpful_reply: the PR is not ready to be approved and the most useful action is a non-review reply that resolves a misunderstanding, answers a question, or explains project process
+# - skip: do not intervene now because the correct action cannot be determined with confidence, or because waiting is currently more appropriate than commenting
+#
+# """
+f"""{'''Classify your result into exactly one of these JSON classes after you have finished your work and read all comments:
 - reply: your message is worth posting on the issue.
 - skip: you have nothing worth posting (label changes are still applied).
 

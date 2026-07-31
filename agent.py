@@ -543,7 +543,11 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
                         fairy.manual_action_description(decision))
             claim.abort()
             return None
-        if kind == "pr":
+        if ticket.pop("force_post", None):
+            # the operator's Y: post as-is although the item may have
+            # moved since the review; popped so the archive stays clean
+            reason = None
+        elif kind == "pr":
             reason = fairy.check_pr_still_unchanged(ns, decision, decision)
         else:
             reason = issue_fairy.check_issue_still_unchanged(ns, decision)

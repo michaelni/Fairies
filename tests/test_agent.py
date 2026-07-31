@@ -588,6 +588,21 @@ class SendTests(SendCase):
         self.assertTrue(self.db.get("posted", "pr", "1")["posted_at"])
         self.assertIsNone(self.db.get("outgoing", "pr", "1"))
 
+    def test_force_post_bypasses_the_staleness_guard_once(self) -> None:
+        """The operator's Y: the stale-state guard is theirs to waive;
+        the flag must not survive into the archive."""
+        self.db.push("outgoing", "pr", "1",
+                     dict(verdict_ticket(1), force_post=True))
+        with mock.patch.object(fairy, "check_pr_still_unchanged",
+                               return_value="PR updated_at changed"), \
+                mock.patch.object(fairy, "submit_decision_action",
+                                  return_value=True) as submit:
+            self.send(pr_ns=self.ns)
+        submit.assert_called_once()
+        posted = self.db.get("posted", "pr", "1")
+        self.assertTrue(posted["posted_at"])
+        self.assertNotIn("force_post", posted)
+
     def test_guard_failure_manual_returns_to_reviewed_with_note(self) -> None:
         self.db.push("outgoing", "pr", "1", verdict_ticket(1))
         with mock.patch.object(fairy, "check_pr_still_unchanged",

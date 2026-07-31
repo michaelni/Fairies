@@ -228,6 +228,13 @@ class ActTests(DbCase):
         self.assertEqual(self.db.find("pr", "5"), "outgoing")
         self.assertIn((R1, "pr", "5"), self.model.acted)
 
+    def test_force_apply_flags_the_ticket_for_a_guardless_send(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.model.poll()
+        self.model.act("apply-force")
+        self.assertEqual(self.db.find("pr", "5"), "outgoing")
+        self.assertTrue(self.db.get("outgoing", "pr", "5")["force_post"])
+
     def test_apply_on_a_skip_verdict_says_nothing_to_post(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, "skip"))
         self.model.poll()

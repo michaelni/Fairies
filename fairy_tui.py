@@ -370,7 +370,7 @@ class Model:
                     logger.info("requested %d sample evaluations of %s",
                                 count, label)
                 self.seen_live.add(key)
-            elif action == "apply":
+            elif action in ("apply", "apply-force"):
                 if item.state != "reviewed" or not agent.postable(
                         agent.ticket_decision(item.kind, item.number, item.data)):
                     logger.info("%s has nothing to post (state %s, llm %s)",
@@ -378,12 +378,17 @@ class Model:
                                 (item.data.get("review") or {}).get(
                                     "classification", "-"))
                     return
-                if not db.try_move("reviewed", "outgoing", item.kind, item.number):
+                force = action == "apply-force"
+                if not db.try_move("reviewed", "outgoing", item.kind,
+                                   item.number,
+                                   mutate=(lambda d: d.update(force_post=True))
+                                   if force else None):
                     logger.info("%s changed under the cursor; not applied", label)
                     return
                 self.acted.add(key)
-                logger.info("%s -> outgoing/ (the agent's send pass posts it)",
-                            label)
+                logger.info("%s -> outgoing/ (%s)", label,
+                            "Y: posts even if the item moved since the review"
+                            if force else "the agent's send pass posts it")
                 self._advance_to_reviewed(key)
             elif action == "cancel" and item.state == "llm":
                 workset.update_json(db.path("llm", item.kind, item.number), lambda d: d.update(cancel=True, reason="operator cancel"))
@@ -657,12 +662,13 @@ EXPORT_FULL_W = 200  # E: full exports reflow at this fixed width
 PANES = {"tl": "stats", "tr": "list", "bl": "logs", "br": "message"}
 PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
-ACTION_KEYS = {"y": "apply", "s": "skip", "S": "snooze", "r": "rerun",
-               "f": "force", "x": "cancel"}
-KEYMAP = (("q", "quit"), ("y", "apply"), ("s", "skip"), ("S", "snooze"),
-          ("r", "rerun"), ("f", "force"), ("x", "drop"), ("o", "edit msg"),
-          ("p", "pause"), ("a", "filter"), ("t", "sort"), ("/", "search"),
-          ("e/E", "export"), ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
+ACTION_KEYS = {"y": "apply", "Y": "apply-force", "s": "skip", "S": "snooze",
+               "r": "rerun", "f": "force", "x": "cancel"}
+KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
+          ("S", "snooze"), ("r", "rerun"), ("f", "force"), ("x", "drop"),
+          ("o", "edit msg"), ("p", "pause"), ("a", "filter"), ("t", "sort"),
+          ("/", "search"), ("e/E", "export"), ("Tab/click", "focus"),
+          ("↑↓ PgUp/PgDn", "scroll"))
 
 
 def _proc_children(pid: int) -> list[int]:

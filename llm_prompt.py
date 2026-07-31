@@ -384,6 +384,7 @@ If you review a commit touching profiles and pixel formats in APV, inspect the R
 CR_PROMPT_MESSAGE_RULES = """Message Rules:
 - message may be empty only for approve and skip.
 - the message is in Markdown and will be posted to Forgejo
+
 """
 
 

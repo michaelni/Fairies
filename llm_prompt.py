@@ -280,7 +280,8 @@ And avoid posting the same point again if it was already raised by the current {
 
 # Generic patch/commit hygiene, unlike the per-deployment project facts
 # it follows in the prompt.
-CRT_PROMPT_MINOR_ISSUE_POLICY = """
+def crt_prompt_issue_policy(code_issues: bool) -> str:
+    return f"""
 For classifying the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
 
 Additional Minor issues:
@@ -288,7 +289,7 @@ Additional Minor issues:
 * Commit messages should explain what is changed and why it is changed.
 * Duplicated code should be avoided, existing helper functions should be used when appropriate.
 * Minor inconsistencies between commit message, documentation and implementation.
-* Signed integer overflows in timestamps or sample values as long as they don't lead to out of array accesses and don't affect normal real use cases.
+{"* Signed integer overflows in timestamps or sample values as long as they don't lead to out of array accesses and don't affect normal real use cases.\n" * code_issues}\
 
 Additional Moderate issues:
 * There should be no patches introducing an issue that is fixed in a subsequent patch of the same pull request. Patches should be updated to not introduce issues. The only exception are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, that's the author's choice.
@@ -298,11 +299,12 @@ Additional Moderate issues:
 * Commits should not span ABI boundaries, that is feature added to a library and its use outside the library should be seperate commits
 
 Additional Major issues:
-* Out of array access.
+{'''* Out of array access.
 * NULL pointer dereference.
 * Use after free.
 * Double free.
 * Infinite loop.
+''' * code_issues}\
 * Introduces an avoidable regression.
 
 These lists supplement the class definitions with specific calls; they are not exhaustive.
@@ -742,7 +744,7 @@ def make_developer_prompt(
         )
         + (CRT_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
-        + CRT_PROMPT_MINOR_ISSUE_POLICY
+        + crt_prompt_issue_policy(ctx.reviews_code)
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
         + prompt_output_guideline(ctx)
         + cr_prompt_review_classifications(ctx)
@@ -837,7 +839,7 @@ def make_combiner_developer_prompt(
         )
         + (CRT_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
-        + CRT_PROMPT_MINOR_ISSUE_POLICY
+        + crt_prompt_issue_policy(True)
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
         + prompt_output_guideline(ctx)
         + cr_prompt_review_classifications(ctx)
@@ -882,7 +884,7 @@ def make_triage_developer_prompt(
             machines=machines,
         )
         + project_facts
-        + CRT_PROMPT_MINOR_ISSUE_POLICY
+        + crt_prompt_issue_policy(True)
         + prompt_output_guideline(ctx)
         + T_PROMPT_TRIAGE_TASK
         + t_prompt_user_request(allowed_models or [])

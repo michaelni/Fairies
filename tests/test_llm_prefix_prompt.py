@@ -100,12 +100,16 @@ class LlmPrefixPromptTests(unittest.TestCase):
         for text in (code, both):
             self.assertIn("##In your Code Reviewer role", text)
             self.assertIn("Suggest to add tests", text)
+            self.assertIn("* NULL pointer dereference.", text)
+            self.assertIn("* Signed integer overflows", text)
         for text in (design, both):
             self.assertIn("##In your Design Reviewer role", text)
             self.assertIn("suggest factorizations", text)
         self.assertNotIn("##In your Design Reviewer role", code)
         self.assertNotIn("##In your Code Reviewer role", design)
         self.assertNotIn("Suggest to add tests", design)
+        self.assertNotIn("NULL pointer dereference", design)
+        self.assertNotIn("Signed integer overflows", design)
 
     def test_the_split_prompts_keep_the_shared_bullets(self) -> None:
         """The design reviewer has no code reviewer section to carry them,

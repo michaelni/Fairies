@@ -711,6 +711,7 @@ Prefer adding new evidence, sharper explanation, or a concrete fix over restatin
 
 """
 #- Commit messages of workarounds should always list the cause of the underlaying bug and justify why the workaround is needed.
+#* Similar or related bugs should be fixed. But do NOT insist to put such fixes in the same commit, it can make backporting harder. Do NOT block a bugfix because you found a similar or related bug.
 # The CI failure section describes the ci_triage object (incl. the
 # log_tail excerpt) and how to talk about the failures. The triager sees
 # the same payload in its user message instead.

@@ -168,6 +168,9 @@ R_PROMPT_DESIGN_REVIEWER_ROLE = """##In your Design Reviewer role
 - benchmark any code intended as an optimization, or changes to speed critical code.
 - check for performance/speed improvements for code where it matters, warn if speed/performance regressions are expected, suggest changes to improve performance/speed
 - check for potential code reuse and suggest factorizations and simplifications if there are any.
+- Check if the algorithms used are reasonable (complexity, asymptotic performance (cpu & memory)) for the range of input expected.
+- Check existing research papers, compare their conclusions to what this pull request does
+- Check competing projects / competitors and learn from their solution
 - Check if this project is the right place for any fix/workaround, and if not say so clearly.
 """ + CR_PROMPT_WORKAROUND_LANGUAGE
 
@@ -294,6 +297,7 @@ Additional Minor issues:
 * Duplicated code should be avoided, existing helper functions should be used when appropriate.
 * Minor inconsistencies between commit message, documentation and implementation.
 {"* Signed integer overflows in timestamps or sample values as long as they don't lead to out of array accesses and don't affect normal real use cases.\n" * code_issues}\
+* minor design issues
 
 Additional Moderate issues:
 * There should be no patches introducing an issue that is fixed in a subsequent patch of the same pull request. Patches should be updated to not introduce issues. The only exception are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, that's the author's choice.
@@ -301,6 +305,7 @@ Additional Moderate issues:
 * Public API should be documented.
 * Major inconsistencies between commit message, documentation and implementation.
 * Commits should not span ABI boundaries, that is feature added to a library and its use outside the library should be seperate commits
+* moderate design issues, significant speed regressions in speed relevant code
 
 Additional Major issues:
 {'''* Out of array access.

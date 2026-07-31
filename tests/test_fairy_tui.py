@@ -119,7 +119,7 @@ class PollTests(DbCase):
         self.db.try_pop("reviewed", "pr", "5")
         for _ in range(fairy_tui.GONE_POLLS - 1):
             self.model.poll()
-        self.assertIn((R1, "pr", "5"), self.model.items)  # still shown
+        self.assertIn((R1, "pr", "5"), self.model.items)
         with self.assertLogs("fairy_tui", level="INFO"):
             self.model.poll()
         self.assertNotIn((R1, "pr", "5"), self.model.items)

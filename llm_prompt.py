@@ -113,6 +113,25 @@ class PromptFor:
     reviews_design = property(lambda s: s.role in ("review", "design_review"))
 
 
+# This helped with a flase claim about hwnd being used uninitialized but its a big and hard rule for a 1 out of 4 issue in 20148
+#- For control-flow claims (uninitialized read, leak, use-after-free, double free, unreachable code), trace one concrete execution path that triggers the problem (the specific branch/goto sequence) and verify every step against the inspected code. If you cannot name such a path, do not report the issue.
+
+
+#- unrelated bugs that you find should be mentioned but are not by themselves a reason to reject the PR - An unrelated bug is a real defect that is not caused by the PR, not necessary to make the PR correct, and not part of the same logical problem the PR claims to solve.
+# This rule causes hallucinated issues like hwnd=NULL bein a bug when its unused seemed not to loose issues
+
+#- A real defect that is not caused by the PR, not necessary to make the PR correct, and not part of the same logical problem the PR claims to solve is an unrelated issue. Unrelated issues that you find should be mentioned but are not by themselves a reason to reject the PR.
+# lost some previously found issues but no hallucination issue
+
+#- Distinguish issues the PR introduces or worsens from issues that already existed and that it merely does not also fix. A pre-existing, not-worsened issue is at most a non-blocking suggestion; it must not drive moderate_issues_comment or major_request_changes.
+# Do not treat the known downside of an intentional choice as a blocking issue; you may note it once.
+
+#- Distinguish between issues 1. the PR intends to fix, 2. unintentionally introduces or worsens and 3. preexisting issues the PR does not worsen. A pre-existing, not-worsened issue is a minor issue.
+#- Respect deliberate, stated design tradeoffs (e.g. "uses git, not the forge API, to avoid dependencies").
+#- Before raising an issue as blocking, weigh the cost of the fix you are implying — performance regressions, new dependencies, lost portability/usability, large rewrites — against the concrete benefit, including whether the defect is reachable with real inputs or has ever been reported. A theoretical, never-observed defect whose fix would regress performance or usability for most users is a non-blocking note at most, or omit it.
+#- Theres a cost to "whack a mole" of bugs. A PR that fixes 3 bugs and another PR later fixing another 3 is better than delaying the first PR until all 6 fixes are done.
+#- "The problem the PR claims to solve" is the specific defect named in its title/description — NOT the general class of bug, and NOT every defect reachable on the same data path or in the same function. A different overflow/leak/etc. on the same path is a separate, pre-existing issue: mention it, never block on it. Reducing the number of instances of a defect class is an improvement.
+
 # Shared by the reviewer and combiner prompts: both write posted review
 # text and both own a classification.
 CR_PROMPT_WORKAROUND_LANGUAGE = """- clear language should be used to separate workarounds from bugfixes. With workarounds, it should be justified why they are needed.

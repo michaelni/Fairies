@@ -87,10 +87,30 @@ adding, removing or reordering them is an edit, not a restructuring.
    `project_facts/*.md` for examples; pass yours with `--project-facts`.
 5. Provision a podman host (below) so the models get a shell.
 6. Copy `fairy-ref.sh` to your own launcher and adjust `--owner`, `--repo`,
-   `--gcli-account`, `--patch-repo`, the models, and your forge's labels
-   (`--triage-label`, repeatable). To run fairies for several repositories
-   concurrently, give each launcher its own `--cache` and
+   `--forge-type`, `--gcli-account`, `--patch-repo`, the models, and your
+   forge's labels (`--triage-label`, repeatable). To run fairies for several
+   repositories concurrently, give each launcher its own `--cache` and
    `--debug-response-dir`.
+
+### Using fairy with GitHub
+
+Pass `--forge-type github` and pick one of two credentials:
+
+* **A token.** A classic or fine-grained PAT in a gcli account, selected
+  with `--gcli-account`. Fairy posts as that account, so it cannot approve
+  pull requests the account opened itself (GitHub refuses self-approval).
+* **A GitHub App.** `--github-app-id` and `--github-app-key <pem>`.
+  Installation tokens are minted and renewed automatically;
+  `--github-app-installation` is only needed when the app has more than one
+  installation. `--self-login 'your-app[bot]'` is required -- installation
+  tokens cannot read `/user`, and without its own login fairy re-posts its
+  comments on every run. The app is its own identity and can approve
+  anyone's pull requests. Permissions: Issues and Pull requests read+write,
+  Contents read, Checks read; newly added permissions count only once the
+  installation owner accepts them.
+
+CI is read from both the Checks API (GitHub Actions reports only there) and
+the commit-status endpoint (third-party CI) and merged.
 
 ### Interactive TUI
 
@@ -299,7 +319,7 @@ forge for each PR's real open/closed/merged state (slower).
 ## Supported forges
 
 * Forgejo
-* GitHub (untested)
+* GitHub
 * GitLab (untested)
 * Gitea (untested)
 

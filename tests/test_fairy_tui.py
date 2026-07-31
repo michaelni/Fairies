@@ -689,6 +689,13 @@ class DetailTests(DbCase):
         self.assertIn("reason: ci red", text)
         self.assertIn("cancelled ci contexts: job1", text)
 
+    def test_review_age_is_shown(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("reviewed 2026-07-20", text)
+        self.assertIn("ago)", text)
+
     def test_failed_reviewers_are_shown(self) -> None:
         """Production #23901: the GPT reviewer died (provider content
         flag), the verdict silently came from GLM alone."""

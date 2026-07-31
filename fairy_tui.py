@@ -1047,6 +1047,8 @@ class UILoop:
         if review.get("classification"):
             status_line += ("   llm "
                             + fairy.format_llm_classification(review["classification"]))
+            if data.get("llm_at"):
+                status_line += "   reviewed " + _when(data["llm_at"])
         head += [[("text", status_line[:width])]]
         if data.get("reason"):
             head += tui_core.render_markdown(f"reason: {data['reason']}", width)

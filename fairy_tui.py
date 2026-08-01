@@ -852,6 +852,7 @@ class UILoop:
         self.scroll = {"tl": 0, "bl": 0, "br": 0}
         self.list_top = 0
         self.drag: str | None = None
+        self.follow_cursor = True
         self._last_size: tuple[int, int] | None = None
         self._last_paint = 0.0
         # pane -> (rect, gutter, unclipped plain rows) as last painted;
@@ -1144,12 +1145,16 @@ class UILoop:
         return lines[self.scroll[pane]:self.scroll[pane] + inner_h]
 
     def _list_window(self, rows: list, inner_h: int) -> list:
+        """The view chases the cursor only right after a cursor move
+        (the consumed ``follow_cursor``): a wheel-scrolled window must
+        stay where the operator put it across timer repaints."""
         cursor = self.model.cursor
-        if self.model.cursor_shown:
+        if self.model.cursor_shown and self.follow_cursor:
             if cursor < self.list_top:
                 self.list_top = cursor
             if inner_h > 0 and cursor >= self.list_top + inner_h:
                 self.list_top = cursor - inner_h + 1
+        self.follow_cursor = False
         self.list_top = max(0, min(self.list_top, max(0, len(rows) - inner_h)))
         return rows[self.list_top:self.list_top + inner_h]
 
@@ -1290,6 +1295,7 @@ class UILoop:
                 self.model.select_index(
                     self.model.cursor + (delta if self.model.cursor_shown
                                          else 0))
+            self.follow_cursor = True
         elif pane == "bl":
             # offset counts back from the newest line; 0 follows the tail
             self.scroll["bl"] = max(0, self.scroll["bl"] - delta)
@@ -1319,6 +1325,7 @@ class UILoop:
                         or query in (it.data.get("title") or "").casefold() \
                         or query in it.state:
                     self.model.select_index(i)
+                    self.follow_cursor = True
                     return
         logger.info("no ticket matches %r", query)
 
@@ -1353,8 +1360,13 @@ class UILoop:
             hit = (self.layout.hit(x, y, self.term.width, body_h)
                    if 0 <= y < body_h else "")
             if name in ("MOUSE_SCROLL_UP", "MOUSE_SCROLL_DOWN"):
-                if hit in PANES:
-                    self._scroll_pane(hit, -3 if name.endswith("UP") else 3)
+                delta = -3 if name.endswith("UP") else 3
+                if hit == "tr":
+                    # the wheel moves the VIEW; only cursor keys and
+                    # clicks move the cursor
+                    self.list_top = max(0, self.list_top + delta)
+                elif hit in PANES:
+                    self._scroll_pane(hit, delta)
             elif name == "MOUSE_LEFT":
                 if hit in ("vt", "vb", "h"):
                     self.drag = hit
@@ -1364,6 +1376,7 @@ class UILoop:
                         row = y - 1  # list rows start under the title bar
                         with self.model.lock:
                             self.model.select_index(self.list_top + row)
+                        self.follow_cursor = True
                     self._copy_click(hit, x, y)
             elif name.endswith("_MOTION") and self.drag:
                 before = self.layout.splits(self.term.width, body_h)
@@ -1389,16 +1402,19 @@ class UILoop:
         elif ks == "a":
             with self.model.lock:
                 mode = self.model.cycle_filter()
+            self.follow_cursor = True
             logger.info("list filter: %s", mode)
         elif ks == "t":
             with self.model.lock:
                 mode = self.model.cycle_sort()
+            self.follow_cursor = True
             logger.info("list sort: %s", mode)
         elif str(ks) in ("r", "f"):
             self.model.act(ACTION_KEYS[str(ks)], self._take_count())
         elif str(ks) in ACTION_KEYS:
             self.count_buf = ""
             self.model.act(ACTION_KEYS[str(ks)])
+            self.follow_cursor = True
         elif ks == "p":
             self.toggle_pause()
         elif ks == "/":

@@ -551,6 +551,48 @@ class SortTests(DbCase):
         self.assertIn("sort:status", stream.getvalue())
 
 
+class WheelTests(DbCase):
+    """The wheel moves the view; only cursor keys and clicks move the
+    cursor, and the window stops chasing it until the next cursor move."""
+
+    def _mouse(self, name: str, y: int = 5, x: int = 60):
+        k = NamedKey(name)
+        k.mouse_yx = (y, x)
+        return k
+
+    def setUp(self) -> None:
+        super().setUp()
+        for n in range(1, 61):
+            self.db.push("reviewed", "pr", str(n), verdict(n))
+        self.model.poll()
+
+    def test_wheel_scrolls_the_view_and_leaves_the_cursor(self) -> None:
+        ui = make_ui(self.model)
+        with self.model.lock:
+            self.model.select_index(0)
+        ui.paint()
+        key = self.model.cursor_key
+        ui.dispatch(self._mouse("MOUSE_SCROLL_DOWN"))
+        self.assertEqual(ui.list_top, 3)
+        self.assertEqual(self.model.cursor_key, key)
+        ui.paint()
+        self.assertEqual(ui.list_top, 3)  # timer repaints do not snap back
+
+    def test_an_arrow_after_wheeling_returns_the_view_to_the_cursor(self) -> None:
+        ui = make_ui(self.model)
+        with self.model.lock:
+            self.model.select_index(0)
+        ui.paint()
+        ui.dispatch(self._mouse("MOUSE_SCROLL_DOWN"))
+        ui.dispatch(self._mouse("MOUSE_SCROLL_DOWN"))
+        ui.dispatch(NamedKey("KEY_DOWN"))
+        ui.paint()
+        self.assertLessEqual(ui.list_top, 1)
+        with self.model.lock:
+            self.assertIsNotNone(self.model._cursor_key())
+            self.assertEqual(self.model.cursor, 1)
+
+
 class CopyMessageTests(DbCase):
     def test_clicking_the_message_title_copies_the_raw_message(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, msg="full **body**"))

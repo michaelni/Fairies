@@ -240,6 +240,13 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                     and (kind != "pr" or prior_data.get("expected_head_ref")
                          == fairy.get_pr_head_ref(item))):
                 continue  # standing verdict; reuse
+            if prior_data.get("send_blocked") and not getattr(ns, "approve", False):
+                # A blocked y in manual mode is the operator's case:
+                # requeueing here replaced their verdict with whatever
+                # the fresh round produced -- a gate skip destroyed an
+                # approve (production: #23863, genuine data loss). They
+                # answer with r, s or Y; only auto mode re-reviews.
+                continue
         if prior == "cancelled" and number not in forced_ns and prior_data \
                 and str(prior_data.get("reason", "")).startswith("operator") \
                 and prior_data.get("expected_updated_at") == item.get("updated_at"):

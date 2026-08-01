@@ -353,6 +353,30 @@ class ReuseTests(AgentCase):
         self.assertEqual(ticket["author"], "a")
         self.assertEqual(ticket["head_branch"], "b1")
 
+    def test_a_send_blocked_verdict_awaits_the_operator_in_manual_mode(self) -> None:
+        """Production #23863: y was guard-blocked, the next scan's
+        re-prepare gate-skipped, and the approve verdict was destroyed.
+        A blocked send in manual mode parks the ticket with the
+        operator (r/s/Y); nothing may clobber it."""
+        self.db.push("reviewed", "pr", "1", {
+            "review": {"classification": "approve", "message": "KEEP"},
+            "expected_updated_at": "old", "expected_head_ref": "old",
+            "send_blocked": "PR updated_at changed"})
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.find("pr", "1"), "reviewed")
+        self.assertEqual(self.db.get("reviewed", "pr", "1")
+                         ["review"]["message"], "KEEP")
+
+    def test_auto_mode_still_requeues_a_send_blocked_verdict(self) -> None:
+        self.ns.approve = True
+        self.db.push("reviewed", "pr", "1", {
+            "review": {"classification": "approve", "message": "m"},
+            "expected_updated_at": "old", "expected_head_ref": "old",
+            "send_blocked": "PR updated_at changed"})
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", "1"), "queued")
+
     def test_stale_reviewed_verdict_is_requeued(self) -> None:
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},

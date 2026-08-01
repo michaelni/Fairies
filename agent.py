@@ -401,8 +401,32 @@ def finish_requests(db: filedb.Db, forced: dict[str, set[filedb.TicketId]],
                 db.try_pop("requests", kind, number)
 
 
+def closure_reason(ns: argparse.Namespace, kind: str, number) -> str | None:
+    """One fetch to name WHY an item left the open listing: "merged" is
+    the success story and must not read as a failure in the UI
+    (production: #23913 showed plain cancelled after the operator
+    merged it). None means the item is in fact still open -- the
+    listing was transiently short -- and must not be cancelled at all.
+    A failed fetch keeps the old revivable "not open"."""
+    try:
+        if kind == "pr":
+            item = fairy.get_pr(ns, filedb.forge_number(number))
+        else:
+            item = issue_fairy.get_issue(ns, filedb.forge_number(number))
+    except Exception as exc:
+        logger.warning("%s #%s left the listing but the fate fetch "
+                       "failed: %s", kind, number, exc)
+        return "not open"
+    if kind == "pr" and item.get("merged"):
+        return "merged"
+    if item.get("state") == "closed":
+        return "closed without merge" if kind == "pr" else "closed"
+    return None
+
+
 def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
-                  kinds: set[str]) -> None:
+                  kinds: set[str],
+                  nss: dict[str, argparse.Namespace]) -> None:
     # attention tickets too: a merged PR's merge-ready/ci-blocked row
     # would otherwise sit there forever (prune skips non-settled states)
     for state in ("queued", "reviewed", "ci-blocked", "merge-ready",
@@ -410,12 +434,14 @@ def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
         for kind, number in db.list_state(state):
             if kind in kinds \
                     and (kind, filedb.forge_number(number)) not in open_set:
+                reason = closure_reason(nss[kind], kind, number)
+                if reason is None:
+                    continue
                 # try_move: a claimed item's lock is held for the whole
                 # review and must not stall the pass; retried next scan
                 if db.try_move(state, "cancelled", kind, number,
-                               mutate=lambda d: d.update(reason="not open")):
-                    logger.info("%s #%s cancelled: left the open listing",
-                                kind, number)
+                               mutate=lambda d, r=reason: d.update(reason=r)):
+                    logger.info("%s #%s cancelled: %s", kind, number, reason)
 
 
 def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
@@ -443,7 +469,8 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         finally:
             gcli_cache.save_cache(ns.cache, cache)
     finish_requests(db, forced, kinds)
-    cancel_closed(db, open_set, full_kinds)
+    cancel_closed(db, open_set, full_kinds,
+                  {"pr": pr_ns, "issue": issue_ns})
     for kind, number in db.reap():
         logger.warning("%s #%s re-queued: its worker died", kind, number)
     # A crash between a transition's dst-write and src-unlink leaves the

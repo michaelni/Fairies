@@ -396,13 +396,39 @@ class ReuseTests(AgentCase):
 
 
 class LifecycleTests(AgentCase):
-    def test_closed_item_is_cancelled(self) -> None:
+    def test_closed_item_is_cancelled_with_its_fate(self) -> None:
+        """Production #23913: the operator merged a fairy-approved PR
+        and the row read plain cancelled -- the success case must be
+        named. A vanished item's fate comes from one fetch."""
         self.db.push("queued", "pr", "9", {"title": "gone"})
         self.db.push("merge-ready", "pr", "8", {"title": "merged meanwhile"})
+        fates = {9: dict(make_pr(9), state="closed"),
+                 8: dict(make_pr(8), state="closed", merged=True),
+                 1: make_pr(1)}
+        self.scan([make_pr(1)], fetch=lambda ns, n: fates[n])
+        self.assertEqual(self.db.get("cancelled", "pr", "9")["reason"],
+                         "closed without merge")
+        self.assertEqual(self.db.get("cancelled", "pr", "8")["reason"],
+                         "merged")
+
+    def test_a_transient_listing_glitch_cancels_nothing(self) -> None:
+        """The fate fetch says the item is still open: the short
+        listing lied, and the ticket must survive untouched."""
+        self.db.push("queued", "pr", "9", {"title": "still here"})
         self.scan([make_pr(1)])
-        self.assertEqual(self.db.find("pr", "9"), "cancelled")
-        self.assertEqual(self.db.get("cancelled", "pr", "9")["reason"], "not open")
-        self.assertEqual(self.db.find("pr", "8"), "cancelled")  # attention too
+        self.assertEqual(self.db.find("pr", "9"), "queued")
+
+    def test_a_failed_fate_fetch_keeps_the_revivable_reason(self) -> None:
+        self.db.push("queued", "pr", "9", {"title": "gone"})
+
+        def fetch(ns, n):
+            if n == 9:
+                raise RuntimeError("forge 500")
+            return make_pr(n)
+
+        self.scan([make_pr(1)], fetch=fetch)
+        self.assertEqual(self.db.get("cancelled", "pr", "9")["reason"],
+                         "not open")
 
     def test_crash_remnant_is_swept_in_every_state(self) -> None:
         # reviving an archived item writes queued/ and then unlinks

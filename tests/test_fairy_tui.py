@@ -135,6 +135,18 @@ class PollTests(DbCase):
         self.assertEqual(self.model.items[(R1, "pr", "5")].state, "llm")
         self.assertNotIn((R1, "pr", "5"), self.model.missing)
 
+    def test_a_merged_cancellation_shows_merged_not_cancelled(self) -> None:
+        self.db.push("cancelled", "pr", "5",
+                     dict(verdict(5), reason="merged"))
+        self.model.poll()
+        with self.model.lock:
+            self.model.filter_mode = "all"
+        ui = make_ui(self.model)
+        rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in ui.list_rows()]
+        self.assertTrue(any("merged" in t and "cancelled" not in t
+                            for t in rows), rows)
+
     def test_a_missing_ticket_is_marked_in_the_list(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()

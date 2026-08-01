@@ -990,6 +990,8 @@ class UILoop:
                        or it.data.get("expected_updated_at"))
             title = it.data.get("title") or ""
             state_disp = _STATE_DISP.get(it.state, it.state)
+            if it.state == "cancelled" and it.data.get("reason") == "merged":
+                state_disp = "merged"
             if (it.repo, it.kind, it.number) in m.missing:
                 state_disp += "?"
             if i == m.cursor and m.cursor_shown:

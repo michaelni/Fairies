@@ -785,7 +785,7 @@ each produced by a different model; produce one combined review.
   "ran FATE", "fuzzed the decoder"), keep the relevant
   ones and attribute them to that model.
 - After your LLM-{model_label(model)} identification, put one
-  "Scope <model>: ..." line per draft giving the
+  "Scope <model> [code review|design review]: ..." line per draft giving the
   depth and scope of that model's review as the draft stated it (it is
   understood this cannot be verified); omit models whose draft stated none,
   never guess. Add one "Scope combiner: ..." line for what you verified

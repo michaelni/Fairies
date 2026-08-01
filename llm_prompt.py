@@ -464,6 +464,9 @@ Pick exactly one value for ``route``:
     have nothing new to add.
   * The latest comment duplicates a point that has already been made
     and a restatement from us would add noise rather than help.
+  * The author has asked the current reviewer identity not to review
+    this PR. Honor that even when the engage criteria would otherwise
+    apply; state the author's request in ``reason``.
 
 - reply_no_verdict: a short direct reply is the most useful action.
   Typical cases:

@@ -128,22 +128,9 @@ is tailed automatically; `--tail FILE` adds extras):
 
 The list is a table over the ticket files: select any row and act on
 it at any time; every action is a rename or a `requests/` file, so the
-UI can quit and restart freely. `a` cycles the list lens
-(relevant/review/merge/ci/actionable/all), `y` hands the selected reviewed verdict to the agent's
-send pass (`reviewed/` -> `outgoing/`; the post is guard-checked
-there), `s` skips it, `r`/`f` request a fresh gate-bypassing review,
-`o` edits its review message in `$EDITOR` (a `0-9` count prefix makes
-`r` request that many parallel sample evaluations -- max 9 -- and
-makes the arrows scroll that many lines; `/text` searches
-number/title/state, `n` repeats), `t` cycles the list sort
-(arrival/status/repo/number), `q` quits, `x` throws it out, `e`/`E` export the focused pane (visible/full), arrows and
-PgUp/PgDn scroll, Tab or a mouse click moves focus, clicking a URL,
-git hash or `#number` copies it to the primary selection for
-middle-click paste (falling back to the OSC 52 clipboard without a
-display; in tmux turn `set-clipboard` on), and the pane dividers are
-draggable with the
-mouse. See `fairy-ui-ref.sh` for a
-launcher example.
+UI can quit and restart freely. The full pane, key, lens and mouse
+reference lives in [README-FAIRY-UI.md](README-FAIRY-UI.md); see
+`fairy-ui-ref.sh` for a launcher example.
 
 ### Self-hosted Podman container
 

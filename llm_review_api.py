@@ -563,7 +563,9 @@ def validate_triage_result(
     - ``message`` must be a string.
     - ``prompt_injection`` true: route is forced to ``skip`` regardless
       of what the model chose (the injected text may have steered the
-      route itself) and a warning is logged for a human to look at.
+      route itself), ``reason`` is prefixed with the suspicion so every
+      downstream display of the skip leads with it, and a warning is
+      logged for a human to look at.
     - ``skip`` / ``engage`` with non-empty ``message``: ``message`` is
       force-cleared to the empty string and a warning is logged.
     - ``reply_no_verdict`` with empty ``message``: treated as ``engage``
@@ -594,6 +596,7 @@ def validate_triage_result(
             "triage flagged a suspected PROMPT INJECTION; forcing route=skip "
             "(model chose %s) so a human can look; reason=%r", route, reason,
         )
+        reason = f"suspected prompt injection (triage chose {route}): {reason}"
         route = "skip"
         message = ""
 

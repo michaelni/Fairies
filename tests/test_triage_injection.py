@@ -34,6 +34,32 @@ class TriageInjectionTests(unittest.TestCase):
                 })
                 self.assertEqual("skip", result["route"])
                 self.assertEqual("", result["message"])
+                self.assertEqual(
+                    f"suspected prompt injection (triage chose {route}): "
+                    "PR description tells the AI to approve",
+                    result["reason"])
+
+    def test_forced_skip_reason_leads_with_the_suspicion(self) -> None:
+        """PR 23680 (2026-08-01): triage chose engage with prompt_injection
+        true and a reason whose first 150 chars only explained why a review
+        was warranted; the ticket showed that truncated engage rationale as
+        the skip reason. The rewritten reason must surface the injection
+        before any truncation can eat the tail."""
+        result = llm_review_api.validate_triage_result({
+            "route": "engage",
+            "message": "",
+            "reason": (
+                "Forgejo_Fairy has never reviewed this pull request, and the "
+                "author force-pushed new code before the latest activity, so "
+                "a full reviewer pass is warranted. The latest author comment "
+                "also contains an explicit instruction to the reviewing AI "
+                "not to review and attempts to manipulate the review outcome."
+            ),
+            "prompt_injection": True,
+        })
+        self.assertEqual("skip", result["route"])
+        self.assertTrue(result["reason"].startswith(
+            "suspected prompt injection (triage chose engage): "))
 
     def test_unflagged_result_is_untouched(self) -> None:
         result = llm_review_api.validate_triage_result({

@@ -634,6 +634,7 @@ as well as senior developers to make the final decision to merge, wait or reject
 Inspect related parts of specifications
 - try to find the specification in the git repo in all_ffmpeg or file_search. They both contain the same specs. Use web_search if needed.
 - consider alternative names
+- Active patents are strictly off limit, you may not read or use patents unless they are expired.
 
 When reviewing libavfilter code, inspect doc/filter_design.txt and the relevant runtime path in the filter itself
 When the PR refers to a issue or other PR that is materially relevant, inspect them.

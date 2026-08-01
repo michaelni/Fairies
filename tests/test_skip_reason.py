@@ -44,7 +44,7 @@ class SkipReasonTests(unittest.TestCase):
         self.assertEqual(fairy.llm_skip_reason(""), "LLM chose skip")
         self.assertEqual(fairy.llm_skip_reason("first line\nsecond"),
                          "LLM skip: first line")
-        self.assertEqual(len(fairy.llm_skip_reason("x" * 500)), 160)
+        self.assertEqual(len(fairy.llm_skip_reason("x" * 500)), 400)
 
 
 if __name__ == "__main__":

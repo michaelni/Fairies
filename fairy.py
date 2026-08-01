@@ -2055,7 +2055,7 @@ def llm_skip_reason(message: str) -> str:
     """One-line reason for an LLM skip: the first line of the model's own
     explanation, never a narration of what skip means in general."""
     first = message.strip().splitlines()[0] if message.strip() else ""
-    return f"LLM skip: {first}"[:160] if first else "LLM chose skip"
+    return f"LLM skip: {first}"[:400] if first else "LLM chose skip"
 
 
 def decision_from_review(

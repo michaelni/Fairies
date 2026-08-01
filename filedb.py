@@ -117,7 +117,7 @@ _LOCKS = "locks"
 # tickets are operator/tooling-created evaluations of the same forge
 # item; only the base ticket takes part in scanning, gating and
 # posting by default.
-_TOKEN_RE = re.compile(r"(\d+)(?:s\d+)?(?:r\d+)?")
+_TOKEN_RE = re.compile(r"(\d+)(?:s(\d+))?(?:r\d+)?")
 TicketId = str
 
 
@@ -135,6 +135,11 @@ def forge_number(number: TicketId) -> int:
 def is_base(number: TicketId) -> bool:
     """True for the plain per-item ticket (no sample/review suffix)."""
     return number.isdigit()
+
+
+def sample_index(number: TicketId) -> int:
+    """The sN ordinal of a sample token; 0 for the base ticket."""
+    return int(_TOKEN_RE.fullmatch(_token(number)).group(2) or 0)
 
 
 def _name(kind: str, number: TicketId) -> str:

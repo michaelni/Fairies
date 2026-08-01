@@ -349,7 +349,30 @@ class Model:
                             "base ticket, or mv it to outgoing/ to force",
                             label)
                 return
-            if action in ("rerun", "force"):
+            if action == "sample":
+                # R: one MORE evaluation next to whatever exists -- the
+                # next free sample slot, never clobbering base or earlier
+                # samples the way a repeated <n>r would
+                base = filedb.forge_number(item.number)
+                used = {0}
+                for r, k, num in set(self.items) | self.requested:
+                    if r == item.repo and k == item.kind \
+                            and filedb.forge_number(num) == base:
+                        used.add(filedb.sample_index(num))
+                for k2, num in db.list_state("requests"):
+                    # rapid presses: the model lags a poll behind the
+                    # request files, and two R must not share a slot
+                    if k2 == item.kind and filedb.forge_number(num) == base:
+                        used.add(filedb.sample_index(num))
+                nxt = max(used) + 1
+                if nxt > 9:
+                    logger.error("%s already has 9 evaluations", label)
+                    return
+                db.request(item.kind, f"{base}s{nxt}", {"action": "rerun"})
+                self.seen_live.add(key)
+                logger.info("requested one more evaluation of %s (slot s%d)",
+                            label, nxt)
+            elif action in ("rerun", "force"):
                 if item.state in ("queued", "llm", "outgoing"):
                     logger.info("%s is already in flight", label)
                     return
@@ -663,12 +686,12 @@ PANES = {"tl": "stats", "tr": "list", "bl": "logs", "br": "message"}
 PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
 ACTION_KEYS = {"y": "apply", "Y": "apply-force", "s": "skip", "S": "snooze",
-               "r": "rerun", "f": "force", "x": "cancel"}
+               "r": "rerun", "R": "sample", "f": "force", "x": "cancel"}
 KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
-          ("S", "snooze"), ("r", "rerun"), ("f", "force"), ("x", "drop"),
-          ("o", "edit msg"), ("p", "pause"), ("a", "filter"), ("t", "sort"),
-          ("/", "search"), ("e/E", "export"), ("Tab/click", "focus"),
-          ("↑↓ PgUp/PgDn", "scroll"))
+          ("S", "snooze"), ("r", "rerun"), ("R", "+eval"), ("f", "force"),
+          ("x", "drop"), ("o", "edit msg"), ("p", "pause"), ("a", "filter"),
+          ("t", "sort"), ("/", "search"), ("e/E", "export"),
+          ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
 
 
 def _proc_children(pid: int) -> list[int]:

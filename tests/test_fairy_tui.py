@@ -247,6 +247,18 @@ class ActTests(DbCase):
         self.assertEqual(self.db.find("pr", "5"), "outgoing")
         self.assertTrue(self.db.get("outgoing", "pr", "5")["force_post"])
 
+    def test_R_adds_evaluations_without_clobbering_earlier_ones(self) -> None:
+        """Each R takes the next free sample slot: a verdict for 5s1 on
+        disk plus a pending 5s2 request mean R asks for 5s3."""
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("skipped", "pr", "5s1", verdict(5, "skip"))
+        self.model.poll()
+        self.model.act("sample")
+        self.assertIsNotNone(self.db.get("requests", "pr", "5s2"))
+        self.model.act("sample")
+        self.assertIsNotNone(self.db.get("requests", "pr", "5s3"))
+        self.assertIsNone(self.db.get("requests", "pr", "5"))
+
     def test_apply_on_a_skip_verdict_says_nothing_to_post(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, "skip"))
         self.model.poll()

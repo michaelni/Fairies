@@ -577,38 +577,44 @@ class SortTests(DbCase):
 
 class WheelTests(DbCase):
     """The wheel moves the view; only cursor keys and clicks move the
-    cursor, and the window stops chasing it until the next cursor move."""
+    cursor, and the window stops chasing it until the next cursor move.
 
-    def _mouse(self, name: str, y: int = 5, x: int = 60):
+    On a real tty blessed reads the ioctl window size, not the COLUMNS/
+    LINES the fixture sets, so coordinates and row counts are derived
+    from the actual layout instead of hardcoded."""
+
+    def _mouse(self, ui, name: str):
+        rects = ui.layout.rects(ui.term.width, max(3, ui.term.height - 1))
         k = NamedKey(name)
-        k.mouse_yx = (y, x)
+        k.mouse_yx = (rects["tr"].y + 1, rects["tr"].x + 2)
         return k
 
-    def setUp(self) -> None:
-        super().setUp()
-        for n in range(1, 61):
+    def _ui_with_rows(self):
+        ui = make_ui(self.model)
+        for n in range(1, ui._page() + 13):
             self.db.push("reviewed", "pr", str(n), verdict(n))
         self.model.poll()
+        return ui
 
     def test_wheel_scrolls_the_view_and_leaves_the_cursor(self) -> None:
-        ui = make_ui(self.model)
+        ui = self._ui_with_rows()
         with self.model.lock:
             self.model.select_index(0)
         ui.paint()
         key = self.model.cursor_key
-        ui.dispatch(self._mouse("MOUSE_SCROLL_DOWN"))
+        ui.dispatch(self._mouse(ui, "MOUSE_SCROLL_DOWN"))
         self.assertEqual(ui.list_top, 3)
         self.assertEqual(self.model.cursor_key, key)
         ui.paint()
         self.assertEqual(ui.list_top, 3)  # timer repaints do not snap back
 
     def test_an_arrow_after_wheeling_returns_the_view_to_the_cursor(self) -> None:
-        ui = make_ui(self.model)
+        ui = self._ui_with_rows()
         with self.model.lock:
             self.model.select_index(0)
         ui.paint()
-        ui.dispatch(self._mouse("MOUSE_SCROLL_DOWN"))
-        ui.dispatch(self._mouse("MOUSE_SCROLL_DOWN"))
+        ui.dispatch(self._mouse(ui, "MOUSE_SCROLL_DOWN"))
+        ui.dispatch(self._mouse(ui, "MOUSE_SCROLL_DOWN"))
         ui.dispatch(NamedKey("KEY_DOWN"))
         ui.paint()
         self.assertLessEqual(ui.list_top, 1)

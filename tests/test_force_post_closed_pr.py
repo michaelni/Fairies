@@ -90,6 +90,38 @@ def _check(force: bool, current: dict, *, non_open: bool = False) -> str | None:
         return fairy.check_pr_still_unchanged(args, decision, decision)
 
 
+class ForcePostSkipGuardTests(unittest.TestCase):
+    """The operator's Y (force_post) rides to the submit seam as
+    ``skip_guard``: the seam must post without re-running the guard,
+    which would otherwise re-block the very staleness the operator
+    just waived."""
+
+    def test_skip_guard_posts_despite_the_guard_failing(self) -> None:
+        args = SimpleNamespace(force_review_prs=set(),
+                               force_review_non_open=False,
+                               owner="o", repo="r")
+        decision = _decision()
+        with patch.object(fairy, "get_pr",
+                          return_value=_closed_pr()) as get_pr, \
+                patch.object(fairy, "post_issue_comment") as post:
+            self.assertIsNone(fairy.submit_decision_action(
+                args, decision, decision, skip_guard=True))
+        post.assert_called_once()
+        get_pr.assert_not_called()
+
+    def test_without_skip_guard_the_same_state_blocks(self) -> None:
+        args = SimpleNamespace(force_review_prs=set(),
+                               force_review_non_open=False,
+                               owner="o", repo="r")
+        decision = _decision()
+        with patch.object(fairy, "get_pr", return_value=_closed_pr()), \
+                patch.object(fairy, "post_issue_comment") as post:
+            self.assertEqual(
+                fairy.submit_decision_action(args, decision, decision),
+                "PR is no longer open")
+        post.assert_not_called()
+
+
 class ForcePostClosedPrTests(unittest.TestCase):
     def test_unforced_closed_pr_is_blocked(self) -> None:
         self.assertEqual(_check(False, _closed_pr()), "PR is no longer open")

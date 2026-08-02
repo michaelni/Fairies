@@ -572,16 +572,19 @@ def submit_issue_decision(
     *,
     cache: gcli_cache.Cache,
     submitted_counts: dict[str, int],
+    skip_guard: bool = False,
 ) -> str | None:
     """Post the comment (if any), then apply label changes; None when
     done, the staleness guard's block reason when it blocked the submit.
+    ``skip_guard`` posts without the staleness check: the operator's
+    force_post waives it.
 
     The staleness guard runs once, before the comment, on pristine
     ``updated_at``; the comment itself bumps updated_at so labels are
     applied without re-checking (same ordering as fairy's PR submit
     path).
     """
-    changed_reason = check_issue_still_unchanged(args, decision)
+    changed_reason = None if skip_guard else check_issue_still_unchanged(args, decision)
     if changed_reason is not None:
         logger.info(
             "issue #%s: SKIP            submit skipped because %s",

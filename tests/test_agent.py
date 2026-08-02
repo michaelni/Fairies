@@ -658,6 +658,7 @@ class SendTests(SendCase):
                                return_value=None) as submit:
             self.send(pr_ns=self.ns)
         decision = submit.call_args.args[2]
+        self.assertFalse(submit.call_args.kwargs["skip_guard"])
         self.assertEqual(decision.action, "comment")
         # the ticket's guard rides on the rebuilt decision
         self.assertEqual(decision.expected_pr_updated_at, "2026-07-19T10:00:00Z")
@@ -674,6 +675,7 @@ class SendTests(SendCase):
                                return_value=None) as submit:
             self.send(pr_ns=self.ns)
         submit.assert_called_once()
+        self.assertTrue(submit.call_args.kwargs["skip_guard"])
         posted = self.db.get("posted", "pr", "1")
         self.assertTrue(posted["posted_at"])
         self.assertNotIn("force_post", posted)

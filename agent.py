@@ -542,22 +542,26 @@ def postable(decision: fairy.Decision | None) -> bool:
 
 
 def post_decision(ns: argparse.Namespace, kind: str, decision: fairy.Decision,
-                  *, cache, counts: dict[str, int]) -> str | None:
+                  *, cache, counts: dict[str, int],
+                  skip_guard: bool = False) -> str | None:
     """The forge side effects, through fairy/issue_fairy's guarded
     submit seams; the staleness guard's block reason when it refused,
-    None when everything went out."""
+    None when everything went out. ``skip_guard`` is the operator's
+    force_post riding through to the seams."""
     if kind == "issue":
         return issue_fairy.submit_issue_decision(
-            ns, decision, cache=cache, submitted_counts=counts)
+            ns, decision, cache=cache, submitted_counts=counts,
+            skip_guard=skip_guard)
     if decision.action in fairy.ACTIONABLE_DECISIONS:
-        reason = fairy.submit_decision_action(ns, decision, decision, cache=cache)
+        reason = fairy.submit_decision_action(ns, decision, decision, cache=cache,
+                                              skip_guard=skip_guard)
         if reason is not None:
             return reason
         counts[decision.action] += 1
         if fairy.decision_has_label_changes(decision):
             fairy.apply_triage_labels(ns, decision, decision, skip_guard=True)
         return None
-    return fairy.apply_triage_labels(ns, decision, decision, skip_guard=False)
+    return fairy.apply_triage_labels(ns, decision, decision, skip_guard=skip_guard)
 
 
 def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
@@ -581,8 +585,8 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
             return None
         # the operator's Y: post as-is although the item may have
         # moved since the review; popped so the archive stays clean
-        ticket.pop("force_post", None)
-        reason = post_decision(ns, kind, decision, cache=cache, counts=counts)
+        reason = post_decision(ns, kind, decision, cache=cache, counts=counts,
+                               skip_guard=bool(ticket.pop("force_post", None)))
         if reason is None:
             claim.finish("posted", dict(
                 ticket, posted_at=datetime.now(timezone.utc).isoformat()))

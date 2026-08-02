@@ -679,10 +679,12 @@ def submit_decision_action(
     decision: Decision,
     *,
     cache: gcli_cache.Cache | None = None,
+    skip_guard: bool = False,
 ) -> str | None:
     """Post ``decision``; None on success, the staleness guard's block
-    reason otherwise."""
-    changed_reason = check_pr_still_unchanged(args, prepared, decision)
+    reason otherwise. ``skip_guard`` posts without the staleness check:
+    the operator's force_post waives it."""
+    changed_reason = None if skip_guard else check_pr_still_unchanged(args, prepared, decision)
     if changed_reason is not None:
         logger.info("PR #%s: SKIP            submit skipped because %s", decision.pr_number, changed_reason)
         return changed_reason

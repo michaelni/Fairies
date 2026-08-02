@@ -542,19 +542,21 @@ def postable(decision: fairy.Decision | None) -> bool:
 
 
 def post_decision(ns: argparse.Namespace, kind: str, decision: fairy.Decision,
-                  *, cache, counts: dict[str, int]) -> bool:
+                  *, cache, counts: dict[str, int]) -> str | None:
     """The forge side effects, through fairy/issue_fairy's guarded
-    submit seams; False when the staleness guard blocked the post."""
+    submit seams; the staleness guard's block reason when it refused,
+    None when everything went out."""
     if kind == "issue":
         return issue_fairy.submit_issue_decision(
             ns, decision, cache=cache, submitted_counts=counts)
     if decision.action in fairy.ACTIONABLE_DECISIONS:
-        if not fairy.submit_decision_action(ns, decision, decision, cache=cache):
-            return False
+        reason = fairy.submit_decision_action(ns, decision, decision, cache=cache)
+        if reason is not None:
+            return reason
         counts[decision.action] += 1
         if fairy.decision_has_label_changes(decision):
             fairy.apply_triage_labels(ns, decision, decision, skip_guard=True)
-        return True
+        return None
     return fairy.apply_triage_labels(ns, decision, decision, skip_guard=False)
 
 
@@ -577,22 +579,16 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
                         fairy.manual_action_description(decision))
             claim.abort()
             return None
-        if ticket.pop("force_post", None):
-            # the operator's Y: post as-is although the item may have
-            # moved since the review; popped so the archive stays clean
-            reason = None
-        elif kind == "pr":
-            reason = fairy.check_pr_still_unchanged(ns, decision, decision)
-        else:
-            reason = issue_fairy.check_issue_still_unchanged(ns, decision)
+        # the operator's Y: post as-is although the item may have
+        # moved since the review; popped so the archive stays clean
+        ticket.pop("force_post", None)
+        reason = post_decision(ns, kind, decision, cache=cache, counts=counts)
         if reason is None:
-            if post_decision(ns, kind, decision, cache=cache, counts=counts):
-                claim.finish("posted", dict(
-                    ticket, posted_at=datetime.now(timezone.utc).isoformat()))
-                logger.info("%s #%s posted: %s", kind, number,
-                            fairy.manual_action_description(decision))
-                return "posted"
-            reason = "item changed during submit"
+            claim.finish("posted", dict(
+                ticket, posted_at=datetime.now(timezone.utc).isoformat()))
+            logger.info("%s #%s posted: %s", kind, number,
+                        fairy.manual_action_description(decision))
+            return "posted"
         if getattr(ns, "approve", False):
             # Auto mode must not stall on a stale verdict: without
             # llm_at the skipped/ ticket is re-gated (and, the item

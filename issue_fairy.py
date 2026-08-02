@@ -572,9 +572,9 @@ def submit_issue_decision(
     *,
     cache: gcli_cache.Cache,
     submitted_counts: dict[str, int],
-) -> bool:
-    """Post the comment (if any), then apply label changes; False when
-    the staleness guard blocked the submit.
+) -> str | None:
+    """Post the comment (if any), then apply label changes; None when
+    done, the staleness guard's block reason when it blocked the submit.
 
     The staleness guard runs once, before the comment, on pristine
     ``updated_at``; the comment itself bumps updated_at so labels are
@@ -587,7 +587,7 @@ def submit_issue_decision(
             "issue #%s: SKIP            submit skipped because %s",
             decision.pr_number, changed_reason,
         )
-        return False
+        return changed_reason
     if decision.action == "comment":
         post_issue_comment(
             args, args.owner, args.repo, decision.pr_number,
@@ -623,7 +623,7 @@ def submit_issue_decision(
             args, decision.pr_number, decision.label_changes, current,
             kind=KIND_ISSUE,
         )
-    return True
+    return None
 
 
 

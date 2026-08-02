@@ -679,11 +679,13 @@ def submit_decision_action(
     decision: Decision,
     *,
     cache: gcli_cache.Cache | None = None,
-) -> bool:
+) -> str | None:
+    """Post ``decision``; None on success, the staleness guard's block
+    reason otherwise."""
     changed_reason = check_pr_still_unchanged(args, prepared, decision)
     if changed_reason is not None:
         logger.info("PR #%s: SKIP            submit skipped because %s", decision.pr_number, changed_reason)
-        return False
+        return changed_reason
     if decision.action == "approve":
         gcli_approve(args, decision.pr_number, decision.llm_message)
     elif decision.action == "comment" or decision.action == "request_changes":
@@ -722,7 +724,7 @@ def submit_decision_action(
                 "for PR #%s: %s",
                 decision.action, decision.pr_number, exc,
             )
-    return True
+    return None
 
 
 def first_dt(obj: ApiObject, *keys: str) -> datetime | None:
@@ -1495,9 +1497,9 @@ def apply_triage_labels(
     decision: Decision,
     *,
     skip_guard: bool,
-) -> bool:
-    """Apply label changes for ``decision``; False when the staleness
-    guard suppressed them.
+) -> str | None:
+    """Apply label changes for ``decision``; None when applied, the
+    staleness guard's block reason when it suppressed them.
 
     When ``skip_guard`` is True the caller has just successfully run
     ``submit_decision_action``; re-checking ``check_pr_still_unchanged``
@@ -1512,7 +1514,7 @@ def apply_triage_labels(
                 decision.pr_number,
                 changed_reason,
             )
-            return False
+            return changed_reason
 
     pr = get_pr(args, decision.pr_number)
     current = set(labels(pr))
@@ -1526,7 +1528,7 @@ def apply_triage_labels(
         current,
     )
     post_label_explanations(args, decision.pr_number, decision.label_changes, current)
-    return True
+    return None
 
 
 def post_label_explanations(

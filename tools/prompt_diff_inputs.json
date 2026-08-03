@@ -1,0 +1,4 @@
+{
+  "repo_roots": ["ffmpeg", "all_ffmpeg"],
+  "container_repo_mounts": ["/work/ffmpeg", "/work/all_ffmpeg"]
+}

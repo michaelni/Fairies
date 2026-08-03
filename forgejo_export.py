@@ -45,7 +45,6 @@ import gcli_cache
 from common import (
     add_color_arg,
     attachment_urls,
-    default_cache_path,
     iso_to_dt,
     setup_logging,
 )
@@ -71,9 +70,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--cache",
         type=Path,
-        default=default_cache_path("pr_data_cache.pkl"),
-        help="Shared gcli_cache pickle path (default: ~/.fairy/pr_data_cache.pkl). "
-             "Shared with fairy so each PR's gcli data is fetched once.",
+        help="gcli_cache pickle path holding both kinds. Default: the "
+             "per-side files fairy.py and issue_fairy.py derive for this "
+             "repo, so each item's gcli data is fetched once.",
     )
     p.add_argument(
         "--discussion-cache-max-age-hours",
@@ -182,6 +181,21 @@ def list_repo_endpoint(args: argparse.Namespace, suffix: str, **params: Any) -> 
         raise TypeError(f"expected list from {suffix}, got {type(data).__name__}")
     LOG.debug("fetched %d items from %s", len(data), suffix)
     return data
+
+
+def open_caches(
+    args: argparse.Namespace,
+) -> tuple[dict[str, gcli_cache.Cache], dict[Path, gcli_cache.Cache]]:
+    """One loaded Cache per distinct path, mapped by kind and by path.
+
+    An explicit ``--cache`` holds both kinds; mapping them to a single
+    object keeps the later whole-file saves from discarding each
+    other's entries."""
+    paths = {kind: args.cache or gcli_cache.side_cache_path(args, kind)
+             for kind in ("issues", "pulls")}
+    by_path = {path: gcli_cache.load_cache(path)
+               for path in set(paths.values())}
+    return {kind: by_path[path] for kind, path in paths.items()}, by_path
 
 
 def get_item_fields(
@@ -725,7 +739,7 @@ def main() -> int:
 
     LOG.info("exporting %s/%s", args.owner, args.repo)
 
-    cache = gcli_cache.load_cache(args.cache)
+    caches, cache_by_path = open_caches(args)
     cache_max_age = timedelta(hours=args.discussion_cache_max_age_hours)
     now = datetime.now(timezone.utc)
 
@@ -739,7 +753,7 @@ def main() -> int:
     fetched_issues: list[tuple[dict[str, Any], dict[str, list[dict[str, Any]]], list[str]]] = []
     for issue in real_issues:
         fields, warnings = get_item_fields(
-            args, cache, issue, "issues", ISSUE_FIELDS,
+            args, caches["issues"], issue, "issues", ISSUE_FIELDS,
             now=now, cache_max_age=cache_max_age,
         )
         fetched_issues.append((issue, fields, warnings))
@@ -749,12 +763,13 @@ def main() -> int:
     ] = []
     for pr in pulls:
         fields, warnings = get_item_fields(
-            args, cache, pr, "pulls", PR_FIELDS,
+            args, caches["pulls"], pr, "pulls", PR_FIELDS,
             now=now, cache_max_age=cache_max_age,
         )
         fetched_pulls.append((pr, fields, warnings))
 
-    gcli_cache.save_cache(args.cache, cache)
+    for path, cache in cache_by_path.items():
+        gcli_cache.save_cache(path, cache)
 
     keep = {MARKER}
     for issue, fields, fetch_warnings in fetched_issues:

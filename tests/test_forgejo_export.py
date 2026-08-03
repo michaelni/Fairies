@@ -67,6 +67,31 @@ def _item(number: int = 42, updated_at: str | None = LIVE_ISO) -> dict:
     return {"number": number, "updated_at": updated_at}
 
 
+class OpenCachesTests(unittest.TestCase):
+    """open_caches loads one Cache per distinct path: derived per-kind
+    files by default, a single shared object under an explicit --cache
+    so the whole-file saves cannot discard each other's entries."""
+
+    def _open(self, cache: Path | None):
+        args = SimpleNamespace(cache=cache, forge_type="gitea",
+                               gcli_account="acct", owner="o", repo="r")
+        with patch.object(gcli_cache, "load_cache",
+                          side_effect=lambda path: gcli_cache.Cache()):
+            return forgejo_export.open_caches(args)
+
+    def test_default_is_one_derived_file_per_kind(self) -> None:
+        caches, by_path = self._open(None)
+        self.assertEqual({path.name for path in by_path},
+                         {"gitea_acct_o_r_issues.pkl",
+                          "gitea_acct_o_r_pulls.pkl"})
+        self.assertIsNot(caches["issues"], caches["pulls"])
+
+    def test_explicit_cache_is_one_shared_object(self) -> None:
+        caches, by_path = self._open(Path("x.pkl"))
+        self.assertEqual(set(by_path), {Path("x.pkl")})
+        self.assertIs(caches["issues"], caches["pulls"])
+
+
 class AttachmentExportTests(unittest.TestCase):
     """Exports must list forge attachments: issue 20572's ZIP was attached
     but not linked from the body, so the exported 020572.md had no trace

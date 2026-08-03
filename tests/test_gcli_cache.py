@@ -61,6 +61,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import forge_gcli  # noqa: E402
 import gcli_cache  # noqa: E402
+from common import default_cache_path  # noqa: E402
 from gcli_cache import (  # noqa: E402
     Cache,
     EDIT_PRONE,
@@ -74,6 +75,7 @@ from gcli_cache import (  # noqa: E402
     get,
     load_cache,
     save_cache,
+    side_cache_path,
 )
 
 
@@ -244,6 +246,36 @@ class ConstantsTests(unittest.TestCase):
         # Issues share a subset of PR fields (timeline + comments);
         # FETCH membership encodes this without separate sets.
         self.assertTrue(ISSUE_FIELDS.issubset(PR_FIELDS))
+
+
+class SideCachePathTests(unittest.TestCase):
+    """side_cache_path spells the EntryKey identity into the filename, so
+    any two sides whose entries must not share a cache slot also get
+    distinct default files. Empty identity fields stay empty."""
+
+    def test_account_identified_side(self) -> None:
+        args = SimpleNamespace(forge_type=None, gcli_account="prod",
+                               owner="Acme", repo="Widgets")
+        self.assertEqual(side_cache_path(args, "issues"),
+                         default_cache_path("_prod_Acme_Widgets_issues.pkl"))
+
+    def test_forge_type_identified_side(self) -> None:
+        args = SimpleNamespace(forge_type="GitHub", gcli_account=None,
+                               owner="octo", repo="testrepo")
+        self.assertEqual(side_cache_path(args, "pulls"),
+                         default_cache_path("github__octo_testrepo_pulls.pkl"))
+
+    def test_kinds_of_one_repo_get_distinct_files(self) -> None:
+        args = SimpleNamespace(forge_type="gitea", gcli_account="prod",
+                               owner="o", repo="r")
+        self.assertNotEqual(side_cache_path(args, "pulls"),
+                            side_cache_path(args, "issues"))
+
+    def test_a_hostile_account_cannot_leave_the_cache_dir(self) -> None:
+        args = SimpleNamespace(forge_type="gitea", gcli_account="a/../b c",
+                               owner="o", repo="r")
+        self.assertEqual(side_cache_path(args, "pulls"),
+                         default_cache_path("gitea_a-..-b-c_o_r_pulls.pkl"))
 
 
 # ---------------------------------------------------------------------------

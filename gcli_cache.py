@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import logging
 import pickle
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -51,7 +52,7 @@ from functools import partial
 from pathlib import Path
 from typing import NamedTuple
 
-from common import atomic_write_pickle, iso_to_dt
+from common import atomic_write_pickle, default_cache_path, iso_to_dt
 import forge_gcli
 
 logger = logging.getLogger(__name__)
@@ -128,10 +129,31 @@ class EntryKey(NamedTuple):
     number: int
 
 
+def _forge_ident(args: argparse.Namespace) -> tuple[str, str]:
+    return (args.forge_type or "").lower(), args.gcli_account or ""
+
+
 def entry_key(args: argparse.Namespace, kind: str, owner: str, repo: str,
               number: int) -> EntryKey:
-    return EntryKey((args.forge_type or "").lower(), args.gcli_account or "",
-                    kind, owner, repo, number)
+    return EntryKey(*_forge_ident(args), kind, owner, repo, number)
+
+
+def side_cache_path(args: argparse.Namespace, kind: str) -> Path:
+    """Default cache pickle for the (forge, account, owner, repo, kind)
+    side ``args`` describes: the same identity fields as :class:`EntryKey`,
+    so sides that must not share a cache slot get distinct files and
+    concurrent sides never clobber each other's whole-file saves.
+
+    The account is an unvalidated free string from the operator's gcli
+    config; it is cleaned to filename-safe characters. Owner and repo
+    are forge-validated, the surviving forge types are plain words.
+
+    Not the forge URL: only gcli's config knows that (+46 lines to
+    resolve, see branch ``url-cache-path``)."""
+    forge_type, account = _forge_ident(args)
+    account = re.sub(r"[^A-Za-z0-9._-]", "-", account)
+    return default_cache_path(
+        f"{forge_type}_{account}_{args.owner}_{args.repo}_{kind}.pkl")
 
 
 @dataclass

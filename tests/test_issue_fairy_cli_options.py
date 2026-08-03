@@ -53,6 +53,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import agent  # noqa: E402
+import common  # noqa: E402
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 import filedb  # noqa: E402
@@ -188,6 +189,24 @@ class IssueScanCase(unittest.TestCase):
                 mock.patch.object(agent.gcli_cache, "save_cache"):
             agent.scan_pass(self.db, None, ns, now=NOW)
         return prepare
+
+
+class IssueCacheDefaultTests(unittest.TestCase):
+    """Without --cache the issue side derives its own pickle, distinct
+    from the PR side's, so the two sides of one repo running
+    concurrently never discard each other's whole-file saves."""
+
+    def test_the_default_is_derived_from_the_side_identity(self) -> None:
+        self.assertEqual(issue_ns().cache,
+                         common.default_cache_path("gitea__o_r_issues.pkl"))
+
+    def test_it_differs_from_the_pr_side_of_the_same_repo(self) -> None:
+        self.assertNotEqual(
+            issue_ns().cache,
+            fairy.parse_args(shlex.split("--owner o --repo r")).cache)
+
+    def test_an_explicit_path_wins(self) -> None:
+        self.assertEqual(issue_ns("--cache x.pkl").cache, Path("x.pkl"))
 
 
 class IssueDiscussionCacheMaxAgeTests(IssueScanCase):

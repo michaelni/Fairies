@@ -50,7 +50,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import gcli_cache
-from common import add_color_arg, attachment_urls, default_cache_path, iso_to_dt
+from common import add_color_arg, attachment_urls, iso_to_dt
 import forge_gcli
 from forge_gcli import (
     KIND_ISSUE,
@@ -248,10 +248,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--cache",
         type=Path,
-        default=default_cache_path("pr_data_cache.pkl"),
         help="Pickle cache path holding per-issue gcli data, shared with "
-             "fairy.py and forgejo_export.py so issues fetched by one are "
-             "reused by the others (default: ~/.fairy/pr_data_cache.pkl). "
+             "forgejo_export.py so issues fetched by one are reused by the "
+             "other (default: "
+             "~/.fairy/<forge>_<account>_<owner>_<repo>_issues.pkl). "
              "Saves are whole-file last-writer-wins: a concurrent run can "
              "discard the other's fresh entries (refetched later), never "
              "corrupt them.",
@@ -273,6 +273,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "forces a periodic refetch as a backstop (default: 24).",
     )
     args = p.parse_args(argv)
+    args.cache = args.cache or gcli_cache.side_cache_path(args, "issues")
     args.force_review_issues = flatten_pr_number_args(args.force_review_issue)
     args.force_skip_issues = flatten_pr_number_args(args.force_skip_issue)
     args.triage_labels = flatten_label_args(args.issue_label)

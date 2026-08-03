@@ -52,6 +52,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import agent  # noqa: E402
+import common  # noqa: E402
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 import filedb  # noqa: E402
@@ -237,6 +238,18 @@ class WipPrefixTests(ScanCase):
         self.scan(pr_ns("--wip-prefix SPIKE:"), [open_pr(1, "WIP: try this")])
         self.assertEqual(self.db.get("skipped", "pr", "1")["reason"],
                          "marked WIP/draft")
+
+
+class CacheDefaultTests(unittest.TestCase):
+    """Without --cache the PR side derives its own pickle from the side
+    identity, so no two concurrently running sides share a file."""
+
+    def test_the_default_is_derived_from_the_side_identity(self) -> None:
+        self.assertEqual(pr_ns().cache,
+                         common.default_cache_path("gitea__o_r_pulls.pkl"))
+
+    def test_an_explicit_path_wins(self) -> None:
+        self.assertEqual(pr_ns("--cache x.pkl").cache, Path("x.pkl"))
 
 
 class DiscussionCacheMaxAgeTests(ScanCase):

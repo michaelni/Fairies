@@ -92,7 +92,6 @@ from common import (
     add_color_arg,
     apply_config_file_defaults,
     attachment_urls,
-    default_cache_path,
     iso_to_dt,
     parse_iso_datetime_arg,
     setup_logging,
@@ -569,9 +568,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--cache",
         type=Path,
-        default=default_cache_path("pr_data_cache.pkl"),
-        help="Pickle cache path holding per-PR gcli data "
-             "(default: ~/.fairy/pr_data_cache.pkl).",
+        help="Pickle cache path holding per-PR gcli data (default: "
+             "~/.fairy/<forge>_<account>_<owner>_<repo>_pulls.pkl).",
     )
     p.add_argument(
         "--workset-retention-days",
@@ -595,6 +593,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     apply_config_file_defaults(p, argv)
     args = p.parse_args(argv)
+    args.cache = args.cache or gcli_cache.side_cache_path(args, "pulls")
     args.force_review_prs = flatten_pr_number_args(args.force_review_pr)
     args.force_skip_prs = flatten_pr_number_args(args.force_skip_pr)
     args.triage_labels = flatten_label_args(args.triage_label)

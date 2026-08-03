@@ -53,8 +53,9 @@ ensure_repo fairies    https://code.ffmpeg.org/michaelni/Fairies.git
 # process and its gcli cache), the TUI as a pure view over the same
 # filedbs. Each side string carries --log-file: agent and worker both
 # append there and the TUI tails it automatically. Every repo gets its
-# own --cache pickle and --debug-response-dir because the processes
-# run concurrently and would otherwise race on the shared defaults.
+# own --debug-response-dir because the processes run concurrently and
+# would otherwise race on the shared default; the gcli cache pickle
+# needs no such flag, its default is already derived per side.
 # FFmpeg/web, FFmpeg/fateserver and michaelni/Fairies define no
 # FFmpeg-style label sets, hence no --triage-label/--issue-label there.
 # Extra arguments ($*) go to fairy_tui.py itself.
@@ -78,7 +79,6 @@ FFMPEG_PR="
 FFMPEG_ISSUES="
     --owner FFmpeg --repo FFmpeg $COMMON
     --log-file logs/ffmpeg.log
-    --cache $HOME/.fairy/issue_data_cache.pkl
     --issue-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid,resolution/external,resolution/fixed'
     --llm-review-cmd './pr_review_wrapper.py
         --repo-root ffmpeg
@@ -94,7 +94,6 @@ WEB_PR="
     --owner FFmpeg --repo web $COMMON
     --log-file logs/web.log
     --patch-repo ffmpeg-web
-    --cache $HOME/.fairy/web_pr_data_cache.pkl
     --llm-review-cmd './pr_review_wrapper.py
         --repo-root ffmpeg-web
         --project-facts project_facts/ffmpeg-web.md
@@ -108,7 +107,6 @@ FATE_PR="
     --owner FFmpeg --repo fateserver $COMMON
     --log-file logs/fateserver.log
     --patch-repo fateserver
-    --cache $HOME/.fairy/fateserver_pr_data_cache.pkl
     --llm-review-cmd './pr_review_wrapper.py
         --repo-root fateserver
         --project-facts project_facts/fateserver.md
@@ -122,7 +120,6 @@ FAIRIES_PR="
     --owner michaelni --repo Fairies $COMMON
     --log-file logs/fairies.log
     --patch-repo fairies
-    --cache $HOME/.fairy/fairies_pr_data_cache.pkl
     --llm-review-cmd './pr_review_wrapper.py
         --repo-root fairies
         --model $MODEL
@@ -132,7 +129,6 @@ FAIRIES_PR="
 FAIRIES_ISSUES="
     --owner michaelni --repo Fairies $COMMON
     --log-file logs/fairies.log
-    --cache $HOME/.fairy/fairies_issue_data_cache.pkl
     --llm-review-cmd './pr_review_wrapper.py
         --repo-root fairies
         --model $MODEL

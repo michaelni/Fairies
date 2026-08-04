@@ -47,19 +47,24 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import llm_prompt  # noqa: E402
+import pr_review_wrapper  # noqa: E402
 
 
-def _reviewer_prompt(*, ci_failures_present: bool) -> str:
+def _prompt(role: str, *, ci_triage_mode: bool) -> str:
     return llm_prompt.generate_llm_prompt(
-        role="review",
+        role=role,
         vendor="openai",
         model="m",
         features=set(),
         repo_roots=[],
         container_repo_mounts=[],
         reviewer_username="fairy",
-        ci_triage_mode=ci_failures_present,
+        ci_triage_mode=ci_triage_mode,
     )
+
+
+def _reviewer_prompt(*, ci_failures_present: bool) -> str:
+    return _prompt("review", ci_triage_mode=ci_failures_present)
 
 
 class CiFailureDataFactoringTests(unittest.TestCase):
@@ -82,6 +87,26 @@ class CiFailureDataFactoringTests(unittest.TestCase):
         self.assertNotIn(
             "SHOULD NOT choose engage", _reviewer_prompt(ci_failures_present=True)
         )
+
+    def test_triager_forbids_engage_only_in_announce_mode(self) -> None:
+        self.assertIn(
+            "SHOULD NOT choose engage", _prompt("triager", ci_triage_mode=True))
+        self.assertNotIn(
+            "SHOULD NOT choose engage", _prompt("triager", ci_triage_mode=False))
+
+    def test_announce_mode_ends_when_every_context_was_announced(self) -> None:
+        """The wrapper keys the triager's announce-mode prompt off
+        ``contexts_still_requiring_announcement``, not off ``ci_triage``
+        presence, so an all-announced red PR is triaged with the normal
+        prompt and may route ``engage``."""
+        pending = {"ci_triage": {
+            "contexts_still_requiring_announcement": ["/ build"]}}
+        announced = {"ci_triage": {
+            "contexts_still_requiring_announcement": [],
+            "contexts_bot_already_mentioned": ["/ build"]}}
+        self.assertTrue(pr_review_wrapper.ci_announce_pending(pending))
+        self.assertFalse(pr_review_wrapper.ci_announce_pending(announced))
+        self.assertFalse(pr_review_wrapper.ci_announce_pending({}))
 
 
 if __name__ == "__main__":

@@ -145,16 +145,21 @@ class TriageOnCiFailureTests(PrepareCase):
         self.assertEqual(decision.action, "skip")
         self.assertIn("needs --triage-model", decision.reason)
 
-    def test_an_already_announced_failure_never_invokes_the_wrapper(self) -> None:
-        """Documented: "If every failing context was already mentioned
-        in a prior comment by fairy, the wrapper is not invoked"."""
-        decision = self.prepare(
+    def test_an_already_announced_failure_still_reaches_the_wrapper(self) -> None:
+        """An all-announced red PR flows to the wrapper instead of
+        skipping; the empty ``contexts_still_requiring_announcement``
+        is what switches the triager off the announce-mode prompt
+        (pr_review_wrapper.ci_announce_pending), so a red-CI PR can
+        still reach a full review."""
+        prepared = self.prepare(
             "--triage-on-ci-failure " + TRIAGE_CMD + " --patch-repo /p",
             comments=[FAIRY_CI_HEADS_UP, NEWER_HUMAN_COMMENT],
             self_login="fairy")
-        self.assertEqual(decision.action, "skip")
-        self.assertIn("already mentioned all current ERROR/FAILURE job(s)",
-                      decision.reason)
+        self.assertEqual(
+            prepared.ci_triage["contexts_bot_already_mentioned"], ["/ build"])
+        self.assertEqual(
+            prepared.ci_triage["contexts_still_requiring_announcement"], [])
+        self.assertIn("already announced", prepared.base_reason)
 
     def test_a_newly_red_job_still_reaches_the_wrapper(self) -> None:
         prepared = self.prepare(

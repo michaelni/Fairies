@@ -38,9 +38,10 @@ Selection rules:
 3. PR has no *currently outstanding* request-for-changes review.
 4. The PR head commit has CI statuses and every latest reported context is successful
    (unless ``--triage-on-ci-failure`` is set together with a triage-capable
-   ``--llm-review-cmd``; then ERROR/FAILURE jobs can be passed to the mini
-   model for a short heads-up, with deduplication so fairy does not re-post
-   when its prior comments already mention every failing context).
+   ``--llm-review-cmd``; then ERROR/FAILURE jobs are passed to the mini
+   model, which posts a short heads-up while contexts are unannounced and
+   afterwards triages normally, so a red-CI PR can still reach a full
+   review).
 5. PR has had no activity for at least 7 days.
 
 Optional LLM review:
@@ -543,9 +544,10 @@ def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
             "immediately. If your LLM review command is configured for triage "
             "(e.g. pr_review_wrapper.py with --triage-model), run it so the "
             "mini model can post a short reply_no_verdict pointing at the failure. "
-            "If every failing context was already mentioned in a prior comment by "
-            "fairy, the wrapper is not invoked. Requires --llm-review-cmd and a "
-            "command line that includes --triage-model."
+            "Once every failing context was already mentioned in a prior comment by "
+            "fairy, triage runs in its normal mode and may engage the full review. "
+            "Requires --llm-review-cmd and a command line that includes "
+            "--triage-model."
         ),
     )
     p.add_argument(
@@ -2735,27 +2737,8 @@ def prepare_pr(
             ci_payload = build_ci_triage_payload(
                 get_pr_head_ref(pr) or "", failure_details, fairy_bodies_for_ci
             )
-            men = ci_payload["contexts_bot_already_mentioned"]
             need = ci_payload["contexts_still_requiring_announcement"]
-            assert isinstance(men, list) and isinstance(need, list)
-            if not need:
-                if args.verbose:
-                    logger.info(
-                        "PR #%d: skipping LLM (CI triage); bot already mentioned all %d "
-                        "failing job context(s): %s",
-                        number,
-                        len(failure_details),
-                        ", ".join(men) if men else "-",
-                    )
-                return skip(
-                    "CI not successful; bot already mentioned all current "
-                    f"ERROR/FAILURE job(s): {', '.join(men)}"
-                    if men
-                    else "CI not successful; bot already mentioned all current ERROR/FAILURE job(s)",
-                    last_activity_value=last_activity,
-                    cancelled_ci_contexts=cancelled_ctxs,
-                    blocked_ci_contexts=blocked_ctxs,
-                )
+            assert isinstance(need, list)
             # CI-failure triage is a proactive LLM action, so honor the
             # same discussion-inactivity gate as the normal approval path.
             # Forced-review signals (@mention / requested reviewer) have
@@ -2774,7 +2757,7 @@ def prepare_pr(
                     "PR #%d: CI triage: %d job(s) still need announcement: %s",
                     number,
                     len(need),
-                    ", ".join(need),
+                    ", ".join(need) if need else "-",
                 )
             attach_ci_failure_logs(args, failure_details)
             auto_merge_value = get_auto_merge()
@@ -2782,6 +2765,9 @@ def prepare_pr(
                 f"CI triage (head not green): {len(need)} job(s) not yet "
                 f"mentioned by bot: {', '.join(need[:6])}"
                 f"{'...' if len(need) > 6 else ''}"
+                if need else
+                f"CI red but all {len(failure_details)} failing job(s) already "
+                "announced; triage decides skip/reply/engage"
             )
             return PreparedPR(
                 pr=pr,

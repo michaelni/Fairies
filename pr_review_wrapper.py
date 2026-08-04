@@ -761,6 +761,19 @@ def read_request() -> JsonObject:
     return data
 
 
+def ci_announce_pending(request: JsonObject) -> bool:
+    """True while some failing CI context still needs fairy's heads-up.
+
+    Selects the announce-mode triage prompt (T_PROMPT_TRIAGE_CI_MODE,
+    which forbids ``engage``); once every failure was announced the
+    triager runs its normal prompt, so a red-CI PR can still reach a
+    full review. The reviewer's CI-failure data section is independent
+    of this: it rides on ``ci_triage`` presence alone.
+    """
+    ci = request.get("ci_triage")
+    return isinstance(ci, dict) and bool(ci.get("contexts_still_requiring_announcement"))
+
+
 def find_repo_root(explicit: str | None) -> Path | None:
     if explicit:
         path = Path(explicit).expanduser().resolve()
@@ -1567,7 +1580,7 @@ def main() -> int:
                 source_files=[],
                 source_notes=[],
                 reviewer_username=reviewer_username,
-                ci_triage_mode=ci_triage_active,
+                ci_triage_mode=ci_announce_pending(request),
                 repo_roots=repo_roots,
                 repo_mount_paths=repo_mount_paths,
                 project_facts=project_facts,

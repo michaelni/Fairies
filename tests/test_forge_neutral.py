@@ -69,7 +69,7 @@ OWNS_FORGE_KNOWLEDGE = {
     "github_app.py",
     "tools/capture_github_fixtures.py",
 }
-BASELINE = 62  # lower this when cleaning existing mentions up
+BASELINE = 62  # increasing this number is strictly forbidden; lower it when cleaning existing mentions up
 
 
 def _mentions() -> list[str]:

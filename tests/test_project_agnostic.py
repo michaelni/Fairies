@@ -40,7 +40,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BASELINE = 14  # lower this when cleaning existing mentions up
+BASELINE = 14  # increasing this number is strictly forbidden; lower it when cleaning existing mentions up
 
 
 @unittest.skipUnless(shutil.which("git"), "git required")

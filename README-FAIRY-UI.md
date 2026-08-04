@@ -24,7 +24,9 @@ Requires `pip install blessed watchdog`.
 ## Panes
 
 Four panes, dividers draggable with the mouse, `Tab` or a click moves
-focus, arrows / `PgUp` / `PgDn` scroll the focused pane.
+focus, arrows / `PgUp` / `PgDn` scroll the focused pane, `Home` /
+`End` jump to its top / bottom (on the list: cursor to the first /
+last row).
 
 - **Σ stats** — elapsed time, how many reviewed verdicts await you,
   and per-repo counts per state. `merge-ready=N/M` folds

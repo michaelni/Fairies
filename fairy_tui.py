@@ -690,7 +690,7 @@ KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("S", "snooze"), ("r", "rerun"), ("R", "+eval"), ("f", "force"),
           ("x", "drop"), ("o", "edit msg"), ("p", "pause"), ("a", "filter"),
           ("t", "sort"), ("/", "search"), ("e/E", "export"),
-          ("Tab/click", "focus"), ("↑↓ PgUp/PgDn", "scroll"))
+          ("Tab/click", "focus"), ("↑↓ PgUp/PgDn Home/End", "scroll"))
 
 
 def _proc_children(pid: int) -> list[int]:
@@ -1353,6 +1353,21 @@ class UILoop:
         elif pane in self.scroll:
             self.scroll[pane] = max(0, self.scroll[pane] + delta)
 
+    def _jump_pane(self, pane: str, top: bool) -> None:
+        """Home/End: the list jumps the cursor to the first/last row;
+        the other panes jump their scroll to the oldest/newest end
+        (the log pane's offset counts back from the tail, hence its
+        inverted arithmetic; the huge value is clamped at paint)."""
+        if pane == "tr":
+            with self.model.lock:
+                vis = self.model._sync_cursor()
+                self.model.select_index(0 if top else len(vis) - 1)
+            self.follow_cursor = True
+        elif pane == "bl":
+            self.scroll["bl"] = 10 ** 9 if top else 0
+        elif pane in self.scroll:
+            self.scroll[pane] = 0 if top else 10 ** 9
+
     def _page(self) -> int:
         rects = self.layout.rects(self.term.width, max(3, self.term.height - 1))
         return max(1, rects[self.focus].h - 2)
@@ -1448,6 +1463,8 @@ class UILoop:
             self._scroll_pane(self.focus, -self._page())
         elif name == "KEY_PGDOWN":
             self._scroll_pane(self.focus, self._page())
+        elif name in ("KEY_HOME", "KEY_END"):
+            self._jump_pane(self.focus, top=name == "KEY_HOME")
         elif ks == "q":
             self.model.quit_all()
         elif ks == "a":

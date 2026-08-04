@@ -647,6 +647,19 @@ class WheelTests(DbCase):
         ui.paint()
         self.assertEqual(ui.list_top, 3)  # timer repaints do not snap back
 
+    def test_home_and_end_jump_the_cursor(self) -> None:
+        ui = self._ui_with_rows()
+        with self.model.lock:
+            self.model.select_index(3)
+        ui.dispatch(NamedKey("KEY_END"))
+        with self.model.lock:
+            vis = self.model._sync_cursor()
+            self.assertEqual(self.model.cursor, len(vis) - 1)
+        ui.dispatch(NamedKey("KEY_HOME"))
+        with self.model.lock:
+            self.model._sync_cursor()
+            self.assertEqual(self.model.cursor, 0)
+
     def test_an_arrow_after_wheeling_returns_the_view_to_the_cursor(self) -> None:
         ui = self._ui_with_rows()
         with self.model.lock:

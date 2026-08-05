@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 /*
  * Copyright (C) 2026 Michael Niedermayer
@@ -2857,12 +2856,3 @@ def safe_apply_llm_review_to_prepared(
             decision, external_approvers=prepared.external_approvers
         )
     return decision
-
-
-if __name__ == "__main__":
-    # Library module: running it directly only documents the per-side
-    # argument string (``./fairy.py --help``).
-    parse_args()
-    raise SystemExit(
-        "fairy.py is a library: pass the arguments above to configurator.py, "
-        "in its --prs section")

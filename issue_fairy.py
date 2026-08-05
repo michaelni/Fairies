@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 /*
  * Copyright (C) 2026 Michael Niedermayer
@@ -631,13 +630,3 @@ def submit_issue_decision(
             kind=KIND_ISSUE,
         )
     return None
-
-
-
-if __name__ == "__main__":
-    # Library module: running it directly only documents the per-side
-    # argument string (``./issue_fairy.py --help``).
-    parse_args()
-    raise SystemExit(
-        "issue_fairy.py is a library: pass the arguments above to "
-        "configurator.py, in its --issues section")

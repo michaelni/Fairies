@@ -57,7 +57,10 @@ they fall back to their poll intervals:
 - `worker.py`: claims `queued/` tickets (flock + rename; the held lock
   is its liveness signal), runs the LLM wrapper, writes the verdict to
   `reviewed/` / `skipped/` / `error/`. `--parallel N` reviews N
-  tickets concurrently; running several workers composes too.
+  tickets concurrently; running several workers composes too. Side
+  options on its command line override the config.toml values for
+  this run (e.g. a different `--llm-review-cmd`; before a `--prs` /
+  `--issues` marker they apply to both sides, after one to that side).
 - `fairy_tui.py` (optional): a pure view; every key is a file
   operation on the same db.
 

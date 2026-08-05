@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from datetime import datetime, timezone
@@ -62,7 +63,8 @@ import filedb
 import forge_gcli
 import issue_fairy
 import workset
-from common import add_file_log, setup_logging, watch_paths
+from common import (OVERRIDE_EPILOG, add_file_log, sectioned_help,
+                    setup_logging, split_sections, watch_paths)
 
 __all__ = ["main", "review_claim", "drain"]
 
@@ -226,9 +228,10 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
             own_watch.stop()
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="LLM worker: claim queued filedb tickets and review them.",
+        epilog=OVERRIDE_EPILOG,
     )
     p.add_argument("--db-root", type=Path, required=True,
                    help="filedb root; its config.toml, written by "
@@ -240,17 +243,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="keep waiting for tickets, rechecking every N seconds; "
                         "new queued/ files wake the worker instantly via "
                         "watchdog (default: drain and exit)")
-    return p.parse_args(argv)
+    return p
 
 
 def main() -> int:
-    args = parse_args()
+    argv = sys.argv[1:]
+    if "-h" in argv or "--help" in argv:
+        print(sectioned_help(make_parser(), fairy.make_parser(),
+                             issue_fairy.make_parser()))
+        return 0
+    shared, sections = split_sections(argv)
+    args, overrides = make_parser().parse_known_args(shared)
     pr_argv, issue_argv = db_config.read_side_argv(args.db_root)
+    pr_over = overrides + sections.get("--prs", [])
+    issue_over = overrides + sections.get("--issues", [])
     sides: dict[str, argparse.Namespace] = {}
     if pr_argv:
-        sides["pr"] = fairy.parse_args(pr_argv)
+        sides["pr"] = fairy.parse_args(pr_argv + pr_over)
     if issue_argv:
-        sides["issue"] = issue_fairy.parse_args(issue_argv)
+        sides["issue"] = issue_fairy.parse_args(issue_argv + issue_over)
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
                   logger, db_config.logger, workset.logger, filedb.logger,
@@ -261,7 +272,7 @@ def main() -> int:
     fairy.validate_sides(sides.get("pr"), sides.get("issue"))
     db = filedb.Db(args.db_root)
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
-    db_config.log_side_argv(pr_argv, issue_argv)
+    db_config.log_side_argv(pr_argv, issue_argv, pr_over, issue_over)
     wake = Event()
     watch_paths([db.root / "queued"], wake.set)
     while True:

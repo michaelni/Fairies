@@ -137,10 +137,21 @@ def read_side_argv(root: Path) -> tuple[list[str] | None, list[str] | None]:
     return pr, issue
 
 
-def log_side_argv(pr_argv: list[str] | None,
-                  issue_argv: list[str] | None) -> None:
-    """One provenance line per configured side, for the shared log."""
-    for kind, argv in (("pr", pr_argv), ("issue", issue_argv)):
+def log_side_argv(pr_argv: list[str] | None, issue_argv: list[str] | None,
+                  pr_overrides: list[str] | None = None,
+                  issue_overrides: list[str] | None = None) -> None:
+    """One provenance line per configured side and one per side's CLI
+    overrides, for the shared log; overrides for a side the config
+    lacks warn instead."""
+    for kind, argv, over in (("pr", pr_argv, pr_overrides),
+                             ("issue", issue_argv, issue_overrides)):
         if argv:
             logger.info("%s side from %s: %s", kind, CONFIG_NAME,
                         shlex.join(argv))
+        if not over:
+            continue
+        if argv:
+            logger.info("%s side CLI overrides: %s", kind, shlex.join(over))
+        else:
+            logger.warning("%s side CLI overrides ignored: the config has "
+                           "no such side", kind)

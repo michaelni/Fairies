@@ -31,6 +31,8 @@ worker: claims become verdict tickets in the right directories."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
@@ -353,6 +355,54 @@ class ConfigGuardTests(unittest.TestCase):
                 self.assertRaises(SystemExit) as ctx:
             worker.main()
         self.assertEqual(ctx.exception.code, 2)
+
+
+class OverrideTests(unittest.TestCase):
+    def drain_sides(self, argv: list, pr: dict | None = None,
+                    issue: dict | None = None) -> dict:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        worker.db_config.write_config(Path(tmp.name), "o/r", set(), pr, issue)
+        captured: dict = {}
+
+        def drain(db, sides, **kwargs) -> int:
+            captured.update(sides)
+            return 0
+
+        with mock.patch.object(worker, "drain", side_effect=drain), \
+                mock.patch.object(worker, "setup_logging"), \
+                mock.patch.object(sys, "argv",
+                                  ["worker.py", "--db-root", tmp.name] + argv):
+            worker.main()
+        return captured
+
+    def test_help_lists_the_overridable_side_options(self) -> None:
+        buf = io.StringIO()
+        with mock.patch.object(sys, "argv", ["worker.py", "--help"]), \
+                contextlib.redirect_stdout(buf):
+            rc = worker.main()
+        self.assertEqual(rc, 0)
+        self.assertIn("--llm-review-cmd", buf.getvalue())
+        self.assertIn("--issue-label", buf.getvalue())
+
+    def test_cli_overrides_replace_config_values(self) -> None:
+        sides = self.drain_sides(
+            ["--llm-review-cmd", "w2"],
+            pr={"owner": "o", "repo": "r", "llm-review-cmd": "w1",
+                "patch-repo": "p"})
+        self.assertEqual(sides["pr"].llm_review_cmd, "w2")
+        self.assertEqual(sides["pr"].patch_repo, Path("p"))
+
+    def test_shared_overrides_hit_both_sides_and_sections_one(self) -> None:
+        sides = self.drain_sides(
+            ["--min-age-days", "99", "--issues", "--limit", "5"],
+            pr={"owner": "o", "repo": "r"},
+            issue={"owner": "o", "repo": "r"})
+        self.assertEqual(sides["pr"].min_age_days, 99)
+        self.assertEqual(sides["issue"].min_age_days, 99)
+        self.assertEqual(sides["issue"].limit, 5)
+        self.assertEqual(sides["pr"].limit,
+                         fairy.parse_args(["--owner", "o", "--repo", "r"]).limit)
 
 
 class ColorTests(unittest.TestCase):

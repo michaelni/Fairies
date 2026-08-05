@@ -77,8 +77,9 @@ import gcli_cache
 import issue_fairy
 import worker
 import workset
-from common import (OVERRIDE_EPILOG, add_file_log, default_cache_path,
-                    iso_to_dt, sectioned_help, setup_logging, split_sections,
+from common import (OVERRIDE_EPILOG, add_file_log, config_option_groups,
+                    default_cache_path, grouped_help, iso_to_dt, side_actions,
+                    setup_logging, split_sections, split_side_actions,
                     watch_paths)
 
 __all__ = ["main", "scan_pass", "send_pass"]
@@ -850,8 +851,18 @@ def requests_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
 def main() -> int:
     argv = sys.argv[1:]
     if "-h" in argv or "--help" in argv:
-        print(sectioned_help(make_parser(), fairy.make_parser(),
-                             issue_fairy.make_parser()))
+        pr_agent = fairy.make_parser(worker=False)
+        issue_agent = issue_fairy.make_parser(worker=False)
+        exec_common, exec_pr, exec_issue = split_side_actions(
+            side_actions(fairy.make_parser(), minus=pr_agent),
+            side_actions(issue_fairy.make_parser(), minus=issue_agent))
+        print(grouped_help(
+            make_parser(),
+            config_option_groups(pr_agent, issue_agent)
+            + [("review execution options, both sides (the worker's; the "
+                "agent runs them under --drain)", exec_common),
+               ("review execution options, PR side", exec_pr),
+               ("review execution options, issue side", exec_issue)]))
         return 0
     shared, sections = split_sections(argv)
     args, overrides = make_parser().parse_known_args(shared)

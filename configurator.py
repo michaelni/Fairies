@@ -52,8 +52,8 @@ import db_config
 import fairy
 import issue_fairy
 import workset
-from common import (apply_config_file_defaults, sectioned_help, setup_logging,
-                    split_sections)
+from common import (apply_config_file_defaults, config_option_groups,
+                    grouped_help, setup_logging, split_sections)
 
 __all__ = ["main"]
 
@@ -122,10 +122,8 @@ def make_parser() -> argparse.ArgumentParser:
 def main() -> int:
     argv = sys.argv[1:]
     if "-h" in argv or "--help" in argv:
-        print(sectioned_help(
-            make_parser(), fairy.make_parser(), issue_fairy.make_parser(),
-            pr_label="PR side options (after --prs, or shared):",
-            issue_label="Issue side options (after --issues, or shared):"))
+        print(grouped_help(make_parser(), config_option_groups(
+            fairy.make_parser(), issue_fairy.make_parser())))
         return 0
     shared, sections = split_sections(argv)
     own_parser = make_parser()

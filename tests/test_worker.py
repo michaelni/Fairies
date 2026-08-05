@@ -384,6 +384,8 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("--llm-review-cmd", buf.getvalue())
         self.assertIn("--issue-label", buf.getvalue())
+        self.assertIn("defaults from config.toml", buf.getvalue())
+        self.assertNotIn("--min-age-days", buf.getvalue())
 
     def test_cli_overrides_replace_config_values(self) -> None:
         sides = self.drain_sides(
@@ -395,14 +397,26 @@ class OverrideTests(unittest.TestCase):
 
     def test_shared_overrides_hit_both_sides_and_sections_one(self) -> None:
         sides = self.drain_sides(
-            ["--min-age-days", "99", "--issues", "--limit", "5"],
+            ["--llm-timeout", "99", "--issues", "--llm-retry-delay", "9"],
             pr={"owner": "o", "repo": "r"},
             issue={"owner": "o", "repo": "r"})
-        self.assertEqual(sides["pr"].min_age_days, 99)
-        self.assertEqual(sides["issue"].min_age_days, 99)
-        self.assertEqual(sides["issue"].limit, 5)
-        self.assertEqual(sides["pr"].limit,
-                         fairy.parse_args(["--owner", "o", "--repo", "r"]).limit)
+        self.assertEqual(sides["pr"].llm_timeout, 99)
+        self.assertEqual(sides["issue"].llm_timeout, 99)
+        self.assertEqual(sides["issue"].llm_retry_delay, 9)
+        self.assertEqual(sides["pr"].llm_retry_delay,
+                         fairy.parse_args(["--owner", "o", "--repo", "r"])
+                         .llm_retry_delay)
+
+    def test_agent_scope_config_keys_are_ignored(self) -> None:
+        sides = self.drain_sides([], pr={"owner": "o", "repo": "r",
+                                         "min-age-days": "5"})
+        self.assertFalse(hasattr(sides["pr"], "min_age_days"))
+
+    def test_an_unknown_config_key_is_still_an_error(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            self.drain_sides([], pr={"owner": "o", "repo": "r",
+                                     "no-such-option": "x"})
+        self.assertEqual(ctx.exception.code, 2)
 
 
 class ColorTests(unittest.TestCase):

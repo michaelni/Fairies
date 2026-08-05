@@ -1098,6 +1098,8 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("--llm-review-cmd", buf.getvalue())
         self.assertIn("--issue-label", buf.getvalue())
+        self.assertIn("--min-age-days", buf.getvalue())
+        self.assertIn("review execution options", buf.getvalue())
 
 
 class ColorTests(unittest.TestCase):

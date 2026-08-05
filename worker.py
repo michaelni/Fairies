@@ -63,8 +63,8 @@ import filedb
 import forge_gcli
 import issue_fairy
 import workset
-from common import (OVERRIDE_EPILOG, add_file_log, sectioned_help,
-                    setup_logging, split_sections, watch_paths)
+from common import (OVERRIDE_EPILOG, add_file_log, config_option_groups,
+                    grouped_help, setup_logging, split_sections, watch_paths)
 
 __all__ = ["main", "review_claim", "drain"]
 
@@ -249,8 +249,9 @@ def make_parser() -> argparse.ArgumentParser:
 def main() -> int:
     argv = sys.argv[1:]
     if "-h" in argv or "--help" in argv:
-        print(sectioned_help(make_parser(), fairy.make_parser(),
-                             issue_fairy.make_parser()))
+        print(grouped_help(make_parser(), config_option_groups(
+            fairy.make_parser(agent=False),
+            issue_fairy.make_parser(agent=False))))
         return 0
     shared, sections = split_sections(argv)
     args, overrides = make_parser().parse_known_args(shared)
@@ -259,9 +260,10 @@ def main() -> int:
     issue_over = overrides + sections.get("--issues", [])
     sides: dict[str, argparse.Namespace] = {}
     if pr_argv:
-        sides["pr"] = fairy.parse_args(pr_argv + pr_over)
+        sides["pr"] = fairy.parse_args(pr_argv + pr_over, agent=False)
     if issue_argv:
-        sides["issue"] = issue_fairy.parse_args(issue_argv + issue_over)
+        sides["issue"] = issue_fairy.parse_args(issue_argv + issue_over,
+                                                agent=False)
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
                   logger, db_config.logger, workset.logger, filedb.logger,
@@ -269,7 +271,7 @@ def main() -> int:
     for log_file in {ns.log_file for ns in sides.values() if ns.log_file}:
         add_file_log(log_file, fairy.logger, logger, db_config.logger,
                      workset.logger, filedb.logger, forge_gcli.logger)
-    fairy.validate_sides(sides.get("pr"), sides.get("issue"))
+    fairy.validate_worker_sides(sides.get("pr"), sides.get("issue"))
     db = filedb.Db(args.db_root)
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
     db_config.log_side_argv(pr_argv, issue_argv, pr_over, issue_over)

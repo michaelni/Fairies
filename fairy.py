@@ -660,24 +660,29 @@ def _config_error(message: str) -> None:
     raise SystemExit(2)
 
 
-def validate_sides(pr_ns: argparse.Namespace | None,
-                   issue_ns: argparse.Namespace | None) -> None:
+def validate_worker_sides(pr_ns: argparse.Namespace | None,
+                          issue_ns: argparse.Namespace | None) -> None:
     """Reject broken side configs with rc=2: discovered per-item they
-    would burn error retries for days. The configurator calls this
-    when writing a config, agent and worker on what they read -- a
-    hand-edited config.toml gets the same check as a written one."""
+    would burn error retries for days. The worker-scope checks -- the
+    configurator and the agent run validate_sides, the worker this."""
     if pr_ns and pr_ns.llm_review_cmd and pr_ns.patch_repo is None:
         _config_error("--llm-review-cmd requires --patch-repo PATH")
-    for ns, forced in ((pr_ns, "force_review_prs"),
-                       (issue_ns, "force_review_issues")):
-        if ns is None:
-            continue
-        if getattr(ns, "simulate_past", None) is not None \
+    for ns in (pr_ns, issue_ns):
+        if ns is not None and getattr(ns, "simulate_past", None) is not None \
                 and "{number}" not in (getattr(ns, "patch_pr_ref_template", None) or ""):
             _config_error(
                 "--simulate-past requires --patch-pr-ref-template TEMPLATE "
                 "containing {number} (e.g. fforge/pr/{number})")
-        if ns.forced_only and not getattr(ns, forced):
+
+
+def validate_sides(pr_ns: argparse.Namespace | None,
+                   issue_ns: argparse.Namespace | None) -> None:
+    """validate_worker_sides plus the agent-scope checks, over full
+    side namespaces (the configurator's writes, the agent's reads)."""
+    validate_worker_sides(pr_ns, issue_ns)
+    for ns, forced in ((pr_ns, "force_review_prs"),
+                       (issue_ns, "force_review_issues")):
+        if ns is not None and ns.forced_only and not getattr(ns, forced):
             _config_error(
                 "--forced-only requires at least one --force-review-*")
 

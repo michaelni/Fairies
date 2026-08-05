@@ -187,21 +187,59 @@ OVERRIDE_EPILOG = ("Any side option (below) given here overrides its "
                    "side alone.")
 
 
-def sectioned_help(own: argparse.ArgumentParser,
-                   pr_parser: argparse.ArgumentParser,
-                   issue_parser: argparse.ArgumentParser,
-                   pr_label: str = "PR side options, defaulted from "
-                                   "config.toml's [pr] table (after --prs, "
-                                   "or shared):",
-                   issue_label: str = "Issue side options, defaulted from "
-                                      "config.toml's [issue] table (after "
-                                      "--issues, or shared):") -> str:
-    """The program's own help followed by both side parsers' helps,
-    one labeled block per --prs / --issues section -- the side options
-    visually separated from the program's own."""
-    return (own.format_help()
-            + "\n" + pr_label + "\n\n" + pr_parser.format_help()
-            + "\n" + issue_label + "\n\n" + issue_parser.format_help())
+def side_actions(parser: argparse.ArgumentParser,
+                 minus: argparse.ArgumentParser | None = None,
+                 ) -> list[argparse.Action]:
+    """``parser``'s option actions without --help; with ``minus``,
+    only those outside minus's options (a scope difference, for
+    display)."""
+    skip = {opt for a in (minus._actions if minus else [])
+            for opt in a.option_strings}
+    return [a for a in parser._actions
+            if a.option_strings and a.option_strings[0] != "-h"
+            and a.option_strings[0] not in skip]
+
+
+def split_side_actions(pr_actions: list[argparse.Action],
+                       issue_actions: list[argparse.Action],
+                       ) -> tuple[list, list, list]:
+    """(common, pr only, issue only) for display: an option present on
+    both sides with identical help is common and rendered once;
+    anything else stays with its side."""
+    pr = {a.option_strings[0]: a for a in pr_actions}
+    issue = {a.option_strings[0]: a for a in issue_actions}
+    common = [a for name, a in pr.items()
+              if name in issue and issue[name].help == a.help]
+    pr_only = [a for name, a in pr.items()
+               if name not in issue or issue[name].help != a.help]
+    issue_only = [a for name, a in issue.items()
+                  if name not in pr or pr[name].help != a.help]
+    return common, pr_only, issue_only
+
+
+def config_option_groups(pr_parser: argparse.ArgumentParser,
+                         issue_parser: argparse.ArgumentParser,
+                         ) -> list[tuple[str, list[argparse.Action]]]:
+    """The three display groups over a program's config-defaulted side
+    options: common, PR only, issue only."""
+    common, pr_only, issue_only = split_side_actions(
+        side_actions(pr_parser), side_actions(issue_parser))
+    return [
+        ("side options, both sides (defaults from config.toml)", common),
+        ("PR side options ([pr] table; after --prs)", pr_only),
+        ("issue side options ([issue] table; after --issues)", issue_only),
+    ]
+
+
+def grouped_help(own: argparse.ArgumentParser,
+                 groups: list[tuple[str, list[argparse.Action]]]) -> str:
+    """``own``'s help plus one titled argparse group per (title,
+    actions) entry, empty groups omitted. The group actions only
+    render: they stay out of own's usage line and parsing."""
+    for title, actions in groups:
+        if actions:
+            own.add_argument_group(title)._group_actions.extend(actions)
+    return own.format_help()
 
 
 def split_sections(argv: list[str]) -> tuple[list[str], dict[str, list[str]]]:

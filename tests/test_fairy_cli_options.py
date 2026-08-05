@@ -169,6 +169,40 @@ class TriageOnCiFailureTests(PrepareCase):
             ["/ fate"])
 
 
+class MissingCiGateTests(PrepareCase):
+    """An empty commit-status list gates only the rule-only auto-approve
+    path; an LLM review proceeds without CI evidence.
+
+    Regression: FFmpeg/fateserver runs no CI, so the statuses fetch for
+    https://code.ffmpeg.org/FFmpeg/fateserver/pulls/2 (this fixture)
+    genuinely returns [] and the PR sat in skipped/ forever with
+    "no commit statuses / CI results found"."""
+
+    FATESERVER_PR2 = {
+        "number": 2, "state": "open", "mergeable": True,
+        "title": "Opinionated list of fixes", "updated_at": OLD,
+        "head": {"sha": "4b23f6da3b3b1119958b7f2c0011a1ed7028d5cd"},
+        "user": {"login": "carol"},
+        "html_url": "https://code.ffmpeg.org/FFmpeg/fateserver/pulls/2"}
+
+    def test_an_llm_review_proceeds_without_any_statuses(self) -> None:
+        prepared = self.prepare("--llm-review-cmd wrapper --patch-repo /p",
+                                statuses=[], pr=self.FATESERVER_PR2)
+        self.assertEqual(prepared.base_reason,
+                         "matches all rules; CI contexts=0")
+
+    def test_the_rule_only_auto_approve_still_skips(self) -> None:
+        decision = self.prepare("", statuses=[], pr=self.FATESERVER_PR2)
+        self.assertEqual(decision.action, "skip")
+        self.assertEqual(decision.reason,
+                         "no commit statuses / CI results found")
+
+    def test_statuses_that_do_exist_still_gate_the_llm_review(self) -> None:
+        decision = self.prepare("--llm-review-cmd wrapper --patch-repo /p")
+        self.assertEqual(decision.action, "skip")
+        self.assertEqual(decision.reason, "CI not successful: / build")
+
+
 class ApproveMessageTests(unittest.TestCase):
     """--approve-message rides on the gcli approve command as the -T
     body file, combined with the LLM's own message."""

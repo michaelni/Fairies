@@ -2676,7 +2676,9 @@ def prepare_pr(
         )
 
     commit_statuses = effective_commit_statuses(raw_status_list)
-    if not commit_statuses:
+    # Gates only the rule-only auto-approve, which cannot rest on zero CI
+    # evidence; an LLM review proceeds (a no-CI repo never gets a status).
+    if not commit_statuses and not args.llm_review_cmd:
         return skip(
             "no commit statuses / CI results found",
             last_activity_value=last_activity,

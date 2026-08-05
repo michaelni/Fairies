@@ -255,7 +255,9 @@ def main() -> int:
             issue_fairy.make_parser(agent=False))))
         return 0
     args, pr_over, issue_over, sections = parse_scoped_overrides(
-        argv, make_parser(), fairy.make_parser(), issue_fairy.make_parser())
+        argv, make_parser(),
+        fairy.make_parser(agent=False), fairy.make_parser(),
+        issue_fairy.make_parser(agent=False), issue_fairy.make_parser())
     pr_opts, issue_opts = db_config.read_side_options(args.db_root)
     sides: dict[str, argparse.Namespace] = {}
     if pr_opts is not None:

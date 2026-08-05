@@ -865,7 +865,9 @@ def main() -> int:
                ("review execution options, issue side", exec_issue)]))
         return 0
     args, pr_over, issue_over, sections = parse_scoped_overrides(
-        argv, make_parser(), fairy.make_parser(), issue_fairy.make_parser())
+        argv, make_parser(),
+        fairy.make_parser(), fairy.make_parser(),
+        issue_fairy.make_parser(), issue_fairy.make_parser())
     pr_opts, issue_opts = db_config.read_side_options(args.db_root)
     pr_ns = fairy.parse_args(options_argv({**pr_opts, **pr_over})) \
         if pr_opts is not None else None

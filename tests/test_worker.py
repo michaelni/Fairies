@@ -422,6 +422,24 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(sides["pr"].codex_host, "h")
         self.assertIn("issue", sides)
 
+    def test_a_stray_token_is_an_error(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            self.drain_sides(["junk"], pr={"owner": "o", "repo": "r"})
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_a_wrong_section_option_is_an_error(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            self.drain_sides(["--prs", "--issue-label", "x"],
+                             pr={"owner": "o", "repo": "r"})
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_an_out_of_scope_override_warns_and_is_ignored(self) -> None:
+        with self.assertLogs("common", level="WARNING") as logs:
+            sides = self.drain_sides(["--limit", "3"],
+                                     pr={"owner": "o", "repo": "r"})
+        self.assertIn("--limit", logs.output[0])
+        self.assertFalse(hasattr(sides["pr"], "limit"))
+
     def test_agent_scope_config_keys_are_ignored(self) -> None:
         sides = self.drain_sides([], pr={"owner": "o", "repo": "r",
                                          "min-age-days": "5"})

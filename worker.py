@@ -279,7 +279,10 @@ def main() -> int:
     db_config.log_side_argv(
         options_argv(pr_opts) if pr_opts is not None else None,
         options_argv(issue_opts) if issue_opts is not None else None,
-        options_argv(pr_over), options_argv(issue_over))
+        options_argv(pr_over)
+        if pr_opts is not None or "--prs" in sections else [],
+        options_argv(issue_over)
+        if issue_opts is not None or "--issues" in sections else [])
     wake = Event()
     watch_paths([db.root / "queued"], wake.set)
     while True:

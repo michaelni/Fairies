@@ -890,7 +890,10 @@ def main() -> int:
     db_config.log_side_argv(
         options_argv(pr_opts) if pr_opts is not None else None,
         options_argv(issue_opts) if issue_opts is not None else None,
-        options_argv(pr_over), options_argv(issue_over))
+        options_argv(pr_over)
+        if pr_opts is not None or "--prs" in sections else [],
+        options_argv(issue_over)
+        if issue_opts is not None or "--issues" in sections else [])
     for ns in (pr_ns, issue_ns):
         if ns is not None and getattr(ns, "simulate_past", None):
             warn_simulate_past_limitations(ns.simulate_past)

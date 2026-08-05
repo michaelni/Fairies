@@ -440,6 +440,12 @@ class OverrideTests(unittest.TestCase):
         self.assertIn("--limit", logs.output[0])
         self.assertFalse(hasattr(sides["pr"], "limit"))
 
+    def test_a_shared_override_on_a_one_sided_db_does_not_warn(self) -> None:
+        with self.assertNoLogs(worker.db_config.logger, level="WARNING"):
+            sides = self.drain_sides(["--llm-timeout", "900"],
+                                     pr={"owner": "o", "repo": "r"})
+        self.assertEqual(sides["pr"].llm_timeout, 900)
+
     def test_agent_scope_config_keys_are_ignored(self) -> None:
         sides = self.drain_sides([], pr={"owner": "o", "repo": "r",
                                          "min-age-days": "5"})

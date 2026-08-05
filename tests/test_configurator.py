@@ -31,6 +31,8 @@ configurator: side-string validation and the config.toml it writes."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import shlex
 import sys
 import tempfile
@@ -112,6 +114,15 @@ class SectionTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
+    def test_help_lists_the_side_options(self) -> None:
+        buf = io.StringIO()
+        with mock.patch.object(sys, "argv", ["configurator.py", "--help"]), \
+                contextlib.redirect_stdout(buf):
+            rc = configurator.main()
+        self.assertEqual(rc, 0)
+        self.assertIn("--llm-review-cmd", buf.getvalue())
+        self.assertIn("--issue-label", buf.getvalue())
+
     def run_main(self, argv: list[str]) -> int:
         with mock.patch.object(sys, "argv", ["configurator.py"] + argv), \
                 mock.patch.object(configurator, "setup_logging"):

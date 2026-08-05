@@ -181,6 +181,29 @@ class _ColorFormatter(logging.Formatter):
         return f"{color}{text}{_COLOR_RESET}"
 
 
+OVERRIDE_EPILOG = ("Any side option (below) given here overrides its "
+                   "config.toml value for this run: before a --prs / "
+                   "--issues marker for both sides, after a marker for that "
+                   "side alone.")
+
+
+def sectioned_help(own: argparse.ArgumentParser,
+                   pr_parser: argparse.ArgumentParser,
+                   issue_parser: argparse.ArgumentParser,
+                   pr_label: str = "PR side options, defaulted from "
+                                   "config.toml's [pr] table (after --prs, "
+                                   "or shared):",
+                   issue_label: str = "Issue side options, defaulted from "
+                                      "config.toml's [issue] table (after "
+                                      "--issues, or shared):") -> str:
+    """The program's own help followed by both side parsers' helps,
+    one labeled block per --prs / --issues section -- the side options
+    visually separated from the program's own."""
+    return (own.format_help()
+            + "\n" + pr_label + "\n\n" + pr_parser.format_help()
+            + "\n" + issue_label + "\n\n" + issue_parser.format_help())
+
+
 def split_sections(argv: list[str]) -> tuple[list[str], dict[str, list[str]]]:
     """The tokens before the first ``--prs``/``--issues`` marker, and
     one token list per marker present."""

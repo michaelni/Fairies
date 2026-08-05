@@ -52,7 +52,7 @@ import db_config
 import fairy
 import issue_fairy
 import workset
-from common import apply_config_file_defaults, setup_logging
+from common import apply_config_file_defaults, setup_logging, split_sections
 
 __all__ = ["main"]
 
@@ -116,22 +116,6 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--db-root", type=Path,
                    help="filedb root (default: ~/.fairy/db/<forge~account~owner~repo>)")
     return p
-
-
-def split_sections(argv: list[str]) -> tuple[list[str], dict[str, list[str]]]:
-    """The tokens before the first ``--prs``/``--issues`` marker, and
-    one token list per marker present."""
-    shared: list[str] = []
-    sections: dict[str, list[str]] = {}
-    current = shared
-    for token in argv:
-        if token in ("--prs", "--issues"):
-            if token in sections:
-                raise SystemExit(f"{token} given twice")
-            current = sections[token] = []
-        else:
-            current.append(token)
-    return shared, sections
 
 
 def main() -> int:

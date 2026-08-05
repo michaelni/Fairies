@@ -181,6 +181,22 @@ class _ColorFormatter(logging.Formatter):
         return f"{color}{text}{_COLOR_RESET}"
 
 
+def split_sections(argv: list[str]) -> tuple[list[str], dict[str, list[str]]]:
+    """The tokens before the first ``--prs``/``--issues`` marker, and
+    one token list per marker present."""
+    shared: list[str] = []
+    sections: dict[str, list[str]] = {}
+    current = shared
+    for token in argv:
+        if token in ("--prs", "--issues"):
+            if token in sections:
+                raise SystemExit(f"{token} given twice")
+            current = sections[token] = []
+        else:
+            current.append(token)
+    return shared, sections
+
+
 def apply_config_file_defaults(
     parser: argparse.ArgumentParser, argv: list[str] | None = None,
 ) -> None:

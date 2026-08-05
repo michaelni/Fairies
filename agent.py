@@ -859,6 +859,7 @@ def main() -> int:
         add_file_log(log_file, fairy.logger, logger, db_config.logger,
                      workset.logger, gcli_cache.logger, filedb.logger,
                      forge_gcli.logger, ci_log.logger)
+    fairy.validate_sides(pr_ns, issue_ns)
     db = filedb.Db(args.db_root)
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
     db_config.log_side_argv(pr_argv, issue_argv)

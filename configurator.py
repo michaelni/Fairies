@@ -35,8 +35,8 @@ as the db root's config.toml that agent, worker and TUI configure
 themselves from. Run it before starting the daemons; rerun it to
 change a repo's configuration.
 
-What belongs here: the side validation and everything else that
-decides what goes into a db root's config.
+What belongs here: everything that decides what goes into a db root's
+config.
 What does NOT belong: the config.toml format itself (db_config),
 running the configured processes (agent / worker / fairy_tui).
 """
@@ -64,31 +64,6 @@ def db_root_for(ns: argparse.Namespace) -> Path:
         Path.home() / ".fairy" / "db",
         forge_type=ns.forge_type, account=ns.gcli_account or "",
         owner=ns.owner, repo=ns.repo)
-
-
-def _config_error(message: str) -> None:
-    logger.error(message)
-    raise SystemExit(2)
-
-
-def validate_sides(pr_ns: argparse.Namespace | None,
-                   issue_ns: argparse.Namespace | None) -> None:
-    """Reject broken side configs with rc=2: discovered per-item they
-    would burn error retries for days."""
-    if pr_ns and pr_ns.llm_review_cmd and pr_ns.patch_repo is None:
-        _config_error("--llm-review-cmd requires --patch-repo PATH")
-    for ns, forced in ((pr_ns, "force_review_prs"),
-                       (issue_ns, "force_review_issues")):
-        if ns is None:
-            continue
-        if getattr(ns, "simulate_past", None) is not None \
-                and "{number}" not in (getattr(ns, "patch_pr_ref_template", None) or ""):
-            _config_error(
-                "--simulate-past requires --patch-pr-ref-template TEMPLATE "
-                "containing {number} (e.g. fforge/pr/{number})")
-        if ns.forced_only and not getattr(ns, forced):
-            _config_error(
-                "--forced-only requires at least one --force-review-*")
 
 
 def side_options(parser: argparse.ArgumentParser,
@@ -182,7 +157,7 @@ def main() -> int:
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   logger, db_config.logger, workset.logger, color=lead.color)
-    validate_sides(pr_ns, issue_ns)
+    fairy.validate_sides(pr_ns, issue_ns)
     root = args.db_root or db_root_for(lead)
     pr_options = None
     if pr_tokens is not None:

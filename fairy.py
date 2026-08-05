@@ -604,6 +604,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def _config_error(message: str) -> None:
+    logger.error(message)
+    raise SystemExit(2)
+
+
+def validate_sides(pr_ns: argparse.Namespace | None,
+                   issue_ns: argparse.Namespace | None) -> None:
+    """Reject broken side configs with rc=2: discovered per-item they
+    would burn error retries for days. The configurator calls this
+    when writing a config, agent and worker on what they read -- a
+    hand-edited config.toml gets the same check as a written one."""
+    if pr_ns and pr_ns.llm_review_cmd and pr_ns.patch_repo is None:
+        _config_error("--llm-review-cmd requires --patch-repo PATH")
+    for ns, forced in ((pr_ns, "force_review_prs"),
+                       (issue_ns, "force_review_issues")):
+        if ns is None:
+            continue
+        if getattr(ns, "simulate_past", None) is not None \
+                and "{number}" not in (getattr(ns, "patch_pr_ref_template", None) or ""):
+            _config_error(
+                "--simulate-past requires --patch-pr-ref-template TEMPLATE "
+                "containing {number} (e.g. fforge/pr/{number})")
+        if ns.forced_only and not getattr(ns, forced):
+            _config_error(
+                "--forced-only requires at least one --force-review-*")
+
+
 def combine_review_messages(*parts: str) -> str:
     clean = [p.strip() for p in parts if p and p.strip()]
     return "\n\n".join(clean)

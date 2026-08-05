@@ -340,6 +340,20 @@ class ConfigGuardTests(unittest.TestCase):
                 self.assertRaisesRegex(SystemExit, "no side options"):
             worker.main()
 
+    def test_a_hand_broken_config_is_rejected_at_startup(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        worker.db_config.write_config(Path(tmp.name), "o/r", set(),
+                                      {"owner": "o", "repo": "r",
+                                       "llm-review-cmd": "wrapper"}, None)
+        with mock.patch.object(worker, "setup_logging"), \
+                mock.patch.object(worker, "drain"), \
+                mock.patch.object(sys, "argv",
+                                  ["worker.py", "--db-root", tmp.name]), \
+                self.assertRaises(SystemExit) as ctx:
+            worker.main()
+        self.assertEqual(ctx.exception.code, 2)
+
 
 class ColorTests(unittest.TestCase):
     def test_wrapper_stream_logger_joins_the_side_log_file(self) -> None:

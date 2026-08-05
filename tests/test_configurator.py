@@ -57,27 +57,27 @@ class ValidationTests(unittest.TestCase):
     def test_llm_review_cmd_requires_patch_repo(self) -> None:
         ns = self.pr("--llm-review-cmd wrapper")
         with self.assertRaises(SystemExit) as ctx:
-            configurator.validate_sides(ns, None)
+            fairy.validate_sides(ns, None)
         self.assertEqual(ctx.exception.code, 2)  # rc 2, not 1: cron distinguishes config from crash
 
     def test_patch_repo_satisfies_the_check(self) -> None:
-        configurator.validate_sides(
+        fairy.validate_sides(
             self.pr("--llm-review-cmd wrapper --patch-repo p"), None)
 
     def test_simulate_past_template_must_contain_number(self) -> None:
         base = "--simulate-past 2026-07-01T00:00:00+00:00 "
         with self.assertRaises(SystemExit):
-            configurator.validate_sides(self.pr(base), None)
+            fairy.validate_sides(self.pr(base), None)
         with self.assertRaises(SystemExit):
-            configurator.validate_sides(
+            fairy.validate_sides(
                 self.pr(base + "--patch-pr-ref-template fforge/pr/"), None)
-        configurator.validate_sides(
+        fairy.validate_sides(
             self.pr(base + "--patch-pr-ref-template fforge/pr/{number}"), None)
 
     def test_forced_only_requires_a_force_review(self) -> None:
         with self.assertRaises(SystemExit):
-            configurator.validate_sides(self.pr("--forced-only"), None)
-        configurator.validate_sides(
+            fairy.validate_sides(self.pr("--forced-only"), None)
+        fairy.validate_sides(
             self.pr("--forced-only --force-review-pr 5"), None)
 
 

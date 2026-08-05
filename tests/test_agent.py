@@ -1068,6 +1068,20 @@ class RequestsPassTests(AgentCase):
 
 
 class ColorTests(unittest.TestCase):
+    def test_a_hand_broken_config_is_rejected_at_startup(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_config.write_config(Path(tmp.name), "o/r", set(),
+                               {"owner": "o", "repo": "r",
+                                "llm-review-cmd": "wrapper"}, None)
+        with mock.patch.object(agent, "setup_logging"), \
+                mock.patch.object(agent, "one_pass"), \
+                mock.patch.object(sys, "argv",
+                                  ["agent.py", "--db-root", tmp.name]), \
+                self.assertRaises(SystemExit) as ctx:
+            agent.main()
+        self.assertEqual(ctx.exception.code, 2)
+
     def test_side_color_reaches_setup_logging(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

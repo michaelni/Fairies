@@ -258,6 +258,7 @@ def main() -> int:
     for log_file in {ns.log_file for ns in sides.values() if ns.log_file}:
         add_file_log(log_file, fairy.logger, logger, db_config.logger,
                      workset.logger, filedb.logger, forge_gcli.logger)
+    fairy.validate_sides(sides.get("pr"), sides.get("issue"))
     db = filedb.Db(args.db_root)
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
     db_config.log_side_argv(pr_argv, issue_argv)

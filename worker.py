@@ -232,7 +232,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="LLM worker: claim queued filedb tickets and review them.",
     )
     p.add_argument("--db-root", type=Path, required=True,
-                   help="filedb root; its config.json, written by the repo's "
+                   help="filedb root; its config.toml, written by the repo's "
                         "agent, carries the side argument strings")
     p.add_argument("--parallel", type=int, default=1, metavar="N",
                    help="review up to N tickets concurrently (default: 1; "
@@ -248,13 +248,13 @@ def main() -> int:
     args = parse_args()
     cfg = db_config.read_config(args.db_root)
     sides: dict[str, argparse.Namespace] = {}
-    if cfg["pr_args"]:
+    if cfg.get("pr_args"):
         sides["pr"] = fairy.parse_args(shlex.split(cfg["pr_args"]))
-    if cfg["issue_args"]:
+    if cfg.get("issue_args"):
         sides["issue"] = issue_fairy.parse_args(shlex.split(cfg["issue_args"]))
     if not sides:
-        raise SystemExit(
-            f"{args.db_root / 'config.json'}: no side argument strings")
+        raise SystemExit(f"{args.db_root / db_config.CONFIG_NAME}: "
+                         "no side argument strings")
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
                   logger, db_config.logger, workset.logger, filedb.logger,
@@ -265,7 +265,8 @@ def main() -> int:
     db = filedb.Db(args.db_root)
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
     for kind in sides:
-        logger.info("%s side from config.json: %s", kind, cfg[f"{kind}_args"])
+        logger.info("%s side from %s: %s", kind, db_config.CONFIG_NAME,
+                    cfg[f"{kind}_args"])
     wake = Event()
     watch_paths([db.root / "queued"], wake.set)
     while True:

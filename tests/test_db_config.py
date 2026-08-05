@@ -27,7 +27,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-db_config: the agent-written config.json round-trips."""
+db_config: the agent-written config.toml round-trips."""
 
 from __future__ import annotations
 
@@ -45,15 +45,14 @@ import db_config  # noqa: E402
 
 class DbConfigTests(unittest.TestCase):
     def test_round_trip_resolves_log_files(self) -> None:
+        pr = """--owner o --repo r --llm-review-cmd './w.py "quoted" \\ x'"""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            db_config.write_config(root, "o/r", {Path("logs/x.log")},
-                                   "--owner o --repo r", None)
+            db_config.write_config(root, "o/r", {Path("logs/x.log")}, pr, None)
             cfg = db_config.read_config(root)
         self.assertEqual(cfg, {"label": "o/r",
                                "log_files": [str(Path("logs/x.log").resolve())],
-                               "pr_args": "--owner o --repo r",
-                               "issue_args": None})
+                               "pr_args": pr})
 
 
 if __name__ == "__main__":

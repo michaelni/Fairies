@@ -36,7 +36,7 @@ directories; the agent takes the per-side configuration as a
 `fairy.py` / `issue_fairy.py` argument string (`./fairy.py --help` and
 `./issue_fairy.py --help` document the contents; a side's `--log-file`
 is the shared agent+worker log the UI tails) and records it in the db
-root's `config.json`, from which worker and UI -- both taking only
+root's `config.toml`, from which worker and UI -- both taking only
 `--db-root` -- configure themselves. With `pip install
 watchdog` the processes react to new files within 100ms; without it
 they fall back to their poll intervals:
@@ -122,7 +122,7 @@ filedb of one or more repositories in a 4-pane terminal UI: statistics
 agent/worker log files, and the rendered review message with its label
 changes. It is a pure view -- start the agent and worker processes
 separately and point the TUI at the same db roots (the agent logs its
-root at startup and writes a `config.json` there naming the repo and
+root at startup and writes a `config.toml` there naming the repo and
 the log files, which are tailed automatically; `--tail FILE` adds
 extras):
 

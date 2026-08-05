@@ -1634,7 +1634,7 @@ def build_sides(
     args: argparse.Namespace,
 ) -> tuple[list[tuple[str, filedb.Db]], list[Path]]:
     """One (repo label, filedb) side per distinct --db-root; each root's
-    config.json, written by its agent at startup, names the repo and
+    config.toml, written by its agent at startup, names the repo and
     the log files the logs pane tails without separate --tail flags."""
     sides: list[tuple[str, filedb.Db]] = []
     tails: list[Path] = []

@@ -27,11 +27,11 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-The db root's config.json: the repo facts the agent records at startup
+The db root's config.toml: the repo facts the agent records at startup
 for the other components -- the worker configures its sides from it,
 the TUI its repo labels and log tails.
 
-What belongs here: the config.json format, its writer and its waiting
+What belongs here: the config.toml format, its writer and its waiting
 reader.
 What does NOT belong: the ticket files (filedb), parsing the side
 argument strings (fairy / issue_fairy).
@@ -42,27 +42,37 @@ from __future__ import annotations
 import json
 import logging
 import time
+import tomllib
 from pathlib import Path
 
 from common import atomic_write_text
 
-__all__ = ["read_config", "write_config"]
+__all__ = ["CONFIG_NAME", "read_config", "write_config"]
 
 logger = logging.getLogger(__name__)
 
+CONFIG_NAME = "config.toml"
 CONFIG_WAIT = 5.0
 
 
 def write_config(root: Path, label: str, log_files: set[Path],
                  pr_args: str | None, issue_args: str | None) -> None:
     """Record the repo label, the sides' log files and the verbatim
-    side argument strings as <root>/config.json."""
-    atomic_write_text(root / "config.json", json.dumps({
-        "label": label,
-        "log_files": sorted(str(f.resolve()) for f in log_files),
-        "pr_args": pr_args,
-        "issue_args": issue_args}))
-    logger.info("wrote %s", root / "config.json")
+    side argument strings as <root>/config.toml.
+
+    A non-ASCII-escaping JSON-encoded str or list of str is also a
+    valid TOML basic string / array (ASCII-escaping is not: JSON
+    spells non-BMP characters as surrogate pairs, which TOML rejects),
+    so json.dumps does the value quoting; a None-valued side is an
+    omitted key (TOML has no null)."""
+    pairs = {"label": label,
+             "log_files": sorted(str(f.resolve()) for f in log_files),
+             "pr_args": pr_args,
+             "issue_args": issue_args}
+    atomic_write_text(root / CONFIG_NAME, "".join(
+        f"{key} = {json.dumps(value, ensure_ascii=False)}\n"
+        for key, value in pairs.items() if value is not None))
+    logger.info("wrote %s", root / CONFIG_NAME)
 
 
 def read_config(root: Path) -> dict:
@@ -74,8 +84,8 @@ def read_config(root: Path) -> dict:
     waiting = False
     while True:
         try:
-            return json.loads(
-                (root / "config.json").read_text(encoding="utf-8"))
+            return tomllib.loads(
+                (root / CONFIG_NAME).read_text(encoding="utf-8"))
         except FileNotFoundError as exc:
             if time.monotonic() >= deadline:
                 hint = "".join(
@@ -84,11 +94,11 @@ def read_config(root: Path) -> dict:
                     if sibling.name.casefold() == root.name.casefold()
                 ) if not root.exists() else ""
                 raise SystemExit(
-                    f"{exc}: the repo's agent writes config.json at "
+                    f"{exc}: the repo's agent writes {CONFIG_NAME} at "
                     f"startup{hint}") from exc
             if not waiting:
-                logger.warning("waiting for %s", root / "config.json")
+                logger.warning("waiting for %s", root / CONFIG_NAME)
                 waiting = True
             time.sleep(0.1)
         except (OSError, ValueError) as exc:
-            raise SystemExit(f"{root / 'config.json'}: {exc!r}") from exc
+            raise SystemExit(f"{root / CONFIG_NAME}: {exc!r}") from exc

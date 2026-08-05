@@ -54,7 +54,7 @@ ensure_repo fairies    https://code.ffmpeg.org/michaelni/Fairies.git
 # filedbs: one --db-root variable per repo ties the three processes
 # together (the names match what the agent would derive by default).
 # Only the agent takes the side strings; it records them, with each
-# side's --log-file, in the db root's config.json, where the worker
+# side's --log-file, in the db root's config.toml, where the worker
 # reads its configuration and the TUI what to tail. Every repo gets its
 # own --debug-response-dir because the processes run concurrently and
 # would otherwise race on the shared default; the gcli cache pickle

@@ -14,7 +14,7 @@ any number of agents and workers or none at all.
 
 One `--db-root` per repo, as its agent logs at startup; the PR and
 issue sides of one repo share a filedb. The agent writes a
-`config.json` into the root naming the repo and the sides'
+`config.toml` into the root naming the repo and the sides'
 `--log-file`s, which are tailed into the log pane automatically;
 `--tail FILE` adds extra files, and
 `--save-dir DIR` sets where `e`/`E` exports land (default: cwd).

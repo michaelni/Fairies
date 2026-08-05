@@ -287,8 +287,9 @@ class LoopTests(unittest.TestCase):
         import time
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        argv = ["worker.py", "--db-root", tmp.name,
-                "--pr-args", "--owner o --repo r"] + shlex.split(flags)
+        worker.db_config.write_config(Path(tmp.name), "o/r", set(),
+                                  "--owner o --repo r", None)
+        argv = ["worker.py", "--db-root", tmp.name] + shlex.split(flags)
         calls = self.calls = []
 
         def drain(*args, **kwargs) -> int:
@@ -330,6 +331,16 @@ class LoopTests(unittest.TestCase):
             self.run_main("", [RuntimeError("provider 503")])
 
 
+class ConfigGuardTests(unittest.TestCase):
+    def test_config_without_side_strings_is_a_clear_exit(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        worker.db_config.write_config(Path(tmp.name), "o/r", set(), None, None)
+        with mock.patch.object(sys, "argv", ["worker.py", "--db-root", tmp.name]), \
+                self.assertRaisesRegex(SystemExit, "no side argument strings"):
+            worker.main()
+
+
 class ColorTests(unittest.TestCase):
     def test_wrapper_stream_logger_joins_the_side_log_file(self) -> None:
         """The pane tails the file; without forge_gcli's logger there the
@@ -337,8 +348,10 @@ class ColorTests(unittest.TestCase):
         import forge_gcli
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        argv = ["worker.py", "--db-root", tmp.name, "--pr-args",
-                f"--owner o --repo r --log-file {tmp.name}/side.log"]
+        worker.db_config.write_config(
+            Path(tmp.name), "o/r", set(),
+            f"--owner o --repo r --log-file {tmp.name}/side.log", None)
+        argv = ["worker.py", "--db-root", tmp.name]
         with mock.patch.object(worker, "add_file_log") as file_log, \
                 mock.patch.object(worker, "setup_logging"), \
                 mock.patch.object(worker, "drain"), \
@@ -349,8 +362,9 @@ class ColorTests(unittest.TestCase):
     def test_side_color_reaches_setup_logging(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        argv = ["worker.py", "--db-root", tmp.name,
-                "--pr-args", "--owner o --repo r --color always"]
+        worker.db_config.write_config(Path(tmp.name), "o/r", set(),
+                                  "--owner o --repo r --color always", None)
+        argv = ["worker.py", "--db-root", tmp.name]
         with mock.patch.object(worker, "setup_logging") as logging_setup, \
                 mock.patch.object(worker, "drain"), \
                 mock.patch.object(sys, "argv", argv):

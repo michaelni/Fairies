@@ -28,8 +28,8 @@
  */
 
 The db root's config.json: the repo facts the agent records at startup
-for the other components -- the TUI reads its repo labels and log
-tails from it.
+for the other components -- the worker configures its sides from it,
+the TUI its repo labels and log tails.
 
 What belongs here: the config.json format, its writer and its waiting
 reader.
@@ -53,12 +53,15 @@ logger = logging.getLogger(__name__)
 CONFIG_WAIT = 5.0
 
 
-def write_config(root: Path, label: str, log_files: set[Path]) -> None:
-    """Record the repo label and the sides' log files as
-    <root>/config.json."""
+def write_config(root: Path, label: str, log_files: set[Path],
+                 pr_args: str | None, issue_args: str | None) -> None:
+    """Record the repo label, the sides' log files and the verbatim
+    side argument strings as <root>/config.json."""
     atomic_write_text(root / "config.json", json.dumps({
         "label": label,
-        "log_files": sorted(str(f.resolve()) for f in log_files)}))
+        "log_files": sorted(str(f.resolve()) for f in log_files),
+        "pr_args": pr_args,
+        "issue_args": issue_args}))
     logger.info("wrote %s", root / "config.json")
 
 

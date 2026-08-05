@@ -479,7 +479,7 @@ class SideBuildTests(unittest.TestCase):
     def root(self, name: str, label: str, log_files: set[Path]) -> Path:
         root = self.base / name
         root.mkdir()
-        fairy_tui.db_config.write_config(root, label, log_files)
+        fairy_tui.db_config.write_config(root, label, log_files, None, None)
         return root
 
     def test_sides_come_from_each_roots_config(self) -> None:

@@ -32,11 +32,12 @@ the *directory* it sits in (`~/.fairy/db/<forge~account~owner~repo>/`:
 `requests/ queued/ llm/ reviewed/ outgoing/ posted/ skipped/ ...` --
 `mv` is a state change, `ls | wc -l` is a statistic; `filedb.py` is the
 thin atomic API). Three independent processes cooperate over these
-directories; agent and worker take the per-side configuration as a
+directories; the agent takes the per-side configuration as a
 `fairy.py` / `issue_fairy.py` argument string (`./fairy.py --help` and
 `./issue_fairy.py --help` document the contents; a side's `--log-file`
-is the shared agent+worker log the UI tails), the UI only the
-`--db-root`s. With `pip install
+is the shared agent+worker log the UI tails) and records it in the db
+root's `config.json`, from which worker and UI -- both taking only
+`--db-root` -- configure themselves. With `pip install
 watchdog` the processes react to new files within 100ms; without it
 they fall back to their poll intervals:
 

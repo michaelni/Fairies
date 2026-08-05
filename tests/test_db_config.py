@@ -47,10 +47,13 @@ class DbConfigTests(unittest.TestCase):
     def test_round_trip_resolves_log_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            db_config.write_config(root, "o/r", {Path("logs/x.log")})
+            db_config.write_config(root, "o/r", {Path("logs/x.log")},
+                                   "--owner o --repo r", None)
             cfg = db_config.read_config(root)
         self.assertEqual(cfg, {"label": "o/r",
-                               "log_files": [str(Path("logs/x.log").resolve())]})
+                               "log_files": [str(Path("logs/x.log").resolve())],
+                               "pr_args": "--owner o --repo r",
+                               "issue_args": None})
 
 
 if __name__ == "__main__":

@@ -53,9 +53,9 @@ ensure_repo fairies    https://code.ffmpeg.org/michaelni/Fairies.git
 # process and its gcli cache), the TUI as a pure view over the same
 # filedbs: one --db-root variable per repo ties the three processes
 # together (the names match what the agent would derive by default).
-# Each side string carries --log-file: agent and worker both append
-# there, the agent records it in the db root's config.json and the TUI
-# tails it automatically. Every repo gets its
+# Only the agent takes the side strings; it records them, with each
+# side's --log-file, in the db root's config.json, where the worker
+# reads its configuration and the TUI what to tail. Every repo gets its
 # own --debug-response-dir because the processes run concurrently and
 # would otherwise race on the shared default; the gcli cache pickle
 # needs no such flag, its default is already derived per side.
@@ -147,13 +147,13 @@ mkdir -p logs
 # console output goes to .console files: a backgrounded process's
 # stderr handlers would otherwise scribble over the blessed screen
 ./agent.py  --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --db-root "$FFMPEG_DB" --loop 600 >"logs/agent-ffmpeg.console" 2>&1 &
-./worker.py --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --db-root "$FFMPEG_DB" --loop 600 >"logs/worker-ffmpeg.console" 2>&1 &
+./worker.py --db-root "$FFMPEG_DB" --loop 600 >"logs/worker-ffmpeg.console" 2>&1 &
 ./agent.py  --pr-args "$WEB_PR" --db-root "$WEB_DB" --loop 600 >"logs/agent-web.console" 2>&1 &
-./worker.py --pr-args "$WEB_PR" --db-root "$WEB_DB" --loop 600 >"logs/worker-web.console" 2>&1 &
+./worker.py --db-root "$WEB_DB" --loop 600 >"logs/worker-web.console" 2>&1 &
 ./agent.py  --pr-args "$FATE_PR" --db-root "$FATE_DB" --loop 600 >"logs/agent-fateserver.console" 2>&1 &
-./worker.py --pr-args "$FATE_PR" --db-root "$FATE_DB" --loop 600 >"logs/worker-fateserver.console" 2>&1 &
+./worker.py --db-root "$FATE_DB" --loop 600 >"logs/worker-fateserver.console" 2>&1 &
 ./agent.py  --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --db-root "$FAIRIES_DB" --loop 600 >"logs/agent-fairies.console" 2>&1 &
-./worker.py --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --db-root "$FAIRIES_DB" --loop 600 >"logs/worker-fairies.console" 2>&1 &
+./worker.py --db-root "$FAIRIES_DB" --loop 600 >"logs/worker-fairies.console" 2>&1 &
 trap 'kill $(jobs -p) 2>/dev/null' EXIT
 
 ./fairy_tui.py --log-file fairy_tui.log \

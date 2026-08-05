@@ -57,7 +57,7 @@ from threading import Event
 from datetime import datetime, timezone
 from pathlib import Path
 
-import agent
+import db_config
 import fairy
 import filedb
 import forge_gcli
@@ -231,14 +231,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="LLM worker: claim queued filedb tickets and review them.",
     )
-    p.add_argument("--pr-args", metavar="ARGS",
-                   help="the PR side's argument string (models, wrapper, "
-                        "hosts); ./fairy.py --help documents its contents")
-    p.add_argument("--issue-args", metavar="ARGS",
-                   help="the issue side's argument string; ./issue_fairy.py "
-                        "--help documents its contents")
-    p.add_argument("--db-root", type=Path,
-                   help="filedb root (default: derived from the side's repo)")
+    p.add_argument("--db-root", type=Path, required=True,
+                   help="filedb root; its config.json, written by the repo's "
+                        "agent, carries the side argument strings")
     p.add_argument("--parallel", type=int, default=1, metavar="N",
                    help="review up to N tickets concurrently (default: 1; "
                         "running several worker processes composes too)")
@@ -246,28 +241,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="keep waiting for tickets, rechecking every N seconds; "
                         "new queued/ files wake the worker instantly via "
                         "watchdog (default: drain and exit)")
-    args = p.parse_args(argv)
-    if not args.pr_args and not args.issue_args:
-        p.error("at least one of --pr-args / --issue-args is required")
-    return args
+    return p.parse_args(argv)
 
 
 def main() -> int:
     args = parse_args()
+    cfg = db_config.read_config(args.db_root)
     sides: dict[str, argparse.Namespace] = {}
-    if args.pr_args:
-        sides["pr"] = fairy.parse_args(shlex.split(args.pr_args))
-    if args.issue_args:
-        sides["issue"] = issue_fairy.parse_args(shlex.split(args.issue_args))
+    if cfg["pr_args"]:
+        sides["pr"] = fairy.parse_args(shlex.split(cfg["pr_args"]))
+    if cfg["issue_args"]:
+        sides["issue"] = issue_fairy.parse_args(shlex.split(cfg["issue_args"]))
+    if not sides:
+        raise SystemExit(
+            f"{args.db_root / 'config.json'}: no side argument strings")
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
-                  logger, workset.logger, filedb.logger, forge_gcli.logger,
-                  color=lead.color)
+                  logger, db_config.logger, workset.logger, filedb.logger,
+                  forge_gcli.logger, color=lead.color)
     for log_file in {ns.log_file for ns in sides.values() if ns.log_file}:
-        add_file_log(log_file, fairy.logger, logger, workset.logger,
-                     filedb.logger, forge_gcli.logger)
-    db = filedb.Db(args.db_root or agent.db_root_for(lead))
+        add_file_log(log_file, fairy.logger, logger, db_config.logger,
+                     workset.logger, filedb.logger, forge_gcli.logger)
+    db = filedb.Db(args.db_root)
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
+    for kind in sides:
+        logger.info("%s side from config.json: %s", kind, cfg[f"{kind}_args"])
     wake = Event()
     watch_paths([db.root / "queued"], wake.set)
     while True:

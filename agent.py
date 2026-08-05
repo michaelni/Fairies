@@ -75,6 +75,7 @@ import filedb
 import forge_gcli
 import gcli_cache
 import issue_fairy
+import worker
 import workset
 from common import (add_file_log, default_cache_path, iso_to_dt,
                     setup_logging, watch_paths)
@@ -830,9 +831,6 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     def review_cycle() -> None:
         scan_pass(db, pr_ns, issue_ns)
         if args.drain:
-            # Imported here: worker imports agent for db_root_for, so a
-            # module-level import back would be circular.
-            import worker
             worker.drain(db, sides, parallel=args.drain)
 
     review_cycle()
@@ -903,7 +901,8 @@ def main() -> int:
                      forge_gcli.logger, ci_log.logger)
     validate_sides(pr_ns, issue_ns)
     db = filedb.Db(args.db_root or db_root_for(lead))
-    db_config.write_config(db.root, f"{lead.owner}/{lead.repo}", log_files)
+    db_config.write_config(db.root, f"{lead.owner}/{lead.repo}", log_files,
+                           args.pr_args, args.issue_args)
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
     for ns in (pr_ns, issue_ns):
         if ns is not None and getattr(ns, "simulate_past", None):

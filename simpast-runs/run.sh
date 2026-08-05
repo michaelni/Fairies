@@ -148,19 +148,20 @@ run_one() {
     # --drain N reviews the cell's PRs concurrently, like the old
     # --llm-parallelism did
     if ./configurator.py --db-root "$outdir/db" \
-        --pr-args "--owner FFmpeg --repo FFmpeg --gcli-account ff
-        --simulate-past $CUTOFF
-        --patch-repo $PATCH_REPO
-        --patch-pr-ref-template fforge/pr/{number}
-        --cache $outdir/cache.pkl
-        --forced-only --force-review-non-open ${FORCE_ENGAGE:+--force-engage} $force
-        --llm-review-cmd \"./pr_review_wrapper.py
+        --owner FFmpeg --repo FFmpeg --gcli-account ff \
+        --prs \
+        --simulate-past "$CUTOFF" \
+        --patch-repo "$PATCH_REPO" \
+        --patch-pr-ref-template 'fforge/pr/{number}' \
+        --cache "$outdir/cache.pkl" \
+        --forced-only --force-review-non-open ${FORCE_ENGAGE:+--force-engage} $force \
+        --llm-review-cmd "./pr_review_wrapper.py
             --repo-root $PATCH_REPO $extra
             $CONTAINER_ARGS $WRAPPER_EXTRA
             --model $MODEL $TRIAGE_ARGS
             --service-tier $TIER --reasoning-summary detailed
-            --debug-response-dir $outdir/openaidebug --verbose\"
-        --verbose 2" >"$outdir/run.log" 2>&1 \
+            --debug-response-dir $outdir/openaidebug --verbose" \
+        --verbose 2 >"$outdir/run.log" 2>&1 \
         && CLICOLOR_FORCE=1 ./agent.py --drain "${#PRS[@]}" --db-root "$outdir/db" \
             2>&1 | tee -a "$outdir/run.log" | sed -u "$pfx"
     then

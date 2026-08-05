@@ -38,14 +38,20 @@ cd ..
 # One-shot cron cycle: configurator writes the db root's config.toml,
 # then the agent runs scan -> inline worker -> send from it. Extra
 # arguments ($*) go to agent.py itself (e.g. --dry-run, --loop 600).
-# ./fairy.py --help documents the --pr-args contents.
+# ./configurator.py --help documents the side options.
+# The configurator writes the WHOLE config: this PR-only invocation
+# drops any [issue] table another script (issue-fairy-ref.sh,
+# fairy-ui-ref.sh) put on the same db root. One db root wants one
+# configuring script.
 #--include-direct-includes --use-vector-store-search
 FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
-./configurator.py --db-root "$FFMPEG_DB" --pr-args "
-    --owner FFmpeg --repo FFmpeg
-    --gcli-account ff
-    --patch-repo ffmpeg
-    --triage-label 'important,enhancement,fix/bug,fix/regression,resolution/invalid,API,API major,needs sample,needs docs,needs testing,resolution/duplicate'
+./configurator.py --db-root "$FFMPEG_DB" \
+    --owner FFmpeg --repo FFmpeg \
+    --gcli-account ff \
+    --verbose 2 \
+    --prs \
+    --patch-repo ffmpeg \
+    --triage-label 'important,enhancement,fix/bug,fix/regression,resolution/invalid,API,API major,needs sample,needs docs,needs testing,resolution/duplicate' \
     --llm-review-cmd './pr_review_wrapper.py
         --repo-root ffmpeg
         --model openai:gpt-5.6@high
@@ -54,10 +60,8 @@ FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
         --verbose
         --debug-response-dir openaidebug
         --web-search live
-        --max-tool-calls 100'
-    --verbose 2
+        --max-tool-calls 100' \
     --min-age-days 56
-    "
 ./agent.py --drain --db-root "$FFMPEG_DB" $*
 
 #./fairy.py --owner FFmpeg --repo FFmpeg  --gcli-account ff --llm-review-cmd './pr_review_wrapper.py --repo-root ffmpeg --model openai:gpt-5.6@high --extra-repo-root for_ffmpeg --extra-repo-root forgejo_git --extra-repo-root ffmpeg-web --extra-repo-root fateserver --use-vector-store-search --verbose --debug-response-dir openaidebug --web-search live' --verbose --min-age-days 56 $*

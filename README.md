@@ -32,12 +32,13 @@ the *directory* it sits in (`~/.fairy/db/<forge~account~owner~repo>/`:
 `requests/ queued/ llm/ reviewed/ outgoing/ posted/ skipped/ ...` --
 `mv` is a state change, `ls | wc -l` is a statistic; `filedb.py` is the
 thin atomic API). `configurator.py` takes the per-side configuration
-as a `fairy.py` / `issue_fairy.py` argument string (`./fairy.py
---help` and `./issue_fairy.py --help` document the contents; a side's
-`--log-file` is the shared agent+worker log the UI tails), validates
-it and records it in the db root's `config.toml`; the three
-processes cooperating over the directories all take only `--db-root`
-and configure themselves from that file. With `pip install
+directly as options -- shared ones first, then a `--prs` and/or
+`--issues` section per side; `./configurator.py --help` documents them
+all, and a side's `--log-file` is the shared agent+worker log the UI
+tails. It validates them and records them in the db root's
+`config.toml`; the three processes cooperating over the directories
+all take only `--db-root` and configure themselves from that file.
+With `pip install
 watchdog` the processes react to new files within 100ms; without it
 they fall back to their poll intervals:
 
@@ -60,7 +61,7 @@ they fall back to their poll intervals:
 A human moves any reviewed verdict out whenever they choose (`y` in the
 TUI, `agent.py --ask` for the classic per-verdict terminal prompt, or
 plain `mv reviewed/pr-N.json outgoing/`); with `--approve` in a side's
-argument string the agent promotes actionable verdicts itself.
+options the agent promotes actionable verdicts itself.
 
 The reviewer (`pr_review_wrapper.py`) receives the PR data and returns one
 structured JSON review. Inside it runs a pipeline: an optional cheap triage

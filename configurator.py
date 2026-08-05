@@ -28,12 +28,14 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-The configurator: validate a repo's side argument strings and write
-them, with the repo label and log files, as the db root's config.toml
-that agent, worker and TUI configure themselves from. Run it before
-starting the daemons; rerun it to change a repo's configuration.
+The configurator: validate a repo's side options -- given directly on
+its command line, shared ones first, then a --prs and/or --issues
+section per side -- and write them, with the repo label and log files,
+as the db root's config.toml that agent, worker and TUI configure
+themselves from. Run it before starting the daemons; rerun it to
+change a repo's configuration.
 
-What belongs here: the side-string validation and everything else that
+What belongs here: the side validation and everything else that
 decides what goes into a db root's config.
 What does NOT belong: the config.toml format itself (db_config),
 running the configured processes (agent / worker / fairy_tui).
@@ -43,7 +45,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-import shlex
+import sys
 from pathlib import Path
 
 import db_config
@@ -90,18 +92,17 @@ def validate_sides(pr_ns: argparse.Namespace | None,
 
 
 def side_options(parser: argparse.ArgumentParser,
-                 arg_str: str) -> dict[str, bool | str | list[str]]:
-    """One dict entry per CLI option in ``arg_str``, keyed by the
+                 tokens: list[str]) -> dict[str, bool | str | list[str]]:
+    """One dict entry per CLI option in ``tokens``, keyed by the
     option name without the leading dashes: True for a bare flag, a
     list for a repeated (argparse append) option, the token string
     otherwise -- the shape db_config.write_config stores. The parser
-    must carry every option ``arg_str`` uses -- for the PR side that
+    must carry every option the tokens use -- for the PR side that
     includes --config, which apply_config_file_defaults registers.
-    parse_args has already accepted ``arg_str``, so the only rejection
+    parse_args has already accepted ``tokens``, so the only rejection
     left here is an abbreviated option name, which parse_args resolves
     but a config key must not carry."""
     actions = {opt: a for a in parser._actions for opt in a.option_strings}
-    tokens = shlex.split(arg_str)
     options: dict[str, bool | str | list[str]] = {}
     i = 0
     while i < len(tokens):
@@ -125,46 +126,75 @@ def side_options(parser: argparse.ArgumentParser,
     return options
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Validate a repo's side argument strings and write them "
-                    "into the db root's config.toml, which agent, worker and "
-                    "TUI configure themselves from.",
+        add_help=False,
+        usage="%(prog)s [--db-root DIR] [shared side options] "
+              "--prs [pr options] --issues [issue options]",
+        description="Validate a repo's side options and write them into the "
+                    "db root's config.toml, which agent, worker and TUI "
+                    "configure themselves from. Options before the first "
+                    "--prs / --issues marker are shared by both sides; each "
+                    "marker starts that side's own options, which append "
+                    "after (and thereby override) the shared ones.",
     )
-    p.add_argument("--pr-args", metavar="ARGS",
-                   help="the PR side's argument string; ./fairy.py --help "
-                        "documents its contents")
-    p.add_argument("--issue-args", metavar="ARGS",
-                   help="the issue side's argument string; ./issue_fairy.py "
-                        "--help documents its contents")
     p.add_argument("--db-root", type=Path,
                    help="filedb root (default: ~/.fairy/db/<forge~account~owner~repo>)")
-    args = p.parse_args(argv)
-    if not args.pr_args and not args.issue_args:
-        p.error("at least one of --pr-args / --issue-args is required")
-    return args
+    return p
+
+
+def split_sections(argv: list[str]) -> tuple[list[str], dict[str, list[str]]]:
+    """The tokens before the first ``--prs``/``--issues`` marker, and
+    one token list per marker present."""
+    shared: list[str] = []
+    sections: dict[str, list[str]] = {}
+    current = shared
+    for token in argv:
+        if token in ("--prs", "--issues"):
+            if token in sections:
+                raise SystemExit(f"{token} given twice")
+            current = sections[token] = []
+        else:
+            current.append(token)
+    return shared, sections
 
 
 def main() -> int:
-    args = parse_args()
-    pr_ns = fairy.parse_args(shlex.split(args.pr_args)) if args.pr_args else None
-    issue_ns = issue_fairy.parse_args(shlex.split(args.issue_args)) if args.issue_args else None
+    argv = sys.argv[1:]
+    if "-h" in argv or "--help" in argv:
+        print(make_parser().format_help()
+              + "\nPR side options (after --prs, or shared):\n\n"
+              + fairy.make_parser().format_help()
+              + "\nIssue side options (after --issues, or shared):\n\n"
+              + issue_fairy.make_parser().format_help())
+        return 0
+    shared, sections = split_sections(argv)
+    own_parser = make_parser()
+    args, shared = own_parser.parse_known_args(shared)
+    if not sections:
+        own_parser.error("at least one of --prs / --issues is required")
+    pr_tokens = shared + sections["--prs"] if "--prs" in sections else None
+    issue_tokens = shared + sections["--issues"] if "--issues" in sections \
+        else None
+    pr_ns = fairy.parse_args(pr_tokens) if pr_tokens is not None else None
+    issue_ns = issue_fairy.parse_args(issue_tokens) \
+        if issue_tokens is not None else None
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   logger, db_config.logger, workset.logger, color=lead.color)
     validate_sides(pr_ns, issue_ns)
     root = args.db_root or db_root_for(lead)
     pr_options = None
-    if args.pr_args:
+    if pr_tokens is not None:
         pr_parser = fairy.make_parser()
-        apply_config_file_defaults(pr_parser, shlex.split(args.pr_args))
-        pr_options = side_options(pr_parser, args.pr_args)
+        apply_config_file_defaults(pr_parser, pr_tokens)
+        pr_options = side_options(pr_parser, pr_tokens)
     db_config.write_config(
         root, f"{lead.owner}/{lead.repo}",
         {ns.log_file for ns in (pr_ns, issue_ns) if ns and ns.log_file},
         pr_options,
-        side_options(issue_fairy.make_parser(), args.issue_args)
-        if args.issue_args else None)
+        side_options(issue_fairy.make_parser(), issue_tokens)
+        if issue_tokens is not None else None)
     logger.info("configured %s/%s, db %s", lead.owner, lead.repo, root)
     return 0
 

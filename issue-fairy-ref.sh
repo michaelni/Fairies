@@ -40,14 +40,19 @@ cd ..
 # uses the exported-issue
 # vector store. Triage runs on GPT-5.6-luna@medium, the full pass on
 # GPT-5.6@high; both on the flex tier. Verdicts wait in reviewed/ by
-# default; put --approve inside --issue-args to let the send pass post
-# them. Extra arguments ($*) go to agent.py itself. configurator.py
-# writes the db root's config.toml the agent then runs from.
+# default; put --approve in the --issues section to let the send pass
+# post them. Extra arguments ($*) go to agent.py itself.
+# configurator.py writes the db root's config.toml the agent then runs
+# from -- the WHOLE config: this issue-only invocation drops any [pr]
+# table another script (fairy-ref.sh, fairy-ui-ref.sh) put on the same
+# db root. One db root wants one configuring script.
 FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
-./configurator.py --db-root "$FFMPEG_DB" --issue-args "
-    --owner FFmpeg --repo FFmpeg
-    --gcli-account ff
-    --issue-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid,resolution/external,resolution/fixed'
+./configurator.py --db-root "$FFMPEG_DB" \
+    --owner FFmpeg --repo FFmpeg \
+    --gcli-account ff \
+    --verbose 2 \
+    --issues \
+    --issue-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid,resolution/external,resolution/fixed' \
     --llm-review-cmd './pr_review_wrapper.py
         --repo-root ffmpeg
         --extra-repo-root all_ffmpeg
@@ -60,6 +65,4 @@ FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
         --debug-response-dir openaidebug
         --web-search live
         --max-tool-calls 100'
-    --verbose 2
-    "
 ./agent.py --drain --db-root "$FFMPEG_DB" $*

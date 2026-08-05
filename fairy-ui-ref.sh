@@ -53,8 +53,9 @@ ensure_repo fairies    https://code.ffmpeg.org/michaelni/Fairies.git
 # process and its gcli cache), the TUI as a pure view over the same
 # filedbs: one --db-root variable per repo ties the processes together
 # (the names match what configurator.py would derive by default).
-# Only configurator.py takes the side strings; it records them, with
-# each side's --log-file, in the db root's config.toml, where agent and
+# Only configurator.py takes the side options -- shared ones first,
+# then a --prs / --issues section per side; it records them, with the
+# shared --log-file, in the db root's config.toml, where agent and
 # worker read their configuration and the TUI what to tail. It runs in
 # the foreground before the daemons, so they all see the same, current
 # config. Every repo gets its
@@ -64,7 +65,7 @@ ensure_repo fairies    https://code.ffmpeg.org/michaelni/Fairies.git
 # FFmpeg/web, FFmpeg/fateserver and michaelni/Fairies define no
 # FFmpeg-style label sets, hence no --triage-label/--issue-label there.
 # Extra arguments ($*) go to fairy_tui.py itself.
-COMMON="--gcli-account ff --verbose 2"
+COMMON=(--gcli-account ff --verbose 2)
 MODEL="openai:gpt-5.6@high"
 FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
 WEB_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~web"
@@ -72,24 +73,20 @@ FATE_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~fateserver"
 FAIRIES_DB="$HOME/.fairy/db/gitea~ff~michaelni~Fairies"
 WRAP_TAIL="--use-vector-store-search --verbose --web-search live --max-tool-calls 100"
 
-FFMPEG_PR="
-    --owner FFmpeg --repo FFmpeg $COMMON
-    --log-file logs/ffmpeg.log
+FFMPEG_PR=(
     --patch-repo ffmpeg
     --triage-label 'important,enhancement,fix/bug,fix/regression,resolution/invalid,API,API major,needs sample,needs docs,needs testing,resolution/duplicate'
-    --llm-review-cmd './pr_review_wrapper.py
+    --llm-review-cmd "./pr_review_wrapper.py
         --repo-root ffmpeg
         --model $MODEL
         --extra-repo-root all_ffmpeg
         --debug-response-dir openaidebug
-        $WRAP_TAIL'
+        $WRAP_TAIL"
     --min-age-days 56
-"
-FFMPEG_ISSUES="
-    --owner FFmpeg --repo FFmpeg $COMMON
-    --log-file logs/ffmpeg.log
+)
+FFMPEG_ISSUES=(
     --issue-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid,resolution/external,resolution/fixed'
-    --llm-review-cmd './pr_review_wrapper.py
+    --llm-review-cmd "./pr_review_wrapper.py
         --repo-root ffmpeg
         --extra-repo-root all_ffmpeg
         --triage-model openai:gpt-5.6-luna
@@ -97,59 +94,59 @@ FFMPEG_ISSUES="
         --model $MODEL
         --service-tier flex
         --debug-response-dir openaidebug-issues
-        $WRAP_TAIL'
-"
-WEB_PR="
-    --owner FFmpeg --repo web $COMMON
-    --log-file logs/web.log
+        $WRAP_TAIL"
+)
+WEB_PR=(
     --patch-repo ffmpeg-web
-    --llm-review-cmd './pr_review_wrapper.py
+    --llm-review-cmd "./pr_review_wrapper.py
         --repo-root ffmpeg-web
         --project-facts project_facts/ffmpeg-web.md
         --model $MODEL
         --extra-repo-root all_ffmpeg
         --debug-response-dir openaidebug-web
-        $WRAP_TAIL'
+        $WRAP_TAIL"
     --min-age-days 13
-"
-FATE_PR="
-    --owner FFmpeg --repo fateserver $COMMON
-    --log-file logs/fateserver.log
+)
+FATE_PR=(
     --patch-repo fateserver
-    --llm-review-cmd './pr_review_wrapper.py
+    --llm-review-cmd "./pr_review_wrapper.py
         --repo-root fateserver
         --project-facts project_facts/fateserver.md
         --model $MODEL
         --extra-repo-root all_ffmpeg
         --debug-response-dir openaidebug-fateserver
-        $WRAP_TAIL'
+        $WRAP_TAIL"
     --min-age-days 13
-"
-FAIRIES_PR="
-    --owner michaelni --repo Fairies $COMMON
-    --log-file logs/fairies.log
+)
+FAIRIES_PR=(
     --patch-repo fairies
-    --llm-review-cmd './pr_review_wrapper.py
+    --llm-review-cmd "./pr_review_wrapper.py
         --repo-root fairies
         --model $MODEL
         --debug-response-dir openaidebug-fairies
-        $WRAP_TAIL'
-"
-FAIRIES_ISSUES="
-    --owner michaelni --repo Fairies $COMMON
-    --log-file logs/fairies.log
-    --llm-review-cmd './pr_review_wrapper.py
+        $WRAP_TAIL"
+)
+FAIRIES_ISSUES=(
+    --llm-review-cmd "./pr_review_wrapper.py
         --repo-root fairies
         --model $MODEL
         --debug-response-dir openaidebug-fairies-issues
-        $WRAP_TAIL'
-"
+        $WRAP_TAIL"
+)
 
 mkdir -p logs
-./configurator.py --db-root "$FFMPEG_DB" --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES"
-./configurator.py --db-root "$WEB_DB" --pr-args "$WEB_PR"
-./configurator.py --db-root "$FATE_DB" --pr-args "$FATE_PR"
-./configurator.py --db-root "$FAIRIES_DB" --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES"
+./configurator.py --db-root "$FFMPEG_DB" \
+    --owner FFmpeg --repo FFmpeg "${COMMON[@]}" --log-file logs/ffmpeg.log \
+    --prs "${FFMPEG_PR[@]}" --issues "${FFMPEG_ISSUES[@]}"
+./configurator.py --db-root "$WEB_DB" \
+    --owner FFmpeg --repo web "${COMMON[@]}" --log-file logs/web.log \
+    --prs "${WEB_PR[@]}"
+./configurator.py --db-root "$FATE_DB" \
+    --owner FFmpeg --repo fateserver "${COMMON[@]}" --log-file logs/fateserver.log \
+    --prs "${FATE_PR[@]}"
+./configurator.py --db-root "$FAIRIES_DB" \
+    --owner michaelni --repo Fairies "${COMMON[@]}" --log-file logs/fairies.log \
+    --prs "${FAIRIES_PR[@]}" --issues "${FAIRIES_ISSUES[@]}"
 # console output goes to .console files: a backgrounded process's
 # stderr handlers would otherwise scribble over the blessed screen
 ./agent.py  --db-root "$FFMPEG_DB" --loop 600 >"logs/agent-ffmpeg.console" 2>&1 &

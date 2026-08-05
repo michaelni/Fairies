@@ -45,6 +45,7 @@ if str(REPO_ROOT) not in sys.path:
 import configurator  # noqa: E402
 import db_config  # noqa: E402
 import fairy  # noqa: E402
+import issue_fairy  # noqa: E402
 
 
 class ValidationTests(unittest.TestCase):
@@ -84,41 +85,44 @@ class SideOptionsTests(unittest.TestCase):
     def test_flags_values_and_repeats(self) -> None:
         opts = configurator.side_options(
             fairy.make_parser(),
-            "--owner o --repo r --approve --triage-label a --triage-label b "
-            "--min-age-days=3")
+            shlex.split("--owner o --repo r --approve --triage-label a "
+                        "--triage-label b --min-age-days=3"))
         self.assertEqual(opts, {"owner": "o", "repo": "r", "approve": True,
                                 "triage-label": ["a", "b"],
                                 "min-age-days": "3"})
 
     def test_an_abbreviated_option_is_rejected(self) -> None:
         with self.assertRaisesRegex(SystemExit, "abbreviated"):
-            configurator.side_options(fairy.make_parser(), "--owne o --repo r")
+            configurator.side_options(fairy.make_parser(),
+                                      ["--owne", "o", "--repo", "r"])
+
+
+class SectionTests(unittest.TestCase):
+    def test_shared_prs_and_issues_split(self) -> None:
+        shared, sections = configurator.split_sections(
+            ["--owner", "o", "--prs", "--min-age-days", "12",
+             "--issues", "--limit", "5"])
+        self.assertEqual(shared, ["--owner", "o"])
+        self.assertEqual(sections, {"--prs": ["--min-age-days", "12"],
+                                    "--issues": ["--limit", "5"]})
+
+    def test_a_repeated_marker_is_rejected(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "--prs given twice"):
+            configurator.split_sections(["--prs", "--prs"])
 
 
 class MainTests(unittest.TestCase):
-    def test_pr_side_config_file_option_is_stored(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            side = Path(tmp) / "side.toml"
-            side.write_text('min-age-days = 3\n', encoding="utf-8")
-            argv = ["configurator.py", "--db-root", tmp, "--pr-args",
-                    f"--owner o --repo r --config {side}"]
-            with mock.patch.object(sys, "argv", argv), \
-                    mock.patch.object(configurator, "setup_logging"):
-                configurator.main()
-            cfg = db_config.read_config(Path(tmp))
-            pr_argv, _ = db_config.read_side_argv(Path(tmp))
-            self.assertEqual(cfg["pr"]["config"], str(side))
-            self.assertEqual(fairy.parse_args(pr_argv).min_age_days, 3)
+    def run_main(self, argv: list[str]) -> int:
+        with mock.patch.object(sys, "argv", ["configurator.py"] + argv), \
+                mock.patch.object(configurator, "setup_logging"):
+            return configurator.main()
 
     def test_main_round_trips_the_side_namespace(self) -> None:
         pr = ("--owner o --repo r --log-file logs/x.log --approve "
               "--patch-repo p --triage-label a --triage-label b "
               "--llm-review-cmd './w.py\n    --model m'")
         with tempfile.TemporaryDirectory() as tmp:
-            argv = ["configurator.py", "--db-root", tmp, "--pr-args", pr]
-            with mock.patch.object(sys, "argv", argv), \
-                    mock.patch.object(configurator, "setup_logging"):
-                rc = configurator.main()
+            rc = self.run_main(["--db-root", tmp, "--prs"] + shlex.split(pr))
             cfg = db_config.read_config(Path(tmp))
             pr_argv, issue_argv = db_config.read_side_argv(Path(tmp))
         self.assertEqual(rc, 0)
@@ -127,6 +131,28 @@ class MainTests(unittest.TestCase):
         self.assertIsNone(issue_argv)
         self.assertEqual(fairy.parse_args(pr_argv),
                          fairy.parse_args(shlex.split(pr)))
+
+    def test_pr_side_config_file_option_is_stored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            side = Path(tmp) / "side.toml"
+            side.write_text('min-age-days = 3\n', encoding="utf-8")
+            self.run_main(["--db-root", tmp, "--owner", "o", "--repo", "r",
+                           "--prs", "--config", str(side)])
+            cfg = db_config.read_config(Path(tmp))
+            pr_argv, _ = db_config.read_side_argv(Path(tmp))
+            self.assertEqual(cfg["pr"]["config"], str(side))
+            self.assertEqual(fairy.parse_args(pr_argv).min_age_days, 3)
+
+    def test_shared_options_reach_both_sides_and_sections_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.run_main(["--db-root", tmp,
+                           "--owner", "o", "--repo", "r", "--limit", "10",
+                           "--prs", "--min-age-days", "12",
+                           "--issues", "--limit", "5"])
+            pr_argv, issue_argv = db_config.read_side_argv(Path(tmp))
+        self.assertEqual(fairy.parse_args(pr_argv).limit, 10)
+        self.assertEqual(fairy.parse_args(pr_argv).min_age_days, 12)
+        self.assertEqual(issue_fairy.parse_args(issue_argv).limit, 5)
 
     def test_db_root_defaults_to_the_side_identity(self) -> None:
         ns = fairy.parse_args(["--owner", "O", "--repo", "R",

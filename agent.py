@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 import time
 from threading import Event
 from dataclasses import replace as dataclasses_replace
@@ -76,8 +77,9 @@ import gcli_cache
 import issue_fairy
 import worker
 import workset
-from common import (add_file_log, default_cache_path, iso_to_dt,
-                    setup_logging, watch_paths)
+from common import (OVERRIDE_EPILOG, add_file_log, default_cache_path,
+                    iso_to_dt, sectioned_help, setup_logging, split_sections,
+                    watch_paths)
 
 __all__ = ["main", "scan_pass", "send_pass"]
 
@@ -759,10 +761,11 @@ def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
             gcli_cache.save_cache(ns.cache, cache)
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Repo agent: scan the forge and maintain the filedb tickets "
                     "for one repository's PRs and issues.",
+        epilog=OVERRIDE_EPILOG,
     )
     p.add_argument("--db-root", type=Path, required=True,
                    help="filedb root; its config.toml, written by "
@@ -783,7 +786,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "q stops)")
     p.add_argument("--dry-run", action="store_true",
                    help="log what the send pass would post; post nothing")
-    return p.parse_args(argv)
+    return p
 
 
 def warn_simulate_past_limitations(ignore_after: datetime) -> None:
@@ -845,10 +848,19 @@ def requests_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
 
 
 def main() -> int:
-    args = parse_args()
+    argv = sys.argv[1:]
+    if "-h" in argv or "--help" in argv:
+        print(sectioned_help(make_parser(), fairy.make_parser(),
+                             issue_fairy.make_parser()))
+        return 0
+    shared, sections = split_sections(argv)
+    args, overrides = make_parser().parse_known_args(shared)
     pr_argv, issue_argv = db_config.read_side_argv(args.db_root)
-    pr_ns = fairy.parse_args(pr_argv) if pr_argv else None
-    issue_ns = issue_fairy.parse_args(issue_argv) if issue_argv else None
+    pr_over = overrides + sections.get("--prs", [])
+    issue_over = overrides + sections.get("--issues", [])
+    pr_ns = fairy.parse_args(pr_argv + pr_over) if pr_argv else None
+    issue_ns = issue_fairy.parse_args(issue_argv + issue_over) \
+        if issue_argv else None
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   logger, db_config.logger, workset.logger, gcli_cache.logger,
@@ -862,7 +874,7 @@ def main() -> int:
     fairy.validate_sides(pr_ns, issue_ns)
     db = filedb.Db(args.db_root)
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
-    db_config.log_side_argv(pr_argv, issue_argv)
+    db_config.log_side_argv(pr_argv, issue_argv, pr_over, issue_over)
     for ns in (pr_ns, issue_ns):
         if ns is not None and getattr(ns, "simulate_past", None):
             warn_simulate_past_limitations(ns.simulate_past)

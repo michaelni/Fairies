@@ -31,6 +31,8 @@ agent: gate outcomes, backoff, limit and requests become filedb tickets."""
 
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import tempfile
 import unittest
@@ -1050,7 +1052,7 @@ class RequestsPassTests(AgentCase):
 
     def test_only_the_requested_item_is_fetched(self) -> None:
         self.db.push("requests", "pr", "7", {"action": "rerun"})
-        args = agent.parse_args(["--db-root", "x"])
+        args = agent.make_parser().parse_args(["--db-root", "x"])
         with mock.patch.object(fairy, "list_open_prs",
                                side_effect=AssertionError("full listing")), \
                 mock.patch.object(fairy, "get_pr",
@@ -1065,6 +1067,37 @@ class RequestsPassTests(AgentCase):
         self.assertEqual(self.db.find("pr", "7"), "queued")
         self.assertIsNone(self.db.get("requests", "pr", "7"))
         self.assertFalse(self.ns.forced_only)  # the clone flips, not ours
+
+
+class OverrideTests(unittest.TestCase):
+    def test_cli_overrides_replace_config_values(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_config.write_config(Path(tmp.name), "o/r", set(),
+                               {"owner": "o", "repo": "r",
+                                "min-age-days": "5"}, None)
+        captured: dict = {}
+
+        def one_pass(db, pr_ns, issue_ns, args) -> None:
+            captured["pr"] = pr_ns
+
+        with mock.patch.object(agent, "one_pass", side_effect=one_pass), \
+                mock.patch.object(agent, "send_pass"), \
+                mock.patch.object(agent, "setup_logging"), \
+                mock.patch.object(sys, "argv",
+                                  ["agent.py", "--db-root", tmp.name,
+                                   "--min-age-days", "99"]):
+            agent.main()
+        self.assertEqual(captured["pr"].min_age_days, 99)
+
+    def test_help_lists_the_overridable_side_options(self) -> None:
+        buf = io.StringIO()
+        with mock.patch.object(sys, "argv", ["agent.py", "--help"]), \
+                contextlib.redirect_stdout(buf):
+            rc = agent.main()
+        self.assertEqual(rc, 0)
+        self.assertIn("--llm-review-cmd", buf.getvalue())
+        self.assertIn("--issue-label", buf.getvalue())
 
 
 class ColorTests(unittest.TestCase):
@@ -1159,7 +1192,7 @@ class OnePassTests(unittest.TestCase):
     def _run(self, argv: list[str]) -> list[str]:
         import worker
         calls: list[str] = []
-        args = agent.parse_args(argv)
+        args = agent.make_parser().parse_args(argv)
         with mock.patch.object(agent, "scan_pass",
                                side_effect=lambda *a, **k: calls.append("scan")), \
                 mock.patch.object(worker, "drain",

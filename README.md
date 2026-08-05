@@ -53,7 +53,8 @@ they fall back to their poll intervals:
   workers and prunes. `--loop N` to daemonize, default is one pass
   (cron style); `--drain N` runs the worker inline for a
   self-contained one-shot, N tickets concurrently; `--dry-run` logs
-  what would be posted.
+  what would be posted. Side options on its command line override the
+  config.toml values like the worker's do.
 - `worker.py`: claims `queued/` tickets (flock + rename; the held lock
   is its liveness signal), runs the LLM wrapper, writes the verdict to
   `reviewed/` / `skipped/` / `error/`. `--parallel N` reviews N

@@ -80,7 +80,7 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             fairy.validate_sides(self.pr("--forced-only"), None)
         fairy.validate_sides(
-            self.pr("--forced-only --force-review-pr 5"), None)
+            self.pr("--forced-only --force-review 5"), None)
 
 
 class SideOptionsTests(unittest.TestCase):
@@ -122,7 +122,7 @@ class MainTests(unittest.TestCase):
             configurator.main()
         self.assertEqual(ctx.exception.code, 0)
         self.assertIn("--llm-review-cmd", buf.getvalue())
-        self.assertIn("--force-review-issue", buf.getvalue())
+        self.assertIn("--force-review", buf.getvalue())
 
     def run_main(self, argv: list[str]) -> int:
         with mock.patch.object(sys, "argv", ["configurator.py"] + argv), \

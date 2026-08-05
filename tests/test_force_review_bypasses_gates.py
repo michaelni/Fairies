@@ -27,7 +27,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-``--force-review-pr`` bypasses the state/WIP/mergeable skip gates.
+``--force-review`` bypasses the state/WIP/mergeable skip gates.
 
 Without the bypass these gates fire before ``forced_review_reason``
 ever sees the override, so a forced run on a closed/merged, draft,
@@ -150,11 +150,11 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
 
     def test_force_skip_takes_precedence_over_force_review(self) -> None:
         # Pinned so a refactor cannot quietly invert the documented
-        # precedence of --force-skip-pr over --force-review-pr.
+        # precedence of --force-skip over --force-review.
         pr = {"number": 5, "state": "open", "mergeable": True, "title": "ok"}
         decision = _call(pr, force_review={5}, force_skip={5})
         self.assertEqual(decision.action, "skip")
-        self.assertEqual(decision.reason, "forced skip by --force-skip-pr")
+        self.assertEqual(decision.reason, "forced skip by --force-skip")
         self.mock_disc.assert_not_called()
 class ForceReviewSkipPayloadTests(unittest.TestCase):
     """``--force-review-skip`` / ``--force-engage`` ride to the wrapper as

@@ -27,7 +27,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-``--force-review-pr`` + ``--force-review-non-open`` posts to a closed PR.
+``--force-review`` + ``--force-review-non-open`` posts to a closed PR.
 
 Regression: a forced review reached the submit step but the open-state
 guard in ``check_pr_still_unchanged`` blocked the post ("submit skipped

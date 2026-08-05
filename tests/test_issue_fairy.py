@@ -250,7 +250,7 @@ class PrepareIssueGateTests(unittest.TestCase):
             real_issue(), now=self.LAST_COMMENT + timedelta(days=2),
         )
         self.assertIsInstance(d, Decision)
-        self.assertEqual(d.reason, "forced skip by --force-skip-issue")
+        self.assertEqual(d.reason, "forced skip by --force-skip")
 
 
 def with_labels(issue: dict[str, object], *names: str) -> dict[str, object]:

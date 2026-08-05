@@ -124,7 +124,7 @@ class IssueLabelTests(unittest.TestCase):
 
 
 class ForceReviewIssueTests(unittest.TestCase):
-    """--force-review-issue overrides the open-state gate, on the way in
+    """--force-review overrides the open-state gate, on the way in
     (prepare) and on the way out (the pre-post staleness guard)."""
 
     def prepare(self, flags: str, issue: dict):
@@ -137,26 +137,26 @@ class ForceReviewIssueTests(unittest.TestCase):
                 discussion_cache_max_age=timedelta(hours=1))
 
     def test_a_closed_issue_is_analyzed_when_named(self) -> None:
-        result = self.prepare("--force-review-issue 5", make_issue(5, "closed"))
+        result = self.prepare("--force-review 5", make_issue(5, "closed"))
         self.assertEqual(result.base_reason,
-                         "forced review by --force-review-issue")
+                         "forced review by --force-review")
 
     def test_an_unnamed_closed_issue_is_skipped(self) -> None:
-        result = self.prepare("--force-review-issue 6", make_issue(5, "closed"))
+        result = self.prepare("--force-review 6", make_issue(5, "closed"))
         self.assertEqual(result.reason, "not open")
 
     def test_comma_separated_and_repeated_numbers_all_count(self) -> None:
-        flags = "--force-review-issue 5,6 --force-review-issue 7"
+        flags = "--force-review 5,6 --force-review 7"
         for number in (5, 6, 7):
             with self.subTest(number=number):
                 result = self.prepare(flags, make_issue(number, "closed"))
                 self.assertEqual(result.base_reason,
-                                 "forced review by --force-review-issue")
+                                 "forced review by --force-review")
 
     def test_force_skip_issue_still_wins(self) -> None:
-        result = self.prepare("--force-review-issue 5 --force-skip-issue 5",
+        result = self.prepare("--force-review 5 --force-skip 5",
                               make_issue(5))
-        self.assertEqual(result.reason, "forced skip by --force-skip-issue")
+        self.assertEqual(result.reason, "forced skip by --force-skip")
 
     def test_the_send_guard_lets_a_forced_closed_issue_be_posted(self) -> None:
         decision = fairy.Decision(5, "i5", "dev", "-", "comment", "llm", None,
@@ -164,7 +164,7 @@ class ForceReviewIssueTests(unittest.TestCase):
         with mock.patch.object(issue_fairy, "get_issue",
                                return_value=make_issue(5, "closed")):
             blocked = issue_fairy.check_issue_still_unchanged(
-                issue_ns("--force-review-issue 5"), decision)
+                issue_ns("--force-review 5"), decision)
             unnamed = issue_fairy.check_issue_still_unchanged(
                 issue_ns(""), decision)
         self.assertIsNone(blocked)

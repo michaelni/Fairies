@@ -223,7 +223,7 @@ class PreparedPR:
     # ``ignore_triage_skip`` field in the wrapper's stdin request.
     ignore_triage_skip: bool = False
     # The review was forced (an @-mention, a Forgejo review request, or
-    # --force-review-pr): the agent must not drop it at --limit, or a
+    # --force-review): the agent must not drop it at --limit, or a
     # human's explicit ask starves behind stale eligible items forever.
     forced_review: bool = False
     # Stronger sibling of ``ignore_triage_skip`` (see --force-engage):
@@ -369,10 +369,36 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
              "provider rate-limit windows; gate-skipped items do not count.",
     )
     p.add_argument(
+        "--force-review",
+        action="append",
+        type=parse_pr_number_csv,
+        default=None,
+        metavar="N[,N...]",
+        help=(
+            "Force review (and potential approval) of the specified item "
+            "number(s), bypassing the usual selection checks -- for an issue "
+            "including the open-state gate; a closed/merged PR additionally "
+            "needs --force-review-non-open. Can be repeated or passed as a "
+            "comma-separated list."
+        ),
+    )
+    p.add_argument(
+        "--force-skip",
+        action="append",
+        type=parse_pr_number_csv,
+        default=None,
+        metavar="N[,N...]",
+        help=(
+            "Always skip the specified item number(s). Can be repeated or "
+            "passed as a comma-separated list. Takes precedence over "
+            "--force-review."
+        ),
+    )
+    p.add_argument(
         "--forced-only",
         action="store_true",
-        help="Limit the run to the items named via --force-review-* "
-             "(no open-item listing). Requires at least one --force-review-*.",
+        help="Limit the run to the items named via --force-review "
+             "(no open-item listing). Requires at least one --force-review.",
     )
     p.add_argument(
         "--workset-retention-days",
@@ -535,31 +561,9 @@ def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
         ),
     )
     p.add_argument(
-        "--force-review-pr",
-        action="append",
-        type=parse_pr_number_csv,
-        default=None,
-        metavar="N[,N...]",
-        help=(
-            "Force review and potential approval for the specified PR number(s), bypassing the usual "
-            "selection checks. Can be repeated or passed as a comma-separated list."
-        ),
-    )
-    p.add_argument(
-        "--force-skip-pr",
-        action="append",
-        type=parse_pr_number_csv,
-        default=None,
-        metavar="N[,N...]",
-        help=(
-            "Always skip review and approval for the specified PR number(s). Can be repeated or passed "
-            "as a comma-separated list. Takes precedence over --force-review-pr."
-        ),
-    )
-    p.add_argument(
         "--force-review-non-open",
         action="store_true",
-        help="Let --force-review-pr also review closed/merged PRs. Off by "
+        help="Let --force-review also review closed/merged PRs. Off by "
              "default: a forced PR whose state is not ``open`` is skipped "
              "with ``not open``. (WIP/draft and conflicting PRs are always "
              "reviewed when forced, independent of this flag.)",
@@ -567,20 +571,20 @@ def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--force-review-skip",
         action="store_true",
-        help="When reviewing a PR named via --force-review-pr, ignore a "
+        help="When reviewing a PR named via --force-review, ignore a "
              "``skip`` verdict from the --llm-review-cmd triage pre-check and "
              "run the full reviewer pass anyway. Only applies to PRs named "
-             "with --force-review-pr (not @mention / requested-reviewer "
+             "with --force-review (not @mention / requested-reviewer "
              "engagements).",
     )
     p.add_argument(
         "--force-engage",
         action="store_true",
-        help="When reviewing a PR named via --force-review-pr, run the full "
+        help="When reviewing a PR named via --force-review, run the full "
              "reviewer pass regardless of the triage route (overrides both "
              "``skip`` and ``reply_no_verdict``) and even when the head CI is red. "
              "Stronger than --force-review-skip. Only applies to PRs named with "
-             "--force-review-pr (not @mention / requested-reviewer engagements).",
+             "--force-review (not @mention / requested-reviewer engagements).",
     )
 
 
@@ -642,8 +646,8 @@ def parse_args(argv: list[str] | None = None, *, agent: bool = True,
                            None if agent and worker else make_parser(), argv)
     args.cache = args.cache or gcli_cache.side_cache_path(args, "pulls")
     if agent:
-        args.force_review_prs = flatten_pr_number_args(args.force_review_pr)
-        args.force_skip_prs = flatten_pr_number_args(args.force_skip_pr)
+        args.force_review_prs = flatten_pr_number_args(args.force_review)
+        args.force_skip_prs = flatten_pr_number_args(args.force_skip)
     if worker:
         args.triage_labels = flatten_label_args(args.triage_label)
     return args
@@ -678,7 +682,7 @@ def validate_sides(pr_ns: argparse.Namespace | None,
                        (issue_ns, "force_review_issues")):
         if ns is not None and ns.forced_only and not getattr(ns, forced):
             _config_error(
-                "--forced-only requires at least one --force-review-*")
+                "--forced-only requires at least one --force-review")
 
 
 def combine_review_messages(*parts: str) -> str:
@@ -735,7 +739,7 @@ def check_pr_still_unchanged(
 ) -> str | None:
     expected_pr_updated_at, expected_head_ref = get_submission_guard(prepared, decision)
     current = get_pr(args, decision.pr_number)
-    # ``--force-review-pr`` with --force-review-non-open posts even to a
+    # ``--force-review`` with --force-review-non-open posts even to a
     # closed/merged PR (the forge still accepts comments there); the
     # heuristic open-state guard is for cron mode. Without the opt-in,
     # a PR that closed between prepare and post is left alone, matching
@@ -2270,17 +2274,17 @@ def prepare_pr(
             author,
             "-",
             "skip",
-            "forced skip by --force-skip-pr",
+            "forced skip by --force-skip",
             pr_last_activity,
         )
 
-    # ``--force-review-pr`` means "review this PR no matter what".
+    # ``--force-review`` means "review this PR no matter what".
     # The WIP/mergeable gates below are heuristics for the cron mode
     # -- when the operator named a PR explicitly we honor that and let
     # the LLM look at it. The closed/merged gate is the exception:
     # reviewing a non-open PR is opt-in via --force-review-non-open,
     # since the usual intent of forcing is a still-open PR.
-    # ``--force-skip-pr`` still wins (handled above) per its
+    # ``--force-skip`` still wins (handled above) per its
     # documented precedence.
     is_forced = number in args.force_review_prs
 
@@ -2454,7 +2458,7 @@ def prepare_pr(
 
     forced_review_reason: str | None = None
     if number in args.force_review_prs:
-        forced_review_reason = "forced review by --force-review-pr"
+        forced_review_reason = "forced review by --force-review"
     elif self_login:
         # First collect every signal that says "fairy ought to reply
         # on this PR". Only if at least one such signal exists do we

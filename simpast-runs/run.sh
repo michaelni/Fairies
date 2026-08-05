@@ -132,7 +132,7 @@ run_one() {
     # (which still left a partial run.log) is correctly re-run on resume.
     [[ -f "$outdir/.done" ]] && { echo "skip ${label}_${i} (done)"; return; }
     mkdir -p "$outdir/openaidebug"
-    local force="" pr; for pr in "${PRS[@]}"; do force+=" --force-review-pr $pr"; done
+    local force="" pr; for pr in "${PRS[@]}"; do force+=" --force-review $pr"; done
     local extra=""; [[ -n "$EXTRA_REPO" ]] && extra="--extra-repo-root $EXTRA_REPO"
     # Live output: tee the raw stream to run.log (what the analysis tools
     # read) and to the terminal. When samples run concurrently (PAR>1),

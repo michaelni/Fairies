@@ -82,7 +82,6 @@ from fairy import (
     list_open_prs,
     llm_skip_reason,
     max_dt,
-    parse_pr_number_csv,
     post_label_explanations,
 )
 
@@ -103,7 +102,7 @@ class PreparedIssue:
     discussion: list[ApiObject]
     reviewer_username: str | None
     # Same contract as PreparedPR.forced_review: a mention or
-    # --force-review-issue must not be dropped at --limit.
+    # --force-review must not be dropped at --limit.
     forced_review: bool = False
 
 
@@ -112,33 +111,6 @@ def prepared_issue_from_dict(data: dict) -> PreparedIssue:
     if d.get("last_activity"):
         d["last_activity"] = datetime.fromisoformat(d["last_activity"])
     return PreparedIssue(**d)
-
-
-def _add_issue_agent_args(p: argparse.ArgumentParser) -> None:
-    """The issue-only options of the agent's scan pass."""
-    p.add_argument(
-        "--force-review-issue",
-        action="append",
-        type=parse_pr_number_csv,
-        default=None,
-        metavar="N[,N...]",
-        help=(
-            "Force analysis for the specified issue number(s), bypassing the "
-            "usual selection checks (including the open-state gate). Can be "
-            "repeated or passed as a comma-separated list."
-        ),
-    )
-    p.add_argument(
-        "--force-skip-issue",
-        action="append",
-        type=parse_pr_number_csv,
-        default=None,
-        metavar="N[,N...]",
-        help=(
-            "Always skip the specified issue number(s). Takes precedence over "
-            "--force-review-issue."
-        ),
-    )
 
 
 def make_parser(agent: bool = True, worker: bool = True) -> argparse.ArgumentParser:
@@ -152,7 +124,6 @@ def make_parser(agent: bool = True, worker: bool = True) -> argparse.ArgumentPar
     fairy.add_side_identity_args(p)
     if agent:
         fairy.add_side_agent_args(p, min_age_default=14.0)
-        _add_issue_agent_args(p)
     if worker:
         fairy.add_llm_exec_args(p)
     return p
@@ -164,8 +135,8 @@ def parse_args(argv: list[str] | None = None, *, agent: bool = True,
                            None if agent and worker else make_parser(), argv)
     args.cache = args.cache or gcli_cache.side_cache_path(args, "issues")
     if agent:
-        args.force_review_issues = flatten_pr_number_args(args.force_review_issue)
-        args.force_skip_issues = flatten_pr_number_args(args.force_skip_issue)
+        args.force_review_issues = flatten_pr_number_args(args.force_review)
+        args.force_skip_issues = flatten_pr_number_args(args.force_skip)
     if worker:
         args.triage_labels = flatten_label_args(args.triage_label)
     return args
@@ -244,7 +215,7 @@ def prepare_issue(
         return Decision(number, title, author, "-", "skip", reason, last_activity)
 
     if number in args.force_skip_issues:
-        return skip("forced skip by --force-skip-issue")
+        return skip("forced skip by --force-skip")
 
     # A forced issue is analyzed no matter what, including closed ones
     # (e.g. re-checking a fixed regression); everything below the force
@@ -273,7 +244,7 @@ def prepare_issue(
 
     forced_reason: str | None = None
     if is_forced:
-        forced_reason = "forced review by --force-review-issue"
+        forced_reason = "forced review by --force-review"
     elif self_login:
         mention_re = compile_user_mention_regex(self_login)
         latest_mention = get_last_activity(

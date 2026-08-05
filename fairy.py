@@ -348,9 +348,9 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
             "Minimum age of last discussion activity (in days) before the "
             "item is proactively analyzed, including the optional CI-failure "
             "triage path (--triage-on-ci-failure). Does not apply when a "
-            "human @-mentions the bot, the item is forced, or fairy is a "
+            "human @-mentions fairy, the item is forced, or fairy is a "
             "requested reviewer. Once fairy has engaged, the effective "
-            "threshold drops to at most 1 day for a PR and 6h for an issue. "
+            "threshold drops to at most 6h. "
             "Default: 7 for PRs, 14 for issues."
         ),
     )

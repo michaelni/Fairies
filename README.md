@@ -168,9 +168,9 @@ Then point the reviewer at the host, either directly:
         --repo-root ~/forgejo_fairy/ffmpeg \
         --extra-repo-root ~/forgejo_fairy/all_ffmpeg ...
 
-or via the main tool, which injects `--podman --shell-host` for you:
+or via the pipeline, which injects `--podman --shell-host` for you:
 
-    ./fairy.py ... --podman-host fairy@HOST
+    ./configurator.py ... --prs ... --podman-host fairy@HOST
 
 Add `--podman-ssh-identity KEY` if the key is not offered by your ssh agent /
 `~/.ssh/config`. A non-standard ssh port goes in the host spec, e.g.
@@ -208,8 +208,9 @@ machine). A local-GPU backend is TODO -- PRs very welcome.
 Codex runs in an ephemeral container on `--codex-host` (a podman host, same
 spec syntax as `--shell-host`), never on the wrapper host. A `codex:` spec
 without `--codex-host` is a hard error at startup; there is no local codex.
-Through `fairy.py`, pass `--codex-host` and `--codex-home`; it forwards them
-to the wrapper alongside `--podman-host`/`--shell-host`.
+Through the pipeline, pass `--codex-host` and `--codex-home` in the
+configurator's `--prs` section; they are forwarded to the wrapper
+alongside `--podman-host`/`--shell-host`.
 
 Build the thin codex image once from `containers/Containerfile.codex` (bakes a
 pinned codex binary; `--codex-bin` is its in-container path, `--codex-image`

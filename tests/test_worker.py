@@ -407,6 +407,12 @@ class OverrideTests(unittest.TestCase):
                          fairy.parse_args(["--owner", "o", "--repo", "r"])
                          .llm_retry_delay)
 
+    def test_an_append_override_replaces_the_config_list(self) -> None:
+        sides = self.drain_sides(
+            ["--podman-host", "b"],
+            pr={"owner": "o", "repo": "r", "podman-host": ["a"]})
+        self.assertEqual(sides["pr"].podman_host, ["b"])
+
     def test_agent_scope_config_keys_are_ignored(self) -> None:
         sides = self.drain_sides([], pr={"owner": "o", "repo": "r",
                                          "min-age-days": "5"})

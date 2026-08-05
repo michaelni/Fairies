@@ -184,7 +184,9 @@ class _ColorFormatter(logging.Formatter):
 OVERRIDE_EPILOG = ("Any side option (below) given here overrides its "
                    "config.toml value for this run: before a --prs / "
                    "--issues marker for both sides, after a marker for that "
-                   "side alone.")
+                   "side alone. A repeated option's list replaces the "
+                   "config's; a flag the config enables cannot be disabled "
+                   "here.")
 
 
 def _option_actions(*parsers: argparse.ArgumentParser,
@@ -260,6 +262,25 @@ def options_argv(options: dict) -> list[str]:
                 continue
             argv.append(f"--{key}" if v is True else f"--{key}={v}")
     return argv
+
+
+def parse_scoped_overrides(argv: list[str],
+                           own_parser: argparse.ArgumentParser,
+                           pr_full: argparse.ArgumentParser,
+                           issue_full: argparse.ArgumentParser):
+    """A daemon's argv split into (own namespace, pr override options,
+    issue override options, sections given): a side option anywhere on
+    the command line overrides its config.toml value -- shared before
+    a --prs / --issues marker, per side after one."""
+    shared, sections = split_sections(argv)
+    args, leftover = own_parser.parse_known_args(shared)
+
+    def place(full: argparse.ArgumentParser, section: list[str]) -> dict:
+        return _options_dict(_walk_options(
+            leftover + section, _option_actions(full), own_parser.error))
+
+    return (args, place(pr_full, sections.get("--prs", [])),
+            place(issue_full, sections.get("--issues", [])), sections)
 
 
 def side_actions(parser: argparse.ArgumentParser,

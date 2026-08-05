@@ -64,7 +64,8 @@ import forge_gcli
 import issue_fairy
 import workset
 from common import (OVERRIDE_EPILOG, add_file_log, config_option_groups,
-                    grouped_help, setup_logging, split_sections, watch_paths)
+                    grouped_help, options_argv, parse_scoped_overrides,
+                    setup_logging, watch_paths)
 
 __all__ = ["main", "review_claim", "drain"]
 
@@ -253,17 +254,16 @@ def main() -> int:
             fairy.make_parser(agent=False),
             issue_fairy.make_parser(agent=False))))
         return 0
-    shared, sections = split_sections(argv)
-    args, overrides = make_parser().parse_known_args(shared)
-    pr_argv, issue_argv = db_config.read_side_argv(args.db_root)
-    pr_over = overrides + sections.get("--prs", [])
-    issue_over = overrides + sections.get("--issues", [])
+    args, pr_over, issue_over, sections = parse_scoped_overrides(
+        argv, make_parser(), fairy.make_parser(), issue_fairy.make_parser())
+    pr_opts, issue_opts = db_config.read_side_options(args.db_root)
     sides: dict[str, argparse.Namespace] = {}
-    if pr_argv:
-        sides["pr"] = fairy.parse_args(pr_argv + pr_over, agent=False)
-    if issue_argv:
-        sides["issue"] = issue_fairy.parse_args(issue_argv + issue_over,
-                                                agent=False)
+    if pr_opts is not None:
+        sides["pr"] = fairy.parse_args(
+            options_argv({**pr_opts, **pr_over}), agent=False)
+    if issue_opts is not None:
+        sides["issue"] = issue_fairy.parse_args(
+            options_argv({**issue_opts, **issue_over}), agent=False)
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
                   logger, db_config.logger, workset.logger, filedb.logger,
@@ -274,7 +274,10 @@ def main() -> int:
     fairy.validate_worker_sides(sides.get("pr"), sides.get("issue"))
     db = filedb.Db(args.db_root)
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
-    db_config.log_side_argv(pr_argv, issue_argv, pr_over, issue_over)
+    db_config.log_side_argv(
+        options_argv(pr_opts) if pr_opts is not None else None,
+        options_argv(issue_opts) if issue_opts is not None else None,
+        options_argv(pr_over), options_argv(issue_over))
     wake = Event()
     watch_paths([db.root / "queued"], wake.set)
     while True:

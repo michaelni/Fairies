@@ -78,9 +78,9 @@ import issue_fairy
 import worker
 import workset
 from common import (OVERRIDE_EPILOG, add_file_log, config_option_groups,
-                    default_cache_path, grouped_help, iso_to_dt, side_actions,
-                    setup_logging, split_sections, split_side_actions,
-                    watch_paths)
+                    default_cache_path, grouped_help, iso_to_dt, options_argv,
+                    parse_scoped_overrides, side_actions, setup_logging,
+                    split_side_actions, watch_paths)
 
 __all__ = ["main", "scan_pass", "send_pass"]
 
@@ -864,14 +864,14 @@ def main() -> int:
                ("review execution options, PR side", exec_pr),
                ("review execution options, issue side", exec_issue)]))
         return 0
-    shared, sections = split_sections(argv)
-    args, overrides = make_parser().parse_known_args(shared)
-    pr_argv, issue_argv = db_config.read_side_argv(args.db_root)
-    pr_over = overrides + sections.get("--prs", [])
-    issue_over = overrides + sections.get("--issues", [])
-    pr_ns = fairy.parse_args(pr_argv + pr_over) if pr_argv else None
-    issue_ns = issue_fairy.parse_args(issue_argv + issue_over) \
-        if issue_argv else None
+    args, pr_over, issue_over, sections = parse_scoped_overrides(
+        argv, make_parser(), fairy.make_parser(), issue_fairy.make_parser())
+    pr_opts, issue_opts = db_config.read_side_options(args.db_root)
+    pr_ns = fairy.parse_args(options_argv({**pr_opts, **pr_over})) \
+        if pr_opts is not None else None
+    issue_ns = issue_fairy.parse_args(
+        options_argv({**issue_opts, **issue_over})) \
+        if issue_opts is not None else None
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   logger, db_config.logger, workset.logger, gcli_cache.logger,
@@ -885,7 +885,10 @@ def main() -> int:
     fairy.validate_sides(pr_ns, issue_ns)
     db = filedb.Db(args.db_root)
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
-    db_config.log_side_argv(pr_argv, issue_argv, pr_over, issue_over)
+    db_config.log_side_argv(
+        options_argv(pr_opts) if pr_opts is not None else None,
+        options_argv(issue_opts) if issue_opts is not None else None,
+        options_argv(pr_over), options_argv(issue_over))
     for ns in (pr_ns, issue_ns):
         if ns is not None and getattr(ns, "simulate_past", None):
             warn_simulate_past_limitations(ns.simulate_past)

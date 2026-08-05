@@ -417,10 +417,10 @@ class OverrideTests(unittest.TestCase):
     def test_a_shared_override_of_a_one_side_option_routes_to_its_side(
             self) -> None:
         sides = self.drain_sides(
-            ["--codex-host", "h"],
+            ["--patch-repo", "p"],
             pr={"owner": "o", "repo": "r"},
             issue={"owner": "o", "repo": "r"})
-        self.assertEqual(sides["pr"].codex_host, "h")
+        self.assertEqual(sides["pr"].patch_repo, Path("p"))
         self.assertIn("issue", sides)
 
     def test_a_stray_token_is_an_error(self) -> None:

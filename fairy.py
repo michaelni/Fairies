@@ -450,6 +450,27 @@ def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
             "or after the final one."
         ),
     )
+    p.add_argument(
+        "--codex-host",
+        default=None,
+        metavar="[LABEL=]USER@HOST",
+        help=(
+            "podman host that runs the codex container, forwarded as "
+            "--codex-host to --llm-review-cmd. Required for any codex: model "
+            "spec (codex runs only in a container there). Provision it with "
+            "containers/provision_remote.py --codex-bin."
+        ),
+    )
+    p.add_argument(
+        "--codex-home",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Wrapper-side CODEX_HOME (the bot's `codex login`), forwarded as "
+            "--codex-home to --llm-review-cmd. Default: the wrapper's "
+            "environment / codex's ~/.codex."
+        ),
+    )
 
 
 def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
@@ -552,27 +573,6 @@ def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
 def _add_pr_worker_args(p: argparse.ArgumentParser) -> None:
     """The PR-only options of the worker's review execution: the patch
     and payload are built at review time."""
-    p.add_argument(
-        "--codex-host",
-        default=None,
-        metavar="[LABEL=]USER@HOST",
-        help=(
-            "podman host that runs the codex container, forwarded as "
-            "--codex-host to --llm-review-cmd. Required for any codex: model "
-            "spec (codex runs only in a container there). Provision it with "
-            "containers/provision_remote.py --codex-bin."
-        ),
-    )
-    p.add_argument(
-        "--codex-home",
-        default=None,
-        metavar="DIR",
-        help=(
-            "Wrapper-side CODEX_HOME (the bot's `codex login`), forwarded as "
-            "--codex-home to --llm-review-cmd. Default: the wrapper's "
-            "environment / codex's ~/.codex."
-        ),
-    )
     p.add_argument(
         "--triage-label",
         action="append",

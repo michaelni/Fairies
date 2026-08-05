@@ -69,6 +69,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import ci_log
+import db_config
 import fairy
 import filedb
 import forge_gcli
@@ -892,15 +893,17 @@ def main() -> int:
     issue_ns = issue_fairy.parse_args(shlex.split(args.issue_args)) if args.issue_args else None
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
-                  logger, workset.logger, gcli_cache.logger, filedb.logger,
-                  forge_gcli.logger, ci_log.logger, color=lead.color)
-    for log_file in {ns.log_file for ns in (pr_ns, issue_ns)
-                     if ns and ns.log_file}:
-        add_file_log(log_file, fairy.logger, logger, workset.logger,
-                     gcli_cache.logger, filedb.logger, forge_gcli.logger,
-                     ci_log.logger)
+                  logger, db_config.logger, workset.logger, gcli_cache.logger,
+                  filedb.logger, forge_gcli.logger, ci_log.logger,
+                  color=lead.color)
+    log_files = {ns.log_file for ns in (pr_ns, issue_ns) if ns and ns.log_file}
+    for log_file in log_files:
+        add_file_log(log_file, fairy.logger, logger, db_config.logger,
+                     workset.logger, gcli_cache.logger, filedb.logger,
+                     forge_gcli.logger, ci_log.logger)
     validate_sides(pr_ns, issue_ns)
     db = filedb.Db(args.db_root or db_root_for(lead))
+    db_config.write_config(db.root, f"{lead.owner}/{lead.repo}", log_files)
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
     for ns in (pr_ns, issue_ns):
         if ns is not None and getattr(ns, "simulate_past", None):

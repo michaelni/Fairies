@@ -76,9 +76,9 @@ from threading import Event, Lock, Thread
 import blessed
 
 import agent
+import db_config
 import fairy
 import filedb
-import issue_fairy
 import tui_core
 import workset
 from common import setup_logging, watch_paths
@@ -1614,12 +1614,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Blessed 4-pane operator UI over the filedb ticket directories.",
     )
-    p.add_argument("--pr-args", metavar="ARGS", action="append",
-                   help="fairy.py argument string naming a PR side's repo; "
+    p.add_argument("--db-root", metavar="DIR", action="append", type=Path,
+                   help="a repo's filedb root, as its agent logs at startup; "
                         "one per use")
-    p.add_argument("--issue-args", metavar="ARGS", action="append",
-                   help="issue_fairy.py argument string naming an issue side's "
-                        "repo; one per use")
     p.add_argument("--tail", metavar="FILE", action="append", type=Path,
                    help="follow this agent/worker --log-file in the logs pane "
                         "(repeatable)")
@@ -1628,41 +1625,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--save-dir", type=Path, default=Path("."),
                    help="directory for e/E pane exports (default: cwd)")
     args = p.parse_args(argv)
-    if not args.pr_args and not args.issue_args:
-        p.error("at least one of --pr-args / --issue-args is required")
+    if not args.db_root:
+        p.error("at least one --db-root is required")
     return args
 
 
 def build_sides(
     args: argparse.Namespace,
 ) -> tuple[list[tuple[str, filedb.Db]], list[Path]]:
-    """One (repo label, filedb) side per distinct repo: the PR and issue
-    argument strings of one repo share a db, and Forgejo routes
-    owner/repo case-insensitively, so case variants merge too. Every
-    side's --log-file is collected for the logs pane, so the agent and
-    worker logs arrive without separate --tail flags."""
+    """One (repo label, filedb) side per distinct --db-root; each root's
+    config.json, written by its agent at startup, names the repo and
+    the log files the logs pane tails without separate --tail flags."""
     sides: list[tuple[str, filedb.Db]] = []
     tails: list[Path] = []
-    for parse, arg_strs in ((fairy.parse_args, args.pr_args),
-                            (issue_fairy.parse_args, args.issue_args)):
-        for arg_str in arg_strs or []:
-            ns = parse(shlex.split(arg_str))
-            if ns.log_file and ns.log_file not in tails:
-                tails.append(ns.log_file)
-            label = f"{ns.owner}/{ns.repo}"
-            if any(known.casefold() == label.casefold() for known, _ in sides):
-                continue
-            root = agent.db_root_for(ns)
-            if not root.exists():
-                # db roots are case-sensitive while the forge is not: a
-                # case slip silently shows an empty repo
-                for sibling in root.parent.glob("*"):
-                    if sibling.name.casefold() == root.name.casefold():
-                        logger.warning("side %s: %s does not exist but %s "
-                                       "does -- check the owner/repo case",
-                                       label, root.name, sibling.name)
-            sides.append((label, filedb.Db(root)))
-    tails += [t for t in args.tail or [] if t not in tails]
+    seen: set[Path] = set()
+
+    def add_tail(path: Path) -> None:
+        if path.resolve() not in seen:
+            seen.add(path.resolve())
+            tails.append(path)
+
+    for root in args.db_root:
+        if any(db.root.resolve() == root.resolve() for _, db in sides):
+            continue
+        cfg = db_config.read_config(root)
+        for f in map(Path, cfg["log_files"]):
+            add_tail(f)
+        sides.append((cfg["label"], filedb.Db(root)))
+    for t in args.tail or []:
+        add_tail(t)
     return sides, tails
 
 
@@ -1672,7 +1663,8 @@ def main() -> int:
     sides, tails = build_sides(args)
     model = Model(sides)
     sink = OutputSink(ring, model.dirty, args.log_file)
-    setup_logging(logger, False, handlers=[RingLogHandler(sink)])
+    setup_logging(logger, False, db_config.logger,
+                  handlers=[RingLogHandler(sink)])
     for repo, db in sides:
         logger.info("side %s: db %s", repo, db.root)
     for path in tails:

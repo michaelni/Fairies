@@ -32,10 +32,11 @@ the *directory* it sits in (`~/.fairy/db/<forge~account~owner~repo>/`:
 `requests/ queued/ llm/ reviewed/ outgoing/ posted/ skipped/ ...` --
 `mv` is a state change, `ls | wc -l` is a statistic; `filedb.py` is the
 thin atomic API). Three independent processes cooperate over these
-directories, each taking the per-side configuration as a `fairy.py` /
-`issue_fairy.py` argument string (`./fairy.py --help` and
+directories; agent and worker take the per-side configuration as a
+`fairy.py` / `issue_fairy.py` argument string (`./fairy.py --help` and
 `./issue_fairy.py --help` document the contents; a side's `--log-file`
-is the shared agent+worker log the UI tails). With `pip install
+is the shared agent+worker log the UI tails), the UI only the
+`--db-root`s. With `pip install
 watchdog` the processes react to new files within 100ms; without it
 they fall back to their poll intervals:
 
@@ -119,11 +120,13 @@ filedb of one or more repositories in a 4-pane terminal UI: statistics
 (the per-state file counts), the ticket list, a merged tail of the
 agent/worker log files, and the rendered review message with its label
 changes. It is a pure view -- start the agent and worker processes
-separately and point the TUI at the same sides (a side's `--log-file`
-is tailed automatically; `--tail FILE` adds extras):
+separately and point the TUI at the same db roots (the agent logs its
+root at startup and writes a `config.json` there naming the repo and
+the log files, which are tailed automatically; `--tail FILE` adds
+extras):
 
-    ./fairy_tui.py --pr-args '<fairy.py args>' --issue-args '<issue_fairy.py args>' \
-        --pr-args '<fairy.py args for another repo>' \
+    ./fairy_tui.py --db-root '<a repo's filedb root>' \
+        --db-root '<another repo's filedb root>' \
         --log-file fairy_tui.log
 
 The list is a table over the ticket files: select any row and act on

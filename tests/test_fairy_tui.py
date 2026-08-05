@@ -474,39 +474,42 @@ class SideBuildTests(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        patcher = mock.patch.object(
-            fairy_tui.agent, "db_root_for",
-            side_effect=lambda ns: Path(tmp.name) / f"{ns.owner}~{ns.repo}")
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.base = Path(tmp.name).resolve()
 
-    def test_repeated_side_args_build_one_side_per_repo(self) -> None:
+    def root(self, name: str, label: str, log_files: set[Path]) -> Path:
+        root = self.base / name
+        root.mkdir()
+        fairy_tui.db_config.write_config(root, label, log_files)
+        return root
+
+    def test_sides_come_from_each_roots_config(self) -> None:
+        x = self.root("a~x", "a/x", {self.base / "x.log"})
+        y = self.root("a~y", "a/y", {self.base / "y.log"})
         args = fairy_tui.parse_args(
-            ["--pr-args", "--owner a --repo x",
-             "--pr-args", "--owner a --repo y",
-             "--issue-args", "--owner a --repo x"])  # shares a/x's db
-        sides, _ = fairy_tui.build_sides(args)
-        self.assertEqual([label for label, _ in sides], ["a/x", "a/y"])
-
-    def test_case_variant_repos_merge_into_one_side(self) -> None:
-        # The forge routes owner/repo case-insensitively, so a case slip
-        # must not become a second side over the same repo.
-        args = fairy_tui.parse_args(["--pr-args", "--owner FFmpeg --repo web",
-                                     "--pr-args", "--owner ffmpeg --repo Web"])
-        sides, _ = fairy_tui.build_sides(args)
-        self.assertEqual([label for label, _ in sides], ["FFmpeg/web"])
-
-    def test_side_log_files_become_tails(self) -> None:
-        # A side's --log-file is where its agent and worker write; the
-        # UI tails it without a separate --tail flag.
-        args = fairy_tui.parse_args(
-            ["--pr-args", "--owner a --repo x --log-file logs/x.log",
-             "--issue-args", "--owner a --repo x --log-file logs/x.log",
-             "--pr-args", "--owner a --repo y --log-file logs/y.log",
+            ["--db-root", str(x), "--db-root", str(y),
+             "--db-root", str(x),
+             "--tail", str(self.base / "nosuch" / ".." / "x.log"),
              "--tail", "extra.log"])
-        _, tails = fairy_tui.build_sides(args)
-        self.assertEqual(tails, [Path("logs/x.log"), Path("logs/y.log"),
+        sides, tails = fairy_tui.build_sides(args)
+        self.assertEqual([label for label, _ in sides], ["a/x", "a/y"])
+        self.assertEqual([db.root for _, db in sides], [x, y])
+        self.assertEqual(tails, [self.base / "x.log", self.base / "y.log",
                                  Path("extra.log")])
+
+    def test_missing_config_names_a_case_sibling(self) -> None:
+        self.root("FFmpeg~web", "FFmpeg/web", set())
+        args = fairy_tui.parse_args(["--db-root", str(self.base / "ffmpeg~Web")])
+        with mock.patch.object(fairy_tui.db_config, "CONFIG_WAIT", 0), \
+                self.assertRaisesRegex(SystemExit, "FFmpeg~web exists"):
+            fairy_tui.build_sides(args)
+
+    def test_existing_root_without_config_does_not_blame_its_own_case(self) -> None:
+        (self.base / "a~x").mkdir()
+        args = fairy_tui.parse_args(["--db-root", str(self.base / "a~x")])
+        with mock.patch.object(fairy_tui.db_config, "CONFIG_WAIT", 0), \
+                self.assertRaises(SystemExit) as ctx:
+            fairy_tui.build_sides(args)
+        self.assertNotIn("check the case", str(ctx.exception))
 
 
 class SortTests(DbCase):

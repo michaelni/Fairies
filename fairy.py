@@ -303,8 +303,7 @@ def flatten_label_args(values: list[list[str]] | None) -> list[str]:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="The PR side of the repo agent. Pass these arguments as "
-                    "one --pr-args string to agent.py, worker.py or "
-                    "fairy_tui.py.",
+                    "one --pr-args string to agent.py or worker.py.",
     )
     add_forge_repo_args(p)
     p.add_argument(
@@ -2834,4 +2833,4 @@ if __name__ == "__main__":
     parse_args()
     raise SystemExit(
         "fairy.py is a library: pass the arguments above as one --pr-args "
-        "string to agent.py, worker.py or fairy_tui.py")
+        "string to agent.py or worker.py")

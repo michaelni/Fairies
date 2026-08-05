@@ -120,8 +120,7 @@ def prepared_issue_from_dict(data: dict) -> PreparedIssue:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="The issue side of the repo agent. Pass these arguments "
-                    "as one --issue-args string to agent.py, worker.py or "
-                    "fairy_tui.py.",
+                    "as one --issue-args string to agent.py or worker.py.",
     )
     add_forge_repo_args(p)
     p.add_argument(
@@ -637,4 +636,4 @@ if __name__ == "__main__":
     parse_args()
     raise SystemExit(
         "issue_fairy.py is a library: pass the arguments above as one "
-        "--issue-args string to agent.py, worker.py or fairy_tui.py")
+        "--issue-args string to agent.py or worker.py")

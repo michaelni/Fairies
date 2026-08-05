@@ -51,8 +51,11 @@ ensure_repo fairies    https://code.ffmpeg.org/michaelni/Fairies.git
 
 # One agent + one worker per repository (both kinds of a repo share the
 # process and its gcli cache), the TUI as a pure view over the same
-# filedbs. Each side string carries --log-file: agent and worker both
-# append there and the TUI tails it automatically. Every repo gets its
+# filedbs: one --db-root variable per repo ties the three processes
+# together (the names match what the agent would derive by default).
+# Each side string carries --log-file: agent and worker both append
+# there, the agent records it in the db root's config.json and the TUI
+# tails it automatically. Every repo gets its
 # own --debug-response-dir because the processes run concurrently and
 # would otherwise race on the shared default; the gcli cache pickle
 # needs no such flag, its default is already derived per side.
@@ -61,6 +64,10 @@ ensure_repo fairies    https://code.ffmpeg.org/michaelni/Fairies.git
 # Extra arguments ($*) go to fairy_tui.py itself.
 COMMON="--gcli-account ff --verbose 2"
 MODEL="openai:gpt-5.6@high"
+FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
+WEB_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~web"
+FATE_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~fateserver"
+FAIRIES_DB="$HOME/.fairy/db/gitea~ff~michaelni~Fairies"
 WRAP_TAIL="--use-vector-store-search --verbose --web-search live --max-tool-calls 100"
 
 FFMPEG_PR="
@@ -139,21 +146,19 @@ FAIRIES_ISSUES="
 mkdir -p logs
 # console output goes to .console files: a backgrounded process's
 # stderr handlers would otherwise scribble over the blessed screen
-./agent.py  --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --loop 600 >"logs/agent-ffmpeg.console" 2>&1 &
-./worker.py --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --loop 600 >"logs/worker-ffmpeg.console" 2>&1 &
-./agent.py  --pr-args "$WEB_PR" --loop 600 >"logs/agent-web.console" 2>&1 &
-./worker.py --pr-args "$WEB_PR" --loop 600 >"logs/worker-web.console" 2>&1 &
-./agent.py  --pr-args "$FATE_PR" --loop 600 >"logs/agent-fateserver.console" 2>&1 &
-./worker.py --pr-args "$FATE_PR" --loop 600 >"logs/worker-fateserver.console" 2>&1 &
-./agent.py  --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --loop 600 >"logs/agent-fairies.console" 2>&1 &
-./worker.py --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --loop 600 >"logs/worker-fairies.console" 2>&1 &
+./agent.py  --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --db-root "$FFMPEG_DB" --loop 600 >"logs/agent-ffmpeg.console" 2>&1 &
+./worker.py --pr-args "$FFMPEG_PR" --issue-args "$FFMPEG_ISSUES" --db-root "$FFMPEG_DB" --loop 600 >"logs/worker-ffmpeg.console" 2>&1 &
+./agent.py  --pr-args "$WEB_PR" --db-root "$WEB_DB" --loop 600 >"logs/agent-web.console" 2>&1 &
+./worker.py --pr-args "$WEB_PR" --db-root "$WEB_DB" --loop 600 >"logs/worker-web.console" 2>&1 &
+./agent.py  --pr-args "$FATE_PR" --db-root "$FATE_DB" --loop 600 >"logs/agent-fateserver.console" 2>&1 &
+./worker.py --pr-args "$FATE_PR" --db-root "$FATE_DB" --loop 600 >"logs/worker-fateserver.console" 2>&1 &
+./agent.py  --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --db-root "$FAIRIES_DB" --loop 600 >"logs/agent-fairies.console" 2>&1 &
+./worker.py --pr-args "$FAIRIES_PR" --issue-args "$FAIRIES_ISSUES" --db-root "$FAIRIES_DB" --loop 600 >"logs/worker-fairies.console" 2>&1 &
 trap 'kill $(jobs -p) 2>/dev/null' EXIT
 
 ./fairy_tui.py --log-file fairy_tui.log \
-    --pr-args "$FFMPEG_PR" \
-    --pr-args "$WEB_PR" \
-    --pr-args "$FATE_PR" \
-    --pr-args "$FAIRIES_PR" \
-    --issue-args "$FFMPEG_ISSUES" \
-    --issue-args "$FAIRIES_ISSUES" \
+    --db-root "$FFMPEG_DB" \
+    --db-root "$WEB_DB" \
+    --db-root "$FATE_DB" \
+    --db-root "$FAIRIES_DB" \
     $*

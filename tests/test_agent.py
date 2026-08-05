@@ -44,6 +44,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import agent  # noqa: E402
+import db_config  # noqa: E402
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 import filedb  # noqa: E402
@@ -1042,39 +1043,6 @@ class AskPassTests(AgentCase):
         self.assertEqual(self.db.find("pr", "1"), "reviewed")  # verdict kept
 
 
-class StartupValidationTests(unittest.TestCase):
-    """Broken side configs exit rc=2 at startup, as master's block did."""
-
-    def pr(self, extra: str) -> object:
-        import shlex
-        return fairy.parse_args(shlex.split("--owner o --repo r " + extra))
-
-    def test_llm_review_cmd_requires_patch_repo(self) -> None:
-        ns = self.pr("--llm-review-cmd wrapper")
-        with self.assertRaises(SystemExit) as ctx:
-            agent.validate_sides(ns, None)
-        self.assertEqual(ctx.exception.code, 2)  # rc 2, not 1: cron distinguishes config from crash
-
-    def test_patch_repo_satisfies_the_check(self) -> None:
-        agent.validate_sides(self.pr("--llm-review-cmd wrapper --patch-repo p"),
-                             None)
-
-    def test_simulate_past_template_must_contain_number(self) -> None:
-        base = "--simulate-past 2026-07-01T00:00:00+00:00 "
-        with self.assertRaises(SystemExit):
-            agent.validate_sides(self.pr(base), None)
-        with self.assertRaises(SystemExit):
-            agent.validate_sides(
-                self.pr(base + "--patch-pr-ref-template fforge/pr/"), None)
-        agent.validate_sides(
-            self.pr(base + "--patch-pr-ref-template fforge/pr/{number}"), None)
-
-    def test_forced_only_requires_a_force_review(self) -> None:
-        with self.assertRaises(SystemExit):
-            agent.validate_sides(self.pr("--forced-only"), None)
-        agent.validate_sides(self.pr("--forced-only --force-review-pr 5"), None)
-
-
 class RequestsPassTests(AgentCase):
     """An r/f press must not rescan the whole forge (production: one
     request cost a ~74s full pass); the requests pass fetches only the
@@ -1082,7 +1050,7 @@ class RequestsPassTests(AgentCase):
 
     def test_only_the_requested_item_is_fetched(self) -> None:
         self.db.push("requests", "pr", "7", {"action": "rerun"})
-        args = agent.parse_args(["--pr-args", "x"])
+        args = agent.parse_args(["--db-root", "x"])
         with mock.patch.object(fairy, "list_open_prs",
                                side_effect=AssertionError("full listing")), \
                 mock.patch.object(fairy, "get_pr",
@@ -1103,8 +1071,9 @@ class ColorTests(unittest.TestCase):
     def test_side_color_reaches_setup_logging(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        argv = ["agent.py", "--db-root", tmp.name,
-                "--pr-args", "--owner o --repo r --color never"]
+        db_config.write_config(Path(tmp.name), "o/r", set(),
+                               "--owner o --repo r --color never", None)
+        argv = ["agent.py", "--db-root", tmp.name]
         with mock.patch.object(agent, "setup_logging") as logging_setup, \
                 mock.patch.object(agent, "one_pass"), \
                 mock.patch.object(sys, "argv", argv):
@@ -1127,8 +1096,9 @@ class LoopTests(unittest.TestCase):
         import time
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        argv = ["agent.py", "--db-root", tmp.name,
-                "--pr-args", "--owner o --repo r"] + shlex.split(flags)
+        db_config.write_config(Path(tmp.name), "o/r", set(),
+                               "--owner o --repo r", None)
+        argv = ["agent.py", "--db-root", tmp.name] + shlex.split(flags)
         calls = self.calls = []
 
         def one_pass(*args, **kwargs) -> None:
@@ -1186,19 +1156,19 @@ class OnePassTests(unittest.TestCase):
         return calls
 
     def test_drain_runs_the_worker_between_scan_and_send(self) -> None:
-        self.assertEqual(self._run(["--pr-args", "x", "--drain"]),
+        self.assertEqual(self._run(["--db-root", "x", "--drain"]),
                          ["scan", "drain", "send"])
 
     def test_without_drain_the_agent_never_reviews(self) -> None:
-        self.assertEqual(self._run(["--pr-args", "x"]), ["scan", "send"])
+        self.assertEqual(self._run(["--db-root", "x"]), ["scan", "send"])
 
     def test_ask_gets_an_inline_retry_only_with_drain(self) -> None:
         retries = []
         with mock.patch.object(agent, "ask_pass",
                                side_effect=lambda db, kinds, retry=None:
                                retries.append(retry)):
-            self._run(["--pr-args", "x", "--ask", "--drain"])
-            self._run(["--pr-args", "x", "--ask"])
+            self._run(["--db-root", "x", "--ask", "--drain"])
+            self._run(["--db-root", "x", "--ask"])
         self.assertIsNotNone(retries[0])
         self.assertIsNone(retries[1])
 

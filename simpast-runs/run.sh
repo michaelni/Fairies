@@ -142,11 +142,12 @@ run_one() {
     # --simulate-past rewinds git but reads live forge state: a replayed PR
     # that has since merged/closed would skip as "not open". Replaying it at
     # the cutoff is the whole point, so force review regardless of live state.
-    # agent --drain is the one-shot cycle (scan -> inline worker -> send);
+    # configurator writes the cell db's config.toml, then agent --drain is
+    # the one-shot cycle (scan -> inline worker -> send);
     # each cell gets its own --db-root so samples don't share verdicts.
     # --drain N reviews the cell's PRs concurrently, like the old
     # --llm-parallelism did
-    if CLICOLOR_FORCE=1 ./agent.py --drain "${#PRS[@]}" --db-root "$outdir/db" \
+    if ./configurator.py --db-root "$outdir/db" \
         --pr-args "--owner FFmpeg --repo FFmpeg --gcli-account ff
         --simulate-past $CUTOFF
         --patch-repo $PATCH_REPO
@@ -159,7 +160,9 @@ run_one() {
             --model $MODEL $TRIAGE_ARGS
             --service-tier $TIER --reasoning-summary detailed
             --debug-response-dir $outdir/openaidebug --verbose\"
-        --verbose 2" 2>&1 | tee "$outdir/run.log" | sed -u "$pfx"
+        --verbose 2" >"$outdir/run.log" 2>&1 \
+        && CLICOLOR_FORCE=1 ./agent.py --drain "${#PRS[@]}" --db-root "$outdir/db" \
+            2>&1 | tee -a "$outdir/run.log" | sed -u "$pfx"
     then
         touch "$outdir/.done"; echo "<<< done ${label}_${i}"
     else

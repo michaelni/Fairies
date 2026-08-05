@@ -27,12 +27,11 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-The db root's config.toml: the repo facts the agent records at startup
-for the other components -- the worker configures its sides from it,
-the TUI its repo labels and log tails.
+The db root's config.toml: the repo facts configurator.py records for
+the other components -- agent and worker configure their sides from
+it, the TUI its repo labels and log tails.
 
-What belongs here: the config.toml format, its writer and its waiting
-reader.
+What belongs here: the config.toml format, its writer and its reader.
 What does NOT belong: the ticket files (filedb), parsing the side
 argument strings (fairy / issue_fairy).
 """
@@ -41,18 +40,16 @@ from __future__ import annotations
 
 import json
 import logging
-import time
 import tomllib
 from pathlib import Path
 
 from common import atomic_write_text
 
-__all__ = ["CONFIG_NAME", "read_config", "write_config"]
+__all__ = ["CONFIG_NAME", "read_config", "read_side_strings", "write_config"]
 
 logger = logging.getLogger(__name__)
 
 CONFIG_NAME = "config.toml"
-CONFIG_WAIT = 5.0
 
 
 def write_config(root: Path, label: str, log_files: set[Path],
@@ -76,29 +73,27 @@ def write_config(root: Path, label: str, log_files: set[Path],
 
 
 def read_config(root: Path) -> dict:
-    """The dict write_config stored under ``root``, waiting up to
-    CONFIG_WAIT seconds for it: launchers like fairy-ui-ref.sh
-    background the agent moments before the readers start, and the
-    agent writes the file at startup."""
-    deadline = time.monotonic() + CONFIG_WAIT
-    waiting = False
-    while True:
-        try:
-            return tomllib.loads(
-                (root / CONFIG_NAME).read_text(encoding="utf-8"))
-        except FileNotFoundError as exc:
-            if time.monotonic() >= deadline:
-                hint = "".join(
-                    f" ({sibling.name} exists -- check the case)"
-                    for sibling in root.parent.glob("*")
-                    if sibling.name.casefold() == root.name.casefold()
-                ) if not root.exists() else ""
-                raise SystemExit(
-                    f"{exc}: the repo's agent writes {CONFIG_NAME} at "
-                    f"startup{hint}") from exc
-            if not waiting:
-                logger.warning("waiting for %s", root / CONFIG_NAME)
-                waiting = True
-            time.sleep(0.1)
-        except (OSError, ValueError) as exc:
-            raise SystemExit(f"{root / CONFIG_NAME}: {exc!r}") from exc
+    """The dict write_config stored under ``root``."""
+    try:
+        return tomllib.loads(
+            (root / CONFIG_NAME).read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        hint = "".join(
+            f" ({sibling.name} exists -- check the case)"
+            for sibling in root.parent.glob("*")
+            if sibling.name.casefold() == root.name.casefold()
+        ) if not root.exists() else ""
+        raise SystemExit(
+            f"{exc}: run ./configurator.py for this repo{hint}") from exc
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"{root / CONFIG_NAME}: {exc!r}") from exc
+
+
+def read_side_strings(root: Path) -> tuple[str | None, str | None]:
+    """The (pr_args, issue_args) side strings from ``root``'s config;
+    at least one is present."""
+    cfg = read_config(root)
+    pr_args, issue_args = cfg.get("pr_args"), cfg.get("issue_args")
+    if not (pr_args or issue_args):
+        raise SystemExit(f"{root / CONFIG_NAME}: no side argument strings")
+    return pr_args, issue_args

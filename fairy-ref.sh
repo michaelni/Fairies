@@ -35,11 +35,13 @@ git fetch fforge
 git pull --rebase
 cd ..
 
-# One-shot cron cycle: scan -> inline worker -> send. Extra arguments
-# ($*) go to agent.py itself (e.g. --dry-run, --loop 600).
+# One-shot cron cycle: configurator writes the db root's config.toml,
+# then the agent runs scan -> inline worker -> send from it. Extra
+# arguments ($*) go to agent.py itself (e.g. --dry-run, --loop 600).
 # ./fairy.py --help documents the --pr-args contents.
 #--include-direct-includes --use-vector-store-search
-./agent.py --drain --pr-args "
+FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
+./configurator.py --db-root "$FFMPEG_DB" --pr-args "
     --owner FFmpeg --repo FFmpeg
     --gcli-account ff
     --patch-repo ffmpeg
@@ -55,7 +57,8 @@ cd ..
         --max-tool-calls 100'
     --verbose 2
     --min-age-days 56
-    " $*
+    "
+./agent.py --drain --db-root "$FFMPEG_DB" $*
 
 #./fairy.py --owner FFmpeg --repo FFmpeg  --gcli-account ff --llm-review-cmd './pr_review_wrapper.py --repo-root ffmpeg --model openai:gpt-5.6@high --extra-repo-root for_ffmpeg --extra-repo-root forgejo_git --extra-repo-root ffmpeg-web --extra-repo-root fateserver --use-vector-store-search --verbose --debug-response-dir openaidebug --web-search live' --verbose --min-age-days 56 $*
 

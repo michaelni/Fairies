@@ -12,10 +12,10 @@ any number of agents and workers or none at all.
         --db-root '<another repo's filedb root>' \
         --log-file fairy_tui.log
 
-One `--db-root` per repo, as its agent logs at startup; the PR and
-issue sides of one repo share a filedb. The agent writes a
-`config.toml` into the root naming the repo and the sides'
-`--log-file`s, which are tailed into the log pane automatically;
+One `--db-root` per repo; the PR and issue sides of one repo share a
+filedb. `configurator.py` writes a `config.toml` into the root naming
+the repo and the sides' `--log-file`s, which are tailed into the log
+pane automatically;
 `--tail FILE` adds extra files, and
 `--save-dir DIR` sets where `e`/`E` exports land (default: cwd).
 `fairy-ui-ref.sh` is a complete three-process launcher example.

@@ -499,15 +499,13 @@ class SideBuildTests(unittest.TestCase):
     def test_missing_config_names_a_case_sibling(self) -> None:
         self.root("FFmpeg~web", "FFmpeg/web", set())
         args = fairy_tui.parse_args(["--db-root", str(self.base / "ffmpeg~Web")])
-        with mock.patch.object(fairy_tui.db_config, "CONFIG_WAIT", 0), \
-                self.assertRaisesRegex(SystemExit, "FFmpeg~web exists"):
+        with self.assertRaisesRegex(SystemExit, "FFmpeg~web exists"):
             fairy_tui.build_sides(args)
 
     def test_existing_root_without_config_does_not_blame_its_own_case(self) -> None:
         (self.base / "a~x").mkdir()
         args = fairy_tui.parse_args(["--db-root", str(self.base / "a~x")])
-        with mock.patch.object(fairy_tui.db_config, "CONFIG_WAIT", 0), \
-                self.assertRaises(SystemExit) as ctx:
+        with self.assertRaises(SystemExit) as ctx:
             fairy_tui.build_sides(args)
         self.assertNotIn("check the case", str(ctx.exception))
 

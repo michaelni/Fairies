@@ -31,13 +31,13 @@ The state of every PR and issue is one JSON ticket file whose state is
 the *directory* it sits in (`~/.fairy/db/<forge~account~owner~repo>/`:
 `requests/ queued/ llm/ reviewed/ outgoing/ posted/ skipped/ ...` --
 `mv` is a state change, `ls | wc -l` is a statistic; `filedb.py` is the
-thin atomic API). Three independent processes cooperate over these
-directories; the agent takes the per-side configuration as a
-`fairy.py` / `issue_fairy.py` argument string (`./fairy.py --help` and
-`./issue_fairy.py --help` document the contents; a side's `--log-file`
-is the shared agent+worker log the UI tails) and records it in the db
-root's `config.toml`, from which worker and UI -- both taking only
-`--db-root` -- configure themselves. With `pip install
+thin atomic API). `configurator.py` takes the per-side configuration
+as a `fairy.py` / `issue_fairy.py` argument string (`./fairy.py
+--help` and `./issue_fairy.py --help` document the contents; a side's
+`--log-file` is the shared agent+worker log the UI tails), validates
+it and records it in the db root's `config.toml`; the three
+processes cooperating over the directories all take only `--db-root`
+and configure themselves from that file. With `pip install
 watchdog` the processes react to new files within 100ms; without it
 they fall back to their poll intervals:
 
@@ -121,10 +121,9 @@ filedb of one or more repositories in a 4-pane terminal UI: statistics
 (the per-state file counts), the ticket list, a merged tail of the
 agent/worker log files, and the rendered review message with its label
 changes. It is a pure view -- start the agent and worker processes
-separately and point the TUI at the same db roots (the agent logs its
-root at startup and writes a `config.toml` there naming the repo and
-the log files, which are tailed automatically; `--tail FILE` adds
-extras):
+separately and point the TUI at the same db roots (`configurator.py`
+writes a `config.toml` into each root naming the repo and the log
+files, which are tailed automatically; `--tail FILE` adds extras):
 
     ./fairy_tui.py --db-root '<a repo's filedb root>' \
         --db-root '<another repo's filedb root>' \

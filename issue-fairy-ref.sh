@@ -41,8 +41,10 @@ cd ..
 # vector store. Triage runs on GPT-5.6-luna@medium, the full pass on
 # GPT-5.6@high; both on the flex tier. Verdicts wait in reviewed/ by
 # default; put --approve inside --issue-args to let the send pass post
-# them. Extra arguments ($*) go to agent.py itself.
-./agent.py --drain --issue-args "
+# them. Extra arguments ($*) go to agent.py itself. configurator.py
+# writes the db root's config.toml the agent then runs from.
+FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
+./configurator.py --db-root "$FFMPEG_DB" --issue-args "
     --owner FFmpeg --repo FFmpeg
     --gcli-account ff
     --issue-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid,resolution/external,resolution/fixed'
@@ -59,4 +61,5 @@ cd ..
         --web-search live
         --max-tool-calls 100'
     --verbose 2
-    " $*
+    "
+./agent.py --drain --db-root "$FFMPEG_DB" $*

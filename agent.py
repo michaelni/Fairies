@@ -765,14 +765,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Repo agent: scan the forge and maintain the filedb tickets "
                     "for one repository's PRs and issues.",
     )
-    p.add_argument("--pr-args", metavar="ARGS",
-                   help="the PR side's argument string; ./fairy.py --help "
-                        "documents its contents")
-    p.add_argument("--issue-args", metavar="ARGS",
-                   help="the issue side's argument string; ./issue_fairy.py "
-                        "--help documents its contents")
-    p.add_argument("--db-root", type=Path,
-                   help="filedb root for this repo (default: ~/.fairy/db/<forge~account~owner~repo>)")
+    p.add_argument("--db-root", type=Path, required=True,
+                   help="filedb root; its config.toml, written by "
+                        "configurator.py, carries the side argument strings")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
                    help="rescan every N seconds; operator files (requests/, "
                         "outgoing/) wake the loop instantly via watchdog "
@@ -789,10 +784,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "q stops)")
     p.add_argument("--dry-run", action="store_true",
                    help="log what the send pass would post; post nothing")
-    args = p.parse_args(argv)
-    if not args.pr_args and not args.issue_args:
-        p.error("at least one of --pr-args / --issue-args is required")
-    return args
+    return p.parse_args(argv)
 
 
 def warn_simulate_past_limitations(ignore_after: datetime) -> None:
@@ -815,13 +807,6 @@ def warn_simulate_past_limitations(ignore_after: datetime) -> None:
     )
 
 
-def db_root_for(ns: argparse.Namespace) -> Path:
-    return workset.repo_dir(
-        Path.home() / ".fairy" / "db",
-        forge_type=ns.forge_type, account=ns.gcli_account or "",
-        owner=ns.owner, repo=ns.repo)
-
-
 def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
              issue_ns: argparse.Namespace | None,
              args: argparse.Namespace) -> None:
@@ -839,31 +824,6 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                  retry=review_cycle if args.drain else None)
     send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
     log_summary(db)
-
-
-def _config_error(message: str) -> None:
-    logger.error(message)
-    raise SystemExit(2)
-
-
-def validate_sides(pr_ns: argparse.Namespace | None,
-                   issue_ns: argparse.Namespace | None) -> None:
-    """Reject broken side configs with rc=2 at startup: discovered
-    per-item they would burn error retries for days."""
-    if pr_ns and pr_ns.llm_review_cmd and pr_ns.patch_repo is None:
-        _config_error("--llm-review-cmd requires --patch-repo PATH")
-    for ns, forced in ((pr_ns, "force_review_prs"),
-                       (issue_ns, "force_review_issues")):
-        if ns is None:
-            continue
-        if getattr(ns, "simulate_past", None) is not None \
-                and "{number}" not in (getattr(ns, "patch_pr_ref_template", None) or ""):
-            _config_error(
-                "--simulate-past requires --patch-pr-ref-template TEMPLATE "
-                "containing {number} (e.g. fforge/pr/{number})")
-        if ns.forced_only and not getattr(ns, forced):
-            _config_error(
-                "--forced-only requires at least one --force-review-*")
 
 
 def _forced_only(ns: argparse.Namespace | None) -> argparse.Namespace | None:
@@ -887,8 +847,9 @@ def requests_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
 
 def main() -> int:
     args = parse_args()
-    pr_ns = fairy.parse_args(shlex.split(args.pr_args)) if args.pr_args else None
-    issue_ns = issue_fairy.parse_args(shlex.split(args.issue_args)) if args.issue_args else None
+    pr_args, issue_args = db_config.read_side_strings(args.db_root)
+    pr_ns = fairy.parse_args(shlex.split(pr_args)) if pr_args else None
+    issue_ns = issue_fairy.parse_args(shlex.split(issue_args)) if issue_args else None
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   logger, db_config.logger, workset.logger, gcli_cache.logger,
@@ -899,11 +860,12 @@ def main() -> int:
         add_file_log(log_file, fairy.logger, logger, db_config.logger,
                      workset.logger, gcli_cache.logger, filedb.logger,
                      forge_gcli.logger, ci_log.logger)
-    validate_sides(pr_ns, issue_ns)
-    db = filedb.Db(args.db_root or db_root_for(lead))
-    db_config.write_config(db.root, f"{lead.owner}/{lead.repo}", log_files,
-                           args.pr_args, args.issue_args)
+    db = filedb.Db(args.db_root)
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
+    for kind, args_str in (("pr", pr_args), ("issue", issue_args)):
+        if args_str:
+            logger.info("%s side from %s: %s", kind, db_config.CONFIG_NAME,
+                        args_str)
     for ns in (pr_ns, issue_ns):
         if ns is not None and getattr(ns, "simulate_past", None):
             warn_simulate_past_limitations(ns.simulate_past)

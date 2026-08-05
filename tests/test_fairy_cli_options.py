@@ -92,27 +92,34 @@ def open_pr(number: int = 1, title: str = "a fix") -> dict:
             "user": {"login": "dev"}, "html_url": f"https://forge/pr/{number}"}
 
 
-class TriageOnCiFailureTests(unittest.TestCase):
-    """--triage-on-ci-failure decides whether a CI-red PR stops at a
-    skip or reaches the triage LLM with a failure payload."""
+class PrepareCase(unittest.TestCase):
+    """Shared harness: ``prepare_pr`` on a real parsed namespace with
+    the forge mocked out."""
 
     def prepare(self, flags: str, comments: list | None = None,
-                self_login: str | None = None, statuses: list | None = None):
+                self_login: str | None = None, statuses: list | None = None,
+                pr: dict | None = None):
         with mock.patch.object(
                 fairy, "get_pr_discussion",
                 return_value=([], comments or [HUMAN_COMMENT], [])), \
                 mock.patch.object(fairy.gcli_cache, "get",
                                   return_value={"timeline": []}), \
                 mock.patch.object(fairy, "list_commit_statuses",
-                                  return_value=statuses or FAILING_CI), \
+                                  return_value=FAILING_CI if statuses is None
+                                  else statuses), \
                 mock.patch.object(fairy, "get_auto_merge_info",
                                   return_value="no"), \
                 mock.patch.object(fairy, "attach_ci_failure_logs"):
             return fairy.prepare_pr(
-                pr_ns(flags), open_pr(), now=NOW, self_login=self_login,
+                pr_ns(flags), pr or open_pr(), now=NOW, self_login=self_login,
                 wip_re=fairy.compile_wip_regex([]),
                 cache=gcli_cache.Cache(),
                 discussion_cache_max_age=timedelta(hours=1))
+
+
+class TriageOnCiFailureTests(PrepareCase):
+    """--triage-on-ci-failure decides whether a CI-red PR stops at a
+    skip or reaches the triage LLM with a failure payload."""
 
     def test_without_the_flag_red_ci_stops_at_a_skip(self) -> None:
         decision = self.prepare(TRIAGE_CMD + " --patch-repo /p")

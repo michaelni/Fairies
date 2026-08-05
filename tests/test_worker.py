@@ -413,6 +413,15 @@ class OverrideTests(unittest.TestCase):
             pr={"owner": "o", "repo": "r", "podman-host": ["a"]})
         self.assertEqual(sides["pr"].podman_host, ["b"])
 
+    def test_a_shared_override_of_a_one_side_option_routes_to_its_side(
+            self) -> None:
+        sides = self.drain_sides(
+            ["--codex-host", "h"],
+            pr={"owner": "o", "repo": "r"},
+            issue={"owner": "o", "repo": "r"})
+        self.assertEqual(sides["pr"].codex_host, "h")
+        self.assertIn("issue", sides)
+
     def test_agent_scope_config_keys_are_ignored(self) -> None:
         sides = self.drain_sides([], pr={"owner": "o", "repo": "r",
                                          "min-age-days": "5"})

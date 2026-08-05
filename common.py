@@ -271,13 +271,18 @@ def parse_scoped_overrides(argv: list[str],
     """A daemon's argv split into (own namespace, pr override options,
     issue override options, sections given): a side option anywhere on
     the command line overrides its config.toml value -- shared before
-    a --prs / --issues marker, per side after one."""
+    a --prs / --issues marker, per side after one. A shared option
+    routes to the side(s) whose parser knows it."""
     shared, sections = split_sections(argv)
+    union = _option_actions(pr_full, issue_full)
     args, leftover = own_parser.parse_known_args(shared)
 
     def place(full: argparse.ArgumentParser, section: list[str]) -> dict:
-        return _options_dict(_walk_options(
-            leftover + section, _option_actions(full), own_parser.error))
+        side = _option_actions(full)
+        triples = [t for t in _walk_options(leftover, union, own_parser.error)
+                   if t[0] in side]
+        triples += _walk_options(section, side, own_parser.error)
+        return _options_dict(triples)
 
     return (args, place(pr_full, sections.get("--prs", [])),
             place(issue_full, sections.get("--issues", [])), sections)

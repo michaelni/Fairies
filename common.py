@@ -187,6 +187,81 @@ OVERRIDE_EPILOG = ("Any side option (below) given here overrides its "
                    "side alone.")
 
 
+def _option_actions(*parsers: argparse.ArgumentParser,
+                    ) -> dict[str, argparse.Action]:
+    return {opt: a for p in parsers for a in p._actions
+            for opt in a.option_strings if opt not in ("-h", "--help")}
+
+
+def _walk_options(tokens: list[str], actions: dict[str, argparse.Action],
+                  error) -> list[tuple[str, argparse.Action, bool | str]]:
+    """(option name, action, value) triples consumed from ``tokens``
+    per the actions' shapes (True for a bare flag); anything that is
+    not one of ``actions``' full option names -- an unknown or
+    abbreviated option, a stray value -- goes to ``error``."""
+    triples = []
+    i = 0
+    while i < len(tokens):
+        name, eq, inline = tokens[i].partition("=")
+        action = actions.get(name)
+        if action is None:
+            if name.startswith("--"):
+                error(f"{name}: unknown or abbreviated option")
+            error(f"unrecognized arguments: {tokens[i]}")
+        if action.nargs == 0:
+            triples.append((name, action, True))
+            i += 1
+            continue
+        value = inline if eq else tokens[i + 1]
+        i += 1 if eq else 2
+        triples.append((name, action, value))
+    return triples
+
+
+def _options_dict(triples) -> dict[str, bool | str | list[str]]:
+    """Collect _walk_options triples into the side-option dict shape:
+    a repeated (argparse append) option accumulates into a list,
+    everything else overwrites like argparse does."""
+    options: dict[str, bool | str | list[str]] = {}
+    for name, action, value in triples:
+        key = name.removeprefix("--")
+        if isinstance(action, argparse._AppendAction):
+            options.setdefault(key, []).append(value)
+        else:
+            options[key] = value
+    return options
+
+
+def side_options(parser: argparse.ArgumentParser,
+                 tokens: list[str]) -> dict[str, bool | str | list[str]]:
+    """One dict entry per CLI option in ``tokens``, keyed by the
+    option name without the leading dashes: True for a bare flag, a
+    list for a repeated (argparse append) option, the token string
+    otherwise -- the shape db_config.write_config stores. The parser
+    must carry every option the tokens use. parse_args has already
+    accepted ``tokens``, so the only rejection left here is an
+    abbreviated option name, which parse_args resolves but a config
+    key must not carry."""
+    def fail(message: str) -> None:
+        raise SystemExit(message)
+    return _options_dict(_walk_options(tokens, _option_actions(parser), fail))
+
+
+def options_argv(options: dict) -> list[str]:
+    """The argv spelling of a side-option dict (a config.toml side
+    table is one, hence a hand-editable boundary): a list is a
+    repeated option, True a bare flag, false an absent one, any other
+    scalar one option value -- spelled ``--key=value`` in one token,
+    since argparse takes a leading-dash value only in that form."""
+    argv: list[str] = []
+    for key, value in options.items():
+        for v in (value if isinstance(value, list) else [value]):
+            if v is False:
+                continue
+            argv.append(f"--{key}" if v is True else f"--{key}={v}")
+    return argv
+
+
 def side_actions(parser: argparse.ArgumentParser,
                  minus: argparse.ArgumentParser | None = None,
                  ) -> list[argparse.Action]:
@@ -305,6 +380,20 @@ def apply_config_file_defaults(
                 value = [action.type(v) if isinstance(v, str) else v for v in value]
         defaults[dest] = value
     parser.set_defaults(**defaults)
+
+
+def parse_side_args(p: argparse.ArgumentParser,
+                    full: argparse.ArgumentParser | None,
+                    argv: list[str] | None) -> argparse.Namespace:
+    """Apply --config defaults and parse ``argv`` with ``p``; ``full``
+    (the whole side, given on a scoped parse) tolerates out-of-scope
+    leftovers -- reject_foreign_args still errors on unknown ones."""
+    apply_config_file_defaults(p, argv, full)
+    if full is None:
+        return p.parse_args(argv)
+    args, leftover = p.parse_known_args(argv)
+    reject_foreign_args(p, leftover, full)
+    return args
 
 
 def reject_foreign_args(parser: argparse.ArgumentParser, leftover: list[str],

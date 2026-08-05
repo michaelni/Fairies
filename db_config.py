@@ -44,10 +44,10 @@ import shlex
 import tomllib
 from pathlib import Path
 
-from common import atomic_write_text
+from common import atomic_write_text, options_argv
 
 __all__ = ["CONFIG_NAME", "log_side_argv", "read_config", "read_side_argv",
-           "write_config"]
+           "read_side_options", "write_config"]
 
 logger = logging.getLogger(__name__)
 
@@ -112,29 +112,22 @@ def read_config(root: Path) -> dict:
         raise SystemExit(f"{root / CONFIG_NAME}: {exc!r}") from exc
 
 
-def _argv(options: dict) -> list[str]:
-    """The [pr]/[issue] table is a hand-editable boundary: a list is a
-    repeated option, True a bare flag, false an absent one, any other
-    scalar one option value -- spelled ``--key=value`` in one token,
-    since argparse takes a leading-dash value only in that form."""
-    argv: list[str] = []
-    for key, value in options.items():
-        for v in (value if isinstance(value, list) else [value]):
-            if v is False:
-                continue
-            argv.append(f"--{key}" if v is True else f"--{key}={v}")
-    return argv
+def read_side_options(root: Path) -> tuple[dict | None, dict | None]:
+    """The (pr, issue) option tables from ``root``'s config; at least
+    one side is present, an absent side is None."""
+    cfg = read_config(root)
+    pr, issue = cfg.get("pr"), cfg.get("issue")
+    if not (pr or issue):
+        raise SystemExit(f"{root / CONFIG_NAME}: no side options")
+    return pr, issue
 
 
 def read_side_argv(root: Path) -> tuple[list[str] | None, list[str] | None]:
     """The (pr, issue) argv lists rebuilt from ``root``'s config
     tables; at least one side is present, an absent side is None."""
-    cfg = read_config(root)
-    pr, issue = (_argv(cfg[side]) if side in cfg else None
-                 for side in ("pr", "issue"))
-    if not (pr or issue):
-        raise SystemExit(f"{root / CONFIG_NAME}: no side options")
-    return pr, issue
+    pr, issue = read_side_options(root)
+    return (options_argv(pr) if pr is not None else None,
+            options_argv(issue) if issue is not None else None)
 
 
 def log_side_argv(pr_argv: list[str] | None, issue_argv: list[str] | None,

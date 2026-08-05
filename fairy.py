@@ -89,11 +89,10 @@ from common import (
     EXIT_REVIEW_HALTED,
     JsonObject,
     add_color_arg,
-    apply_config_file_defaults,
     attachment_urls,
     iso_to_dt,
     parse_iso_datetime_arg,
-    reject_foreign_args,
+    parse_side_args,
     setup_logging,
 )
 import forge_gcli
@@ -638,14 +637,8 @@ def make_parser(agent: bool = True, worker: bool = True) -> argparse.ArgumentPar
 
 def parse_args(argv: list[str] | None = None, *, agent: bool = True,
                worker: bool = True) -> argparse.Namespace:
-    p = make_parser(agent=agent, worker=worker)
-    full = None if agent and worker else make_parser()
-    apply_config_file_defaults(p, argv, full)
-    if full is None:
-        args = p.parse_args(argv)
-    else:
-        args, leftover = p.parse_known_args(argv)
-        reject_foreign_args(p, leftover, full)
+    args = parse_side_args(make_parser(agent=agent, worker=worker),
+                           None if agent and worker else make_parser(), argv)
     args.cache = args.cache or gcli_cache.side_cache_path(args, "pulls")
     if agent:
         args.force_review_prs = flatten_pr_number_args(args.force_review_pr)

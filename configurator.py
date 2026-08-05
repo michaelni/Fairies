@@ -53,7 +53,8 @@ import fairy
 import issue_fairy
 import workset
 from common import (apply_config_file_defaults, config_option_groups,
-                    grouped_help, setup_logging, split_sections)
+                    grouped_help, setup_logging, side_options,
+                    split_sections)
 
 __all__ = ["main"]
 
@@ -65,41 +66,6 @@ def db_root_for(ns: argparse.Namespace) -> Path:
         Path.home() / ".fairy" / "db",
         forge_type=ns.forge_type, account=ns.gcli_account or "",
         owner=ns.owner, repo=ns.repo)
-
-
-def side_options(parser: argparse.ArgumentParser,
-                 tokens: list[str]) -> dict[str, bool | str | list[str]]:
-    """One dict entry per CLI option in ``tokens``, keyed by the
-    option name without the leading dashes: True for a bare flag, a
-    list for a repeated (argparse append) option, the token string
-    otherwise -- the shape db_config.write_config stores. The parser
-    must carry every option the tokens use -- for the PR side that
-    includes --config, which apply_config_file_defaults registers.
-    parse_args has already accepted ``tokens``, so the only rejection
-    left here is an abbreviated option name, which parse_args resolves
-    but a config key must not carry."""
-    actions = {opt: a for a in parser._actions for opt in a.option_strings}
-    options: dict[str, bool | str | list[str]] = {}
-    i = 0
-    while i < len(tokens):
-        name, eq, inline = tokens[i].partition("=")
-        action = actions.get(name)
-        if action is None:
-            raise SystemExit(f"{name}: unknown or abbreviated option; "
-                             "the config stores full option names")
-        key = name.removeprefix("--")
-        if action.nargs == 0:
-            options[key] = True
-            i += 1
-            continue
-        value = inline if eq else tokens[i + 1]
-        i += 1 if eq else 2
-        if isinstance(action, argparse._AppendAction):
-            existing = options.setdefault(key, [])
-            existing.append(value)
-        else:
-            options[key] = value
-    return options
 
 
 def make_parser() -> argparse.ArgumentParser:

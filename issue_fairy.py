@@ -49,11 +49,11 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import gcli_cache
-from common import add_color_arg, attachment_urls, iso_to_dt
+from common import (apply_config_file_defaults, attachment_urls, iso_to_dt,
+                    reject_foreign_args)
 import forge_gcli
 from forge_gcli import (
     KIND_ISSUE,
-    add_forge_repo_args,
     apply_issue_label_changes,
     build_repo_path,
     gcli_api,
@@ -116,88 +116,8 @@ def prepared_issue_from_dict(data: dict) -> PreparedIssue:
     return PreparedIssue(**d)
 
 
-def make_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="The issue side of the repo agent. Pass these arguments "
-                    "to configurator.py, in its --issues section.",
-    )
-    add_forge_repo_args(p)
-    p.add_argument(
-        "--log-file",
-        type=Path,
-        help="agent and worker additionally log to this file; fairy-ui "
-             "tails it into its logs pane (level-tagged line format)",
-    )
-    p.add_argument(
-        "--min-age-days",
-        type=float,
-        default=14.0,
-        help=(
-            "Minimum age of last discussion activity (in days) before the "
-            "issue is proactively analyzed. Does not apply when a human "
-            "@-mentions the bot or the issue is forced; once fairy has "
-            "engaged on an issue the effective threshold drops to 6h. "
-            "Default: 14."
-        ),
-    )
-    p.add_argument(
-        "--approve",
-        action="store_true",
-        help="Auto mode: the agent's send pass posts standing verdicts on its "
-             "own. Without this flag they wait in reviewed/ for the TUI's y "
-             "or --ask.",
-    )
-    p.add_argument(
-        "--llm-review-cmd",
-        help=(
-            "External command used to analyze candidate issues. It receives JSON "
-            "on stdin and must print JSON with classification and message on "
-            "stdout (pr_review_wrapper.py; --task issue is appended here)."
-        ),
-    )
-    p.add_argument(
-        "--podman-host",
-        action="append",
-        default=[],
-        metavar="[LABEL=]USER@HOST[,cpus=N][,memory=SIZE][,gpu=DEV]",
-        help=(
-            "Run LLM shell work (repro, bisect, ...) in ephemeral containers "
-            "on this podman host (passwordless ssh destination); repeat for "
-            "more machines, the first being the default. Each value is "
-            "forwarded as --shell-host to --llm-review-cmd."
-        ),
-    )
-    p.add_argument(
-        "--llm-timeout",
-        type=int,
-        default=3600 * 5,
-        help="Timeout in seconds for the external LLM command (default: 18000)",
-    )
-    p.add_argument(
-        "--llm-max-attempts",
-        type=int,
-        default=3,
-        help="Maximum number of LLM attempts per issue (default: 3).",
-    )
-    p.add_argument(
-        "--llm-retry-delay",
-        type=float,
-        default=5.0,
-        help="Seconds to sleep between failed LLM attempts (default: 5).",
-    )
-    p.add_argument(
-        "--issue-label",
-        action="append",
-        type=parse_label_csv,
-        dest="issue_label",
-        default=None,
-        metavar="LABEL[,LABEL...]",
-        help=(
-            "Label name the LLM may add or remove. Can be repeated or passed "
-            "as a comma-separated list. Passed to the LLM command as "
-            "``triage_label_allowlist`` in the stdin JSON payload."
-        ),
-    )
+def _add_issue_agent_args(p: argparse.ArgumentParser) -> None:
+    """The issue-only options of the agent's scan pass."""
     p.add_argument(
         "--force-review-issue",
         action="append",
@@ -221,64 +141,59 @@ def make_parser() -> argparse.ArgumentParser:
             "--force-review-issue."
         ),
     )
+
+
+def _add_issue_worker_args(p: argparse.ArgumentParser) -> None:
+    """The issue-only options of the worker's review execution."""
     p.add_argument(
-        "--forced-only",
-        action="store_true",
-        help="Limit the run to issues named via --force-review-issue "
-             "(no open-issue listing). Requires at least one --force-review-issue.",
+        "--issue-label",
+        action="append",
+        type=parse_label_csv,
+        dest="issue_label",
+        default=None,
+        metavar="LABEL[,LABEL...]",
+        help=(
+            "Label name the LLM may add or remove. Can be repeated or passed "
+            "as a comma-separated list. Passed to the LLM command as "
+            "``triage_label_allowlist`` in the stdin JSON payload."
+        ),
     )
-    p.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        metavar="N",
-        help="Stop after N LLM evaluations (0 = no limit). Caps cost on "
-             "test runs; gate-skipped issues do not count.",
+
+
+def make_parser(agent: bool = True, worker: bool = True) -> argparse.ArgumentParser:
+    """The issue side's parser: the identity options plus the
+    ``agent`` / ``worker`` scopes -- a program registers only the
+    scopes whose options it reads."""
+    p = argparse.ArgumentParser(
+        description="The issue side of the repo agent. Pass these arguments "
+                    "to configurator.py, in its --issues section.",
     )
-    p.add_argument(
-        "--verbose",
-        type=int,
-        choices=(0, 1, 2),
-        default=0,
-        help="Verbosity level for command logging: 0 = none, 1 = commands and listing, 2 = all.",
-    )
-    add_color_arg(p)
-    p.add_argument(
-        "--cache",
-        type=Path,
-        help="Pickle cache path holding per-issue gcli data, shared with "
-             "forgejo_export.py so issues fetched by one are reused by the "
-             "other (default: "
-             "~/.fairy/<forge>_<account>_<owner>_<repo>_issues.pkl). "
-             "Saves are whole-file last-writer-wins: a concurrent run can "
-             "discard the other's fresh entries (refetched later), never "
-             "corrupt them.",
-    )
-    p.add_argument(
-        "--workset-retention-days",
-        type=float,
-        default=14.0,
-        help="Days a settled filedb ticket (posted/skipped/cancelled/"
-             "error) is kept after its last state change; items still "
-             "in the open listing are never pruned (default: 14).",
-    )
-    p.add_argument(
-        "--discussion-cache-max-age-hours",
-        type=float,
-        default=24.0,
-        help="Time-to-live (hours) on the cached issue comments; comments can "
-             "be edited server-side without bumping issue.updated_at, the TTL "
-             "forces a periodic refetch as a backstop (default: 24).",
-    )
+    fairy.add_side_identity_args(p)
+    if agent:
+        fairy.add_side_agent_args(p, min_age_default=14.0)
+        _add_issue_agent_args(p)
+    if worker:
+        fairy.add_llm_exec_args(p)
+        _add_issue_worker_args(p)
     return p
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    args = make_parser().parse_args(argv)
+def parse_args(argv: list[str] | None = None, *, agent: bool = True,
+               worker: bool = True) -> argparse.Namespace:
+    p = make_parser(agent=agent, worker=worker)
+    full = None if agent and worker else make_parser()
+    apply_config_file_defaults(p, argv, full)
+    if full is None:
+        args = p.parse_args(argv)
+    else:
+        args, leftover = p.parse_known_args(argv)
+        reject_foreign_args(p, leftover, full)
     args.cache = args.cache or gcli_cache.side_cache_path(args, "issues")
-    args.force_review_issues = flatten_pr_number_args(args.force_review_issue)
-    args.force_skip_issues = flatten_pr_number_args(args.force_skip_issue)
-    args.triage_labels = flatten_label_args(args.issue_label)
+    if agent:
+        args.force_review_issues = flatten_pr_number_args(args.force_review_issue)
+        args.force_skip_issues = flatten_pr_number_args(args.force_skip_issue)
+    if worker:
+        args.triage_labels = flatten_label_args(args.issue_label)
     return args
 
 

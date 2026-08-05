@@ -93,6 +93,7 @@ from common import (
     attachment_urls,
     iso_to_dt,
     parse_iso_datetime_arg,
+    reject_foreign_args,
     setup_logging,
 )
 import forge_gcli
@@ -299,11 +300,9 @@ def flatten_label_args(values: list[list[str]] | None) -> list[str]:
     ))
 
 
-def make_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        description="The PR side of the repo agent. Pass these arguments to "
-                    "configurator.py, in its --prs section.",
-    )
+def add_side_identity_args(p: argparse.ArgumentParser) -> None:
+    """The side options every fairy process needs: the repo identity
+    and credentials, logging and the gcli cache."""
     add_forge_repo_args(p)
     p.add_argument(
         "--log-file",
@@ -312,17 +311,47 @@ def make_parser() -> argparse.ArgumentParser:
              "tails it into its logs pane (level-tagged line format)",
     )
     p.add_argument(
+        "--verbose",
+        type=int,
+        choices=(0, 1, 2),
+        default=0,
+        help=(
+            "Verbosity level for command logging: "
+            "0 = none, "
+            "1 = write commands and the initial item listing, "
+            "2 = all commands."
+        ),
+    )
+    add_color_arg(p)
+    p.add_argument(
+        "--cache",
+        type=Path,
+        help="Pickle cache path holding the side's gcli data (default: "
+             "~/.fairy/<forge>_<account>_<owner>_<repo>_<pulls|issues>.pkl). "
+             "The issue cache is shared with forgejo_export.py, so issues "
+             "fetched by one are reused by the other. Saves are whole-file "
+             "last-writer-wins: a concurrent run can discard the other's "
+             "fresh entries (refetched later), never corrupt them.",
+    )
+
+
+def add_side_agent_args(p: argparse.ArgumentParser, *,
+                        min_age_default: float) -> None:
+    """The side options only the agent's scan and send passes read,
+    shared by the PR and issue sides; ``min_age_default`` is the
+    side's --min-age-days default."""
+    p.add_argument(
         "--min-age-days",
         type=float,
-        default=7.0,
+        default=min_age_default,
         help=(
-            "Minimum age of last *discussion* activity (in days) before fairy will "
-            "proactively use the LLM, including the optional CI-failure triage path "
-            "(--triage-on-ci-failure). This does not apply when a human @-mentions the "
-            "bot or sets fairy as a requested reviewer (fairy is expected to "
-            "answer promptly in those cases; see forced-review logic). "
-            "If fairy has posted any prior review, the effective threshold is at "
-            "most 1.0 day (same as before). Default: 7."
+            "Minimum age of last discussion activity (in days) before the "
+            "item is proactively analyzed, including the optional CI-failure "
+            "triage path (--triage-on-ci-failure). Does not apply when a "
+            "human @-mentions the bot, the item is forced, or fairy is a "
+            "requested reviewer. Once fairy has engaged, the effective "
+            "threshold drops to at most 1 day for a PR and 6h for an issue. "
+            "Default: 7 for PRs, 14 for issues."
         ),
     )
     p.add_argument(
@@ -332,6 +361,100 @@ def make_parser() -> argparse.ArgumentParser:
              "own. Without this flag they wait in reviewed/ for the TUI's y "
              "or --ask.",
     )
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Stop after N LLM evaluations (0 = no limit). Caps cost and "
+             "provider rate-limit windows; gate-skipped items do not count.",
+    )
+    p.add_argument(
+        "--forced-only",
+        action="store_true",
+        help="Limit the run to the items named via --force-review-* "
+             "(no open-item listing). Requires at least one --force-review-*.",
+    )
+    p.add_argument(
+        "--workset-retention-days",
+        type=float,
+        default=14.0,
+        help="Days a settled filedb ticket (posted/skipped/cancelled/"
+             "error) is kept after its last state change; items still "
+             "in the open listing are never pruned (default: 14).",
+    )
+    p.add_argument(
+        "--discussion-cache-max-age-hours",
+        type=float,
+        default=24.0,
+        help="Time-to-live (hours) on the cached discussion (a PR's "
+             "comments / reviews / inline review-comments trio, an issue's "
+             "comments); these can be silently edited or deleted server-side "
+             "without bumping the item's updated_at, the TTL forces a "
+             "periodic refetch as a backstop. Other PR fields (timeline, "
+             "commits, files) are gated only on pr.updated_at and ignore "
+             "this TTL. (default: 24)",
+    )
+
+
+def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
+    """The side options the worker's review execution reads, shared by
+    the PR and issue sides."""
+    p.add_argument(
+        "--llm-review-cmd",
+        help=(
+            "External command used to review candidate PRs / analyze "
+            "candidate issues (pr_review_wrapper.py; --task issue is "
+            "appended on the issue side). It receives JSON on stdin and "
+            "must print JSON with classification and message on stdout."
+        ),
+    )
+    p.add_argument(
+        "--podman-host",
+        action="append",
+        default=[],
+        metavar="[LABEL=]USER@HOST[,port=N][,cpus=N][,memory=SIZE][,gpu=DEV]",
+        help=(
+            "Run LLM shell work (review, triage, repro, bisect, ...) in "
+            "ephemeral containers on this podman host (passwordless ssh "
+            "destination); repeat for more machines, the first being the "
+            "default. Each value is forwarded as --shell-host to "
+            "--llm-review-cmd, so that command must be the wrapper. "
+            "Provision each host first with containers/provision_remote.py."
+        ),
+    )
+    p.add_argument(
+        "--llm-timeout",
+        type=int,
+        default=3600*5,
+        help="Timeout in seconds for the external LLM command "
+             "(default: 18000)",
+    )
+    p.add_argument(
+        "--llm-max-attempts",
+        type=int,
+        default=3,
+        help=(
+            "Maximum number of LLM attempts per item (default: 3). "
+            "If the LLM command fails (non-zero exit, timeout, malformed "
+            "JSON, or unknown classification) we retry up to this many total "
+            "attempts before giving up and recording the item as 'error'."
+        ),
+    )
+    p.add_argument(
+        "--llm-retry-delay",
+        type=float,
+        default=5.0,
+        help=(
+            "Seconds to sleep between failed LLM attempts (default: 5). "
+            "Applied only between attempts; no delay before the first attempt "
+            "or after the final one."
+        ),
+    )
+
+
+def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
+    """The PR-only options of the agent's scan and send passes."""
     p.add_argument(
         "--approve-message",
         default="",
@@ -350,83 +473,6 @@ def make_parser() -> argparse.ArgumentParser:
         help=(
             "Additional WIP title prefix. Can be repeated. "
             "Defaults to the common Forgejo/Gitea prefixes WIP: and [WIP]."
-        ),
-    )
-    p.add_argument(
-        "--llm-review-cmd",
-        help=(
-            "External command used to review candidate PRs. It receives JSON on stdin "
-            "and must print JSON with classification and message on stdout."
-        ),
-    )
-    p.add_argument(
-        "--podman-host",
-        action="append",
-        default=[],
-        metavar="[LABEL=]USER@HOST[,port=N][,cpus=N][,memory=SIZE][,gpu=DEV]",
-        help=(
-            "Run LLM shell work (review, triage, ...) in ephemeral "
-            "containers on this podman host (passwordless ssh destination); "
-            "repeat for more machines, the first being the default. Each "
-            "value is forwarded as --shell-host to --llm-review-cmd, so that "
-            "command must be the openai wrapper. Provision each host first "
-            "with containers/provision_remote.py."
-        ),
-    )
-    p.add_argument(
-        "--codex-host",
-        default=None,
-        metavar="[LABEL=]USER@HOST",
-        help=(
-            "podman host that runs the codex container, forwarded as "
-            "--codex-host to --llm-review-cmd. Required for any codex: model "
-            "spec (codex runs only in a container there). Provision it with "
-            "containers/provision_remote.py --codex-bin."
-        ),
-    )
-    p.add_argument(
-        "--codex-home",
-        default=None,
-        metavar="DIR",
-        help=(
-            "Wrapper-side CODEX_HOME (the bot's `codex login`), forwarded as "
-            "--codex-home to --llm-review-cmd. Default: the wrapper's "
-            "environment / codex's ~/.codex."
-        ),
-    )
-    p.add_argument(
-        "--llm-timeout",
-        type=int,
-        default=3600*5,
-        help="Timeout in seconds for the external LLM review command (default: 14400)",
-    )
-    p.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        metavar="N",
-        help="Stop after N LLM evaluations (0 = no limit). Caps cost and "
-             "provider rate-limit windows; gate-skipped PRs do not count.",
-    )
-    p.add_argument(
-        "--llm-max-attempts",
-        type=int,
-        default=3,
-        help=(
-            "Maximum number of LLM review attempts per PR (default: 3). "
-            "If the LLM review command fails (non-zero exit, timeout, malformed "
-            "JSON, or unknown classification) we retry up to this many total "
-            "attempts before giving up and recording the PR as 'error'."
-        ),
-    )
-    p.add_argument(
-        "--llm-retry-delay",
-        type=float,
-        default=5.0,
-        help=(
-            "Seconds to sleep between failed LLM review attempts (default: 5). "
-            "Applied only between attempts; no delay before the first attempt "
-            "or after the final one."
         ),
     )
     p.add_argument(
@@ -452,6 +498,80 @@ def make_parser() -> argparse.ArgumentParser:
             "CI, attach the last N lines of each failing job's log to the "
             "ci_triage payload so the model sees the real error, not just the "
             "one-line status. 0 disables the log fetch (default: 300)."
+        ),
+    )
+    p.add_argument(
+        "--force-review-pr",
+        action="append",
+        type=parse_pr_number_csv,
+        default=None,
+        metavar="N[,N...]",
+        help=(
+            "Force review and potential approval for the specified PR number(s), bypassing the usual "
+            "selection checks. Can be repeated or passed as a comma-separated list."
+        ),
+    )
+    p.add_argument(
+        "--force-skip-pr",
+        action="append",
+        type=parse_pr_number_csv,
+        default=None,
+        metavar="N[,N...]",
+        help=(
+            "Always skip review and approval for the specified PR number(s). Can be repeated or passed "
+            "as a comma-separated list. Takes precedence over --force-review-pr."
+        ),
+    )
+    p.add_argument(
+        "--force-review-non-open",
+        action="store_true",
+        help="Let --force-review-pr also review closed/merged PRs. Off by "
+             "default: a forced PR whose state is not ``open`` is skipped "
+             "with ``not open``. (WIP/draft and conflicting PRs are always "
+             "reviewed when forced, independent of this flag.)",
+    )
+    p.add_argument(
+        "--force-review-skip",
+        action="store_true",
+        help="When reviewing a PR named via --force-review-pr, ignore a "
+             "``skip`` verdict from the --llm-review-cmd triage pre-check and "
+             "run the full reviewer pass anyway. Only applies to PRs named "
+             "with --force-review-pr (not @mention / requested-reviewer "
+             "engagements).",
+    )
+    p.add_argument(
+        "--force-engage",
+        action="store_true",
+        help="When reviewing a PR named via --force-review-pr, run the full "
+             "reviewer pass regardless of the triage route (overrides both "
+             "``skip`` and ``reply_no_verdict``) and even when the head CI is red. "
+             "Stronger than --force-review-skip. Only applies to PRs named with "
+             "--force-review-pr (not @mention / requested-reviewer engagements).",
+    )
+
+
+def _add_pr_worker_args(p: argparse.ArgumentParser) -> None:
+    """The PR-only options of the worker's review execution: the patch
+    and payload are built at review time."""
+    p.add_argument(
+        "--codex-host",
+        default=None,
+        metavar="[LABEL=]USER@HOST",
+        help=(
+            "podman host that runs the codex container, forwarded as "
+            "--codex-host to --llm-review-cmd. Required for any codex: model "
+            "spec (codex runs only in a container there). Provision it with "
+            "containers/provision_remote.py --codex-bin."
+        ),
+    )
+    p.add_argument(
+        "--codex-home",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Wrapper-side CODEX_HOME (the bot's `codex login`), forwarded as "
+            "--codex-home to --llm-review-cmd. Default: the wrapper's "
+            "environment / codex's ~/.codex."
         ),
     )
     p.add_argument(
@@ -488,73 +608,6 @@ def make_parser() -> argparse.ArgumentParser:
              "comes from refs the operator pinned in the prepped mirror.",
     )
     p.add_argument(
-        "--force-review-pr",
-        action="append",
-        type=parse_pr_number_csv,
-        default=None,
-        metavar="N[,N...]",
-        help=(
-            "Force review and potential approval for the specified PR number(s), bypassing the usual "
-            "selection checks. Can be repeated or passed as a comma-separated list."
-        ),
-    )
-    p.add_argument(
-        "--force-skip-pr",
-        action="append",
-        type=parse_pr_number_csv,
-        default=None,
-        metavar="N[,N...]",
-        help=(
-            "Always skip review and approval for the specified PR number(s). Can be repeated or passed "
-            "as a comma-separated list. Takes precedence over --force-review-pr."
-        ),
-    )
-    p.add_argument(
-        "--forced-only",
-        action="store_true",
-        help="Limit the run to PRs named via --force-review-pr "
-             "(no open-PR listing). Requires at least one --force-review-pr.",
-    )
-    p.add_argument(
-        "--force-review-non-open",
-        action="store_true",
-        help="Let --force-review-pr also review closed/merged PRs. Off by "
-             "default: a forced PR whose state is not ``open`` is skipped "
-             "with ``not open``. (WIP/draft and conflicting PRs are always "
-             "reviewed when forced, independent of this flag.)",
-    )
-    p.add_argument(
-        "--force-review-skip",
-        action="store_true",
-        help="When reviewing a PR named via --force-review-pr, ignore a "
-             "``skip`` verdict from the --llm-review-cmd triage pre-check and "
-             "run the full reviewer pass anyway. Only applies to PRs named "
-             "with --force-review-pr (not @mention / requested-reviewer "
-             "engagements).",
-    )
-    p.add_argument(
-        "--force-engage",
-        action="store_true",
-        help="When reviewing a PR named via --force-review-pr, run the full "
-             "reviewer pass regardless of the triage route (overrides both "
-             "``skip`` and ``reply_no_verdict``) and even when the head CI is red. "
-             "Stronger than --force-review-skip. Only applies to PRs named with "
-             "--force-review-pr (not @mention / requested-reviewer engagements).",
-    )
-    p.add_argument(
-        "--verbose",
-        type=int,
-        choices=(0, 1, 2),
-        default=0,
-        help=(
-            "Verbosity level for command logging: "
-            "0 = none, "
-            "1 = write commands and initial PR list, "
-            "2 = all commands."
-        ),
-    )
-    add_color_arg(p)
-    p.add_argument(
         "--simulate-past",
         type=parse_iso_datetime_arg,
         metavar="ISO_DATETIME",
@@ -563,43 +616,42 @@ def make_parser() -> argparse.ArgumentParser:
              "cutoff). Pair with --patch-pr-ref-template and a separate "
              "--cache. See startup warning for residual limits.",
     )
-    p.add_argument(
-        "--cache",
-        type=Path,
-        help="Pickle cache path holding per-PR gcli data (default: "
-             "~/.fairy/<forge>_<account>_<owner>_<repo>_pulls.pkl).",
+
+
+def make_parser(agent: bool = True, worker: bool = True) -> argparse.ArgumentParser:
+    """The PR side's parser: the identity options plus the ``agent`` /
+    ``worker`` scopes -- a program registers only the scopes whose
+    options it reads."""
+    p = argparse.ArgumentParser(
+        description="The PR side of the repo agent. Pass these arguments to "
+                    "configurator.py, in its --prs section.",
     )
-    p.add_argument(
-        "--workset-retention-days",
-        type=float,
-        default=14.0,
-        help="Days a settled filedb ticket (posted/skipped/cancelled/"
-             "error) is kept after its last state change; items still "
-             "in the open listing are never pruned (default: 14).",
-    )
-    p.add_argument(
-        "--discussion-cache-max-age-hours",
-        type=float,
-        default=24.0,
-        help="Time-to-live (hours) on the cached comments / reviews "
-             "/ inline review-comments trio. These three fields can be "
-             "silently edited or deleted server-side without bumping "
-             "pr.updated_at; the TTL forces a periodic refetch as a "
-             "backstop. Other PR fields (timeline, commits, files) are "
-             "gated only on pr.updated_at and ignore this TTL. "
-             "(default: 24)",
-    )
+    add_side_identity_args(p)
+    if agent:
+        add_side_agent_args(p, min_age_default=7.0)
+        _add_pr_agent_args(p)
+    if worker:
+        add_llm_exec_args(p)
+        _add_pr_worker_args(p)
     return p
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = make_parser()
-    apply_config_file_defaults(p, argv)
-    args = p.parse_args(argv)
+def parse_args(argv: list[str] | None = None, *, agent: bool = True,
+               worker: bool = True) -> argparse.Namespace:
+    p = make_parser(agent=agent, worker=worker)
+    full = None if agent and worker else make_parser()
+    apply_config_file_defaults(p, argv, full)
+    if full is None:
+        args = p.parse_args(argv)
+    else:
+        args, leftover = p.parse_known_args(argv)
+        reject_foreign_args(p, leftover, full)
     args.cache = args.cache or gcli_cache.side_cache_path(args, "pulls")
-    args.force_review_prs = flatten_pr_number_args(args.force_review_pr)
-    args.force_skip_prs = flatten_pr_number_args(args.force_skip_pr)
-    args.triage_labels = flatten_label_args(args.triage_label)
+    if agent:
+        args.force_review_prs = flatten_pr_number_args(args.force_review_pr)
+        args.force_skip_prs = flatten_pr_number_args(args.force_skip_pr)
+    if worker:
+        args.triage_labels = flatten_label_args(args.triage_label)
     return args
 
 

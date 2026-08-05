@@ -222,6 +222,7 @@ def split_sections(argv: list[str]) -> tuple[list[str], dict[str, list[str]]]:
 
 def apply_config_file_defaults(
     parser: argparse.ArgumentParser, argv: list[str] | None = None,
+    full_parser: argparse.ArgumentParser | None = None,
 ) -> None:
     """Register ``--config FILE`` and load its TOML values as defaults.
 
@@ -231,6 +232,10 @@ def apply_config_file_defaults(
     syntax, nothing more. Unknown keys error; string values go through
     the option's ``type`` (command-line defaults bypass it otherwise).
     Call after every ``add_argument``, before ``parse_args``.
+
+    When ``parser`` carries only one program's scope of a side's
+    options, ``full_parser`` is the whole side: a key outside the scope
+    but known to the side is skipped instead of erroring.
     """
     parser.add_argument(
         "--config", type=Path, metavar="FILE",
@@ -244,11 +249,16 @@ def apply_config_file_defaults(
     with open(known.config, "rb") as fh:
         cfg = tomllib.load(fh)
     actions = {a.dest: a for a in parser._actions}
+    full_dests = {a.dest for a in full_parser._actions} if full_parser else set()
     defaults: dict[str, object] = {}
     for key, value in cfg.items():
         dest = key.replace("-", "_")
         action = actions.get(dest)
         if action is None or dest == "help":
+            if dest in full_dests and dest != "help":
+                logger.debug("--config %s: %s is outside this program's "
+                             "option scope; ignored", known.config, key)
+                continue
             parser.error(f"--config {known.config}: unknown option {key!r}")
         if action.type is not None:
             if isinstance(value, str):
@@ -257,6 +267,22 @@ def apply_config_file_defaults(
                 value = [action.type(v) if isinstance(v, str) else v for v in value]
         defaults[dest] = value
     parser.set_defaults(**defaults)
+
+
+def reject_foreign_args(parser: argparse.ArgumentParser, leftover: list[str],
+                        full_parser: argparse.ArgumentParser) -> None:
+    """``leftover`` is what ``parser`` (one program's scope of a side's
+    options) did not recognize: an option the whole side does not know
+    either is an error, one merely outside the scope is ignored with a
+    debug line."""
+    known = {opt for a in full_parser._actions for opt in a.option_strings}
+    for token in leftover:
+        name = token.partition("=")[0]
+        if not name.startswith("--"):
+            continue
+        if name not in known:
+            parser.error(f"unrecognized arguments: {name}")
+        logger.debug("ignoring %s: outside this program's option scope", name)
 
 
 def add_color_arg(parser: argparse.ArgumentParser) -> None:

@@ -38,7 +38,10 @@ all, and a side's `--log-file` is the shared agent+worker log the UI
 tails. It validates them and records them in the db root's
 `config.toml`; the three processes cooperating over the directories
 all take only `--db-root` and configure themselves from that file.
-With `pip install
+One db root is one config: each configurator run replaces the whole
+file, so exactly one invocation owns a root -- a deployment that
+configures the sides of a repo separately uses a separate root per
+side. With `pip install
 watchdog` the processes react to new files within 100ms; without it
 they fall back to their poll intervals:
 

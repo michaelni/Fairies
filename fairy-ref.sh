@@ -39,10 +39,10 @@ cd ..
 # then the agent runs scan -> inline worker -> send from it. Extra
 # arguments ($*) go to agent.py itself (e.g. --dry-run, --loop 600).
 # ./configurator.py --help documents the side options.
-# The configurator writes the WHOLE config: this PR-only invocation
-# drops any [issue] table another script (issue-fairy-ref.sh,
-# fairy-ui-ref.sh) put on the same db root. One db root wants one
-# configuring script.
+# One db root is one config: the configurator writes the whole file,
+# so this PR-only deployment has its own root and issue-fairy-ref.sh
+# uses another. fairy-ui-ref.sh is the alternative both-sides
+# deployment of the same repos; run one style or the other, not both.
 #--include-direct-includes --use-vector-store-search
 FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
 ./configurator.py --db-root "$FFMPEG_DB" \

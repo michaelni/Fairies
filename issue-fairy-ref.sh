@@ -43,10 +43,10 @@ cd ..
 # default; put --approve in the --issues section to let the send pass
 # post them. Extra arguments ($*) go to agent.py itself.
 # configurator.py writes the db root's config.toml the agent then runs
-# from -- the WHOLE config: this issue-only invocation drops any [pr]
-# table another script (fairy-ref.sh, fairy-ui-ref.sh) put on the same
-# db root. One db root wants one configuring script.
-FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg"
+# from. One db root is one config: the configurator writes the whole
+# file, so this issue-only deployment has its own root, separate from
+# fairy-ref.sh's PR root.
+FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg-issues"
 ./configurator.py --db-root "$FFMPEG_DB" \
     --owner FFmpeg --repo FFmpeg \
     --gcli-account ff \

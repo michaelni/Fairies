@@ -141,17 +141,19 @@ def main() -> int:
                   logger, db_config.logger, workset.logger, color=lead.color)
     fairy.validate_sides(pr_ns, issue_ns)
     root = args.db_root or db_root_for(lead)
-    pr_options = None
+    pr_options = issue_options = None
     if pr_tokens is not None:
         pr_parser = fairy.make_parser()
         apply_config_file_defaults(pr_parser, pr_tokens)
         pr_options = side_options(pr_parser, pr_tokens)
+    if issue_tokens is not None:
+        issue_parser = issue_fairy.make_parser()
+        apply_config_file_defaults(issue_parser, issue_tokens)
+        issue_options = side_options(issue_parser, issue_tokens)
     db_config.write_config(
         root, f"{lead.owner}/{lead.repo}",
         {ns.log_file for ns in (pr_ns, issue_ns) if ns and ns.log_file},
-        pr_options,
-        side_options(issue_fairy.make_parser(), issue_tokens)
-        if issue_tokens is not None else None)
+        pr_options, issue_options)
     logger.info("configured %s/%s, db %s", lead.owner, lead.repo, root)
     return 0
 

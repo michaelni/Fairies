@@ -154,6 +154,17 @@ class MainTests(unittest.TestCase):
             self.assertEqual(cfg["pr"]["config"], str(side))
             self.assertEqual(fairy.parse_args(pr_argv).min_age_days, 3)
 
+    def test_issue_side_config_file_option_is_stored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            side = Path(tmp) / "side.toml"
+            side.write_text('min-age-days = 3\n', encoding="utf-8")
+            self.run_main(["--db-root", tmp, "--owner", "o", "--repo", "r",
+                           "--issues", "--config", str(side)])
+            cfg = db_config.read_config(Path(tmp))
+            _, issue_argv = db_config.read_side_argv(Path(tmp))
+            self.assertEqual(cfg["issue"]["config"], str(side))
+            self.assertEqual(issue_fairy.parse_args(issue_argv).min_age_days, 3)
+
     def test_shared_options_reach_both_sides_and_sections_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             self.run_main(["--db-root", tmp,

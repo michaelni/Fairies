@@ -63,9 +63,9 @@ import filedb
 import forge_gcli
 import issue_fairy
 import workset
-from common import (OVERRIDE_EPILOG, add_file_log, config_option_groups,
-                    grouped_help, options_argv, parse_scoped_overrides,
-                    setup_logging, watch_paths)
+from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
+                    config_option_groups, grouped_help, options_argv,
+                    parse_scoped_overrides, setup_logging, watch_paths)
 
 __all__ = ["main", "review_claim", "drain"]
 
@@ -231,9 +231,11 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
 
 def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
+        add_help=False,
         description="LLM worker: claim queued filedb tickets and review them.",
         epilog=OVERRIDE_EPILOG,
     )
+    add_grouped_help(p, _help)
     p.add_argument("--db-root", type=Path, required=True,
                    help="filedb root; its config.toml, written by "
                         "configurator.py, carries the side options")
@@ -247,15 +249,14 @@ def make_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _help() -> str:
+    return grouped_help(make_parser(), config_option_groups(
+        fairy.make_parser(agent=False), issue_fairy.make_parser(agent=False)))
+
+
 def main() -> int:
-    argv = sys.argv[1:]
-    if "-h" in argv or "--help" in argv:
-        print(grouped_help(make_parser(), config_option_groups(
-            fairy.make_parser(agent=False),
-            issue_fairy.make_parser(agent=False))))
-        return 0
     args, pr_over, issue_over, sections = parse_scoped_overrides(
-        argv, make_parser(),
+        sys.argv[1:], make_parser(),
         fairy.make_parser(agent=False), fairy.make_parser(),
         issue_fairy.make_parser(agent=False), issue_fairy.make_parser())
     pr_opts, issue_opts = db_config.read_side_options(args.db_root)

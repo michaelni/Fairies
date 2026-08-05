@@ -77,10 +77,11 @@ import gcli_cache
 import issue_fairy
 import worker
 import workset
-from common import (OVERRIDE_EPILOG, add_file_log, config_option_groups,
-                    default_cache_path, grouped_help, iso_to_dt, options_argv,
-                    parse_scoped_overrides, side_actions, setup_logging,
-                    split_side_actions, watch_paths)
+from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
+                    config_option_groups, default_cache_path, grouped_help,
+                    iso_to_dt, options_argv, parse_scoped_overrides,
+                    side_actions, setup_logging, split_side_actions,
+                    watch_paths)
 
 __all__ = ["main", "scan_pass", "send_pass"]
 
@@ -764,10 +765,12 @@ def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
 
 def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
+        add_help=False,
         description="Repo agent: scan the forge and maintain the filedb tickets "
                     "for one repository's PRs and issues.",
         epilog=OVERRIDE_EPILOG,
     )
+    add_grouped_help(p, _help)
     p.add_argument("--db-root", type=Path, required=True,
                    help="filedb root; its config.toml, written by "
                         "configurator.py, carries the side options")
@@ -848,24 +851,24 @@ def requests_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     one_pass(db, _forced_only(pr_ns), _forced_only(issue_ns), args)
 
 
+def _help() -> str:
+    pr_agent = fairy.make_parser(worker=False)
+    issue_agent = issue_fairy.make_parser(worker=False)
+    exec_common, exec_pr, exec_issue = split_side_actions(
+        side_actions(fairy.make_parser(), minus=pr_agent),
+        side_actions(issue_fairy.make_parser(), minus=issue_agent))
+    return grouped_help(
+        make_parser(),
+        config_option_groups(pr_agent, issue_agent)
+        + [("review execution options, both sides (the worker's; the "
+            "agent runs them under --drain)", exec_common),
+           ("review execution options, PR side", exec_pr),
+           ("review execution options, issue side", exec_issue)])
+
+
 def main() -> int:
-    argv = sys.argv[1:]
-    if "-h" in argv or "--help" in argv:
-        pr_agent = fairy.make_parser(worker=False)
-        issue_agent = issue_fairy.make_parser(worker=False)
-        exec_common, exec_pr, exec_issue = split_side_actions(
-            side_actions(fairy.make_parser(), minus=pr_agent),
-            side_actions(issue_fairy.make_parser(), minus=issue_agent))
-        print(grouped_help(
-            make_parser(),
-            config_option_groups(pr_agent, issue_agent)
-            + [("review execution options, both sides (the worker's; the "
-                "agent runs them under --drain)", exec_common),
-               ("review execution options, PR side", exec_pr),
-               ("review execution options, issue side", exec_issue)]))
-        return 0
     args, pr_over, issue_over, sections = parse_scoped_overrides(
-        argv, make_parser(),
+        sys.argv[1:], make_parser(),
         fairy.make_parser(), fairy.make_parser(),
         issue_fairy.make_parser(), issue_fairy.make_parser())
     pr_opts, issue_opts = db_config.read_side_options(args.db_root)

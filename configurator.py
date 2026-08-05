@@ -52,9 +52,9 @@ import db_config
 import fairy
 import issue_fairy
 import workset
-from common import (apply_config_file_defaults, config_option_groups,
-                    grouped_help, setup_logging, side_options,
-                    split_sections)
+from common import (add_grouped_help, apply_config_file_defaults,
+                    config_option_groups, grouped_help, setup_logging,
+                    side_options, split_sections)
 
 __all__ = ["main"]
 
@@ -82,16 +82,17 @@ def make_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--db-root", type=Path,
                    help="filedb root (default: ~/.fairy/db/<forge~account~owner~repo>)")
+    add_grouped_help(p, _help)
     return p
 
 
+def _help() -> str:
+    return grouped_help(make_parser(), config_option_groups(
+        fairy.make_parser(), issue_fairy.make_parser()))
+
+
 def main() -> int:
-    argv = sys.argv[1:]
-    if "-h" in argv or "--help" in argv:
-        print(grouped_help(make_parser(), config_option_groups(
-            fairy.make_parser(), issue_fairy.make_parser())))
-        return 0
-    shared, sections = split_sections(argv)
+    shared, sections = split_sections(sys.argv[1:])
     own_parser = make_parser()
     args, shared = own_parser.parse_known_args(shared)
     if not sections:

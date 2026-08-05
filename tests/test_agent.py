@@ -1090,12 +1090,32 @@ class OverrideTests(unittest.TestCase):
             agent.main()
         self.assertEqual(captured["pr"].min_age_days, 99)
 
+    def test_dash_h_as_an_option_value_stays_a_value(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db_config.write_config(Path(tmp.name), "o/r", set(),
+                               {"owner": "o", "repo": "r"}, None)
+        captured: dict = {}
+
+        def one_pass(db, pr_ns, issue_ns, args) -> None:
+            captured["pr"] = pr_ns
+
+        with mock.patch.object(agent, "one_pass", side_effect=one_pass), \
+                mock.patch.object(agent, "send_pass"), \
+                mock.patch.object(agent, "setup_logging"), \
+                mock.patch.object(sys, "argv",
+                                  ["agent.py", "--db-root", tmp.name,
+                                   "--approve-message", "-h"]):
+            agent.main()
+        self.assertEqual(captured["pr"].approve_message, "-h")
+
     def test_help_lists_the_overridable_side_options(self) -> None:
         buf = io.StringIO()
         with mock.patch.object(sys, "argv", ["agent.py", "--help"]), \
-                contextlib.redirect_stdout(buf):
-            rc = agent.main()
-        self.assertEqual(rc, 0)
+                contextlib.redirect_stdout(buf), \
+                self.assertRaises(SystemExit) as ctx:
+            agent.main()
+        self.assertEqual(ctx.exception.code, 0)
         self.assertIn("--llm-review-cmd", buf.getvalue())
         self.assertIn("--issue-label", buf.getvalue())
         self.assertIn("--min-age-days", buf.getvalue())

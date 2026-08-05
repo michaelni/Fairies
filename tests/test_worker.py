@@ -379,9 +379,10 @@ class OverrideTests(unittest.TestCase):
     def test_help_lists_the_overridable_side_options(self) -> None:
         buf = io.StringIO()
         with mock.patch.object(sys, "argv", ["worker.py", "--help"]), \
-                contextlib.redirect_stdout(buf):
-            rc = worker.main()
-        self.assertEqual(rc, 0)
+                contextlib.redirect_stdout(buf), \
+                self.assertRaises(SystemExit) as ctx:
+            worker.main()
+        self.assertEqual(ctx.exception.code, 0)
         self.assertIn("--llm-review-cmd", buf.getvalue())
         self.assertIn("--issue-label", buf.getvalue())
         self.assertIn("defaults from config.toml", buf.getvalue())

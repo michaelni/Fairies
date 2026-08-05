@@ -273,26 +273,39 @@ def parse_scoped_overrides(argv: list[str],
     """A daemon's argv split into (own namespace, pr override options,
     issue override options, sections given): a side option anywhere on
     the command line overrides its config.toml value -- shared before
-    a --prs / --issues marker, per side after one. A shared option
-    routes to the side(s) whose parser knows it; one outside the
-    program's scope is ignored with a warning, one in the wrong side's
-    section or unknown to everything errors."""
+    a --prs / --issues marker, per side after one. An option outside
+    the program's scope is ignored with a warning, an option in the
+    wrong side's section or unknown to everything errors."""
     shared, sections = split_sections(argv)
     union = _option_actions(pr_full, issue_full)
-    args, leftover = own_parser.parse_known_args(shared)
+    own_tokens: list[str] = []
+    shared_side: list[str] = []
+    i = 0
+    while i < len(shared):
+        name, eq, _ = shared[i].partition("=")
+        action = union.get(name)
+        if action is None:
+            own_tokens.append(shared[i])
+            i += 1
+            continue
+        take = 1 if eq or action.nargs == 0 else 2
+        shared_side += shared[i:i + take]
+        i += take
+    args = own_parser.parse_args(own_tokens)
     warned: set[str] = set()
 
     def place(scope: argparse.ArgumentParser, full: argparse.ArgumentParser,
               section: list[str]) -> dict:
         scoped = _option_actions(scope)
         side = _option_actions(full)
-        triples = [t for t in _walk_options(leftover, union, own_parser.error)
-                   if t[0] in side]
+        triples = _walk_options(shared_side, union, own_parser.error)
         triples += _walk_options(
             section, side,
             lambda msg: own_parser.error(f"{msg} (not this side's option)"))
         kept = []
         for name, action, value in triples:
+            if name not in side:
+                continue
             if name not in scoped:
                 if name not in warned:
                     warned.add(name)
@@ -305,6 +318,18 @@ def parse_scoped_overrides(argv: list[str],
     return (args, place(pr_scope, pr_full, sections.get("--prs", [])),
             place(issue_scope, issue_full, sections.get("--issues", [])),
             sections)
+
+
+def add_grouped_help(p: argparse.ArgumentParser, build) -> None:
+    """--help printing ``build()`` (the program's grouped help) as a
+    real argparse action, so -h given as another option's value stays
+    a value; ``p`` must be built with add_help=False."""
+    class _Help(argparse.Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            print(build())
+            parser.exit()
+    p.add_argument("-h", "--help", action=_Help, nargs=0,
+                   help="show this help message and exit")
 
 
 def side_actions(parser: argparse.ArgumentParser,

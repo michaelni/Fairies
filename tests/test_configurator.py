@@ -117,9 +117,10 @@ class MainTests(unittest.TestCase):
     def test_help_lists_the_side_options(self) -> None:
         buf = io.StringIO()
         with mock.patch.object(sys, "argv", ["configurator.py", "--help"]), \
-                contextlib.redirect_stdout(buf):
-            rc = configurator.main()
-        self.assertEqual(rc, 0)
+                contextlib.redirect_stdout(buf), \
+                self.assertRaises(SystemExit) as ctx:
+            configurator.main()
+        self.assertEqual(ctx.exception.code, 0)
         self.assertIn("--llm-review-cmd", buf.getvalue())
         self.assertIn("--issue-label", buf.getvalue())
 

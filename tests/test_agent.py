@@ -1072,7 +1072,8 @@ class ColorTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         db_config.write_config(Path(tmp.name), "o/r", set(),
-                               "--owner o --repo r --color never", None)
+                               {"owner": "o", "repo": "r", "color": "never"},
+                               None)
         argv = ["agent.py", "--db-root", tmp.name]
         with mock.patch.object(agent, "setup_logging") as logging_setup, \
                 mock.patch.object(agent, "one_pass"), \
@@ -1097,7 +1098,7 @@ class LoopTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         db_config.write_config(Path(tmp.name), "o/r", set(),
-                               "--owner o --repo r", None)
+                               {"owner": "o", "repo": "r"}, None)
         argv = ["agent.py", "--db-root", tmp.name] + shlex.split(flags)
         calls = self.calls = []
 

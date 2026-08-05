@@ -27,7 +27,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-db_config: the agent-written config.toml round-trips."""
+db_config: the configurator-written config.toml round-trips."""
 
 from __future__ import annotations
 
@@ -44,15 +44,55 @@ import db_config  # noqa: E402
 
 
 class DbConfigTests(unittest.TestCase):
-    def test_round_trip_resolves_log_files(self) -> None:
-        pr = """--owner o --repo r --llm-review-cmd './w.py "quoted" \\ x'"""
+    def test_round_trip_one_key_per_option(self) -> None:
+        pr = {"owner": "o", "repo": "r", "approve": True,
+              "triage-label": ["important", "fix/bug"],
+              "llm-review-cmd": './w.py "quoted" \\ x\n    --model m\n'}
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             db_config.write_config(root, "o/r", {Path("logs/x.log")}, pr, None)
+            text = (root / "config.toml").read_text(encoding="utf-8")
             cfg = db_config.read_config(root)
-        self.assertEqual(cfg, {"label": "o/r",
-                               "log_files": [str(Path("logs/x.log").resolve())],
-                               "pr_args": pr})
+            pr_argv, issue_argv = db_config.read_side_argv(root)
+        self.assertIn("[pr]", text)
+        self.assertIn("llm-review-cmd = '''\n"
+                      './w.py "quoted" \\ x\n    --model m\n'
+                      "'''", text)
+        self.assertEqual(cfg["label"], "o/r")
+        self.assertEqual(cfg["log_files"], [str(Path("logs/x.log").resolve())])
+        self.assertIsNone(issue_argv)
+        self.assertEqual(pr_argv, [
+            "--owner=o", "--repo=r", "--approve",
+            "--triage-label=important", "--triage-label=fix/bug",
+            '--llm-review-cmd=./w.py "quoted" \\ x\n    --model m\n'])
+
+    def test_non_bmp_and_leading_dash_values_round_trip(self) -> None:
+        """ASCII-escaping JSON would spell the emoji as a surrogate
+        pair, which tomllib rejects; argparse takes a leading-dash
+        value only as one --key=value token."""
+        pr = {"owner": "o", "triage-label": ["bug \U0001f41b"],
+              "approve-message": "-x"}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_config.write_config(root, "o/r \U0001f9da", set(), pr, None)
+            cfg = db_config.read_config(root)
+            pr_argv, _ = db_config.read_side_argv(root)
+        self.assertEqual(cfg["label"], "o/r \U0001f9da")
+        self.assertEqual(pr_argv, ["--owner=o",
+                                   "--triage-label=bug \U0001f41b",
+                                   "--approve-message=-x"])
+
+    def test_a_false_flag_reads_as_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_config.write_config(root, "o/r", set(),
+                                   {"owner": "o", "approve": True}, None)
+            path = root / "config.toml"
+            path.write_text(path.read_text(encoding="utf-8")
+                            .replace("approve = true", "approve = false"),
+                            encoding="utf-8")
+            pr_argv, _ = db_config.read_side_argv(root)
+        self.assertEqual(pr_argv, ["--owner=o"])
 
 
 if __name__ == "__main__":

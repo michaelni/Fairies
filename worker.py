@@ -51,7 +51,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import shlex
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from datetime import datetime, timezone
@@ -233,7 +232,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--db-root", type=Path, required=True,
                    help="filedb root; its config.toml, written by "
-                        "configurator.py, carries the side argument strings")
+                        "configurator.py, carries the side options")
     p.add_argument("--parallel", type=int, default=1, metavar="N",
                    help="review up to N tickets concurrently (default: 1; "
                         "running several worker processes composes too)")
@@ -246,12 +245,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    pr_args, issue_args = db_config.read_side_strings(args.db_root)
+    pr_argv, issue_argv = db_config.read_side_argv(args.db_root)
     sides: dict[str, argparse.Namespace] = {}
-    if pr_args:
-        sides["pr"] = fairy.parse_args(shlex.split(pr_args))
-    if issue_args:
-        sides["issue"] = issue_fairy.parse_args(shlex.split(issue_args))
+    if pr_argv:
+        sides["pr"] = fairy.parse_args(pr_argv)
+    if issue_argv:
+        sides["issue"] = issue_fairy.parse_args(issue_argv)
     lead = next(iter(sides.values()))
     setup_logging(fairy.logger, max(ns.verbose for ns in sides.values()),
                   logger, db_config.logger, workset.logger, filedb.logger,
@@ -261,10 +260,7 @@ def main() -> int:
                      workset.logger, filedb.logger, forge_gcli.logger)
     db = filedb.Db(args.db_root)
     logger.info("worker for %s/%s, db %s", lead.owner, lead.repo, db.root)
-    for kind, args_str in (("pr", pr_args), ("issue", issue_args)):
-        if args_str:
-            logger.info("%s side from %s: %s", kind, db_config.CONFIG_NAME,
-                        args_str)
+    db_config.log_side_argv(pr_argv, issue_argv)
     wake = Event()
     watch_paths([db.root / "queued"], wake.set)
     while True:

@@ -300,7 +300,7 @@ def flatten_label_args(values: list[list[str]] | None) -> list[str]:
     ))
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="The PR side of the repo agent. Pass these arguments as "
                     "one --pr-args string to configurator.py.",
@@ -590,6 +590,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "gated only on pr.updated_at and ignore this TTL. "
              "(default: 24)",
     )
+    return p
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    p = make_parser()
     apply_config_file_defaults(p, argv)
     args = p.parse_args(argv)
     args.cache = args.cache or gcli_cache.side_cache_path(args, "pulls")

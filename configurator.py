@@ -50,7 +50,7 @@ import db_config
 import fairy
 import issue_fairy
 import workset
-from common import setup_logging
+from common import apply_config_file_defaults, setup_logging
 
 __all__ = ["main"]
 
@@ -89,6 +89,42 @@ def validate_sides(pr_ns: argparse.Namespace | None,
                 "--forced-only requires at least one --force-review-*")
 
 
+def side_options(parser: argparse.ArgumentParser,
+                 arg_str: str) -> dict[str, bool | str | list[str]]:
+    """One dict entry per CLI option in ``arg_str``, keyed by the
+    option name without the leading dashes: True for a bare flag, a
+    list for a repeated (argparse append) option, the token string
+    otherwise -- the shape db_config.write_config stores. The parser
+    must carry every option ``arg_str`` uses -- for the PR side that
+    includes --config, which apply_config_file_defaults registers.
+    parse_args has already accepted ``arg_str``, so the only rejection
+    left here is an abbreviated option name, which parse_args resolves
+    but a config key must not carry."""
+    actions = {opt: a for a in parser._actions for opt in a.option_strings}
+    tokens = shlex.split(arg_str)
+    options: dict[str, bool | str | list[str]] = {}
+    i = 0
+    while i < len(tokens):
+        name, eq, inline = tokens[i].partition("=")
+        action = actions.get(name)
+        if action is None:
+            raise SystemExit(f"{name}: unknown or abbreviated option; "
+                             "the config stores full option names")
+        key = name.removeprefix("--")
+        if action.nargs == 0:
+            options[key] = True
+            i += 1
+            continue
+        value = inline if eq else tokens[i + 1]
+        i += 1 if eq else 2
+        if isinstance(action, argparse._AppendAction):
+            existing = options.setdefault(key, [])
+            existing.append(value)
+        else:
+            options[key] = value
+    return options
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Validate a repo's side argument strings and write them "
@@ -118,10 +154,17 @@ def main() -> int:
                   logger, db_config.logger, workset.logger, color=lead.color)
     validate_sides(pr_ns, issue_ns)
     root = args.db_root or db_root_for(lead)
+    pr_options = None
+    if args.pr_args:
+        pr_parser = fairy.make_parser()
+        apply_config_file_defaults(pr_parser, shlex.split(args.pr_args))
+        pr_options = side_options(pr_parser, args.pr_args)
     db_config.write_config(
         root, f"{lead.owner}/{lead.repo}",
         {ns.log_file for ns in (pr_ns, issue_ns) if ns and ns.log_file},
-        args.pr_args, args.issue_args)
+        pr_options,
+        side_options(issue_fairy.make_parser(), args.issue_args)
+        if args.issue_args else None)
     logger.info("configured %s/%s, db %s", lead.owner, lead.repo, root)
     return 0
 

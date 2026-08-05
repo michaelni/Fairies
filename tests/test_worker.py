@@ -288,7 +288,7 @@ class LoopTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         worker.db_config.write_config(Path(tmp.name), "o/r", set(),
-                                  "--owner o --repo r", None)
+                                  {"owner": "o", "repo": "r"}, None)
         argv = ["worker.py", "--db-root", tmp.name] + shlex.split(flags)
         calls = self.calls = []
 
@@ -337,7 +337,7 @@ class ConfigGuardTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         worker.db_config.write_config(Path(tmp.name), "o/r", set(), None, None)
         with mock.patch.object(sys, "argv", ["worker.py", "--db-root", tmp.name]), \
-                self.assertRaisesRegex(SystemExit, "no side argument strings"):
+                self.assertRaisesRegex(SystemExit, "no side options"):
             worker.main()
 
 
@@ -350,7 +350,8 @@ class ColorTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         worker.db_config.write_config(
             Path(tmp.name), "o/r", set(),
-            f"--owner o --repo r --log-file {tmp.name}/side.log", None)
+            {"owner": "o", "repo": "r", "log-file": f"{tmp.name}/side.log"},
+            None)
         argv = ["worker.py", "--db-root", tmp.name]
         with mock.patch.object(worker, "add_file_log") as file_log, \
                 mock.patch.object(worker, "setup_logging"), \
@@ -363,7 +364,8 @@ class ColorTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         worker.db_config.write_config(Path(tmp.name), "o/r", set(),
-                                  "--owner o --repo r --color always", None)
+                                  {"owner": "o", "repo": "r",
+                                   "color": "always"}, None)
         argv = ["worker.py", "--db-root", tmp.name]
         with mock.patch.object(worker, "setup_logging") as logging_setup, \
                 mock.patch.object(worker, "drain"), \

@@ -89,7 +89,7 @@ from fairy import (
     post_label_explanations,
 )
 
-__all__ = ["parse_args", "prepare_issue", "evaluate_issue"]
+__all__ = ["make_parser", "parse_args", "prepare_issue", "evaluate_issue"]
 
 logger = fairy.logger
 
@@ -117,7 +117,7 @@ def prepared_issue_from_dict(data: dict) -> PreparedIssue:
     return PreparedIssue(**d)
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="The issue side of the repo agent. Pass these arguments "
                     "as one --issue-args string to configurator.py.",
@@ -271,7 +271,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "be edited server-side without bumping issue.updated_at, the TTL "
              "forces a periodic refetch as a backstop (default: 24).",
     )
-    args = p.parse_args(argv)
+    return p
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    args = make_parser().parse_args(argv)
     args.cache = args.cache or gcli_cache.side_cache_path(args, "issues")
     args.force_review_issues = flatten_pr_number_args(args.force_review_issue)
     args.force_skip_issues = flatten_pr_number_args(args.force_skip_issue)

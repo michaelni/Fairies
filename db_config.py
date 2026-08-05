@@ -40,35 +40,58 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 import tomllib
 from pathlib import Path
 
 from common import atomic_write_text
 
-__all__ = ["CONFIG_NAME", "read_config", "read_side_strings", "write_config"]
+__all__ = ["CONFIG_NAME", "log_side_argv", "read_config", "read_side_argv",
+           "write_config"]
 
 logger = logging.getLogger(__name__)
 
 CONFIG_NAME = "config.toml"
 
 
-def write_config(root: Path, label: str, log_files: set[Path],
-                 pr_args: str | None, issue_args: str | None) -> None:
-    """Record the repo label, the sides' log files and the verbatim
-    side argument strings as <root>/config.toml.
+def _toml_value(value: bool | str | list[str]) -> str:
+    """``value`` is a side option as write_config documents it: True
+    for a bare flag, a list for a repeated option, a token string
+    otherwise. A non-ASCII-escaping JSON-encoded str is also a valid
+    TOML basic string (ASCII-escaping is not: JSON spells non-BMP
+    characters as surrogate pairs, which TOML rejects), so json.dumps
+    does the quoting; a multi-line token becomes a TOML multi-line
+    literal string when its content permits one."""
+    if value is True:
+        return "true"
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    if "\n" in value and "'''" not in value and not value.endswith("'") \
+            and all(c == "\n" or c == "\t" or c.isprintable() for c in value):
+        return f"'''\n{value}'''"
+    return json.dumps(value, ensure_ascii=False)
 
-    A non-ASCII-escaping JSON-encoded str or list of str is also a
-    valid TOML basic string / array (ASCII-escaping is not: JSON
-    spells non-BMP characters as surrogate pairs, which TOML rejects),
-    so json.dumps does the value quoting; a None-valued side is an
-    omitted key (TOML has no null)."""
-    pairs = {"label": label,
-             "log_files": sorted(str(f.resolve()) for f in log_files),
-             "pr_args": pr_args,
-             "issue_args": issue_args}
-    atomic_write_text(root / CONFIG_NAME, "".join(
-        f"{key} = {json.dumps(value, ensure_ascii=False)}\n"
-        for key, value in pairs.items() if value is not None))
+
+def write_config(root: Path, label: str, log_files: set[Path],
+                 pr_options: dict | None,
+                 issue_options: dict | None) -> None:
+    """Record the repo label, the sides' log files and the sides'
+    options as <root>/config.toml, one ``key = value`` line per CLI
+    option under a [pr] / [issue] table: the key is the option name
+    without the leading dashes, the value True for a bare flag, a
+    list for a repeated option, the token string otherwise. A None
+    side is an omitted table (TOML has no null)."""
+    lines = [f"label = {json.dumps(label, ensure_ascii=False)}\n",
+             "log_files = " +
+             json.dumps(sorted(str(f.resolve()) for f in log_files),
+                        ensure_ascii=False) + "\n"]
+    for side, options in (("pr", pr_options), ("issue", issue_options)):
+        if options is None:
+            continue
+        lines.append(f"\n[{side}]\n")
+        lines += [f"{key} = {_toml_value(value)}\n"
+                  for key, value in options.items()]
+    atomic_write_text(root / CONFIG_NAME, "".join(lines))
     logger.info("wrote %s", root / CONFIG_NAME)
 
 
@@ -89,11 +112,35 @@ def read_config(root: Path) -> dict:
         raise SystemExit(f"{root / CONFIG_NAME}: {exc!r}") from exc
 
 
-def read_side_strings(root: Path) -> tuple[str | None, str | None]:
-    """The (pr_args, issue_args) side strings from ``root``'s config;
-    at least one is present."""
+def _argv(options: dict) -> list[str]:
+    """The [pr]/[issue] table is a hand-editable boundary: a list is a
+    repeated option, True a bare flag, false an absent one, any other
+    scalar one option value -- spelled ``--key=value`` in one token,
+    since argparse takes a leading-dash value only in that form."""
+    argv: list[str] = []
+    for key, value in options.items():
+        for v in (value if isinstance(value, list) else [value]):
+            if v is False:
+                continue
+            argv.append(f"--{key}" if v is True else f"--{key}={v}")
+    return argv
+
+
+def read_side_argv(root: Path) -> tuple[list[str] | None, list[str] | None]:
+    """The (pr, issue) argv lists rebuilt from ``root``'s config
+    tables; at least one side is present, an absent side is None."""
     cfg = read_config(root)
-    pr_args, issue_args = cfg.get("pr_args"), cfg.get("issue_args")
-    if not (pr_args or issue_args):
-        raise SystemExit(f"{root / CONFIG_NAME}: no side argument strings")
-    return pr_args, issue_args
+    pr, issue = (_argv(cfg[side]) if side in cfg else None
+                 for side in ("pr", "issue"))
+    if not (pr or issue):
+        raise SystemExit(f"{root / CONFIG_NAME}: no side options")
+    return pr, issue
+
+
+def log_side_argv(pr_argv: list[str] | None,
+                  issue_argv: list[str] | None) -> None:
+    """One provenance line per configured side, for the shared log."""
+    for kind, argv in (("pr", pr_argv), ("issue", issue_argv)):
+        if argv:
+            logger.info("%s side from %s: %s", kind, CONFIG_NAME,
+                        shlex.join(argv))

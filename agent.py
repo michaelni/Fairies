@@ -61,7 +61,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import shlex
 import time
 from threading import Event
 from dataclasses import replace as dataclasses_replace
@@ -767,7 +766,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--db-root", type=Path, required=True,
                    help="filedb root; its config.toml, written by "
-                        "configurator.py, carries the side argument strings")
+                        "configurator.py, carries the side options")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
                    help="rescan every N seconds; operator files (requests/, "
                         "outgoing/) wake the loop instantly via watchdog "
@@ -847,9 +846,9 @@ def requests_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
 
 def main() -> int:
     args = parse_args()
-    pr_args, issue_args = db_config.read_side_strings(args.db_root)
-    pr_ns = fairy.parse_args(shlex.split(pr_args)) if pr_args else None
-    issue_ns = issue_fairy.parse_args(shlex.split(issue_args)) if issue_args else None
+    pr_argv, issue_argv = db_config.read_side_argv(args.db_root)
+    pr_ns = fairy.parse_args(pr_argv) if pr_argv else None
+    issue_ns = issue_fairy.parse_args(issue_argv) if issue_argv else None
     lead = pr_ns or issue_ns
     setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   logger, db_config.logger, workset.logger, gcli_cache.logger,
@@ -862,10 +861,7 @@ def main() -> int:
                      forge_gcli.logger, ci_log.logger)
     db = filedb.Db(args.db_root)
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)
-    for kind, args_str in (("pr", pr_args), ("issue", issue_args)):
-        if args_str:
-            logger.info("%s side from %s: %s", kind, db_config.CONFIG_NAME,
-                        args_str)
+    db_config.log_side_argv(pr_argv, issue_argv)
     for ns in (pr_ns, issue_ns):
         if ns is not None and getattr(ns, "simulate_past", None):
             warn_simulate_past_limitations(ns.simulate_past)

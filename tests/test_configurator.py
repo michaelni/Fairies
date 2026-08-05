@@ -80,19 +80,53 @@ class ValidationTests(unittest.TestCase):
             self.pr("--forced-only --force-review-pr 5"), None)
 
 
+class SideOptionsTests(unittest.TestCase):
+    def test_flags_values_and_repeats(self) -> None:
+        opts = configurator.side_options(
+            fairy.make_parser(),
+            "--owner o --repo r --approve --triage-label a --triage-label b "
+            "--min-age-days=3")
+        self.assertEqual(opts, {"owner": "o", "repo": "r", "approve": True,
+                                "triage-label": ["a", "b"],
+                                "min-age-days": "3"})
+
+    def test_an_abbreviated_option_is_rejected(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "abbreviated"):
+            configurator.side_options(fairy.make_parser(), "--owne o --repo r")
+
+
 class MainTests(unittest.TestCase):
-    def test_main_writes_the_config(self) -> None:
-        pr = "--owner o --repo r --log-file logs/x.log"
+    def test_pr_side_config_file_option_is_stored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            side = Path(tmp) / "side.toml"
+            side.write_text('min-age-days = 3\n', encoding="utf-8")
+            argv = ["configurator.py", "--db-root", tmp, "--pr-args",
+                    f"--owner o --repo r --config {side}"]
+            with mock.patch.object(sys, "argv", argv), \
+                    mock.patch.object(configurator, "setup_logging"):
+                configurator.main()
+            cfg = db_config.read_config(Path(tmp))
+            pr_argv, _ = db_config.read_side_argv(Path(tmp))
+            self.assertEqual(cfg["pr"]["config"], str(side))
+            self.assertEqual(fairy.parse_args(pr_argv).min_age_days, 3)
+
+    def test_main_round_trips_the_side_namespace(self) -> None:
+        pr = ("--owner o --repo r --log-file logs/x.log --approve "
+              "--patch-repo p --triage-label a --triage-label b "
+              "--llm-review-cmd './w.py\n    --model m'")
         with tempfile.TemporaryDirectory() as tmp:
             argv = ["configurator.py", "--db-root", tmp, "--pr-args", pr]
             with mock.patch.object(sys, "argv", argv), \
                     mock.patch.object(configurator, "setup_logging"):
                 rc = configurator.main()
             cfg = db_config.read_config(Path(tmp))
+            pr_argv, issue_argv = db_config.read_side_argv(Path(tmp))
         self.assertEqual(rc, 0)
-        self.assertEqual(cfg, {"label": "o/r",
-                               "log_files": [str(Path("logs/x.log").resolve())],
-                               "pr_args": pr})
+        self.assertEqual(cfg["label"], "o/r")
+        self.assertEqual(cfg["log_files"], [str(Path("logs/x.log").resolve())])
+        self.assertIsNone(issue_argv)
+        self.assertEqual(fairy.parse_args(pr_argv),
+                         fairy.parse_args(shlex.split(pr)))
 
     def test_db_root_defaults_to_the_side_identity(self) -> None:
         ns = fairy.parse_args(["--owner", "O", "--repo", "R",

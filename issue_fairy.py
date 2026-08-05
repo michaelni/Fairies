@@ -82,7 +82,6 @@ from fairy import (
     list_open_prs,
     llm_skip_reason,
     max_dt,
-    parse_label_csv,
     parse_pr_number_csv,
     post_label_explanations,
 )
@@ -142,23 +141,6 @@ def _add_issue_agent_args(p: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_issue_worker_args(p: argparse.ArgumentParser) -> None:
-    """The issue-only options of the worker's review execution."""
-    p.add_argument(
-        "--issue-label",
-        action="append",
-        type=parse_label_csv,
-        dest="issue_label",
-        default=None,
-        metavar="LABEL[,LABEL...]",
-        help=(
-            "Label name the LLM may add or remove. Can be repeated or passed "
-            "as a comma-separated list. Passed to the LLM command as "
-            "``triage_label_allowlist`` in the stdin JSON payload."
-        ),
-    )
-
-
 def make_parser(agent: bool = True, worker: bool = True) -> argparse.ArgumentParser:
     """The issue side's parser: the identity options plus the
     ``agent`` / ``worker`` scopes -- a program registers only the
@@ -173,7 +155,6 @@ def make_parser(agent: bool = True, worker: bool = True) -> argparse.ArgumentPar
         _add_issue_agent_args(p)
     if worker:
         fairy.add_llm_exec_args(p)
-        _add_issue_worker_args(p)
     return p
 
 
@@ -186,7 +167,7 @@ def parse_args(argv: list[str] | None = None, *, agent: bool = True,
         args.force_review_issues = flatten_pr_number_args(args.force_review_issue)
         args.force_skip_issues = flatten_pr_number_args(args.force_skip_issue)
     if worker:
-        args.triage_labels = flatten_label_args(args.issue_label)
+        args.triage_labels = flatten_label_args(args.triage_label)
     return args
 
 

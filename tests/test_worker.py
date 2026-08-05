@@ -384,7 +384,7 @@ class OverrideTests(unittest.TestCase):
             worker.main()
         self.assertEqual(ctx.exception.code, 0)
         self.assertIn("--llm-review-cmd", buf.getvalue())
-        self.assertIn("--issue-label", buf.getvalue())
+        self.assertIn("--triage-label", buf.getvalue())
         self.assertIn("defaults from config.toml", buf.getvalue())
         self.assertNotIn("--min-age-days", buf.getvalue())
 
@@ -430,8 +430,9 @@ class OverrideTests(unittest.TestCase):
 
     def test_a_wrong_section_option_is_an_error(self) -> None:
         with self.assertRaises(SystemExit) as ctx:
-            self.drain_sides(["--prs", "--issue-label", "x"],
-                             pr={"owner": "o", "repo": "r"})
+            self.drain_sides(["--issues", "--patch-repo", "p"],
+                             pr={"owner": "o", "repo": "r"},
+                             issue={"owner": "o", "repo": "r"})
         self.assertEqual(ctx.exception.code, 2)
 
     def test_an_out_of_scope_override_warns_and_is_ignored(self) -> None:

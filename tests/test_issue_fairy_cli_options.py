@@ -30,7 +30,7 @@
 issue_fairy.py options: the flag string through to what consumes it.
 
 Namespaces come from the real ``issue_fairy.parse_args`` on a
-shlex-split flag string -- ``--issue-label`` in particular lands on
+shlex-split flag string -- ``--triage-label`` in particular lands on
 ``triage_labels`` after two transforms (per-value CSV split, then a
 flatten across repeats), so only a test that starts at the command
 line can catch that chain breaking.
@@ -83,7 +83,7 @@ def prepared(issue: dict) -> issue_fairy.PreparedIssue:
 
 
 class IssueLabelTests(unittest.TestCase):
-    """--issue-label is the LLM's label vocabulary: it rides to the
+    """--triage-label is the LLM's label vocabulary: it rides to the
     wrapper in the payload and bounds what comes back."""
 
     def run_wrapper(self, flags: str, label_changes: list) -> tuple:
@@ -102,7 +102,7 @@ class IssueLabelTests(unittest.TestCase):
 
     def test_repeated_and_comma_separated_values_reach_the_wrapper(self) -> None:
         payload, _ = self.run_wrapper(
-            "--issue-label duplicate,invalid --issue-label 'needs info'", [])
+            "--triage-label duplicate,invalid --triage-label 'needs info'", [])
         self.assertEqual(payload["triage_label_allowlist"],
                          ["duplicate", "invalid", "needs info"])
 
@@ -112,7 +112,7 @@ class IssueLabelTests(unittest.TestCase):
 
     def test_a_label_outside_the_allowlist_is_dropped(self) -> None:
         _, review = self.run_wrapper(
-            "--issue-label duplicate",
+            "--triage-label duplicate",
             [{"label": "duplicate", "op": "add", "reason": "dupe of #1"},
              {"label": "wontfix", "op": "add", "reason": "invented"}])
         self.assertEqual([c.label for c in review.label_changes], ["duplicate"])

@@ -122,7 +122,7 @@ class MainTests(unittest.TestCase):
             configurator.main()
         self.assertEqual(ctx.exception.code, 0)
         self.assertIn("--llm-review-cmd", buf.getvalue())
-        self.assertIn("--issue-label", buf.getvalue())
+        self.assertIn("--force-review-issue", buf.getvalue())
 
     def run_main(self, argv: list[str]) -> int:
         with mock.patch.object(sys, "argv", ["configurator.py"] + argv), \

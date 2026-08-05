@@ -471,6 +471,20 @@ def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
             "environment / codex's ~/.codex."
         ),
     )
+    p.add_argument(
+        "--triage-label",
+        action="append",
+        type=parse_label_csv,
+        dest="triage_label",
+        default=None,
+        metavar="LABEL[,LABEL...]",
+        help=(
+            "Label name the triage/review model may add or remove. Can be "
+            "repeated or passed as a comma-separated list. Passed to the LLM "
+            "command as ``triage_label_allowlist`` in the stdin JSON "
+            "payload."
+        ),
+    )
 
 
 def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
@@ -573,19 +587,6 @@ def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
 def _add_pr_worker_args(p: argparse.ArgumentParser) -> None:
     """The PR-only options of the worker's review execution: the patch
     and payload are built at review time."""
-    p.add_argument(
-        "--triage-label",
-        action="append",
-        type=parse_label_csv,
-        dest="triage_label",
-        default=None,
-        metavar="LABEL[,LABEL...]",
-        help=(
-            "Label name the triage model may add or remove. Can be repeated "
-            "or passed as a comma-separated list. Passed to the LLM review "
-            "command as ``triage_label_allowlist`` in the stdin JSON payload."
-        ),
-    )
     p.add_argument(
         "--llm-max-patch-bytes",
         type=int,

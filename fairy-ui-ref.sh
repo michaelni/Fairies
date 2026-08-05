@@ -63,7 +63,7 @@ ensure_repo fairies    https://code.ffmpeg.org/michaelni/Fairies.git
 # would otherwise race on the shared default; the gcli cache pickle
 # needs no such flag, its default is already derived per side.
 # FFmpeg/web, FFmpeg/fateserver and michaelni/Fairies define no
-# FFmpeg-style label sets, hence no --triage-label/--issue-label there.
+# FFmpeg-style label sets, hence no --triage-label there.
 # Extra arguments ($*) go to fairy_tui.py itself.
 COMMON=(--gcli-account ff --verbose 2)
 MODEL="openai:gpt-5.6@high"
@@ -85,7 +85,7 @@ FFMPEG_PR=(
     --min-age-days 56
 )
 FFMPEG_ISSUES=(
-    --issue-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid,resolution/external,resolution/fixed'
+    --triage-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid,resolution/external,resolution/fixed'
     --llm-review-cmd "./pr_review_wrapper.py
         --repo-root ffmpeg
         --extra-repo-root all_ffmpeg

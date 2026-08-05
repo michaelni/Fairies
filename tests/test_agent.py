@@ -1117,7 +1117,7 @@ class OverrideTests(unittest.TestCase):
             agent.main()
         self.assertEqual(ctx.exception.code, 0)
         self.assertIn("--llm-review-cmd", buf.getvalue())
-        self.assertIn("--issue-label", buf.getvalue())
+        self.assertIn("--force-review-issue", buf.getvalue())
         self.assertIn("--min-age-days", buf.getvalue())
         self.assertIn("review execution options", buf.getvalue())
 

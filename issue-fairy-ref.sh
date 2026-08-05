@@ -52,7 +52,7 @@ FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg-issues"
     --gcli-account ff \
     --verbose 2 \
     --issues \
-    --issue-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid,resolution/external,resolution/fixed' \
+    --triage-label 'repro/yes,repro/no,repro/no(env),repro/flaky,needs info,needs sample,bug,enhancement,regression,resolution/duplicate,resolution/invalid,resolution/external,resolution/fixed' \
     --llm-review-cmd './pr_review_wrapper.py
         --repo-root ffmpeg
         --extra-repo-root all_ffmpeg

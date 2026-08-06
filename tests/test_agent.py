@@ -829,6 +829,17 @@ class SendTests(SendCase):
         self.assertEqual(decision.action, "comment")
         self.assertEqual(self.db.find("issue", "5"), "posted")
 
+    def test_auto_mode_promotes_and_posts_an_issue_verdict(self) -> None:
+        issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r",
+                                           "--auto-mode"])
+        self.db.push("reviewed", "issue", "5", verdict_ticket(
+            5, "reply", expected_head_ref=None))
+        with mock.patch.object(issue_fairy, "submit_issue_decision",
+                               return_value=None) as submit:
+            self.send(issue_ns=issue_ns)
+        self.assertEqual(submit.call_args.args[1].action, "comment")
+        self.assertEqual(self.db.find("issue", "5"), "posted")
+
 
 class ForcedOnlyTests(AgentCase):
     def test_forced_only_never_cancels_or_prunes_other_tickets(self) -> None:

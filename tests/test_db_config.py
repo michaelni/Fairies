@@ -45,7 +45,7 @@ import db_config  # noqa: E402
 
 class DbConfigTests(unittest.TestCase):
     def test_round_trip_one_key_per_option(self) -> None:
-        pr = {"owner": "o", "repo": "r", "approve": True,
+        pr = {"owner": "o", "repo": "r", "auto-mode": True,
               "triage-label": ["important", "fix/bug"],
               "llm-review-cmd": './w.py "quoted" \\ x\n    --model m\n'}
         with tempfile.TemporaryDirectory() as tmp:
@@ -62,7 +62,7 @@ class DbConfigTests(unittest.TestCase):
         self.assertEqual(cfg["log_files"], [str(Path("logs/x.log").resolve())])
         self.assertIsNone(issue_argv)
         self.assertEqual(pr_argv, [
-            "--owner=o", "--repo=r", "--approve",
+            "--owner=o", "--repo=r", "--auto-mode",
             "--triage-label=important", "--triage-label=fix/bug",
             '--llm-review-cmd=./w.py "quoted" \\ x\n    --model m\n'])
 
@@ -86,10 +86,10 @@ class DbConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             db_config.write_config(root, "o/r", set(),
-                                   {"owner": "o", "approve": True}, None)
+                                   {"owner": "o", "auto-mode": True}, None)
             path = root / "config.toml"
             path.write_text(path.read_text(encoding="utf-8")
-                            .replace("approve = true", "approve = false"),
+                            .replace("auto-mode = true", "auto-mode = false"),
                             encoding="utf-8")
             pr_argv, _ = db_config.read_side_argv(root)
         self.assertEqual(pr_argv, ["--owner=o"])

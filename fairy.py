@@ -56,7 +56,7 @@ these classifications:
 - skip
 
 Reads go through `gcli api`, approvals through `gcli pulls ... approve`.
---approve (auto mode) lets the agent's send pass post standing verdicts
+--auto-mode lets the agent's send pass post standing verdicts
 by itself; without it every verdict waits in reviewed/ for the operator.
 
 When a human @-mentions fairy or requests it as a reviewer, the run may enter a
@@ -353,10 +353,10 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
         ),
     )
     p.add_argument(
-        "--approve",
+        "--auto-mode",
         action="store_true",
-        help="Auto mode: the agent's send pass posts standing verdicts on its "
-             "own. Without this flag they wait in reviewed/ for the TUI's y "
+        help="The agent's send pass posts standing verdicts on its own. "
+             "Without this flag they wait in reviewed/ for the TUI's y "
              "or --ask.",
     )
     p.add_argument(

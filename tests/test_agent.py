@@ -401,7 +401,7 @@ class ReuseTests(AgentCase):
                          ["review"]["message"], "KEEP")
 
     def test_auto_mode_still_requeues_a_send_blocked_verdict(self) -> None:
-        self.ns.approve = True
+        self.ns.auto_mode = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "approve", "message": "m"},
             "expected_updated_at": "old", "expected_head_ref": "old",
@@ -424,7 +424,7 @@ class ReuseTests(AgentCase):
                          ["review"]["message"], "KEEP")
 
     def test_auto_mode_requeues_a_stale_reviewed_verdict(self) -> None:
-        self.ns.approve = True
+        self.ns.auto_mode = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "2026-07-01T00:00:00Z",  # PR changed since
@@ -437,7 +437,7 @@ class ReuseTests(AgentCase):
         # operator said no during the prepare; the fresh queued ticket
         # must not resurrect the item. Only auto mode requeues a stale
         # reviewed/ verdict, so the race exists only there.
-        self.ns.approve = True
+        self.ns.auto_mode = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "old", "expected_head_ref": "old"})
@@ -455,7 +455,7 @@ class ReuseTests(AgentCase):
         # The IN_FLIGHT check runs before prepare; prepare takes seconds.
         # An operator y (reviewed -> outgoing) in that window must not be
         # popped by the requeue routing: the pending send would vanish.
-        self.ns.approve = True
+        self.ns.auto_mode = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "old", "expected_head_ref": "old"})
@@ -711,7 +711,7 @@ class SendTests(SendCase):
         self.assertEqual(t["send_blocked"], "PR updated_at changed")
 
     def test_guard_failure_auto_mode_skips_without_stalling(self) -> None:
-        self.ns.approve = True
+        self.ns.auto_mode = True
         self.db.push("outgoing", "pr", "1", verdict_ticket(1))
         with mock.patch.object(fairy, "submit_decision_action",
                                return_value="PR head changed") as submit:
@@ -723,7 +723,7 @@ class SendTests(SendCase):
         self.assertEqual(t["skip_backoff_h"], 24)  # earned history kept
 
     def test_approve_promotes_only_actionable_reviewed_verdicts(self) -> None:
-        self.ns.approve = True
+        self.ns.auto_mode = True
         self.db.push("reviewed", "pr", "1", verdict_ticket(1))
         self.db.push("reviewed", "pr", "2", verdict_ticket(2, "skip"))
         with mock.patch.object(fairy, "submit_decision_action",
@@ -743,7 +743,7 @@ class SendTests(SendCase):
     def test_reviewed_crash_remnant_is_not_repromoted(self) -> None:
         # crash between finish's dst-write and src-unlink: the item is
         # in outgoing AND reviewed; only the later state is real
-        self.ns.approve = True
+        self.ns.auto_mode = True
         self.db.push("outgoing", "pr", "1", verdict_ticket(1))
         self.db.path("reviewed", "pr", "1").write_text(
             self.db.path("outgoing", "pr", "1").read_text())
@@ -754,7 +754,7 @@ class SendTests(SendCase):
     def test_dry_run_never_promotes_reviewed_to_outgoing(self) -> None:
         # promotion is persistent: a dry preview must not stage posts
         # that a later normal run would then send without consent
-        self.ns.approve = True
+        self.ns.auto_mode = True
         self.db.push("reviewed", "pr", "1", verdict_ticket(1))
         with mock.patch.object(fairy, "submit_decision_action") as submit:
             self.send(pr_ns=self.ns, dry_run=True)

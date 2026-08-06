@@ -40,7 +40,7 @@ cd ..
 # uses the exported-issue
 # vector store. Triage runs on GPT-5.6-luna@medium, the full pass on
 # GPT-5.6@high; both on the flex tier. Verdicts wait in reviewed/ by
-# default; put --approve in the --issues section to let the send pass
+# default; put --auto-mode in the --issues section to let the send pass
 # post them. Extra arguments ($*) go to agent.py itself.
 # configurator.py writes the db root's config.toml the agent then runs
 # from. One db root is one config: the configurator writes the whole

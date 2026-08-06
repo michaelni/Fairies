@@ -47,7 +47,7 @@ A send pass follows each scan: every outgoing/ item is re-read under
 its claim lock, guard-checked against the live forge and posted
 through fairy/issue_fairy's guarded submit seams. A guard failure
 returns the verdict to reviewed/ with a note (manual mode) or, under
---approve auto mode -- which itself promotes actionable reviewed/
+--auto-mode -- which itself promotes actionable reviewed/
 verdicts to outgoing/ -- re-gates it via skipped/ so a cron run never
 stalls. --dry-run logs what would be posted and posts nothing.
 
@@ -246,7 +246,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                     and (kind != "pr" or prior_data.get("expected_head_ref")
                          == fairy.get_pr_head_ref(item))):
                 continue  # standing verdict; reuse
-            if not getattr(ns, "approve", False):
+            if not ns.auto_mode:
                 # A reviewed/ verdict in manual mode is the operator's
                 # case, changed item or not: requeueing here replaced
                 # their verdict with whatever the fresh round produced
@@ -600,7 +600,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
             logger.info("%s #%s posted: %s", kind, number,
                         fairy.manual_action_description(decision))
             return "posted"
-        if getattr(ns, "approve", False):
+        if ns.auto_mode:
             # Auto mode must not stall on a stale verdict: without
             # llm_at the skipped/ ticket is re-gated (and, the item
             # having changed, freshly re-reviewed) on the next scan.
@@ -619,7 +619,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
 
 
 def promote_reviewed(db: filedb.Db, kind: str) -> None:
-    """--approve: standing actionable verdicts go out without an operator."""
+    """--auto-mode: standing actionable verdicts go out without an operator."""
     for k, number in db.list_state("reviewed"):
         # find() precedence: a reviewed/ crash remnant behind a later
         # state must not be promoted (and posted) a second time
@@ -737,7 +737,7 @@ def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
         if ns is None:
             continue
-        if getattr(ns, "approve", False):
+        if ns.auto_mode:
             if dry_run:
                 # promotion is a persistent staging step: a later normal
                 # run would post whatever a dry preview promoted

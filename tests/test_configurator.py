@@ -87,9 +87,9 @@ class SideOptionsTests(unittest.TestCase):
     def test_flags_values_and_repeats(self) -> None:
         opts = configurator.side_options(
             fairy.make_parser(),
-            shlex.split("--owner o --repo r --approve --triage-label a "
+            shlex.split("--owner o --repo r --auto-mode --triage-label a "
                         "--triage-label b --min-age-days=3"))
-        self.assertEqual(opts, {"owner": "o", "repo": "r", "approve": True,
+        self.assertEqual(opts, {"owner": "o", "repo": "r", "auto-mode": True,
                                 "triage-label": ["a", "b"],
                                 "min-age-days": "3"})
 
@@ -130,7 +130,7 @@ class MainTests(unittest.TestCase):
             return configurator.main()
 
     def test_main_round_trips_the_side_namespace(self) -> None:
-        pr = ("--owner o --repo r --log-file logs/x.log --approve "
+        pr = ("--owner o --repo r --log-file logs/x.log --auto-mode "
               "--patch-repo p --triage-label a --triage-label b "
               "--llm-review-cmd './w.py\n    --model m'")
         with tempfile.TemporaryDirectory() as tmp:

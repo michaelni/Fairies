@@ -41,8 +41,10 @@ from __future__ import annotations
 
 import base64
 import json
+import shlex
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -121,15 +123,14 @@ class FairyAgentTests(unittest.TestCase):
     def test_timeout_kills_whole_process_group(self) -> None:
         # The command backgrounds a child; the watchdog must kill the
         # whole group, not just bash, so nothing is left running.
-        marker = "/tmp/fairy_agent_pg_test.marker"
-        subprocess.run(["rm", "-f", marker])
+        marker = Path(self.enterContext(tempfile.TemporaryDirectory())) / "marker"
         r = self.agent.request(
             id=7, timeout_s=0.5,
-            command=f"(sleep 3; touch {marker}) & sleep 30",
+            command=f"(sleep 3; touch {shlex.quote(str(marker))}) & sleep 30",
         )
         self.assertEqual(124, r["exit_code"])
         time.sleep(4)
-        self.assertFalse(Path(marker).exists(),
+        self.assertFalse(marker.exists(),
                          "backgrounded child survived the group kill")
 
     def test_output_capping_sets_truncated(self) -> None:

@@ -97,6 +97,7 @@ def verdict_fields(decision: fairy.Decision, prepared) -> dict:
                 for c in decision.label_changes
             ],
         },
+        "discussion": prepared.discussion,
         "action": decision.action,
         "reason": decision.reason,
         "auto_merge": decision.auto_merge,

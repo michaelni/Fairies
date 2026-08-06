@@ -55,10 +55,11 @@ def make_pr(n: int) -> dict:
             "html_url": f"https://forge/pr/{n}"}
 
 
-def queued_ticket(n: int, backoff: float = 0.0) -> dict:
+def queued_ticket(n: int, backoff: float = 0.0,
+                  discussion: list | None = None) -> dict:
     prepared = fairy.PreparedPR(
         pr=make_pr(n), number=n, title=f"t{n}", author="a", auto_merge="-",
-        last_activity=None, base_reason="review", discussion=[],
+        last_activity=None, base_reason="review", discussion=discussion or [],
         reviewer_username="fairy")
     return {"title": f"t{n}", "author": "a", "skip_backoff_h": backoff,
             "forced": False, "prepared": fairy.prepared_to_dict(prepared)}
@@ -112,6 +113,15 @@ class VerdictRoutingTests(WorkerCase):
                                                auto_merge="merge"))
         t = self.db.get("reviewed", "pr", "5")
         self.assertEqual(t["auto_merge"], "merge")
+
+    def test_the_discussion_survives_into_the_verdict(self) -> None:
+        disc = [{"kind": "comment", "author": "carol",
+                 "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"}]
+        self.db.push("queued", "pr", "5", queued_ticket(5, discussion=disc))
+        self.run_one(5, lambda ns, p: decision(5))
+        t = self.db.get("reviewed", "pr", "5")
+        self.assertEqual(t["discussion"], disc)
+        self.assertNotIn("prepared", t)
 
     def test_skip_with_label_changes_is_operator_actionable(self) -> None:
         self.db.push("queued", "pr", "5", queued_ticket(5))

@@ -409,7 +409,22 @@ class ReuseTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "queued")
 
-    def test_stale_reviewed_verdict_is_requeued(self) -> None:
+    def test_a_stale_reviewed_verdict_awaits_the_operator_in_manual_mode(self) -> None:
+        """Production #21117: the author force-pushed after the review
+        and the next scan replaced the verdict awaiting y/s with a
+        fresh LLM run -- no operator decision. A stale y is caught by
+        the send guard; the scan must not move reviewed/."""
+        self.db.push("reviewed", "pr", "1", {
+            "review": {"classification": "moderate_issues", "message": "KEEP"},
+            "expected_updated_at": "2026-07-01T00:00:00Z",  # PR changed since
+            "expected_head_ref": "old"})
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")
+                         ["review"]["message"], "KEEP")
+
+    def test_auto_mode_requeues_a_stale_reviewed_verdict(self) -> None:
+        self.ns.approve = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "2026-07-01T00:00:00Z",  # PR changed since
@@ -420,7 +435,9 @@ class ReuseTests(AgentCase):
     def test_s_and_x_during_the_slow_prepare_are_not_clobbered(self) -> None:
         # Same race as the y test below, for the decline actions: the
         # operator said no during the prepare; the fresh queued ticket
-        # must not resurrect the item.
+        # must not resurrect the item. Only auto mode requeues a stale
+        # reviewed/ verdict, so the race exists only there.
+        self.ns.approve = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "old", "expected_head_ref": "old"})
@@ -438,6 +455,7 @@ class ReuseTests(AgentCase):
         # The IN_FLIGHT check runs before prepare; prepare takes seconds.
         # An operator y (reviewed -> outgoing) in that window must not be
         # popped by the requeue routing: the pending send would vanish.
+        self.ns.approve = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "old", "expected_head_ref": "old"})

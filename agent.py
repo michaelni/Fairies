@@ -36,8 +36,9 @@ skipped/ci-blocked/merge-ready/awaiting-approver, gate survivors get a
 full LLM payload in queued/ -- capped by the per-kind --limit, which
 counts exactly the tickets entering queued/. LLM skip verdicts wait
 out a doubling backoff in skipped/ and re-queue with the doubled
-backoff in the ticket. Standing reviewed/ verdicts with matching
-guards suppress re-review (reuse). Operator requests (requests/) are
+backoff in the ticket. A reviewed/ verdict stands until the operator
+moves it; only auto mode requeues one whose item changed (guard
+mismatch). Operator requests (requests/) are
 agent-mediated so the UI never needs forge access; they bypass gates
 and the limit. The agent also reaps dead workers' claims, cancels
 tickets whose item left the open listing, and prunes settled tickets.
@@ -245,12 +246,13 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                     and (kind != "pr" or prior_data.get("expected_head_ref")
                          == fairy.get_pr_head_ref(item))):
                 continue  # standing verdict; reuse
-            if prior_data.get("send_blocked") and not getattr(ns, "approve", False):
-                # A blocked y in manual mode is the operator's case:
-                # requeueing here replaced their verdict with whatever
-                # the fresh round produced -- a gate skip destroyed an
-                # approve (production: #23863, genuine data loss). They
-                # answer with r, s or Y; only auto mode re-reviews.
+            if not getattr(ns, "approve", False):
+                # A reviewed/ verdict in manual mode is the operator's
+                # case, changed item or not: requeueing here replaced
+                # their verdict with whatever the fresh round produced
+                # (production: #23863 after a blocked y, #21117 before
+                # any y -- genuine data loss). A stale y is caught by
+                # the send guard; only auto mode re-reviews on change.
                 continue
         if prior == "cancelled" and number not in forced_ns and prior_data \
                 and str(prior_data.get("reason", "")).startswith("operator") \

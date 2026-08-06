@@ -36,12 +36,11 @@ Selection rules:
 1. PR is open.
 2. PR is not marked WIP/draft.
 3. PR has no *currently outstanding* request-for-changes review.
-4. The PR head commit has CI statuses and every latest reported context is successful
-   (unless ``--triage-on-ci-failure`` is set together with a triage-capable
-   ``--llm-review-cmd``; then ERROR/FAILURE jobs are passed to the mini
-   model, which posts a short heads-up while contexts are unannounced and
-   afterwards triages normally, so a red-CI PR can still reach a full
-   review).
+4. The PR head commit has CI statuses reported. ERROR/FAILURE jobs do not
+   block the LLM pipeline: the failure details and log tails ride along in
+   the ``ci_triage`` payload so a full review can analyze the failure.
+   Without ``--llm-review-cmd`` a red head still skips (the no-LLM
+   auto-approve path never approves red CI).
 5. PR has had no activity for at least 7 days.
 
 Optional LLM review:
@@ -204,9 +203,8 @@ class PreparedPR:
     base_reason: str
     discussion: list[DiscussionItem]
     reviewer_username: str | None
-    # When the PR head is CI-red, optional structured payload for the review
-    # wrapper so triage can suggest a short heads-up. ``None`` for green CI
-    # or for PRs that did not go through the CI-triage path.
+    # When the PR head is CI-red, structured failure details (incl. log
+    # tails) for the review wrapper. ``None`` for green CI.
     ci_triage: JsonObject | None = None
     # Names of commit-status contexts whose latest state needs a
     # human to act in the Forgejo UI. Propagated into the resulting
@@ -346,8 +344,8 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
         default=min_age_default,
         help=(
             "Minimum age of last discussion activity (in days) before the "
-            "item is proactively analyzed, including the optional CI-failure "
-            "triage path (--triage-on-ci-failure). Does not apply when a "
+            "item is proactively analyzed, including PRs whose head CI is "
+            "red. Does not apply when a "
             "human @-mentions fairy, the item is forced, or fairy is a "
             "requested reviewer. Once fairy has engaged, the effective "
             "threshold drops to at most 6h. "
@@ -534,20 +532,6 @@ def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
         help=(
             "Additional WIP title prefix. Can be repeated. "
             "Defaults to the common Forgejo/Gitea prefixes WIP: and [WIP]."
-        ),
-    )
-    p.add_argument(
-        "--triage-on-ci-failure",
-        action="store_true",
-        help=(
-            "When the head commit has failing CI jobs (ERROR/FAILURE), do not stop "
-            "immediately. If your LLM review command is configured for triage "
-            "(e.g. pr_review_wrapper.py with --triage-model), run it so the "
-            "mini model can post a short reply_no_verdict pointing at the failure. "
-            "Once every failing context was already mentioned in a prior comment by "
-            "fairy, triage runs in its normal mode and may engage the full review. "
-            "Requires --llm-review-cmd and a command line that includes "
-            "--triage-model."
         ),
     )
     p.add_argument(
@@ -1043,10 +1027,10 @@ def effective_commit_statuses(statuses: list[ApiObject]) -> dict[str, tuple[str,
     return result
 
 
-# Commit contexts whose latest state is one of these get a possible
-# ``ci_triage`` nag. PENDING / NEUTRAL etc. do not: we still skip those
-# PRs early without calling the LLM (same as before, but without treating
-# them as "failure" notifications).
+# Commit contexts whose latest state is one of these enter the
+# ``ci_triage`` payload. PENDING / NEUTRAL etc. do not: we still skip
+# those PRs early without calling the LLM (same as before, but without
+# treating them as "failure" notifications).
 CI_TRIAGE_NAG_STATES: frozenset[str] = frozenset({"FAILURE", "ERROR"})
 
 
@@ -1193,86 +1177,13 @@ def attach_ci_failure_logs(
             )
 
 
-def collect_self_comment_bodies(
-    self_login: str | None,
-    reviews: list[ApiObject],
-    comments: list[ApiObject],
-    review_comments: list[ApiObject],
-) -> list[str]:
-    if not self_login:
-        return []
-    bodies: list[str] = []
-    for item in (*comments, *review_comments, *reviews):
-        if get_item_author_login(item) != self_login:
-            continue
-        body = item.get("body")
-        if isinstance(body, str) and body.strip():
-            bodies.append(body)
-    return bodies
-
-
-# Forgejo/Gitea Actions append the workflow trigger event to a status
-# context name, e.g. ``Test / Fate (Full, wine) (pull_request)`` or
-# ``/ pr_labeler (pull_request_target)`` (captured from code.ffmpeg.org;
-# see tests/test_cancelled_ci_handling.py fixtures). The event is always a
-# snake_case token, so stripping a trailing ``(event)`` leaves a real
-# matrix parenthetical -- ``(Full, wine)``, ``(32 bit)`` -- untouched.
-_CI_EVENT_SUFFIX_RE = re.compile(r"\s*\([a-z_]+\)\s*$")
-
-
-def strip_ci_event_suffix(context: str) -> str:
-    return _CI_EVENT_SUFFIX_RE.sub("", context)
-
-
-def fairy_mentioned_ci_context(
-    context: str,
-    target_url: str,
-    bodies: list[str],
-) -> bool:
-    # Match on the event-suffix-stripped name: fairy quotes the bare job
-    # name (``Test / Fate (Full, wine)``) in her heads-up, while the raw
-    # context carries the ``(pull_request)`` suffix, so a verbatim
-    # ``context in body`` never hit and she re-announced the same red jobs
-    # after every push/CI re-run. target_url is per-run and cannot dedup
-    # across re-runs, so the name is the durable signal.
-    name = strip_ci_event_suffix(context)
-    return any(
-        (name and name in b) or (target_url and target_url in b)
-        for b in bodies
-    )
-
-
-def partition_ci_announcement(
-    details: list[dict[str, object]],
-    bodies: list[str],
-) -> tuple[list[str], list[str]]:
-    """``mentioned`` and ``need`` are parallel lists of context names."""
-    mentioned: list[str] = []
-    need: list[str] = []
-    for d in details:
-        ctx = d.get("context")
-        if not isinstance(ctx, str) or not ctx:
-            continue
-        url = d.get("target_url")
-        url = url if isinstance(url, str) else ""
-        if fairy_mentioned_ci_context(ctx, url, bodies):
-            mentioned.append(ctx)
-        else:
-            need.append(ctx)
-    return mentioned, need
-
-
 def build_ci_triage_payload(
     head_sha: str,
     failure_details: list[dict[str, object]],
-    fairy_bodies: list[str],
 ) -> JsonObject:
-    men, need = partition_ci_announcement(failure_details, fairy_bodies)
     return {
         "head_sha": head_sha,
         "failure_contexts": failure_details,
-        "contexts_bot_already_mentioned": men,
-        "contexts_still_requiring_announcement": need,
     }
 
 
@@ -2374,11 +2285,6 @@ def prepare_pr(
         cache=cache,
         cache_max_age=discussion_cache_max_age,
     )
-    # For CI nag deduplication, scan fairy's *full* comment history on this
-    # PR (before --simulate-past filtering) so a prior heads-up is not re-sent.
-    fairy_bodies_for_ci = collect_self_comment_bodies(
-        self_login, reviews, comments, review_comments
-    )
     ignore_after = args.simulate_past
     reviews = filter_activity_after(
         reviews,
@@ -2556,9 +2462,7 @@ def prepare_pr(
                 )
             if fd:
                 attach_ci_failure_logs(args, fd)
-                ci_triage_payload = build_ci_triage_payload(
-                    head_ref_for_ci, fd, fairy_bodies_for_ci
-                )
+                ci_triage_payload = build_ci_triage_payload(head_ref_for_ci, fd)
                 if args.verbose:
                     logger.debug(
                         "PR #%d: forced review; attached ci_triage with %d "
@@ -2717,78 +2621,39 @@ def prepare_pr(
                 cancelled_ci_contexts=cancelled_ctxs,
                 blocked_ci_contexts=blocked_ctxs,
             )
-        if args.triage_on_ci_failure:
-            if not args.llm_review_cmd:
-                return skip(
-                    "CI not successful (--triage-on-ci-failure requires --llm-review-cmd); "
-                    f"{preview}",
-                    last_activity_value=last_activity,
-                    cancelled_ci_contexts=cancelled_ctxs,
-                    blocked_ci_contexts=blocked_ctxs,
-                )
-            if "--triage-model" not in (args.llm_review_cmd or ""):
-                return skip(
-                    "CI not successful; --triage-on-ci-failure needs --triage-model in --llm-review-cmd; "
-                    f"{preview}",
-                    last_activity_value=last_activity,
-                    cancelled_ci_contexts=cancelled_ctxs,
-                    blocked_ci_contexts=blocked_ctxs,
-                )
-            ci_payload = build_ci_triage_payload(
-                get_pr_head_ref(pr) or "", failure_details, fairy_bodies_for_ci
-            )
-            need = ci_payload["contexts_still_requiring_announcement"]
-            assert isinstance(need, list)
-            # CI-failure triage is a proactive LLM action, so honor the
-            # same discussion-inactivity gate as the normal approval path.
-            # Forced-review signals (@mention / requested reviewer) have
-            # already been handled earlier and never reach here.
-            triage_min = effective_min_age_days(args, reviews, self_login)
-            if last_activity > now - timedelta(days=triage_min):
-                return skip(
-                    "CI ERROR/FAILURE: last activity is newer than --min-age-days "
-                    f"({triage_min}); not running CI triage yet",
-                    last_activity_value=last_activity,
-                    cancelled_ci_contexts=cancelled_ctxs,
-                    blocked_ci_contexts=blocked_ctxs,
-                )
-            if args.verbose:
-                logger.info(
-                    "PR #%d: CI triage: %d job(s) still need announcement: %s",
-                    number,
-                    len(need),
-                    ", ".join(need) if need else "-",
-                )
-            attach_ci_failure_logs(args, failure_details)
-            auto_merge_value = get_auto_merge()
-            base_reason = (
-                f"CI triage (head not green): {len(need)} job(s) not yet "
-                f"mentioned by bot: {', '.join(need[:6])}"
-                f"{'...' if len(need) > 6 else ''}"
-                if need else
-                f"CI red but all {len(failure_details)} failing job(s) already "
-                "announced; triage decides skip/reply/engage"
-            )
-            return PreparedPR(
-                pr=pr,
-                number=number,
-                title=title,
-                author=author,
-                auto_merge=auto_merge_value,
-                last_activity=last_activity,
-                base_reason=base_reason,
-                discussion=build_llm_discussion(reviews, comments, review_comments, get_timeline()),
-                reviewer_username=self_login,
-                ci_triage=ci_payload,
+        if not args.llm_review_cmd:
+            # Red CI is reviewable only through the LLM pipeline; the
+            # no-LLM auto-approve path must never approve a red head.
+            return skip(
+                f"CI not successful: {preview}",
+                last_activity_value=last_activity,
                 cancelled_ci_contexts=cancelled_ctxs,
                 blocked_ci_contexts=blocked_ctxs,
-                external_approvers=external_approvers,
             )
-        return skip(
-            f"CI not successful: {preview}",
-            last_activity_value=last_activity,
+        ci_payload = build_ci_triage_payload(
+            get_pr_head_ref(pr) or "", failure_details
+        )
+        attach_ci_failure_logs(args, failure_details)
+        red_names = [str(d.get("context") or "?") for d in failure_details]
+        base_reason = (
+            f"CI red ({len(red_names)} ERROR/FAILURE job(s)): "
+            f"{', '.join(red_names[:6])}"
+            f"{'...' if len(red_names) > 6 else ''}"
+        )
+        return PreparedPR(
+            pr=pr,
+            number=number,
+            title=title,
+            author=author,
+            auto_merge=get_auto_merge(),
+            last_activity=last_activity,
+            base_reason=base_reason,
+            discussion=build_llm_discussion(reviews, comments, review_comments, get_timeline()),
+            reviewer_username=self_login,
+            ci_triage=ci_payload,
             cancelled_ci_contexts=cancelled_ctxs,
             blocked_ci_contexts=blocked_ctxs,
+            external_approvers=external_approvers,
         )
 
     auto_merge_value = get_auto_merge()

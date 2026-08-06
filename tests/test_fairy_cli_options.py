@@ -64,22 +64,10 @@ OLD = "2026-06-01T00:00:00Z"
 HUMAN_COMMENT = {"user": {"login": "dev"}, "created_at": OLD,
                  "updated_at": OLD, "body": "please have a look"}
 
-FAIRY_CI_HEADS_UP = {"user": {"login": "fairy"},
-                     "created_at": "2026-06-02T00:00:00Z",
-                     "updated_at": "2026-06-02T00:00:00Z",
-                     "body": "heads-up: the / build job is red"}
-
-NEWER_HUMAN_COMMENT = {"user": {"login": "dev"},
-                       "created_at": "2026-06-03T00:00:00Z",
-                       "updated_at": "2026-06-03T00:00:00Z",
-                       "body": "thanks, looking"}
-
 FAILING_CI = [{"context": "/ build", "state": "failure",
                "description": "Tests failed in 2m13s",
                "target_url": "/o/r/actions/runs/1/jobs/0",
                "created_at": OLD, "updated_at": OLD}]
-
-TRIAGE_CMD = "--llm-review-cmd 'wrapper --triage-model openai:mini'"
 
 
 def pr_ns(flags: str = "") -> argparse.Namespace:
@@ -117,61 +105,21 @@ class PrepareCase(unittest.TestCase):
                 discussion_cache_max_age=timedelta(hours=1))
 
 
-class TriageOnCiFailureTests(PrepareCase):
-    """--triage-on-ci-failure decides whether a CI-red PR stops at a
-    skip or reaches the triage LLM with a failure payload."""
+class RedCiRoutingTests(PrepareCase):
+    """A CI-red PR reaches the LLM pipeline with the failure payload;
+    only the no-LLM auto-approve mode still stops at a skip."""
 
-    def test_without_the_flag_red_ci_stops_at_a_skip(self) -> None:
-        decision = self.prepare(TRIAGE_CMD + " --patch-repo /p")
+    def test_without_llm_review_cmd_red_ci_stops_at_a_skip(self) -> None:
+        decision = self.prepare("")
         self.assertEqual(decision.action, "skip")
         self.assertEqual(decision.reason, "CI not successful: / build")
 
-    def test_the_flag_sends_the_failing_contexts_to_the_llm(self) -> None:
-        prepared = self.prepare(
-            "--triage-on-ci-failure " + TRIAGE_CMD + " --patch-repo /p")
-        self.assertEqual(
-            prepared.ci_triage["contexts_still_requiring_announcement"],
-            ["/ build"])
-        self.assertIn("CI triage", prepared.base_reason)
-
-    def test_the_flag_needs_an_llm_review_cmd_and_says_so(self) -> None:
-        decision = self.prepare("--triage-on-ci-failure")
-        self.assertEqual(decision.action, "skip")
-        self.assertIn("requires --llm-review-cmd", decision.reason)
-
-    def test_the_flag_needs_a_triage_model_and_says_so(self) -> None:
-        decision = self.prepare(
-            "--triage-on-ci-failure --llm-review-cmd wrapper --patch-repo /p")
-        self.assertEqual(decision.action, "skip")
-        self.assertIn("needs --triage-model", decision.reason)
-
-    def test_an_already_announced_failure_still_reaches_the_wrapper(self) -> None:
-        """An all-announced red PR flows to the wrapper instead of
-        skipping; the empty ``contexts_still_requiring_announcement``
-        is what switches the triager off the announce-mode prompt
-        (pr_review_wrapper.ci_announce_pending), so a red-CI PR can
-        still reach a full review."""
-        prepared = self.prepare(
-            "--triage-on-ci-failure " + TRIAGE_CMD + " --patch-repo /p",
-            comments=[FAIRY_CI_HEADS_UP, NEWER_HUMAN_COMMENT],
-            self_login="fairy")
-        self.assertEqual(
-            prepared.ci_triage["contexts_bot_already_mentioned"], ["/ build"])
-        self.assertEqual(
-            prepared.ci_triage["contexts_still_requiring_announcement"], [])
-        self.assertIn("already announced", prepared.base_reason)
-
-    def test_a_newly_red_job_still_reaches_the_wrapper(self) -> None:
-        prepared = self.prepare(
-            "--triage-on-ci-failure " + TRIAGE_CMD + " --patch-repo /p",
-            comments=[FAIRY_CI_HEADS_UP, NEWER_HUMAN_COMMENT],
-            self_login="fairy",
-            statuses=FAILING_CI + [dict(FAILING_CI[0], context="/ fate")])
-        self.assertEqual(
-            prepared.ci_triage["contexts_bot_already_mentioned"], ["/ build"])
-        self.assertEqual(
-            prepared.ci_triage["contexts_still_requiring_announcement"],
-            ["/ fate"])
+    def test_red_ci_reaches_the_wrapper_with_the_failure_payload(self) -> None:
+        prepared = self.prepare("--llm-review-cmd wrapper --patch-repo /p")
+        self.assertEqual(prepared.ci_triage["head_sha"], "h1")
+        contexts = prepared.ci_triage["failure_contexts"]
+        self.assertEqual([d["context"] for d in contexts], ["/ build"])
+        self.assertIn("CI red", prepared.base_reason)
 
 
 class MissingCiGateTests(PrepareCase):
@@ -201,11 +149,6 @@ class MissingCiGateTests(PrepareCase):
         self.assertEqual(decision.action, "skip")
         self.assertEqual(decision.reason,
                          "no commit statuses / CI results found")
-
-    def test_statuses_that_do_exist_still_gate_the_llm_review(self) -> None:
-        decision = self.prepare("--llm-review-cmd wrapper --patch-repo /p")
-        self.assertEqual(decision.action, "skip")
-        self.assertEqual(decision.reason, "CI not successful: / build")
 
 
 class ApproveMessageTests(unittest.TestCase):

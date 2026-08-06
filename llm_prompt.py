@@ -523,36 +523,19 @@ internal explanation of why you chose that route; it is logged but not
 posted to Forgejo.
 """
 
-# Shared by the triage and reviewer prompts whenever the head commit has
+# Appended to the reviewer/combiner prompts whenever the head commit has
 # red CI: describes the ci_triage object (incl. the log_tail excerpt) and
-# how to talk about the failures. Kept route-agnostic so both the triager
-# and the reviewer can be handed the same text.
-CRT_PROMPT_CI_FAILURE_DATA = """## CI failure mode (this request)
+# how to talk about the failures. The triager sees the same payload in
+# its user message instead.
+CR_PROMPT_CI_FAILURE_DATA = """## CI failure mode (this request)
 The pull request head commit has at least one CI job in ERROR or FAILURE
 (see the JSON object ci_triage in the user message). That object lists
-per-context status text, links, first/last failing timestamps, a log_tail
-excerpt (the last lines of each failing job's log), and which contexts the
-bot already mentioned in prior comments.
+per-context status text, links, first/last failing timestamps, and a
+log_tail excerpt (the last lines of each failing job's log).
 
 Include any likely cause you can see. Do not invent a cause and be clear
 and honest if you have a strong guess. Quote the CI description field when
 useful and include the target_url when present.
-"""
-
-T_PROMPT_TRIAGE_CI_MODE = CRT_PROMPT_CI_FAILURE_DATA + """
-You SHOULD NOT choose engage. A full code review is inappropriate when
-the tree may not build; if a code review would otherwise be warranted,
-choose skip and explain briefly in reason.
-
-Prefer skip when: the failure is very recent, humans already discuss
-it, the author clearly knows, or a note would duplicate the description
-already in thread.
-
-Choose reply_no_verdict if a short list would help someone who may not have
-noticed a long-standing red job.
-
-If contexts_still_requiring_announcement is empty, choose skip
-(this state should be rare— the caller normally filters it out).
 """
 
 I_PROMPT_ISSUE_INVESTIGATOR_ROLE = """##In your Issue investigator role
@@ -745,7 +728,7 @@ def make_developer_prompt(
             container_repo_mounts=container_repo_mounts,
             machines=machines,
         )
-        + (CRT_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
+        + (CR_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
         + crt_prompt_issue_policy(ctx.reviews_code)
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
@@ -840,7 +823,7 @@ def make_combiner_developer_prompt(
             container_repo_mounts=container_repo_mounts,
             machines=machines,
         )
-        + (CRT_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
+        + (CR_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
         + crt_prompt_issue_policy(True)
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
@@ -863,7 +846,6 @@ def make_triage_developer_prompt(
     *,
     ctx: PromptFor,
     project_facts: str = "",
-    ci_triage_mode: bool = False,
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
     machines: Sequence[ShellHostSpec] = (),
@@ -892,7 +874,6 @@ def make_triage_developer_prompt(
         + T_PROMPT_TRIAGE_TASK
         + t_prompt_user_request(allowed_models or [])
         + prompt_triage_labels(allowed_labels or [])
-        + (T_PROMPT_TRIAGE_CI_MODE if ci_triage_mode else "")
         + prompt_persistence_and_verification(ctx)
     )
 
@@ -1145,7 +1126,7 @@ def make_triage_user_text(request: JsonObject, patch_was_truncated: bool) -> str
     if isinstance(ci, dict) and ci:
         parts.extend(
             [
-                "\nCI triage data from the caller (commit statuses / dedup), JSON:\n",
+                "\nCI failure data from the caller (commit statuses), JSON:\n",
                 f"{json.dumps(ci, ensure_ascii=False, indent=2)}\n",
             ]
         )
@@ -1305,7 +1286,6 @@ def generate_llm_prompt(
             container_repo_mounts,
             ctx=ctx,
             project_facts=project_facts,
-            ci_triage_mode=ci_triage_mode,
             allowed_models=allowed_models,
             allowed_labels=allowed_labels,
             machines=machines,

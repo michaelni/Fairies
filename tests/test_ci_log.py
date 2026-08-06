@@ -202,7 +202,7 @@ class AttachCiFailureLogsTests(unittest.TestCase):
         # the payload is built must still surface in failure_contexts.
         args = argparse.Namespace(ci_failure_log_lines=300)
         details = self._details()
-        payload = fairy.build_ci_triage_payload("deadbeef", details, [])
+        payload = fairy.build_ci_triage_payload("deadbeef", details)
         with mock.patch.object(
             fairy.ci_log, "fetch_job_log_tail", return_value="tail-text",
         ):

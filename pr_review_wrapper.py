@@ -761,19 +761,6 @@ def read_request() -> JsonObject:
     return data
 
 
-def ci_announce_pending(request: JsonObject) -> bool:
-    """True while some failing CI context still needs fairy's heads-up.
-
-    Selects the announce-mode triage prompt (T_PROMPT_TRIAGE_CI_MODE,
-    which forbids ``engage``); once every failure was announced the
-    triager runs its normal prompt, so a red-CI PR can still reach a
-    full review. The reviewer's CI-failure data section is independent
-    of this: it rides on ``ci_triage`` presence alone.
-    """
-    ci = request.get("ci_triage")
-    return isinstance(ci, dict) and bool(ci.get("contexts_still_requiring_announcement"))
-
-
 def find_repo_root(explicit: str | None) -> Path | None:
     if explicit:
         path = Path(explicit).expanduser().resolve()
@@ -1346,8 +1333,7 @@ def main() -> int:
     # run the full reviewer pass even when triage votes ``skip``.
     ignore_triage_skip = bool(request.get("ignore_triage_skip"))
     # Cross-process contract with fairy's --force-engage: run the
-    # full reviewer pass regardless of the triage route (skip / reply_no_verdict)
-    # and even when triage itself fails on a CI-red request.
+    # full reviewer pass regardless of the triage route (skip / reply_no_verdict).
     force_engage = bool(request.get("force_engage"))
 
     patch = request.get("patch") if isinstance(request.get("patch"), str) else ""
@@ -1580,7 +1566,7 @@ def main() -> int:
                 source_files=[],
                 source_notes=[],
                 reviewer_username=reviewer_username,
-                ci_triage_mode=ci_announce_pending(request),
+                ci_triage_mode=ci_triage_active,
                 repo_roots=repo_roots,
                 repo_mount_paths=repo_mount_paths,
                 project_facts=project_facts,
@@ -1603,13 +1589,6 @@ def main() -> int:
             if triage_result is not None:
                 workset_note_triage(args, triage_result)
             if triage_result is None:
-                if ci_triage_active and not force_engage:
-                    logger.warning(
-                        "triage stage failed on CI triage request; skipping main "
-                        "reviewer pass (unsafe to run full review when CI is red)"
-                    )
-                    emit_review_stdout("skip", "")
-                    return 0
                 logger.warning(
                     "triage stage failed; falling through to main reviewer pass"
                 )

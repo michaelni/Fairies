@@ -27,13 +27,15 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Pins the CI-failure-data factoring in ``llm_prompt``.
+Pins the CI-failure-data wiring in ``llm_prompt``.
 
-The ``log_tail`` / failure-listing guidance is shared by the triager and
-the reviewer: the triage CI-mode prompt is built on top of it, and the
-reviewer prompt includes it only when the head CI is red. These tests
+The reviewer/combiner developer prompt carries the ``log_tail`` /
+failure-listing guidance only when the head CI is red; the triager has
+no CI-mode prompt at all (the CI-red announcement path was removed) and
+sees the ``ci_triage`` payload in its user message instead. These tests
 guard that wiring so the reviewer does not silently lose (or always
-carry) the CI failure context.
+carry) the CI failure context and no engage-blocking CI mode creeps
+back into the triager.
 """
 
 from __future__ import annotations
@@ -47,7 +49,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import llm_prompt  # noqa: E402
-import pr_review_wrapper  # noqa: E402
 
 
 def _prompt(role: str, *, ci_triage_mode: bool) -> str:
@@ -68,45 +69,32 @@ def _reviewer_prompt(*, ci_failures_present: bool) -> str:
 
 
 class CiFailureDataFactoringTests(unittest.TestCase):
-    def test_triage_ci_mode_is_built_on_shared_snippet(self) -> None:
-        self.assertTrue(
-            llm_prompt.T_PROMPT_TRIAGE_CI_MODE.startswith(
-                llm_prompt.CRT_PROMPT_CI_FAILURE_DATA
-            )
-        )
-        # The triage-only routing guidance still rides along.
-        self.assertIn("SHOULD NOT choose engage", llm_prompt.T_PROMPT_TRIAGE_CI_MODE)
-
     def test_reviewer_gets_ci_data_only_on_red_ci(self) -> None:
         self.assertIn("log_tail", _reviewer_prompt(ci_failures_present=True))
         self.assertNotIn("log_tail", _reviewer_prompt(ci_failures_present=False))
 
-    def test_reviewer_ci_data_omits_triage_routing(self) -> None:
-        # The reviewer engages a real review; the triage route guidance
-        # ("SHOULD NOT choose engage") must not leak into its prompt.
-        self.assertNotIn(
-            "SHOULD NOT choose engage", _reviewer_prompt(ci_failures_present=True)
+    def test_triager_prompt_has_no_ci_mode(self) -> None:
+        # Red CI must not steer the triager away from ``engage``: the
+        # developer prompt is identical for green and red heads.
+        self.assertEqual(
+            _prompt("triager", ci_triage_mode=True),
+            _prompt("triager", ci_triage_mode=False),
         )
-
-    def test_triager_forbids_engage_only_in_announce_mode(self) -> None:
-        self.assertIn(
-            "SHOULD NOT choose engage", _prompt("triager", ci_triage_mode=True))
         self.assertNotIn(
-            "SHOULD NOT choose engage", _prompt("triager", ci_triage_mode=False))
+            "CI failure mode", _prompt("triager", ci_triage_mode=True))
 
-    def test_announce_mode_ends_when_every_context_was_announced(self) -> None:
-        """The wrapper keys the triager's announce-mode prompt off
-        ``contexts_still_requiring_announcement``, not off ``ci_triage``
-        presence, so an all-announced red PR is triaged with the normal
-        prompt and may route ``engage``."""
-        pending = {"ci_triage": {
-            "contexts_still_requiring_announcement": ["/ build"]}}
-        announced = {"ci_triage": {
-            "contexts_still_requiring_announcement": [],
-            "contexts_bot_already_mentioned": ["/ build"]}}
-        self.assertTrue(pr_review_wrapper.ci_announce_pending(pending))
-        self.assertFalse(pr_review_wrapper.ci_announce_pending(announced))
-        self.assertFalse(pr_review_wrapper.ci_announce_pending({}))
+    def test_ci_data_is_dumped_into_the_triage_user_text(self) -> None:
+        request = {
+            "pull_request": {"number": 1},
+            "ci_triage": {
+                "head_sha": "h1",
+                "failure_contexts": [
+                    {"context": "/ build", "log_tail": "make: *** error"}],
+            },
+        }
+        text = llm_prompt.make_triage_user_text(request, False)
+        self.assertIn("make: *** error", text)
+        self.assertIn("CI failure data from the caller", text)
 
 
 if __name__ == "__main__":

@@ -771,6 +771,44 @@ class DetailTests(DbCase):
         self.assertIn("state reviewed", text)
         self.assertIn("comment", text)  # rebuilt decision's action
 
+    def test_discussion_thread_renders_below_the_message(self) -> None:
+        disc = [
+            {"kind": "comment", "author": "carol",
+             "created_at": "2026-07-18T09:00:00Z", "body": "please **rebase**",
+             "attachment_urls": ["https://forge/attachments/1"]},
+            {"kind": "review", "author": "dave", "state": "APPROVED",
+             "submitted_at": "2026-07-18T10:00:00Z", "body": "LGTM"},
+            {"kind": "review_comment", "author": "erin",
+             "created_at": "2026-07-18T11:00:00Z", "path": "src/x.c",
+             "line": 42, "body": "off by one"},
+            {"kind": "push", "author": "a",
+             "created_at": "2026-07-18T12:00:00Z",
+             "head_sha": "abcdef1234567890", "is_force_push": True,
+             "commit_count": 2},
+        ]
+        self.db.push("reviewed", "pr", "5",
+                     verdict(5, msg="persisted body", discussion=disc))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("discussion (4)", text)
+        self.assertIn("carol  comment  2026-07-18", text)
+        self.assertIn("rebase", text)
+        self.assertIn("https://forge/attachments/1", text)
+        self.assertIn("dave  review APPROVED", text)
+        self.assertIn("erin  review_comment  src/x.c:42", text)
+        self.assertIn("a  force-pushed 2 commit(s) abcdef1234", text)
+        self.assertLess(text.index("persisted body"), text.index("carol"))
+
+    def test_queued_ticket_shows_the_thread_from_its_prepared_payload(self) -> None:
+        self.db.push("queued", "pr", "5", {"title": "t", "prepared": {
+            "discussion": [{"kind": "comment", "author": "carol",
+                            "created_at": "2026-07-18T09:00:00Z",
+                            "body": "still applies?"}]}})
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("discussion (1)", text)
+        self.assertIn("still applies?", text)
+
     def test_author_and_branch_are_shown(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, head_branch="fix-lavc"))
         self.model.poll()

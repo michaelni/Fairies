@@ -39,8 +39,9 @@ fresh gate-bypassing ticket, o edits the persisted review message.
 The agent and LLM workers are separate processes; the UI composes
 with them but none of them needs it running. Panes: stats (top left),
 ticket list (top right), merged tail of the processes' log files
-(bottom left), rendered review message + label changes (bottom
-right). Dividers move with the mouse.
+(bottom left), rendered review message + label changes + the
+discussion the review replied to (bottom right). Dividers move
+with the mouse.
 
 What belongs here: everything terminal-facing -- blessed painting,
 key/mouse dispatch, the directory poll and the log tail.
@@ -248,7 +249,10 @@ class Model:
                 continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                data.pop("prepared", None)  # multi-MB payload; never shown
+                # multi-MB payload; only its discussion is shown
+                prepared = data.pop("prepared", None)
+                if isinstance(prepared, dict) and prepared.get("discussion"):
+                    data.setdefault("discussion", prepared["discussion"])
                 updates.append((key, state, data, ""))
             except (FileNotFoundError, IsADirectoryError):
                 continue
@@ -1091,8 +1095,32 @@ class UILoop:
                 head.append([("label", fieldname.replace("_", " ") + ": "),
                              ("text", ", ".join(map(str, vals))[:width])])
         head.append([])
+        tail: list[tui_core.StyledLine] = []
+        disc = data.get("discussion") or []
+        if disc:
+            tail += [[], [("h3", f"discussion ({len(disc)})"[:width])]]
+        for c in disc:
+            if not isinstance(c, dict):
+                continue
+            when = _when(str(c.get("submitted_at") or c.get("updated_at")
+                             or c.get("created_at") or ""))
+            if c.get("kind") == "push":
+                what = ("force-pushed" if c.get("is_force_push") else "pushed") \
+                    + f" {c.get('commit_count')} commit(s) {str(c.get('head_sha') or '')[:10]}"
+            else:
+                what = " ".join(str(c[k]) for k in ("kind", "state") if c.get(k))
+                if c.get("path"):
+                    what += f"  {c['path']}" \
+                        + (f":{c['line']}" if c.get("line") is not None else "")
+            tail.append([])
+            tail.append([("h4", str(c.get("author") or "?")),
+                         ("label", f"  {what}  {when}"[:width])])
+            if c.get("body"):
+                tail += tui_core.render_markdown(str(c["body"]), width)
+            for url in c.get("attachment_urls") or []:
+                tail.append([("link", str(url)[:width])])
         if not review:
-            return head + [[("text", f"({item.state}: no review)")]]
+            return head + [[("text", f"({item.state}: no review)")]] + tail
         labels = tui_core.render_markdown("\n".join(
             f"- {c.get('op')} **{c.get('label')}**"
             + (f" — {c.get('reason')}" if c.get("reason") else "")
@@ -1102,7 +1130,7 @@ class UILoop:
         if labels:
             labels.append([])
         return head + labels + tui_core.render_markdown(
-            review.get("message") or "", width)
+            review.get("message") or "", width) + tail
 
     def paint(self) -> None:
         self._last_paint = time.monotonic()

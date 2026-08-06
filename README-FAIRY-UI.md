@@ -42,8 +42,10 @@ focus, arrows / `PgUp` / `PgDn` scroll the focused pane.
   the author's fork unless it lives in the reviewed repo), errors and
   send blocks with local date and age, dropped reviewers, the action a
   `y` would perform, state and verdict with when the review was
-  generated, gate reasons, CI contexts, label changes, and the
-  markdown-rendered review message.
+  generated, gate reasons, CI contexts, label changes, the
+  markdown-rendered review message, and below it the discussion the
+  review replied to — every comment, review, inline review comment and
+  push, each under an `author  kind  date` header line.
 
 ## The list
 

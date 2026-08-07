@@ -1097,6 +1097,9 @@ class UILoop:
         head.append([])
         tail: list[tui_core.StyledLine] = []
         disc = data.get("discussion") or []
+        if data.get("body"):
+            disc = [{"kind": "description", "author": data.get("author"),
+                     "body": data["body"]}] + disc
         if disc:
             tail += [[], [("h3", f"discussion ({len(disc)})"[:width])]]
         for c in disc:

@@ -385,6 +385,16 @@ class ReuseTests(AgentCase):
         self.assertEqual(ticket["author"], "a")
         self.assertEqual(ticket["head_branch"], "b1")
 
+    def test_the_opening_description_reaches_queued_and_gate_tickets(self) -> None:
+        self.scan([dict(make_pr(1), body="the initial message")])
+        self.assertEqual(self.db.get("queued", "pr", "1")["body"],
+                         "the initial message")
+        self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(
+            pr, "ci red", cancelled_ci_contexts=("job1",))
+        self.scan([dict(make_pr(2), body="another opener")])
+        self.assertEqual(self.db.get("ci-blocked", "pr", "2")["body"],
+                         "another opener")
+
     def test_a_send_blocked_verdict_awaits_the_operator_in_manual_mode(self) -> None:
         """Production #23863: y was guard-blocked, the next scan's
         re-prepare gate-skipped, and the approve verdict was destroyed.

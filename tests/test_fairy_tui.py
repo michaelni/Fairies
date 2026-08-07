@@ -771,6 +771,20 @@ class DetailTests(DbCase):
         self.assertIn("state reviewed", text)
         self.assertIn("comment", text)  # rebuilt decision's action
 
+    def test_the_opening_description_leads_the_thread(self) -> None:
+        """An item whose only text is its description (no comments yet)
+        showed an empty thread while the forge web UI showed the post."""
+        self.db.push("reviewed", "pr", "5", verdict(
+            5, body="the initial message", discussion=[
+                {"kind": "comment", "author": "carol",
+                 "created_at": "2026-07-18T09:00:00Z", "body": "ack"}]))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("discussion (2)", text)
+        self.assertIn("a  description", text)
+        self.assertIn("the initial message", text)
+        self.assertLess(text.index("the initial message"), text.index("ack"))
+
     def test_discussion_thread_renders_below_the_message(self) -> None:
         disc = [
             {"kind": "comment", "author": "carol",

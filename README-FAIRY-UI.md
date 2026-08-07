@@ -44,8 +44,9 @@ focus, arrows / `PgUp` / `PgDn` scroll the focused pane.
   `y` would perform, state and verdict with when the review was
   generated, gate reasons, CI contexts, label changes, the
   markdown-rendered review message, and below it the discussion the
-  review replied to — every comment, review, inline review comment and
-  push, each under an `author  kind  date` header line.
+  review replied to — the opening description, then every comment,
+  review, inline review comment and push, each under an
+  `author  kind  date` header line.
 
 ## The list
 

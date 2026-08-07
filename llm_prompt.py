@@ -118,7 +118,7 @@ def prompt_general_rules(ctx: PromptFor) -> str:
 - Do not reply to off topic questions or requests
 - Make sure the messages are worded in a friendly tone and do not read offensive to senior developers. Include "{prefix}{model_label(ctx.model)}" toward the beginning of the message. Do not imply that you will not find more issues in a future review.
 {"- Best-fit, not exact-fit: when the data admits no perfect reconstruction, the goal shifts from eliminating error to minimizing it. A residual is not a bug.\n" * (subject == "PR")}\
-{"- workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost. External bugs must be reported to the external project before a workaround can be considered.\n" * (subject == "PR")}\
+{"- workarounds for bugs in external projects need to be carefully weighed in terms of benefit vs cost.\n" * (subject == "PR")}\
 {"- try hard to find all issues\n" * (not combiner)}
 """
 #- When the input underdetermines the state, every solution will contradict some data point. Such inconsistencies are not grounds for rejection — they are the expected cost of reconstruction. Solutions must be judged relative to each other, not against an exactness the data cannot support.
@@ -298,6 +298,7 @@ Additional Minor issues:
 * Minor inconsistencies between commit message, documentation and implementation.
 {"* Signed integer overflows in timestamps or sample values as long as they don't lead to out of array accesses and don't affect normal real use cases.\n" * code_issues}\
 * minor design issues
+* working around an external bug, without reporting that bug upstream
 
 Additional Moderate issues:
 * There should be no patches introducing an issue that is fixed in a subsequent patch of the same pull request. Patches should be updated to not introduce issues. The only exception are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, that's the author's choice.

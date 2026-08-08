@@ -250,7 +250,8 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         client = _ScriptedClient([
             _Message([_Block(type="tool_use", id="t1", name="submit_review",
                              input={"route": "engage", "message": "", "reason": "new code",
-                                    "prompt_injection": False})]),
+                                    "prompt_injection": False,
+                                    "requested_verbosity": None})]),
         ])
         role = make_triager_role(allowed_models=[], allowed_labels=[])
         reviewer = anthropic_reviewer.AnthropicReviewer(

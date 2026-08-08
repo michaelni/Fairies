@@ -105,7 +105,7 @@ class TriageInjectionTests(unittest.TestCase):
             )
         llm_review_api.check_schema(
             {"route": "skip", "message": "", "reason": "ok",
-             "prompt_injection": False}, schema,
+             "prompt_injection": False, "requested_verbosity": None}, schema,
         )
 
     def test_prompt_documents_the_field(self) -> None:
@@ -119,7 +119,7 @@ class TriageInjectionTests(unittest.TestCase):
         role = llm_prompt.make_triager_role(allowed_models=["gpt-5.4"], allowed_labels=[])
         result = role.validate({
             "route": "engage", "message": "", "reason": "ok",
-            "prompt_injection": False,
+            "prompt_injection": False, "requested_verbosity": None,
             "requested_models": [], "requested_effort": None,
         })
         self.assertEqual("engage", result["route"])

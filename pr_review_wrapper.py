@@ -93,6 +93,7 @@ import concurrency
 import llm_review_api
 from llm_review_api import (
     EXIT_BAD_MODEL_OUTPUT,
+    VERBOSITY_LEVELS,
     BadModelOutput,
     ProviderTurnFailed,
     ReviewContext,
@@ -383,18 +384,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--verbosity",
         default="high",
-        choices=["low", "medium", "high"],
-        help="Output verbosity for every stage (OpenAI ``text.verbosity`` / "
-             "codex ``model_verbosity``; default: high). "
+        choices=list(VERBOSITY_LEVELS),
+        help="Output verbosity for every stage (default: high). Currently "
+             "openai (``text.verbosity``) and codex (``model_verbosity``) "
+             "only; anthropic/zai have no verbosity parameter. "
              "--final-verbosity overrides it for the user-visible stage.",
     )
     p.add_argument(
         "--final-verbosity",
         default=None,
-        choices=["low", "medium", "high"],
+        choices=list(VERBOSITY_LEVELS),
         help="Verbosity for the stage whose message the user sees (the "
              "combiner when one is configured, else the single main "
-             "reviewer/investigator); default: --verbosity.",
+             "reviewer/investigator); default: --verbosity; overridden by "
+             "an explicit community request the triager relays "
+             "(``requested_verbosity``). Like --verbosity, openai/codex "
+             "only currently.",
     )
     p.add_argument(
         "--max-tool-calls",
@@ -1566,6 +1571,7 @@ def main() -> int:
         triage_label_allowlist = triage_label_allowlist_from_request(request)
         requested_models: list[str] = []
         requested_effort: str | None = None
+        requested_verbosity: str | None = None
 
         if args.triage_model:
             triager_role = make_triager_role(
@@ -1688,6 +1694,12 @@ def main() -> int:
                             "main pass reasoning effort set by user request: %r",
                             requested_effort,
                         )
+                    requested_verbosity = triage_result.get("requested_verbosity") or None
+                    if requested_verbosity:
+                        logger.info(
+                            "final stage verbosity set by user request: %r",
+                            requested_verbosity,
+                        )
                     logger.info(
                         "triage route=engage; reason=%r; running main reviewer pass",
                         triage_result.get("reason", ""),
@@ -1702,8 +1714,7 @@ def main() -> int:
         # the combiner whenever one is configured (it runs even on a
         # single draft), else the single reviewer.
         main_specs = requested_models or [args.model, *args.extra_model]
-        final_verbosity = (
-            args.final_verbosity if args.final_verbosity is not None else args.verbosity)
+        final_verbosity = requested_verbosity or args.final_verbosity or args.verbosity
         # A user request names models only, so each runs the task's own prompt.
         main_prompts = [None] * len(requested_models) if requested_models else args.main_prompts
         reviewer_labels = (

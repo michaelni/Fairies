@@ -60,6 +60,7 @@ def _engage(**extra: object) -> dict[str, object]:
         "reason": "user explicitly asked for re-review with gpt-5.5",
         "requested_models": [],
         "requested_effort": None,
+        "requested_verbosity": None,
     }
     base.update(extra)
     return base
@@ -77,6 +78,17 @@ class TriageSchemaShapeTests(unittest.TestCase):
         self.assertNotIn("requested_effort", properties)
         self.assertNotIn("requested_models", required)
         self.assertNotIn("requested_effort", required)
+
+    def test_requested_verbosity_is_always_on(self) -> None:
+        # Unlike the model/effort override there is no gate: verbosity
+        # is a bounded, cost-neutral knob, so every triage schema offers it.
+        for allowed_models in ([], ["gpt-5.5"]):
+            with self.subTest(allowed_models=allowed_models):
+                schema = llm_review_api.build_triage_schema(allowed_models)
+                field = schema["schema"]["properties"]["requested_verbosity"]
+                self.assertEqual(
+                    field["enum"], [None, *llm_review_api.VERBOSITY_LEVELS])
+                self.assertIn("requested_verbosity", schema["schema"]["required"])
 
     def test_enabled_schema_constrains_models_to_allowlist(self) -> None:
         schema = llm_review_api.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])
@@ -141,6 +153,12 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
         })
         self.assertEqual(result["requested_models"], [])
         self.assertIsNone(result["requested_effort"])
+        self.assertIsNone(result["requested_verbosity"])
+
+    def test_verbosity_passes_through(self) -> None:
+        result = llm_review_api.validate_triage_result(
+            _engage(requested_verbosity="low"))
+        self.assertEqual(result["requested_verbosity"], "low")
 
     def test_non_engage_routes_preserve_override_fields(self) -> None:
         # The override fields are only consumed on the engage path.
@@ -155,18 +173,24 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
                     "reason": "irrelevant",
                     "requested_models": ["gpt-5.5"],
                     "requested_effort": "high",
+                    "requested_verbosity": "low",
                 })
                 self.assertEqual(result["route"], route)
                 self.assertEqual(result["requested_models"], ["gpt-5.5"])
                 self.assertEqual(result["requested_effort"], "high")
+                self.assertEqual(result["requested_verbosity"], "low")
 
 
 class TriagePromptShapeTests(unittest.TestCase):
     """Pin the prompt-section behavior across allowlist states."""
 
-    def test_no_allowlist_emits_empty_prompt_section(self) -> None:
-        # Feature off -> no LLM-visible prompt content for the override.
-        self.assertEqual(llm_prompt.t_prompt_user_request([]), "")
+    def test_no_allowlist_offers_verbosity_only(self) -> None:
+        # Model/effort feature off -> no prompt text for those fields;
+        # the always-on verbosity request stays.
+        text = llm_prompt.t_prompt_user_request([])
+        self.assertNotIn("requested_models", text)
+        self.assertNotIn("requested_effort", text)
+        self.assertIn("requested_verbosity", text)
 
     def test_allowlist_lists_supported_models_and_efforts(self) -> None:
         text = llm_prompt.t_prompt_user_request(["gpt-5.4", "zai:glm-5.2"])
@@ -175,6 +199,7 @@ class TriagePromptShapeTests(unittest.TestCase):
         self.assertIn("up to two", text)
         for effort in llm_review_api.TRIAGE_REQUESTABLE_EFFORTS:
             self.assertIn(effort, text)
+        self.assertIn("requested_verbosity", text)
 
     def test_make_triage_developer_prompt_includes_user_request_section(self) -> None:
         prompt = llm_prompt.make_triage_developer_prompt(
@@ -191,9 +216,9 @@ class TriagePromptShapeTests(unittest.TestCase):
         self.assertIn("gpt-5.5", prompt)
 
     def test_make_triage_developer_prompt_off_has_no_override_text(self) -> None:
-        # When the feature is off the developer prompt must contain
-        # no mention of the override fields so the LLM does not see
-        # any conflicting instruction.
+        # When the model/effort feature is off the developer prompt must
+        # contain no mention of those override fields so the LLM does
+        # not see any conflicting instruction.
         prompt = llm_prompt.make_triage_developer_prompt(
             reviewer_username="fairy",
             repo_roots=[],

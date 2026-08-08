@@ -50,6 +50,7 @@ from llm_review_api import (
     ISSUE_REPORT_SCHEMA,
     REVIEW_SCHEMA,
     TRIAGE_REQUESTABLE_EFFORTS,
+    VERBOSITY_LEVELS,
     Review,
     ReviewContext,
     RoleSpec,
@@ -626,17 +627,19 @@ posted to Forgejo.
 
 
 def t_prompt_user_request(allowed_models: list[str]) -> str:
-    if not allowed_models:
-        return ""
     return (
-        "## User-requested model / effort\n"
-        f"Supported models: {', '.join(allowed_models)}. "
-        f"Supported efforts: {', '.join(TRIAGE_REQUESTABLE_EFFORTS)}.\n"
-        "If the community in this PR/Issue explicitly asks for specific\n"
-        "supported LLM models (up to two, which then review in parallel)\n"
-        "or an effort, set ``requested_models`` (in request order) and/or\n"
-        "``requested_effort`` accordingly.\n"
-        "If an unsupported model is requested, tell the user what is supported.\n"
+        "## User-requested review tuning\n"
+        + (
+            f"Supported models: {', '.join(allowed_models)}. "
+            f"Supported efforts: {', '.join(TRIAGE_REQUESTABLE_EFFORTS)}.\n"
+            "If the community in this PR/Issue explicitly asks for specific\n"
+            "supported LLM models (up to two, which then review in parallel)\n"
+            "or an effort, set ``requested_models`` (in request order) and/or\n"
+            "``requested_effort`` accordingly.\n"
+            "If an unsupported model is requested, tell the user what is supported.\n"
+        ) * bool(allowed_models)
+        + "If the community explicitly asks for a more or less verbose or\n"
+        + f"detailed review, set ``requested_verbosity`` ({', '.join(VERBOSITY_LEVELS)}).\n"
     )
 
 

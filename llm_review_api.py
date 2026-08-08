@@ -69,6 +69,7 @@ __all__ = [
     "TRIAGE_ROUTES",
     "TURN_FAILED_COMBINER_ATTEMPTS",
     "TURN_FAILED_REVIEWER_ATTEMPTS",
+    "VERBOSITY_LEVELS",
     "ENGAGE",
     "REVIEW_SCHEMA",
     "Z_AI_ANTHROPIC_URL",
@@ -137,6 +138,10 @@ TRIAGE_ROUTES = (*TERMINAL_ROUTES, ENGAGE)
 # Reasoning efforts a user may request for the main pass via the triager
 # (see ``t_prompt_user_request`` / ``build_triage_schema``).
 TRIAGE_REQUESTABLE_EFFORTS = ("medium", "high", "xhigh")
+
+# Output verbosity levels: the --verbosity / --final-verbosity choices
+# and the ``requested_verbosity`` values a user may ask the triager for.
+VERBOSITY_LEVELS = ("low", "medium", "high")
 
 # z.ai's Anthropic-compatible Messages endpoint. GLM is reached by pointing
 # the Anthropic reviewer at this base URL with a z.ai key.
@@ -496,7 +501,8 @@ def build_triage_schema(
     ``requested_models`` (array, each entry enum-constrained to the
     allowlist; at most two are honored) and ``requested_effort``
     (nullable, enum-constrained to ``TRIAGE_REQUESTABLE_EFFORTS``).
-    Strict mode enforces the enums on the wire so
+    ``requested_verbosity`` (nullable, ``VERBOSITY_LEVELS``) is always
+    present. Strict mode enforces the enums on the wire so
     ``validate_triage_result`` does not need to re-check the values.
     """
     properties: dict[str, object] = {
@@ -535,7 +541,15 @@ def build_triage_schema(
             ),
         },
     }
-    required = ["route", "message", "reason", "prompt_injection"]
+    properties["requested_verbosity"] = {
+        "type": ["string", "null"],
+        "enum": [None, *VERBOSITY_LEVELS],
+        "description": (
+            "Verbosity of the final review message from an explicit "
+            "user request, else null."
+        ),
+    }
+    required = ["route", "message", "reason", "prompt_injection", "requested_verbosity"]
     if allowed_models:
         properties["requested_models"] = {
             "type": "array",
@@ -593,10 +607,11 @@ def validate_triage_result(
       with empty message (caller will fall through to the main reviewer
       pass). A warning is logged.
 
-    The optional ``requested_models`` / ``requested_effort`` fields are
-    constrained by the schema (see ``build_triage_schema``); we just pass
-    them through, deduplicated (requesting the same model twice means one
-    run of it). Only the engage path consumes them.
+    The optional ``requested_models`` / ``requested_effort`` /
+    ``requested_verbosity`` fields are constrained by the schema (see
+    ``build_triage_schema``); we just pass them through, deduplicated
+    (requesting the same model twice means one run of it). Only the
+    engage path consumes them.
     """
     if not isinstance(obj, dict):
         raise RuntimeError("triage model output is not a JSON object")
@@ -623,6 +638,7 @@ def validate_triage_result(
 
     requested_models = list(dict.fromkeys(obj.get("requested_models") or []))
     requested_effort = obj.get("requested_effort")
+    requested_verbosity = obj.get("requested_verbosity")
     label_changes = sanitize_label_changes(obj.get("label_changes"), allowed_labels or [])
 
     if route == "reply_no_verdict" and not message.strip():
@@ -635,6 +651,7 @@ def validate_triage_result(
             "route": "engage", "message": "", "reason": reason,
             "requested_models": requested_models,
             "requested_effort": requested_effort,
+            "requested_verbosity": requested_verbosity,
             "label_changes": label_changes,
         }
 
@@ -652,6 +669,7 @@ def validate_triage_result(
         "reason": reason,
         "requested_models": requested_models,
         "requested_effort": requested_effort,
+        "requested_verbosity": requested_verbosity,
         "label_changes": label_changes,
     }
 

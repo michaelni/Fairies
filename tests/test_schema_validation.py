@@ -99,7 +99,7 @@ class CheckSchemaTests(unittest.TestCase):
         llm_review_api.check_schema(
             {
                 "route": "engage", "message": "", "reason": "ok",
-                "prompt_injection": False,
+                "prompt_injection": False, "requested_verbosity": None,
                 "requested_models": [], "requested_effort": "high",
                 "label_changes": [
                     {"label": "needs-review", "op": "add",
@@ -112,7 +112,7 @@ class CheckSchemaTests(unittest.TestCase):
             llm_review_api.check_schema(
                 {
                     "route": "engage", "message": "", "reason": "ok",
-                    "prompt_injection": False,
+                    "prompt_injection": False, "requested_verbosity": None,
                     "requested_models": [], "requested_effort": "high",
                     "label_changes": [{"label": "secret", "op": "add",
                                        "reason": "x", "post": True}],
@@ -125,7 +125,8 @@ class CheckSchemaTests(unittest.TestCase):
         # checker must enforce the same bound to stay in lockstep.
         schema = llm_review_api.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])["schema"]
         base = {"route": "engage", "message": "", "reason": "ok",
-                "prompt_injection": False, "requested_effort": None}
+                "prompt_injection": False, "requested_effort": None,
+                "requested_verbosity": None}
         llm_review_api.check_schema(
             {**base, "requested_models": ["gpt-5.4", "zai:glm-5.2"]}, schema,
         )

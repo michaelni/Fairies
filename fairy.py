@@ -87,6 +87,7 @@ import git_util
 import gcli_cache
 from common import (
     EXIT_REVIEW_HALTED,
+    EXIT_TURN_FAILED,
     JsonObject,
     add_color_arg,
     attachment_urls,
@@ -143,6 +144,13 @@ class LabelChange:
 
 class ReviewHalted(RuntimeError):
     """A review container is suspect; this PR must not be retried."""
+
+
+class ReviewTurnFailed(RuntimeError):
+    """The wrapper spent its in-run retry budget on provider-ended
+    turns (``EXIT_TURN_FAILED``): more outer attempts would re-run the
+    whole ensemble against the same content flag, so the item goes to
+    error/ and the agent's doubling backoff paces the next try."""
 
 
 @dataclass(frozen=True)
@@ -1851,6 +1859,11 @@ def invoke_llm_wrapper(
             "LLM review halted: the wrapper flagged a review container as "
             "suspect; inspect the paused container and the debug dumps"
         )
+    if cp.returncode == EXIT_TURN_FAILED:
+        raise ReviewTurnFailed(
+            "LLM review gave up: provider-ended turns exhausted the "
+            "wrapper's in-run retry budget"
+        )
     if cp.returncode != 0:
         raise RuntimeError(
             f"LLM review command failed with exit code {cp.returncode}; see stderr above"
@@ -1888,8 +1901,10 @@ def call_llm_with_retries(
     ``invoke`` receives the attempt's extra wrapper args (the
     flex->default service-tier fallback on the final attempt, else
     None; see ``flex_fallback_extra_args``). Re-raises the last error
-    when every attempt failed, and ``ReviewHalted`` immediately: a PR
-    that left a container suspect must not be run again.
+    when every attempt failed; ``ReviewHalted`` and ``ReviewTurnFailed``
+    immediately: a PR that left a container suspect must not be run
+    again, and a spent turn-failure budget makes more attempts of the
+    whole ensemble pointless.
     """
     max_attempts = max(1, int(getattr(args, "llm_max_attempts", 1) or 1))
     retry_delay = max(0.0, float(getattr(args, "llm_retry_delay", 0.0) or 0.0))
@@ -1905,7 +1920,7 @@ def call_llm_with_retries(
             )
         try:
             review = invoke(extra_cmd_args)
-        except (KeyboardInterrupt, ReviewHalted):
+        except (KeyboardInterrupt, ReviewHalted, ReviewTurnFailed):
             raise
         except Exception as exc:
             last_exc = exc

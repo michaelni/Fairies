@@ -60,6 +60,11 @@ JsonObject: TypeAlias = dict[str, JsonValue]
 # exit status, defined here so the wrapper and the fairy that spawns it
 # agree on it without either importing the other.
 EXIT_REVIEW_HALTED = 4
+# The wrapper's "provider-ended turns survived the in-run retry budget"
+# exit status: the outer --llm-max-attempts loop must not re-run the
+# ensemble against the same content flag, so fairy sends the item to
+# error/ where the agent's doubling backoff paces the next try.
+EXIT_TURN_FAILED = 5
 
 
 def response_to_debug_json(response: object) -> JsonObject:

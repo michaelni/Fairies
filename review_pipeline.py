@@ -44,13 +44,15 @@ import logging
 from typing import Callable
 
 from llm_review_api import (
+    TURN_FAILED_COMBINER_ATTEMPTS,
+    TURN_FAILED_REVIEWER_ATTEMPTS,
     Z_AI_ANTHROPIC_URL,
     BadModelOutput,
-    ProviderTurnFailed,
     Review,
     ReviewContext,
     Reviewer,
     RoleSpec,
+    review_with_turn_retries,
     run_parallel,
 )
 from openai_reviewer import (
@@ -225,11 +227,14 @@ def review_pr(
     (configured or surviving) draft: since its prompt diverged from the
     reviewer's, its verification and grading are no longer redundant.
     Without a combiner exactly one model reviewer is required.
-    A provider-ended combiner turn is retried once; failing again it
-    propagates, costing the caller's full-pipeline retry as before.
+    A provider-ended combiner turn is retried up to
+    ``TURN_FAILED_COMBINER_ATTEMPTS`` attempts; still failing it
+    propagates and the wrapper exits ``EXIT_TURN_FAILED``, which skips
+    the outer --llm-max-attempts loop.
     """
     if len(model_reviewers) == 1:
-        drafts = [model_reviewers[0].review(ctx)]
+        drafts = [review_with_turn_retries(
+            model_reviewers[0], ctx, TURN_FAILED_REVIEWER_ATTEMPTS)]
     else:
         drafts = run_parallel(model_reviewers, ctx)
     ctx.drafts.extend(drafts)
@@ -243,11 +248,4 @@ def review_pr(
         return drafts[0]
 
     logger.info("combine stage: %s merging %d draft(s)", combiner.name, len(drafts))
-    try:
-        return combiner.review(ctx)
-    except ProviderTurnFailed as exc:
-        logger.warning(
-            "combiner %s: provider ended the turn (%s); retrying once",
-            combiner.name, (str(exc).splitlines() or ["-"])[0][:160],
-        )
-        return combiner.review(ctx)
+    return review_with_turn_retries(combiner, ctx, TURN_FAILED_COMBINER_ATTEMPTS)

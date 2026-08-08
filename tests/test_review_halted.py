@@ -70,6 +70,17 @@ class ReviewHaltedRetryPolicyTests(unittest.TestCase):
             fairy.call_llm_with_retries(_args(3), 23750, invoke)
         self.assertEqual(1, len(calls))
 
+    def test_turn_failed_review_is_not_retried(self) -> None:
+        calls = []
+
+        def invoke(extra_cmd_args):
+            calls.append(extra_cmd_args)
+            raise fairy.ReviewTurnFailed("in-run retry budget spent")
+
+        with self.assertRaises(fairy.ReviewTurnFailed):
+            fairy.call_llm_with_retries(_args(3), 23750, invoke)
+        self.assertEqual(1, len(calls))
+
     def test_ordinary_failure_still_retried(self) -> None:
         calls = []
 

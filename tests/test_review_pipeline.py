@@ -252,9 +252,9 @@ class ReviewPrTests(unittest.TestCase):
             ["zai:glm-5.2: zai:glm-5.2: simulated provider failure"],
             ctx.failed_reviewers)
 
-    def test_a_provider_ended_turn_is_retried_once_and_recovers(self) -> None:
+    def test_a_provider_ended_turn_is_retried_and_recovers(self) -> None:
         """gpt-5.6-sol's "possible cybersecurity risk" flag on PR #23901:
-        transient, so one retry -- of that reviewer alone -- recovers the
+        transient, so a retry -- of that reviewer alone -- recovers the
         full ensemble."""
         ctx = _ctx()
         d1 = Review("minor_issues_approve", "ok", model="glm")
@@ -270,42 +270,54 @@ class ReviewPrTests(unittest.TestCase):
         self.assertEqual(2, flagged.calls)
         self.assertEqual([], ctx.failed_reviewers)
 
-    def test_a_flagged_combiner_is_retried_once(self) -> None:
+    def test_a_flagged_combiner_is_retried_to_its_budget(self) -> None:
         ctx = _ctx()
         d1 = Review("moderate_issues", "issue", model="glm")
         merged = Review("moderate_issues", "verified", model="combiner")
-        combiner = _FlaggedReviewer("codex:gpt", merged, fail_times=1)
-        with self.assertLogs("review_pipeline", level="WARNING"):
+        combiner = _FlaggedReviewer("codex:gpt", merged, fail_times=7)
+        with self.assertLogs("llm_review_api", level="WARNING"):
             out = review_pipeline.review_pr(
                 ctx, [_FakeReviewer("zai:glm", d1)], combiner)
         self.assertIs(out, merged)
-        self.assertEqual(2, combiner.calls)
+        self.assertEqual(8, combiner.calls)
 
-    def test_a_twice_flagged_combiner_propagates(self) -> None:
-        """The caller's full-pipeline retry (and error pacing) owns the
-        persistent case; no in-pipeline looping."""
+    def test_an_exhausted_combiner_propagates(self) -> None:
+        """The error state's doubling backoff owns the persistent case:
+        the wrapper maps this to EXIT_TURN_FAILED, which also skips the
+        outer --llm-max-attempts loop."""
         ctx = _ctx()
         d1 = Review("moderate_issues", "issue", model="glm")
-        combiner = _FlaggedReviewer("codex:gpt", d1, fail_times=2)
+        combiner = _FlaggedReviewer("codex:gpt", d1, fail_times=8)
         with self.assertRaises(ProviderTurnFailed), \
-                self.assertLogs("review_pipeline", level="WARNING"):
+                self.assertLogs("llm_review_api", level="WARNING"):
             review_pipeline.review_pr(
                 ctx, [_FakeReviewer("zai:glm", d1)], combiner)
-        self.assertEqual(2, combiner.calls)
+        self.assertEqual(8, combiner.calls)
 
-    def test_a_twice_flagged_reviewer_is_dropped_and_named(self) -> None:
+    def test_an_exhausted_reviewer_is_dropped_and_named(self) -> None:
         ctx = _ctx()
         d1 = Review("minor_issues_approve", "ok", model="glm")
-        flagged = _FlaggedReviewer("codex:gpt", d1, fail_times=2)
+        flagged = _FlaggedReviewer("codex:gpt", d1, fail_times=4)
         merged = Review("minor_issues_approve", "verified", model="combiner")
         with self.assertLogs("llm_review_api", level="ERROR"):
             out = review_pipeline.review_pr(
                 ctx, [_FakeReviewer("zai:glm", d1), flagged],
                 _FakeReviewer("combiner", merged))
         self.assertIs(out, merged)
-        self.assertEqual(2, flagged.calls)
+        self.assertEqual(4, flagged.calls)
         self.assertEqual(["codex:gpt: codex:gpt: content flagged"],
                          ctx.failed_reviewers)
+
+    def test_a_flagged_single_reviewer_is_retried(self) -> None:
+        ctx = _ctx()
+        d1 = Review("minor_issues_approve", "ok", model="gpt")
+        flagged = _FlaggedReviewer("codex:gpt", d1, fail_times=1)
+        merged = Review("minor_issues_approve", "verified", model="combiner")
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_pipeline.review_pr(
+                ctx, [flagged], _FakeReviewer("combiner", merged))
+        self.assertIs(out, merged)
+        self.assertEqual(2, flagged.calls)
 
     def test_single_reviewer_with_combiner_still_combines(self) -> None:
         ctx = _ctx()

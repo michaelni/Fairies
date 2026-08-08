@@ -67,10 +67,13 @@ __all__ = [
     "TERMINAL_ROUTES",
     "TRIAGE_REQUESTABLE_EFFORTS",
     "TRIAGE_ROUTES",
+    "TURN_FAILED_COMBINER_ATTEMPTS",
+    "TURN_FAILED_REVIEWER_ATTEMPTS",
     "ENGAGE",
     "REVIEW_SCHEMA",
     "Z_AI_ANTHROPIC_URL",
     "BadModelOutput",
+    "ProviderTurnFailed",
     "Review",
     "ReviewContext",
     "Reviewer",
@@ -81,6 +84,7 @@ __all__ = [
     "build_triage_schema",
     "check_schema",
     "model_needs_diff_tripwire",
+    "review_with_turn_retries",
     "run_parallel",
     "sanitize_label_changes",
     "schema_with_labels",
@@ -216,8 +220,25 @@ class ProviderTurnFailed(RuntimeError):
     """The provider ended the reviewer's turn itself (e.g. gpt-5.6-sol's
     "possible cybersecurity risk" content flag on a security patch);
     nothing on our side is suspect and the flag has been observed not to
-    reproduce, so ``run_parallel`` retries such a reviewer once before
-    dropping it."""
+    reproduce, so ``review_with_turn_retries`` re-runs the stage before
+    it is dropped (a reviewer) or the run fails (the combiner)."""
+
+
+# In-run retry budgets for ``ProviderTurnFailed``. The budget is spent
+# here rather than in fairy's outer --llm-max-attempts loop -- a stage
+# retry costs one stage run where an outer attempt re-runs the whole
+# ensemble -- and a run that still fails exits EXIT_TURN_FAILED so the
+# outer loop is skipped too (policies compared with
+# tools/turn_failed_retry_cost.py). What this shape costs:
+#  * an exhausted run waits in error/ for the agent's doubling backoff
+#    (a day or more), not seconds, before its next try;
+#  * up to TURN_FAILED_COMBINER_ATTEMPTS back-to-back combiner runs
+#    must fit --llm-timeout, or the timeout masks the flag as a generic
+#    failure and re-enters the outer loop;
+#  * the budgets price attempts as independent; a patch that
+#    deterministically trips the flag loses the whole budget every run.
+TURN_FAILED_REVIEWER_ATTEMPTS = 4
+TURN_FAILED_COMBINER_ATTEMPTS = 8
 
 
 class SelfReportedViolation(Exception):
@@ -758,14 +779,30 @@ class Reviewer(ABC):
         )
 
 
+def review_with_turn_retries(reviewer: Reviewer, ctx: ReviewContext,
+                             attempts: int) -> Review:
+    """Run ``reviewer.review``, retrying only ``ProviderTurnFailed``, up
+    to ``attempts`` total attempts; the last failure propagates."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return reviewer.review(ctx)
+        except ProviderTurnFailed as exc:
+            if attempt == attempts:
+                raise
+            logger.warning(
+                "%s: provider ended the turn (%s); attempt %d/%d",
+                reviewer.name, (str(exc).splitlines() or ["-"])[0][:160],
+                attempt + 1, attempts)
+
+
 def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     """Run each reviewer concurrently; return their drafts in input order.
 
     A reviewer that raises (provider outage, exhausted quota, ...) is
     dropped with a logged traceback so the surviving drafts still produce
-    a review; only when every reviewer fails is the run aborted. The one
-    exception: a ``ProviderTurnFailed`` reviewer is retried once -- alone,
-    inline -- before being dropped.
+    a review; only when every reviewer fails is the run aborted. A
+    provider-ended turn is re-run in the reviewer's own thread, up to
+    ``TURN_FAILED_REVIEWER_ATTEMPTS`` attempts, before the drop.
 
     Each reviewer opens its own shells via ``ctx.open_shell`` so concurrent
     runs never share a container working tree. Results are gathered only
@@ -780,7 +817,9 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
         ", ".join(r.name for r in reviewers),
     )
     with ThreadPoolExecutor(max_workers=len(reviewers)) as executor:
-        futures = [executor.submit(r.review, ctx) for r in reviewers]
+        futures = [executor.submit(review_with_turn_retries, r, ctx,
+                                   TURN_FAILED_REVIEWER_ATTEMPTS)
+                   for r in reviewers]
     drafts: list[Review] = []
     failed: list[str] = []
 
@@ -796,16 +835,6 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     for reviewer, future in zip(reviewers, futures):
         try:
             drafts.append(future.result())
-        except ProviderTurnFailed as exc:
-            logger.warning(
-                "reviewer %s: provider ended the turn (%s); retrying once",
-                reviewer.name,
-                (str(exc).splitlines() or ["-"])[0][:160],
-            )
-            try:
-                drafts.append(reviewer.review(ctx))
-            except Exception as exc2:
-                drop(reviewer, exc2)
         except Exception as exc:
             drop(reviewer, exc)
     if not drafts:

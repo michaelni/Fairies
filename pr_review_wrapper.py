@@ -79,6 +79,7 @@ from openai import OpenAI
 
 from common import (
     EXIT_REVIEW_HALTED,
+    EXIT_TURN_FAILED,
     add_color_arg,
     apply_config_file_defaults,
     setup_logging,
@@ -93,6 +94,7 @@ import llm_review_api
 from llm_review_api import (
     EXIT_BAD_MODEL_OUTPUT,
     BadModelOutput,
+    ProviderTurnFailed,
     ReviewContext,
 )
 import review_pipeline
@@ -1732,6 +1734,9 @@ def main() -> int:
             return EXIT_CONTAINER_UNHEALTHY
         except BadModelOutput:
             return EXIT_BAD_MODEL_OUTPUT
+        except ProviderTurnFailed as exc:
+            logger.error("giving up, provider ended the turns: %s", exc)
+            return EXIT_TURN_FAILED
         except Exception:
             if not poisoned_session_ids:
                 raise

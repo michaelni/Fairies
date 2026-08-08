@@ -32,101 +32,156 @@ Cost vs probability of losing a review run to a provider-ended turn.
 
 The provider can end a reviewer's or the combiner's turn itself (e.g.
 the "flagged for possible cybersecurity risk" content flag, see
-``ProviderTurnFailed`` in llm_review_api.py); ``run_parallel`` and
-``review_pr`` retry the blocked stage, today with a budget of one
-retry. For each retry budget up to --max-retries this prints the
-probability that a run of parallel reviewers plus combiner still fails
-on the block, the expected cost of the run, cost per unit of failure
-probability, and the marginal cost of the probability removed by that
-budget's last retry.
+``ProviderTurnFailed`` in llm_review_api.py). Retries happen on three
+levels, all mirrored here:
 
-Model (mirrors run_parallel / review_pr):
-  * each attempt is blocked independently with probability -p;
-  * a reviewer that exhausts the budget is dropped; the run fails only
-    when every reviewer is dropped or the combiner exhausts the budget;
-  * the combiner runs (and costs) only when a draft survives;
+  * ``run_parallel`` / ``review_pr`` retry the blocked stage; today's
+    budget is one retry. This budget is the table's sweep variable.
+  * ``call_llm_with_retries`` (fairy.py) re-runs the whole pipeline up
+    to --llm-max-attempts times (default 3): one cycle.
+  * When the whole cycle failed the item enters the ``error`` state and
+    the agent re-queues it on the first scan where the failure is
+    ERROR_RETRY_H = 24h old (agent.py) -- fixed pacing, no doubling
+    (the skip_backoff_h doubling applies to skip verdicts only). So
+    roughly one cycle per day; the model runs --horizon-days of them.
+
+For each stage retry budget this prints:
+  P(attempt)  one pipeline attempt fails on the block
+  E[attempt]  expected cost of one pipeline attempt
+  P(error)    the whole cycle fails: the item stalls in ``error`` a day
+  E[cycle]    expected cost of one cycle -- attempts stop at the first
+              success, a fully failed cycle burns all its attempts
+  P(horizon)  every cycle of the horizon failed: the item is still
+              unreviewed when the horizon ends
+  E[total]    expected cost of all cycles up to the horizon
+  dcost/dP    marginal E[total] per unit of P(error) removed by that
+              budget's last retry (negative: the retry both saves money
+              and probability, a stage retry being cheaper than the
+              full-pipeline retries it avoids)
+
+Model assumptions:
+  * each reviewer has its own per-attempt block probability (a provider
+    that never emits the flag, e.g. GLM so far, gets 0), the combiner
+    its own; attempts block independently;
+  * a reviewer that exhausts the budget is dropped; a pipeline attempt
+    fails only when every reviewer is dropped or the combiner exhausts
+    the budget; the combiner runs (and costs) only when a draft
+    survives;
   * every attempt, blocked or not, is billed one full stage cost;
-  * failure causes other than the block are out of scope, as is the
-    outer --llm-max-attempts whole-pipeline retry.
+  * failure causes other than the block are out of scope, and only
+    cost is modelled, not the wall-clock delay of retries.
 
-Costs default to 1, so without --reviewer-cost / --combiner-cost the
-cost columns are in units of one stage attempt.
+Costs default to 1, so without :COST suffixes the cost columns are in
+units of one stage attempt.
 
 Usage:
-  tools/turn_failed_retry_cost.py -p 0.3
-  tools/turn_failed_retry_cost.py -p 0.05 --reviewers 3 \\
-      --reviewer-cost 0.90 --combiner-cost 1.40 --max-retries 6
+  tools/turn_failed_retry_cost.py --reviewer 0.3 --combiner 0.3
+  tools/turn_failed_retry_cost.py \\
+      --reviewer code=0.10:0.9 --reviewer design=0.15:0.9 \\
+      --reviewer glm=0 --combiner 0.10:1.4 --max-retries 6
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 
 
-def failure_probability(p: float, reviewers: int, retries: int) -> float:
-    """P that the run fails on the block: every reviewer dropped, or the
-    combiner blocked on all retries+1 attempts. All args as in main()."""
-    blocked = p ** (retries + 1)
-    all_dropped = blocked ** reviewers
-    return all_dropped + (1 - all_dropped) * blocked
+def attempt_outcome(reviewers: list[tuple[str, float, float]],
+                    combiner: tuple[str, float, float] | None,
+                    retries: int) -> tuple[float, float]:
+    """One pipeline attempt at the given stage retry budget:
+    (P(it fails on the block), its expected cost). ``reviewers`` and
+    ``combiner`` are (label, block probability, attempt cost)."""
+    dropped = [p ** (retries + 1) for _, p, _ in reviewers]
+    all_dropped = math.prod(dropped)
+    attempts = [sum(p ** i for i in range(retries + 1)) for _, p, _ in reviewers]
+    fails = all_dropped
+    cost = sum(c * a for (_, _, c), a in zip(reviewers, attempts))
+    if combiner is not None:
+        _, p, c = combiner
+        fails += (1 - all_dropped) * p ** (retries + 1)
+        cost += (1 - all_dropped) * c * sum(p ** i for i in range(retries + 1))
+    return fails, cost
 
 
-def expected_cost(p: float, reviewers: int, retries: int,
-                  reviewer_cost: float, combiner_cost: float) -> float:
-    """Expected cost of one run: every stage pays per attempt until it
-    succeeds or the budget is spent. All args as in main()."""
-    blocked = p ** (retries + 1)
-    attempts = sum(p ** i for i in range(retries + 1))
-    return attempts * (reviewers * reviewer_cost
-                       + (1 - blocked ** reviewers) * combiner_cost)
+def retried_outcome(fails: float, cost: float,
+                    attempts: int) -> tuple[float, float]:
+    """Up to ``attempts`` pipeline attempts, stopping at the first
+    success: (P(all fail), E[cost of the attempts made]).
+    ``fails``/``cost`` are one attempt's, from attempt_outcome().
+    One cycle is retried_outcome(fails, cost, --attempts); the whole
+    horizon is retried_outcome(fails, cost, --attempts * days)."""
+    if fails == 1:
+        return 1.0, cost * attempts
+    return fails ** attempts, cost * (1 - fails ** attempts) / (1 - fails)
 
 
-def probability(text: str) -> float:
-    value = float(text)
-    if not 0 <= value <= 1:
-        raise argparse.ArgumentTypeError(f"{text}: not a probability in [0, 1]")
-    return value
+def stage(text: str) -> tuple[str, float, float]:
+    """[LABEL=]P[:COST] -> (label, block probability, attempt cost)"""
+    label, _, spec = text.rpartition("=")
+    prob, _, cost = spec.partition(":")
+    try:
+        value = float(prob)
+        if not 0 <= value <= 1:
+            raise ValueError
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{prob!r}: not a probability in [0, 1]")
+    return label, value, float(cost) if cost else 1.0
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="cost vs probability of losing a review run to a "
-                    "provider-ended turn, per retry budget")
-    parser.add_argument("-p", "--block-probability", type=probability,
-                        required=True,
-                        help="per-attempt probability of the block, in [0, 1]")
-    parser.add_argument("--reviewers", type=int, default=3,
-                        help="parallel model reviewers (default: 3)")
-    parser.add_argument("--reviewer-cost", type=float, default=1.0,
-                        help="cost of one reviewer attempt (default: 1)")
-    parser.add_argument("--combiner-cost", type=float, default=1.0,
-                        help="cost of one combiner attempt (default: 1)")
+                    "provider-ended turn, per stage retry budget")
+    parser.add_argument("--reviewer", type=stage, action="append",
+                        required=True, metavar="[LABEL=]P[:COST]",
+                        help="add a model reviewer with per-attempt block "
+                             "probability P and attempt cost COST "
+                             "(default 1); repeat per reviewer")
+    parser.add_argument("--combiner", type=stage, metavar="[LABEL=]P[:COST]",
+                        help="the combiner's block probability and attempt "
+                             "cost (omit for a combiner-less single-reviewer "
+                             "pipeline)")
+    parser.add_argument("--attempts", type=int, default=3,
+                        help="whole-pipeline attempts per cycle, "
+                             "--llm-max-attempts (default: 3)")
+    parser.add_argument("--horizon-days", type=int, default=365,
+                        help="stop retrying after this many daily cycles "
+                             "(default: 365)")
     parser.add_argument("--max-retries", type=int, default=4,
-                        help="largest retry budget to tabulate (default: 4)")
+                        help="largest stage retry budget to tabulate "
+                             "(default: 4)")
     args = parser.parse_args()
 
-    print(f"block probability {args.block_probability:g} per attempt, "
-          f"{args.reviewers} reviewer(s) + combiner")
-    print(f"{'retries':>7}  {'P(run fails)':>12}  {'E[cost]':>10}  "
-          f"{'E[cost]/P':>10}  {'dcost/dP':>10}")
+    print("reviewers "
+          + ", ".join(f"{label or 'r%d' % i}=p{p:g}:c{c:g}"
+                      for i, (label, p, c) in enumerate(args.reviewer, 1))
+          + (" + combiner p%g:c%g" % args.combiner[1:] if args.combiner
+             else ", no combiner")
+          + f"; {args.attempts} attempts/cycle, one cycle/day for "
+          + f"{args.horizon_days} days")
+    print(f"{'retries':>7}  {'P(attempt)':>10}  {'E[attempt]':>10}  "
+          f"{'P(error)':>10}  {'E[cycle]':>10}  {'P(horizon)':>10}  "
+          f"{'E[total]':>10}  {'dcost/dP':>10}")
     previous = None
     for retries in range(args.max_retries + 1):
-        p_fail = failure_probability(
-            args.block_probability, args.reviewers, retries)
-        cost = expected_cost(
-            args.block_probability, args.reviewers, retries,
-            args.reviewer_cost, args.combiner_cost)
-        per_p = f"{cost / p_fail:10.4g}" if p_fail else f"{'inf':>10}"
+        fails, cost = attempt_outcome(args.reviewer, args.combiner, retries)
+        stalls, cycle_cost = retried_outcome(fails, cost, args.attempts)
+        unreviewed, total = retried_outcome(
+            fails, cost, args.attempts * args.horizon_days)
         if previous is None:
             marginal = f"{'-':>10}"
         else:
-            removed = previous[0] - p_fail
-            marginal = (f"{(cost - previous[1]) / removed:10.4g}"
+            removed = previous[0] - stalls
+            marginal = (f"{(total - previous[1]) / removed:10.4g}"
                         if removed else f"{'inf':>10}")
         current = "  <- current budget" if retries == 1 else ""
-        print(f"{retries:>7}  {p_fail:>12.4g}  {cost:>10.4g}  "
-              f"{per_p}  {marginal}{current}")
-        previous = (p_fail, cost)
+        print(f"{retries:>7}  {fails:>10.4g}  {cost:>10.4g}  "
+              f"{stalls:>10.4g}  {cycle_cost:>10.4g}  {unreviewed:>10.4g}  "
+              f"{total:>10.4g}  {marginal}{current}")
+        previous = (stalls, total)
 
 
 if __name__ == "__main__":

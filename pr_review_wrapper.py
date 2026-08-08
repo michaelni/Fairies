@@ -384,7 +384,17 @@ def parse_args() -> argparse.Namespace:
         "--verbosity",
         default="high",
         choices=["low", "medium", "high"],
-        help="Optional output verbosity parameter passed to the Responses API.",
+        help="Output verbosity for every stage (OpenAI ``text.verbosity`` / "
+             "codex ``model_verbosity``; default: high). "
+             "--final-verbosity overrides it for the user-visible stage.",
+    )
+    p.add_argument(
+        "--final-verbosity",
+        default=None,
+        choices=["low", "medium", "high"],
+        help="Verbosity for the stage whose message the user sees (the "
+             "combiner when one is configured, else the single main "
+             "reviewer/investigator); default: --verbosity.",
     )
     p.add_argument(
         "--max-tool-calls",
@@ -1688,10 +1698,12 @@ def main() -> int:
                         route,
                     )
 
-        # The final verdict author owns the labels: the combiner whenever
-        # one is configured (it runs even on a single draft), else the
-        # single reviewer.
+        # The final verdict author owns the labels and --final-verbosity:
+        # the combiner whenever one is configured (it runs even on a
+        # single draft), else the single reviewer.
         main_specs = requested_models or [args.model, *args.extra_model]
+        final_verbosity = (
+            args.final_verbosity if args.final_verbosity is not None else args.verbosity)
         # A user request names models only, so each runs the task's own prompt.
         main_prompts = [None] * len(requested_models) if requested_models else args.main_prompts
         reviewer_labels = (
@@ -1702,14 +1714,18 @@ def main() -> int:
         )
         combiner_role = role_with_labels(base_combiner_role, triage_label_allowlist)
 
+        main_verbosity = (
+            args.verbosity if len(main_specs) > 1 or args.combine_model
+            else final_verbosity)
         model_reviewers = [
             make_reviewer(spec, args=args, resources=openai_resources,
                           role=role_with_labels(review_role(base_reviewer_role, prompt), reviewer_labels),
-                          verbose=args.verbose, default_effort=requested_effort)
+                          verbose=args.verbose, default_effort=requested_effort,
+                          verbosity=main_verbosity)
             for spec, prompt in zip(main_specs, main_prompts, strict=True)
         ]
         combiner = (
-            make_reviewer(args.combine_model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose, default_effort=requested_effort)
+            make_reviewer(args.combine_model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose, default_effort=requested_effort, verbosity=final_verbosity)
             if args.combine_model
             else None
         )
@@ -1721,7 +1737,7 @@ def main() -> int:
                 "user requested %d models with no --combine-model configured; "
                 "combining with %s", len(model_reviewers), args.model,
             )
-            combiner = make_reviewer(args.model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose)
+            combiner = make_reviewer(args.model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose, verbosity=final_verbosity)
         workset_note_stage(args, "review")
         try:
             review = review_pr(

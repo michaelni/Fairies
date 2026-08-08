@@ -165,6 +165,20 @@ class ReviewBudgetOptionTests(unittest.TestCase):
         self.assertEqual(parse("--top-p", "0.4").top_p, 0.4)
         self.assertIsNone(parse().top_p)
 
+    def test_final_verbosity_defaults_to_unset(self) -> None:
+        # None makes main() fall back to --verbosity, so the split is
+        # invisible until an operator asks for it.
+        args = parse()
+        self.assertEqual("high", args.verbosity)
+        self.assertIsNone(args.final_verbosity)
+
+    def test_final_verbosity_accepts_the_verbosity_levels(self) -> None:
+        args = parse("--verbosity", "low", "--final-verbosity", "medium")
+        self.assertEqual("low", args.verbosity)
+        self.assertEqual("medium", args.final_verbosity)
+        with self.assertRaises(SystemExit):
+            parse("--final-verbosity", "verbose")
+
     def test_openai_timeout_seconds_is_a_float(self) -> None:
         self.assertEqual(parse("--openai-timeout-seconds", "900.5")
                          .openai_timeout_seconds, 900.5)

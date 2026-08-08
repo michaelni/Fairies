@@ -40,10 +40,11 @@ levels, all mirrored here:
   * ``call_llm_with_retries`` (fairy.py) re-runs the whole pipeline up
     to --llm-max-attempts times (default 3): one cycle.
   * When the whole cycle failed the item enters the ``error`` state and
-    the agent re-queues it on the first scan where the failure is
-    ERROR_RETRY_H = 24h old (agent.py) -- fixed pacing, no doubling
-    (the skip_backoff_h doubling applies to skip verdicts only). So
-    roughly one cycle per day; the model runs --horizon-days of them.
+    the agent re-queues it once the failure has aged past a doubling
+    backoff: 24h, 48h, 96h, ... per served wait (agent.py
+    backoff_wait_h), giving a permanently failing item about
+    log2(--horizon-days) cycles within the horizon. --error-backoff
+    fixed models a flat one-cycle-per-day pacing instead.
 
 For each stage retry budget this prints:
   P(attempt)  one pipeline attempt fails on the block
@@ -111,7 +112,7 @@ def retried_outcome(fails: float, cost: float,
     success: (P(all fail), E[cost of the attempts made]).
     ``fails``/``cost`` are one attempt's, from attempt_outcome().
     One cycle is retried_outcome(fails, cost, --attempts); the whole
-    horizon is retried_outcome(fails, cost, --attempts * days)."""
+    horizon is retried_outcome(fails, cost, --attempts * cycles)."""
     if fails == 1:
         return 1.0, cost * attempts
     return fails ** attempts, cost * (1 - fails ** attempts) / (1 - fails)
@@ -148,20 +149,27 @@ def main() -> None:
                         help="whole-pipeline attempts per cycle, "
                              "--llm-max-attempts (default: 3)")
     parser.add_argument("--horizon-days", type=int, default=365,
-                        help="stop retrying after this many daily cycles "
-                             "(default: 365)")
+                        help="stop counting cycles past this age of the "
+                             "item (default: 365)")
+    parser.add_argument("--error-backoff", choices=("log2", "fixed"),
+                        default="log2",
+                        help="error re-queue cadence: waits doubling per "
+                             "served wait as in agent.py, or a flat cycle "
+                             "per day (default: log2)")
     parser.add_argument("--max-retries", type=int, default=4,
                         help="largest stage retry budget to tabulate "
                              "(default: 4)")
     args = parser.parse_args()
 
+    cycles = (args.horizon_days if args.error_backoff == "fixed"
+              else int(math.log2(args.horizon_days + 1)) + 1)
     print("reviewers "
           + ", ".join(f"{label or 'r%d' % i}=p{p:g}:c{c:g}"
                       for i, (label, p, c) in enumerate(args.reviewer, 1))
           + (" + combiner p%g:c%g" % args.combiner[1:] if args.combiner
              else ", no combiner")
-          + f"; {args.attempts} attempts/cycle, one cycle/day for "
-          + f"{args.horizon_days} days")
+          + f"; {args.attempts} attempts/cycle, {cycles} cycles "
+          + f"({args.error_backoff} backoff) in {args.horizon_days} days")
     print(f"{'retries':>7}  {'P(attempt)':>10}  {'E[attempt]':>10}  "
           f"{'P(error)':>10}  {'E[cycle]':>10}  {'P(horizon)':>10}  "
           f"{'E[total]':>10}  {'dcost/dP':>10}")
@@ -169,8 +177,8 @@ def main() -> None:
     for retries in range(args.max_retries + 1):
         fails, cost = attempt_outcome(args.reviewer, args.combiner, retries)
         stalls, cycle_cost = retried_outcome(fails, cost, args.attempts)
-        unreviewed, total = retried_outcome(
-            fails, cost, args.attempts * args.horizon_days)
+        unreviewed, total = retried_outcome(fails, cost,
+                                            args.attempts * cycles)
         if previous is None:
             marginal = f"{'-':>10}"
         else:

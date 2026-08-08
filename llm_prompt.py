@@ -272,6 +272,7 @@ the HEAD revisions of all the files from all repositories are also available fro
 '''  if container_repo_mounts and not podman_shell_enabled else ""}\
 Prior {subject} discussion is provided separately when available. Use it to avoid repeating already-known and understood issues.
 And avoid posting the same point again if it was already raised by the current {"investigator" if subject == "issue" else "reviewer"} identity.
+Prefer adding new evidence, sharper explanation, or a concrete fix over restating a point already made in the discussion.
 
 """
     )
@@ -396,7 +397,6 @@ CR_PROMPT_MESSAGE_RULES = """Message Rules:
 #If you do not have a materially useful new contribution, prefer skip.
 #When possible, support conclusions with the most concrete available evidence from the patch, inspected code, prior discussion, or specifications.
 #  When suggesting a test, tie it to the specific bug, regression risk, format, or behavior that the test would cover.
-#Prefer adding new evidence, sharper explanation, or a concrete fix over restating an existing point in di
 #Prefer the minimal intervention that materially helps advance the pull request.
 #If the main blocker is missing project-process information, a process clarification is preferable to a review-style comment
 #use specification references only when they materially bear on the claim you are making

@@ -80,6 +80,12 @@ Usage:
   tools/turn_failed_retry_cost.py \\
       --reviewer code=0.10:0.9 --reviewer design=0.15:0.9 \\
       --reviewer glm=0 --combiner 0.10:1.4 --max-retries 6
+
+Since only the block is modelled, a policy where a blocked run skips
+the outer loop entirely (block failures go straight to the error
+backoff) is --attempts 1; e.g. "reviewers 4 attempts, combiner 8, no
+outer loop for the block" is read at row retries=3 of:
+  tools/turn_failed_retry_cost.py --combiner-retries 7 --attempts 1 ...
 """
 
 from __future__ import annotations
@@ -90,8 +96,8 @@ import math
 
 def attempt_outcome(reviewers: list[tuple[str, float, float]],
                     combiner: tuple[str, float, float] | None,
-                    retries: int) -> tuple[float, float]:
-    """One pipeline attempt at the given stage retry budget:
+                    retries: int, combiner_retries: int) -> tuple[float, float]:
+    """One pipeline attempt at the given stage retry budgets:
     (P(it fails on the block), its expected cost). ``reviewers`` and
     ``combiner`` are (label, block probability, attempt cost)."""
     dropped = [p ** (retries + 1) for _, p, _ in reviewers]
@@ -101,8 +107,9 @@ def attempt_outcome(reviewers: list[tuple[str, float, float]],
     cost = sum(c * a for (_, _, c), a in zip(reviewers, attempts))
     if combiner is not None:
         _, p, c = combiner
-        fails += (1 - all_dropped) * p ** (retries + 1)
-        cost += (1 - all_dropped) * c * sum(p ** i for i in range(retries + 1))
+        fails += (1 - all_dropped) * p ** (combiner_retries + 1)
+        cost += (1 - all_dropped) * c * sum(
+            p ** i for i in range(combiner_retries + 1))
     return fails, cost
 
 
@@ -151,6 +158,10 @@ def main() -> None:
     parser.add_argument("--horizon-days", type=int, default=365,
                         help="stop counting cycles past this age of the "
                              "item (default: 365)")
+    parser.add_argument("--combiner-retries", type=int, default=None,
+                        help="combiner stage retry budget when it differs "
+                             "from the sweep value (default: the row's "
+                             "retries)")
     parser.add_argument("--error-backoff", choices=("log2", "fixed"),
                         default="log2",
                         help="error re-queue cadence: waits doubling per "
@@ -168,6 +179,8 @@ def main() -> None:
                       for i, (label, p, c) in enumerate(args.reviewer, 1))
           + (" + combiner p%g:c%g" % args.combiner[1:] if args.combiner
              else ", no combiner")
+          + (f" ({args.combiner_retries} retries)"
+             if args.combiner_retries is not None else "")
           + f"; {args.attempts} attempts/cycle, {cycles} cycles "
           + f"({args.error_backoff} backoff) in {args.horizon_days} days")
     print(f"{'retries':>7}  {'P(attempt)':>10}  {'E[attempt]':>10}  "
@@ -175,7 +188,10 @@ def main() -> None:
           f"{'E[total]':>10}  {'dcost/dP':>10}")
     previous = None
     for retries in range(args.max_retries + 1):
-        fails, cost = attempt_outcome(args.reviewer, args.combiner, retries)
+        fails, cost = attempt_outcome(
+            args.reviewer, args.combiner, retries,
+            args.combiner_retries if args.combiner_retries is not None
+            else retries)
         stalls, cycle_cost = retried_outcome(fails, cost, args.attempts)
         unreviewed, total = retried_outcome(fails, cost,
                                             args.attempts * cycles)

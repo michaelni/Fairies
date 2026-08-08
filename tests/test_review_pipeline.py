@@ -82,7 +82,7 @@ def _ctx() -> ReviewContext:
 def _args() -> argparse.Namespace:
     return argparse.Namespace(
         model="gpt-5.4-mini", podman_max_tool_rounds=0, podman_exec_timeout=600.0,
-        service_tier="flex", reasoning_summary="auto",
+        service_tier="flex", reasoning_summary="auto", verbosity="high",
     )
 
 

@@ -81,6 +81,7 @@ def make_reviewer(
     default_effort: str | None = None,
     max_output_tokens: int | None = None,
     service_tier: str | None = INHERIT_SERVICE_TIER,
+    verbosity: str | None = None,
 ) -> Reviewer:
     """Build a ``Reviewer`` from a ``provider:model[@effort]`` spec.
 
@@ -100,6 +101,10 @@ def make_reviewer(
 
     ``service_tier`` (OpenAI only) is used verbatim; ``None`` sends no
     tier. Leaving it unset inherits ``--service-tier``.
+
+    ``verbosity`` (OpenAI and codex; Anthropic/GLM has no such
+    parameter) overrides ``--verbosity`` for this reviewer; ``None``
+    inherits ``--verbosity``.
     """
     spec_body, sep, spec_effort = spec.partition("@")
     effort = spec_effort if sep else default_effort
@@ -115,6 +120,7 @@ def make_reviewer(
         return OpenAIReviewer(
             args, resources, model=model, role=role, effort=effort,
             max_output_tokens=max_output_tokens, service_tier=service_tier,
+            verbosity=verbosity,
         )
     if provider in ("anthropic", "zai"):
         from anthropic_reviewer import AnthropicReviewer
@@ -160,7 +166,7 @@ def make_reviewer(
                 exec_timeout_s=args.podman_exec_timeout,
                 effort=effort,
                 web_search=resolve_web_search(args.web_search),
-                verbosity=args.verbosity,
+                verbosity=verbosity if verbosity is not None else args.verbosity,
                 reasoning_summary=args.reasoning_summary,
                 run_timeout_s=args.codex_timeout_seconds,
                 verbose=verbose,

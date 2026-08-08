@@ -768,6 +768,7 @@ class OpenAIReviewer(Reviewer):
         effort: str | None = None,
         max_output_tokens: int | None = None,
         service_tier: str | None = INHERIT_SERVICE_TIER,
+        verbosity: str | None = None,
     ) -> None:
         self.args = args
         self.res = resources
@@ -775,6 +776,7 @@ class OpenAIReviewer(Reviewer):
         self.role = role
         self.effort = effort
         self.max_output_tokens = max_output_tokens
+        self.verbosity = verbosity if verbosity is not None else args.verbosity
         # An explicit ``service_tier=None`` sends no tier: the triage call
         # is documented (--triage-service-tier) as independent of
         # --service-tier, so it must not inherit it.
@@ -843,8 +845,8 @@ class OpenAIReviewer(Reviewer):
                 else args.max_output_tokens
             ),
         }
-        if args.verbosity is not None:
-            response_kwargs["text"]["verbosity"] = args.verbosity
+        if self.verbosity is not None:
+            response_kwargs["text"]["verbosity"] = self.verbosity
         if args.top_p is not None:
             response_kwargs["top_p"] = args.top_p
         reasoning: JsonObject = {}
@@ -873,7 +875,7 @@ class OpenAIReviewer(Reviewer):
                 if isinstance(tool, dict)
             ]
             source_bundle_bytes = len(ctx.source_bundle.encode("utf-8")) if ctx.source_bundle is not None else 0
-            logger.debug("responses.create start role=%s model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.role.name, self.model, self.effort or "-", args.verbosity or "-", self.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, response_kwargs["max_output_tokens"])
+            logger.debug("responses.create start role=%s model=%s effort=%s verbosity=%s tier=%s tools=%s vector_stores=%d source_files=%d source_bytes=%d max_output_tokens=%d", self.role.name, self.model, self.effort or "-", self.verbosity or "-", self.service_tier or "-", ",".join(tool_names) if tool_names else "-", len(res.vector_store_ids), len(ctx.source_files), source_bundle_bytes, response_kwargs["max_output_tokens"])
 
         create_started = time.monotonic()
         try:

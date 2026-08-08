@@ -127,6 +127,12 @@ class AnthropicReviewer(Reviewer):
     ``effort`` is an ``ANTHROPIC_EFFORTS`` name controlling extended
     thinking; ``None`` (default) sends no ``thinking`` parameter so the
     provider default applies.
+
+    ``reasoning_summary`` takes --reasoning-summary's vocabulary
+    (``auto``/``concise``/``detailed``): ``concise`` and ``detailed``
+    request ``thinking.display=summarized`` (Anthropic's only summary
+    level) when a named effort enables thinking; ``auto``/``None`` sends
+    no ``display`` so the provider default applies.
     """
 
     def __init__(
@@ -141,6 +147,7 @@ class AnthropicReviewer(Reviewer):
         max_tool_rounds: int = 0,
         exec_timeout_s: float = 600.0,
         effort: str | None = None,
+        reasoning_summary: str | None = None,
         verbose: bool = False,
         debug_dir: str | None = None,
     ) -> None:
@@ -157,6 +164,7 @@ class AnthropicReviewer(Reviewer):
         self.max_tool_rounds = max_tool_rounds
         self.exec_timeout_s = exec_timeout_s
         self.effort = effort
+        self.reasoning_summary = reasoning_summary
         self.verbose = verbose
         self.debug_dir = debug_dir
 
@@ -244,7 +252,15 @@ class AnthropicReviewer(Reviewer):
             if self.effort == "off":
                 request_kwargs["thinking"] = {"type": "disabled"}
             elif self.effort is not None:
-                request_kwargs["thinking"] = {"type": "adaptive"}
+                thinking: JsonObject = {"type": "adaptive"}
+                # Probed 2026-08-09 (one call per variant): anthropic
+                # claude-opus-5 returns empty thinking text with display
+                # unset or "omitted" and a summary with "summarized";
+                # z.ai glm-5.2 accepts display and ignores it (full
+                # thinking text either way), so no per-backend branch.
+                if self.reasoning_summary in ("concise", "detailed"):
+                    thinking["display"] = "summarized"
+                request_kwargs["thinking"] = thinking
                 request_kwargs["output_config"] = {"effort": self.effort}
             with concurrency.slot(self.name.partition(":")[0]):
                 response = call_with_anthropic_retry(

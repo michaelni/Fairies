@@ -271,10 +271,11 @@ class EffortThinkingTests(unittest.TestCase):
                                 input={"classification": "approve", "message": "",
                                        "head_vs_branch_diff_evidence": False})])
 
-    def _run(self, effort: str | None) -> dict:
+    def _run(self, effort: str | None, reasoning_summary: str | None = None) -> dict:
         client = _ScriptedClient([self._submit()])
         reviewer = anthropic_reviewer.AnthropicReviewer(
             "glm-5.2", name="zai:glm-5.2", effort=effort,
+            reasoning_summary=reasoning_summary,
         )
         reviewer._client = lambda: client  # type: ignore[method-assign]
         reviewer.review(_ctx(None))
@@ -285,6 +286,23 @@ class EffortThinkingTests(unittest.TestCase):
 
     def test_off_disables_thinking(self) -> None:
         self.assertEqual({"type": "disabled"}, self._run("off")["thinking"])
+
+    def test_reasoning_summary_requests_summarized_display(self) -> None:
+        # Probed 2026-08-09 (one call per variant): anthropic claude-opus-5
+        # returns a thinking summary only with display=summarized (empty
+        # text with it unset or "omitted"); z.ai glm-5.2 accepts display
+        # and ignores it, so the same request shape serves both backends.
+        for summary in ("concise", "detailed"):
+            call = self._run("high", summary)
+            self.assertEqual(
+                {"type": "adaptive", "display": "summarized"}, call["thinking"])
+            self.assertEqual({"effort": "high"}, call["output_config"])
+
+    def test_reasoning_summary_auto_keeps_provider_default(self) -> None:
+        self.assertEqual({"type": "adaptive"}, self._run("high", "auto")["thinking"])
+
+    def test_reasoning_summary_without_effort_sends_no_thinking(self) -> None:
+        self.assertNotIn("thinking", self._run(None, "detailed"))
 
     def test_effort_sets_adaptive_thinking(self) -> None:
         # The named-effort dialect (thinking adaptive + output_config.effort)

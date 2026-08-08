@@ -131,6 +131,7 @@ def make_reviewer(
                 max_tool_rounds=args.podman_max_tool_rounds,
                 exec_timeout_s=args.podman_exec_timeout,
                 effort=effort,
+                reasoning_summary=args.reasoning_summary,
                 verbose=verbose,
                 debug_dir=(
                     args.debug_response_dir

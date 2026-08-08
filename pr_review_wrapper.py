@@ -370,7 +370,10 @@ def parse_args() -> argparse.Namespace:
         "--reasoning-summary",
         choices=["auto", "concise", "detailed"],
         default="auto",
-        help="Reasoning summary level returned by the Responses API (default: auto).",
+        help="Reasoning summary level (default: auto). OpenAI: Responses "
+             "``reasoning.summary``; codex: ``model_reasoning_summary``; "
+             "anthropic/zai: concise and detailed request "
+             "``thinking.display=summarized`` when thinking is enabled.",
     )
     p.add_argument(
         "--top-p",

@@ -171,6 +171,7 @@ R_PROMPT_DESIGN_REVIEWER_ROLE = """##In your Design Reviewer role
 - Check if the algorithms used are reasonable (complexity, asymptotic performance (cpu & memory)) for the range of input expected.
 - Check existing research papers, compare their conclusions to what this pull request does
 - Check competing projects / competitors and learn from their solution
+- Consider portability (older and latest) x (windows, macosx, linux, bsd)
 - Check if this project is the right place for any fix/workaround, and if not say so clearly.
 """ + CR_PROMPT_WORKAROUND_LANGUAGE
 

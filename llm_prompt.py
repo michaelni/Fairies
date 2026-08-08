@@ -476,8 +476,6 @@ Pick exactly one value for ``route``:
     has not responded yet).
   * The PR is waiting on a maintainer action (approval, merge) and we
     have nothing new to add.
-  * The latest comment duplicates a point that has already been made
-    and a restatement from us would add noise rather than help.
   * The author has asked the current reviewer identity not to review
     this PR. Honor that even when the engage criteria would otherwise
     apply; state the author's request in ``reason``.

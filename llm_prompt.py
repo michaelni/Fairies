@@ -281,7 +281,7 @@ to see a list of specifications available use 'git --git-dir=/mnt/data/repos/all
 all other git commands work similarly as expected without a checkout.
 the HEAD revisions of all the files from all repositories are also available from a vector store
 '''  if container_repo_mounts and not podman_shell_enabled else ""}\
-Prior {subject} discussion is provided separately when available. Use it to avoid repeating already-known and understood issues.
+Prior {subject} discussion is provided separately when available. Use it to avoid repeating already-known and understood points.
 And avoid posting the same point again if it was already raised by the current {"investigator" if subject == "issue" else "reviewer"} identity.
 Prefer adding new evidence, sharper explanation, or a concrete fix over restating a point already made in the discussion.
 

@@ -276,6 +276,15 @@ class ActTests(DbCase):
         self.assertEqual(self.db.find("pr", "5"), "outgoing")
         self.assertTrue(self.db.get("outgoing", "pr", "5")["force_post"])
 
+    def test_apply_stages_a_sample_verdict_like_the_base(self) -> None:
+        """y works on a sample row: the send pass posts under the forge
+        number either way, and the sample may hold the fresher verdict
+        (the base reviewed before the latest discussion)."""
+        self.db.push("reviewed", "pr", "5s1", verdict(5))
+        self.model.poll()
+        self.model.act("apply")
+        self.assertEqual(self.db.find("pr", "5s1"), "outgoing")
+
     def test_R_adds_evaluations_without_clobbering_earlier_ones(self) -> None:
         """Each R takes the next free sample slot: a verdict for 5s1 on
         disk plus a pending 5s2 request mean R asks for 5s3."""

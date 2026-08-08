@@ -348,11 +348,6 @@ class Model:
                 return
             db = self.db(item)
             label = f"{_KIND_DISP[item.kind]} {item.repo}#{item.number}"
-            if action == "apply" and not filedb.is_base(item.number):
-                logger.info("%s is a sample/review evaluation: post the "
-                            "base ticket, or mv it to outgoing/ to force",
-                            label)
-                return
             if action == "sample":
                 # R: one MORE evaluation next to whatever exists -- the
                 # next free sample slot, never clobbering base or earlier

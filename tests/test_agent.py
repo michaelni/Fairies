@@ -154,7 +154,7 @@ class TicketRoutingTests(AgentCase):
                          (NOW - timedelta(days=12)).isoformat())
 
     def test_pr_prepare_failure_is_a_paced_error_not_a_skip(self) -> None:
-        # like the issue side: a row, a summary line, ERROR_RETRY_H --
+        # like the issue side: a row, a summary line, error backoff --
         # and never a clobbered standing verdict
         self.prepare.side_effect = lambda ns, pr, **kw: fairy.Decision(
             pr["number"], pr["title"], "a", "-", "error",
@@ -162,7 +162,7 @@ class TicketRoutingTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertIn("gcli timeout", self.db.get("error", "pr", "1")["error"])
         self.prepare.reset_mock()
-        self.scan([make_pr(1)])  # within ERROR_RETRY_H: no refetch churn
+        self.scan([make_pr(1)])  # within the error backoff: no refetch churn
         self.prepare.assert_not_called()
         self.db.push("reviewed", "pr", "2", {
             "review": {"classification": "moderate_issues"},
@@ -942,11 +942,23 @@ class PortedGateContractTests(AgentCase):
         self.db.push("error", "pr", "1", {"error": "boom"})
         self.age("error", "pr", "1", hours=1)
         self.scan([make_pr(1)])
-        self.prepare.assert_not_called()  # within ERROR_RETRY_H: no spend
+        self.prepare.assert_not_called()  # within the error backoff: no spend
         self.assertEqual(self.db.find("pr", "1"), "error")
         self.age("error", "pr", "1", hours=25)
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "queued")  # and never forgotten
+        self.assertEqual(self.db.get("queued", "pr", "1")["error_backoff_h"], 24)
+
+    def test_error_backoff_doubles_per_served_wait(self) -> None:
+        self.db.push("error", "pr", "1",
+                     {"error": "boom", "error_backoff_h": 24})
+        self.age("error", "pr", "1", hours=25)  # within the 48h doubled wait
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.find("pr", "1"), "error")
+        self.age("error", "pr", "1", hours=49)
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.get("queued", "pr", "1")["error_backoff_h"], 48)
 
     def test_corrupt_timestamps_fail_open(self) -> None:
         self.db.push("skipped", "pr", "1", dict(llm_skip(24), llm_at="garbage"))

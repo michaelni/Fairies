@@ -89,7 +89,6 @@ __all__ = ["main", "scan_pass", "send_pass"]
 logger = logging.getLogger(__name__)
 
 MIN_BACKOFF_H = 24.0
-ERROR_RETRY_H = 24.0
 # States the agent never touches during a scan: the item is being
 # worked on or awaits the operator/sender.
 IN_FLIGHT = ("queued", "llm", "outgoing")
@@ -295,9 +294,14 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # re-gated now but keeps the LLM-skip escalation, which it
             # says nothing about
             backoff_h = float(prior_data.get("skip_backoff_h") or 0)
-        if prior == "error" and prior_data and number not in forced_ns \
-                and _age_h(prior_data, now) < ERROR_RETRY_H:
-            continue  # a persistently failing item must not burn spend every cycle
+        error_backoff_h = 0.0
+        if prior == "error" and prior_data and number not in forced_ns:
+            wait = backoff_wait_h(prior_data.get("error_backoff_h", 0))
+            # served waits double like the skip backoff: a 100%-failing
+            # item costs log2, not linear, retries until someone looks
+            if _age_h(prior_data, now) < wait:
+                continue  # a persistently failing item must not burn spend every cycle
+            error_backoff_h = wait
         if kind == "pr":
             prepared = fairy.safe_prepare_pr(
                 ns, item, now=now, self_login=self_login, wip_re=wip_re,
@@ -310,13 +314,14 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             except Exception as exc:
                 logger.error("issue #%d: prepare failed: %s", number, exc)
                 # an error/ ticket gives the failure a row, a summary
-                # line and ERROR_RETRY_H pacing; the archive and a
+                # line and doubling backoff pacing; the archive and a
                 # standing verdict outrank it
                 if prior not in ("posted", "cancelled", "reviewed"):
                     _route(db, kind, token, "error", {
                         "title": str(item.get("title") or ""),
                         "html_url": str(item.get("html_url") or ""),
                         "error": f"prepare failed: {exc}",
+                        "error_backoff_h": error_backoff_h,
                         "expected_updated_at": item.get("updated_at"),
                     }, prior)
                 continue
@@ -333,6 +338,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 if prior in ("posted", "cancelled", "reviewed"):
                     continue  # never clobber archive or a standing verdict
                 ticket["error"] = prepared.reason
+                ticket["error_backoff_h"] = error_backoff_h
             _route(db, kind, token, state, ticket, prior)
             for token in evals.get(number, ()):
                 # a requested evaluation of a gate-skipped item cannot
@@ -375,6 +381,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             "expected_updated_at": item.get("updated_at"),
             "html_url": str(getattr(prepared, "pr", getattr(prepared, "issue", {})).get("html_url") or ""),
             "skip_backoff_h": backoff_h,
+            "error_backoff_h": error_backoff_h,
             "forced": number in forced_ns,
             "prepared": fairy.prepared_to_dict(prepared),
         }

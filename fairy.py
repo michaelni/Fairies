@@ -88,6 +88,7 @@ import gcli_cache
 from common import (
     EXIT_REVIEW_HALTED,
     EXIT_TURN_FAILED,
+    parse_turn_failure,
     JsonObject,
     add_color_arg,
     attachment_urls,
@@ -1862,7 +1863,7 @@ def invoke_llm_wrapper(
     if cp.returncode == EXIT_TURN_FAILED:
         raise ReviewTurnFailed(
             "LLM review gave up: provider-ended turns exhausted the "
-            "wrapper's in-run retry budget"
+            f"wrapper's in-run retry budget: {parse_turn_failure(cp.stdout)}"
         )
     if cp.returncode != 0:
         raise RuntimeError(

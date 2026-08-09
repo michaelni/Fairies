@@ -67,6 +67,16 @@ EXIT_REVIEW_HALTED = 4
 EXIT_TURN_FAILED = 5
 
 
+def format_turn_failure(exc: BaseException) -> str:
+    """The wrapper's stdout line alongside EXIT_TURN_FAILED; the two
+    sides of the contract live here so neither imports the other."""
+    return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+
+def parse_turn_failure(stdout: str) -> str:
+    return json.loads(stdout)["error"]
+
+
 def response_to_debug_json(response: object) -> JsonObject:
     """Best-effort JSON view of any SDK response object (OpenAI and
     Anthropic models are pydantic and expose ``model_dump``)."""

@@ -39,6 +39,7 @@ containers for another 4.5 minutes.
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -50,7 +51,8 @@ if str(REPO_ROOT) not in sys.path:
 
 import fairy  # noqa: E402
 import shell_tool  # noqa: E402
-from common import EXIT_REVIEW_HALTED  # noqa: E402
+from common import (EXIT_REVIEW_HALTED, EXIT_TURN_FAILED,  # noqa: E402
+                    format_turn_failure)
 
 
 def _args(attempts: int) -> argparse.Namespace:
@@ -91,6 +93,37 @@ class ReviewHaltedRetryPolicyTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             fairy.call_llm_with_retries(_args(3), 23750, invoke)
         self.assertEqual(3, len(calls))
+
+
+class TurnFailedErrorPropagationTests(unittest.TestCase):
+    """The wrapper's EXIT_TURN_FAILED carries the provider's own error.
+    """
+
+    PROVIDER_ERROR = (
+        'codex:gpt-5.6-sol: codex exec produced no final message (rc=1); '
+        'errors: {"type": "error", "message": "This content was flagged '
+        'for possible cybersecurity risk. If this seems wrong, try '
+        'rephrasing your request. To get authorized for security work, '
+        'join the Trusted Access for Cyber program: '
+        'https://chatgpt.com/cyber"}'
+    )
+
+    def test_provider_error_reaches_the_exception(self) -> None:
+        args = argparse.Namespace(
+            llm_review_cmd="./pr_review_wrapper.py", verbose=0,
+            llm_timeout=10)
+        cp = subprocess.CompletedProcess(
+            [], EXIT_TURN_FAILED,
+            stdout=format_turn_failure(RuntimeError(self.PROVIDER_ERROR)) + "\n",
+            stderr="")
+        with mock.patch.object(fairy, "run_cmd", return_value=cp):
+            with self.assertRaises(fairy.ReviewTurnFailed) as caught:
+                fairy.invoke_llm_wrapper(
+                    args, {}, number=42,
+                    allowed_classifications=frozenset(),
+                    label_allowlist=[])
+        self.assertIn(self.PROVIDER_ERROR, str(caught.exception))
+        self.assertIn("in-run retry budget", str(caught.exception))
 
 
 class HaltStopsSiblingReviewersTests(unittest.TestCase):

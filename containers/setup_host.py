@@ -28,43 +28,35 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-One-shot host setup for the fairy isolated review network.
+One-shot host setup that blocks a review container's egress to the LAN
+(RFC1918 / link-local / CGNAT / private IPv6) while leaving
+public-internet egress intact -- internet access is useful during
+review. The filter lives on the HOST, outside the container, so a fully
+compromised container cannot remove it. Default mode is dry-run (every
+command is printed, nothing runs); ``--apply`` executes.
 
-Two outputs:
-1. A podman network with a fixed IPv4 subnet so the nftables rules
-   can reference it.
-2. An nftables ``inet`` table that drops egress from that subnet to
-   RFC1918 / link-local / CGNAT, allowing everything else (the
-   public internet).
+For rootless podman (``--rootless-user USER``, the production model): the
+network backend (slirp4netns or pasta) forwards container egress from a
+host socket owned by USER's uid, so the block is an OUTPUT drop keyed on
+``meta skuid <uid>`` -- the container cannot change that uid or touch
+host nftables, so it is bypass-proof from inside. DNS (port 53) is
+exempted so name resolution still works when the host resolver is a LAN
+address. USER must be an account dedicated to running review containers
+-- every LAN connection it opens is dropped, so it must not also run the
+fairy orchestrator or anything else that needs the LAN. ``--apply``
+loads the ruleset now and installs a systemd unit that reloads it on
+boot; run it as root.
 
-Default mode is dry-run: every command is printed, nothing is run.
-``--apply`` actually executes them. Per the rule that the network
-filter must live OUTSIDE the container, the nftables rules are
-installed on the host and a compromised container cannot remove them.
-
-Scope: this ``ip saddr <subnet>`` FORWARD filter only works under
-**rootful** podman, where netavark puts a real bridge on the host and
-container egress traverses the host FORWARD chain with the container
-subnet as source. It does NOT apply to rootless podman: both pasta
-(the rootless default) and slirp4netns translate egress to the host's
-own address in userspace, so the host FORWARD chain never sees the
-container subnet as a source and these rules match nothing.
-
-TODO(egress-isolation, rootless): the production deployment runs
-rootless podman in a dedicated account, so this script is not wired
-into it yet and review containers currently have unrestricted egress
-(internet AND LAN). The rootless-compatible block is a root-installed
-nftables rule keyed on the fairy uid -- pasta opens its outbound
-sockets as that uid, so e.g. ``meta skuid <uid> ct state new ip daddr
-{ RFC1918... } drop`` in OUTPUT is bypass-proof (the container cannot
-change its uid or touch host nftables). Confirm pasta carries skuid on
-the target box before relying on it, then add it as root pre-setup.
+The subnet/FORWARD path (no ``--rootless-user``) is the pre-existing
+rootful setup; see ``configure_host``.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
+import pwd
 import shlex
 import subprocess
 import sys
@@ -82,6 +74,10 @@ DEFAULT_NETWORK_NAME = "fairy-isolated"
 DEFAULT_SUBNET = "10.222.0.0/24"
 DEFAULT_TABLE_NAME = "fairy_isolation"
 
+DEFAULT_ROOTLESS_TABLE = "fairy_egress"
+DEFAULT_NFT_FILE = Path("/etc/fairy-egress.nft")
+DEFAULT_UNIT_FILE = Path("/etc/systemd/system/fairy-egress.service")
+
 # Destinations the container must NOT be able to reach. Excludes the
 # container's own subnet (added to the allow rule below) so intra-net
 # traffic still works.
@@ -92,6 +88,10 @@ LAN_BLOCK_DESTS = (
     "169.254.0.0/16",
     "100.64.0.0/10",
 )
+
+# A LAN host reachable only via a global IPv6 (GUA) is not covered: no
+# reserved prefix separates it from the public internet.
+LAN_BLOCK_DESTS6 = ("fc00::/7", "fe80::/10")
 
 
 def build_nft_script(*, subnet: str, table: str) -> str:
@@ -109,6 +109,99 @@ def build_nft_script(*, subnet: str, table: str) -> str:
         f"add rule inet {table} forward ip saddr {subnet} ip daddr {subnet} return\n"
         f"add rule inet {table} forward ip saddr {subnet} ip daddr {{ {dests} }} drop\n"
     )
+
+
+def build_rootless_egress_nft(*, uid: int, table: str) -> str:
+    """Render the idempotent uid-keyed OUTPUT ruleset (see module docstring).
+
+    ``add``+``flush`` make re-running converge to the same state. Only new
+    connections from ``uid`` to the LAN ranges are dropped; DNS (port 53)
+    and everything to the public internet pass.
+    """
+    dests = ", ".join(LAN_BLOCK_DESTS)
+    dests6 = ", ".join(LAN_BLOCK_DESTS6)
+    return (
+        f"add table inet {table}\n"
+        f"flush table inet {table}\n"
+        f"add chain inet {table} output {{ type filter hook output priority filter - 10; policy accept; }}\n"
+        f"add rule inet {table} output meta skuid {uid} udp dport 53 accept\n"
+        f"add rule inet {table} output meta skuid {uid} tcp dport 53 accept\n"
+        f"# Restrict DNS to one resolver by dropping the two rules above and adding e.g.:\n"
+        f"# add rule inet {table} output meta skuid {uid} ip daddr 192.0.2.53 udp dport 53 accept\n"
+        f"add rule inet {table} output meta skuid {uid} ip daddr {{ {dests} }} drop\n"
+        f"add rule inet {table} output meta skuid {uid} ip6 daddr {{ {dests6} }} drop\n"
+    )
+
+
+def build_egress_unit(*, nft_file: Path) -> str:
+    """Render the systemd oneshot that reloads the ruleset on boot."""
+    return (
+        "[Unit]\n"
+        "Description=fairy rootless podman LAN-egress block\n"
+        "After=nftables.service network-pre.target\n"
+        "Wants=network-pre.target\n\n"
+        "[Service]\n"
+        "Type=oneshot\n"
+        "RemainAfterExit=yes\n"
+        f"ExecStart=nft -f {nft_file}\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
+
+def configure_rootless_egress(
+    *, user: str, table: str, nft_file: Path, unit_file: Path, apply: bool,
+) -> int:
+    """Print or install the rootless uid-keyed LAN-egress block.
+
+    ``--apply`` writes ``nft_file`` and ``unit_file``, loads the ruleset
+    now with ``nft -f``, and enables the unit so it reloads on boot; it
+    must run as root. The dry-run prints exactly these steps.
+
+    Loading is an explicit ``nft -f`` rather than starting the unit: the
+    unit is ``RemainAfterExit`` so ``systemctl start`` is a no-op once it
+    is active, which would leave an edited ruleset written-but-not-loaded
+    on a re-apply. Returns a process exit code.
+    """
+    try:
+        uid = pwd.getpwnam(user).pw_uid
+    except KeyError:
+        logger.error("no such user %r on this host", user)
+        return 2
+    if uid == 0:
+        logger.error("refusing to block root's egress (uid 0)")
+        return 2
+    nft_script = build_rootless_egress_nft(uid=uid, table=table)
+    unit = build_egress_unit(nft_file=nft_file)
+    commands = [
+        ["nft", "-f", str(nft_file)],
+        ["systemctl", "daemon-reload"],
+        ["systemctl", "enable", unit_file.name],
+    ]
+
+    if not apply:
+        logger.info("dry-run; pass --apply (as root) to install the following:")
+        logger.info("write %s:\n%s", nft_file, nft_script)
+        logger.info("write %s:\n%s", unit_file, unit)
+        for cmd in commands:
+            logger.info("$ %s", shlex.join(cmd))
+        return 0
+
+    if os.geteuid() != 0:
+        logger.error(
+            "--apply for rootless egress must run as root "
+            "(it writes %s and installs a systemd unit)", nft_file,
+        )
+        return 1
+
+    logger.info("blocking LAN egress for user %s (uid %d)", user, uid)
+    nft_file.write_text(nft_script, encoding="utf-8")
+    unit_file.write_text(unit, encoding="utf-8")
+    for cmd in commands:
+        rc = _run(cmd)
+        if rc != 0:
+            return rc
+    return 0
 
 
 def build_podman_network_argv(*, name: str, subnet: str) -> list[str]:
@@ -179,6 +272,11 @@ def configure_host(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0] if __doc__ else "")
+    p.add_argument(
+        "--rootless-user",
+        help="rootless podman account whose LAN egress to block via a "
+             "uid-keyed OUTPUT rule (the production model; run --apply as root)",
+    )
     p.add_argument("--network-name", default=DEFAULT_NETWORK_NAME, help="podman network name")
     p.add_argument("--subnet", default=DEFAULT_SUBNET, help="IPv4 subnet for the isolated network")
     p.add_argument("--table-name", default=DEFAULT_TABLE_NAME, help="nftables table name")
@@ -195,6 +293,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging(logger, args.verbose, color=args.color)
+    if args.rootless_user:
+        return configure_rootless_egress(
+            user=args.rootless_user, table=DEFAULT_ROOTLESS_TABLE,
+            nft_file=DEFAULT_NFT_FILE, unit_file=DEFAULT_UNIT_FILE, apply=args.apply,
+        )
     return configure_host(
         network=args.network_name,
         subnet=args.subnet,

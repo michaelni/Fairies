@@ -140,9 +140,10 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_PODMAN_IMAGE = "localhost/fairy-review:latest"
-# Empty: omit --network so podman uses its default (rootless = pasta).
-# A named isolated network is only meaningful once the out-of-band
-# egress LAN-block exists; see containers/setup_host.py TODO.
+# Empty: omit --network so podman uses its default (rootless
+# slirp4netns/pasta). The LAN-egress block is the uid-keyed host rule
+# from containers/setup_host.py --rootless-user, independent of the
+# podman network.
 DEFAULT_PODMAN_NETWORK = ""
 
 

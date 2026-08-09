@@ -40,6 +40,7 @@ is mocked. The point is to lock down:
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -162,6 +163,105 @@ class ConfigureHostTests(unittest.TestCase):
             rc = setup_host.configure_host(**_cfg_kwargs(apply=True))
         self.assertEqual(125, rc)
         self.assertEqual(2, run.call_count)
+
+
+ROOTLESS_UID = 4242
+ROOTLESS_TABLE = "fairy_egress_test"
+
+
+def _pwd_entry(uid: int) -> mock.Mock:
+    entry = mock.Mock()
+    entry.pw_uid = uid
+    return entry
+
+
+class BuildRootlessEgressNftTests(unittest.TestCase):
+    def test_keys_on_uid_exempts_dns_and_drops_lan(self) -> None:
+        script = setup_host.build_rootless_egress_nft(
+            uid=ROOTLESS_UID, table=ROOTLESS_TABLE)
+        self.assertIn(f"add table inet {ROOTLESS_TABLE}", script)
+        self.assertIn("hook output priority filter - 10", script)
+        # DNS exempted before the LAN drop, so name resolution via a LAN
+        # resolver survives.
+        for proto in ("udp", "tcp"):
+            self.assertIn(
+                f"meta skuid {ROOTLESS_UID} {proto} dport 53 accept", script)
+        for dest in setup_host.LAN_BLOCK_DESTS:
+            self.assertIn(dest, script)
+        for dest in setup_host.LAN_BLOCK_DESTS6:
+            self.assertIn(dest, script)
+        self.assertIn(f"meta skuid {ROOTLESS_UID} ip daddr", script)
+        self.assertLess(script.index("dport 53 accept"),
+                        script.index("ip daddr"))
+
+
+class ConfigureRootlessEgressTests(unittest.TestCase):
+    def _kwargs(self, **overrides: object) -> dict[str, object]:
+        base: dict[str, object] = dict(
+            user="sandbox", table=ROOTLESS_TABLE,
+            nft_file=Path("/etc/fairy-egress.nft"),
+            unit_file=Path("/etc/systemd/system/fairy-egress.service"),
+            apply=False,
+        )
+        base.update(overrides)
+        return base
+
+    def test_dry_run_writes_nothing_and_runs_nothing(self) -> None:
+        with mock.patch.object(setup_host.pwd, "getpwnam",
+                               return_value=_pwd_entry(ROOTLESS_UID)), \
+             mock.patch.object(setup_host.subprocess, "run") as run, \
+             mock.patch.object(Path, "write_text") as write:
+            rc = setup_host.configure_rootless_egress(**self._kwargs())
+        self.assertEqual(0, rc)
+        self.assertFalse(run.called)
+        self.assertFalse(write.called)
+
+    def test_unknown_user_fails(self) -> None:
+        with mock.patch.object(setup_host.pwd, "getpwnam",
+                               side_effect=KeyError("sandbox")):
+            rc = setup_host.configure_rootless_egress(**self._kwargs(apply=True))
+        self.assertEqual(2, rc)
+
+    def test_refuses_root_uid(self) -> None:
+        with mock.patch.object(setup_host.pwd, "getpwnam",
+                               return_value=_pwd_entry(0)):
+            rc = setup_host.configure_rootless_egress(**self._kwargs(apply=True))
+        self.assertEqual(2, rc)
+
+    def test_apply_as_non_root_refuses(self) -> None:
+        with mock.patch.object(setup_host.pwd, "getpwnam",
+                               return_value=_pwd_entry(ROOTLESS_UID)), \
+             mock.patch.object(setup_host.os, "geteuid", return_value=1000), \
+             mock.patch.object(setup_host.subprocess, "run") as run, \
+             mock.patch.object(Path, "write_text") as write:
+            rc = setup_host.configure_rootless_egress(**self._kwargs(apply=True))
+        self.assertEqual(1, rc)
+        self.assertFalse(run.called)
+        self.assertFalse(write.called)
+
+    def test_apply_as_root_writes_files_and_enables_unit(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            nft_file = Path(d) / "fairy-egress.nft"
+            unit_file = Path(d) / "fairy-egress.service"
+            with mock.patch.object(setup_host.pwd, "getpwnam",
+                                   return_value=_pwd_entry(ROOTLESS_UID)), \
+                 mock.patch.object(setup_host.os, "geteuid", return_value=0), \
+                 mock.patch.object(setup_host.subprocess, "run",
+                                   return_value=_completed(0)) as run:
+                rc = setup_host.configure_rootless_egress(
+                    **self._kwargs(apply=True, nft_file=nft_file, unit_file=unit_file))
+            self.assertEqual(0, rc)
+            self.assertIn(f"meta skuid {ROOTLESS_UID}",
+                          nft_file.read_text(encoding="utf-8"))
+            self.assertIn(str(nft_file), unit_file.read_text(encoding="utf-8"))
+        commands = [call.args[0] for call in run.call_args_list]
+        # nft -f loads now; enable (not --now) only persists across boot,
+        # since the RemainAfterExit unit would no-op a re-apply's start.
+        self.assertEqual(["nft", "-f", str(nft_file)], commands[0])
+        self.assertIn(["systemctl", "daemon-reload"], commands)
+        self.assertIn(["systemctl", "enable", unit_file.name], commands)
+        self.assertNotIn(
+            ["systemctl", "enable", "--now", unit_file.name], commands)
 
 
 if __name__ == "__main__":

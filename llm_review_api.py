@@ -809,8 +809,7 @@ def review_with_turn_retries(reviewer: Reviewer, ctx: ReviewContext,
                 raise
             logger.warning(
                 "%s: provider ended the turn (%s); attempt %d/%d",
-                reviewer.name, (str(exc).splitlines() or ["-"])[0][:160],
-                attempt + 1, attempts)
+                reviewer.name, exc, attempt + 1, attempts)
 
 
 def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:

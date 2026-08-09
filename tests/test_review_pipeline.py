@@ -63,7 +63,8 @@ if "anthropic" not in sys.modules:
 
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
-                            ProviderTurnFailed, Z_AI_ANTHROPIC_URL)
+                            ProviderTurnFailed, Z_AI_ANTHROPIC_URL,
+                            review_with_turn_retries)
 import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
 import workset  # noqa: E402
@@ -111,10 +112,12 @@ class _FailingReviewer(Reviewer):
 class _FlaggedReviewer(Reviewer):
     """ProviderTurnFailed on the first ``fail_times`` calls, then a draft."""
 
-    def __init__(self, name: str, review: Review, fail_times: int) -> None:
+    def __init__(self, name: str, review: Review, fail_times: int,
+                 error: str | None = None) -> None:
         self.name = name
         self._review = review
         self.fail_times = fail_times
+        self.error = error or f"{name}: content flagged"
         self.calls = 0
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
@@ -123,7 +126,7 @@ class _FlaggedReviewer(Reviewer):
     def review(self, ctx: ReviewContext) -> Review:
         self.calls += 1
         if self.calls <= self.fail_times:
-            raise ProviderTurnFailed(f"{self.name}: content flagged")
+            raise ProviderTurnFailed(self.error)
         return self._review
 
 
@@ -349,6 +352,30 @@ class ReviewPrTests(unittest.TestCase):
             review_pipeline.review_pr(
                 ctx, [_FailingReviewer("a"), _FailingReviewer("b")], None,
             )
+
+
+class TurnRetryWarningTests(unittest.TestCase):
+    def test_warning_keeps_the_full_provider_error(self) -> None:
+        """Regression: the retry warning cut ``str(exc)`` to 160 chars,
+        which dropped the actionable tail of gpt-5.6-sol's moderation
+        message (observed 2026-08-09: "...cybersecurity risk. )" with
+        the rephrase / Trusted Access remediation cut off)."""
+        error = (
+            'codex:gpt-5.6-sol: codex exec produced no final message '
+            '(rc=1); errors: {"type": "error", "message": "This content '
+            'was flagged for possible cybersecurity risk. If this seems '
+            'wrong, try rephrasing your request. To get authorized for '
+            'security work, join the Trusted Access for Cyber program: '
+            'https://chatgpt.com/cyber"}'
+        )
+
+        draft = Review("minor_issues_approve", "ok", model="gpt")
+        reviewer = _FlaggedReviewer(
+            "codex:gpt-5.6-sol", draft, fail_times=1, error=error)
+        with self.assertLogs("llm_review_api", level="WARNING") as logs:
+            out = review_with_turn_retries(reviewer, _ctx(), attempts=4)
+        self.assertIs(out, draft)
+        self.assertIn(error, logs.output[0])
 
 
 class RunTriageTests(unittest.TestCase):

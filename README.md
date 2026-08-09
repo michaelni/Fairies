@@ -147,9 +147,10 @@ reference lives in [README-FAIRY-UI.md](README-FAIRY-UI.md); see
 
 The LLM's shell tool runs in an ephemeral Podman container on an ssh host
 (local, a VM, or in the cloud). Each review gets a fresh container (no reuse)
-with a full dev toolchain and internet access (restrictable via iptables).
-Repos are filled from host-local mirrors, so no multi-hundred-MB `.git`
-crosses the wire per review.
+with a full dev toolchain and internet access; egress to your LAN is
+blockable out-of-band (see "Blocking LAN egress" below). Repos are filled
+from host-local mirrors, so no multi-hundred-MB `.git` crosses the wire per
+review. Containers run with `--pids-limit` and `--security-opt=no-new-privileges`.
 
 Prerequisite, once, as root on the host: install `podman`. Nothing else --
 no `podman.socket`, no lingering; fairy uses rootless podman purely over ssh
@@ -184,6 +185,31 @@ The LLM's shell runs over a single persistent
 `ssh DEST podman exec -i` pipe into an in-container agent
 (`containers/fairy_agent.py`) speaking a small JSON protocol, so there is no
 per-command ssh handshake and no shell-quoting of model output.
+
+#### Blocking LAN egress (optional)
+
+A review runs untrusted PR code, so the container should not be able to reach
+your LAN (routers, other hosts, internal services) while it keeps internet
+access, which is useful during review. `containers/setup_host.py` installs a
+host nftables rule that drops the podman account's new connections to
+RFC1918 / link-local / CGNAT and lets everything else through. Dry-run, then
+apply as root on the podman host:
+
+    python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT
+    sudo python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT --apply
+
+The rule is keyed on the account's uid (rootless podman's slirp4netns/pasta
+forwards container egress from a socket owned by that uid), so it is
+bypass-proof from inside the container. `--apply` also installs a systemd
+unit that reloads it on boot.
+
+- `SANDBOX_ACCOUNT` must be **dedicated** to running review containers: every
+  LAN connection it opens is dropped, so it must not also run the fairy
+  orchestrator or anything else that needs the LAN.
+- Whatever drives the review reaches the container over inbound ssh to the
+  host (the sshd socket is root-owned, not the sandbox uid), so it is
+  unaffected; the sandbox account only receives connections and fills mirrors
+  locally -- it never originates LAN egress.
 
 ### Ensemble (multiple models + verify/combine)
 

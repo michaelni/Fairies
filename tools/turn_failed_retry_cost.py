@@ -33,7 +33,8 @@ Cost vs probability of losing a review run to a provider-ended turn.
 The provider can end a reviewer's or the combiner's turn itself (e.g.
 the "flagged for possible cybersecurity risk" content flag, see
 ``ProviderTurnFailed`` in llm_review_api.py). Retries happen on three
-levels, all mirrored here:
+levels, all mirrored here (a reviewer's ``fallbacks`` chain multiplies
+the stage runs and is not modeled):
 
   * ``run_parallel`` / ``review_pr`` retry the blocked stage; today's
     budget is one retry. This budget is the table's sweep variable.

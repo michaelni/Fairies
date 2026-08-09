@@ -242,8 +242,9 @@ class ProviderContentFlagged(ProviderTurnFailed):
 # tools/turn_failed_retry_cost.py). What this shape costs:
 #  * an exhausted run waits in error/ for the agent's doubling backoff
 #    (a day or more), not seconds, before its next try;
-#  * up to TURN_FAILED_COMBINER_ATTEMPTS back-to-back combiner runs
-#    must fit --llm-timeout, or the timeout masks the flag as a generic
+#  * up to TURN_FAILED_COMBINER_ATTEMPTS back-to-back combiner runs --
+#    plus one run per fallback in the combiner's chain -- must fit
+#    --llm-timeout, or the timeout masks the flag as a generic
 #    failure and re-enters the outer loop;
 #  * the budgets price attempts as independent; a patch that
 #    deterministically trips the flag loses the whole budget every run.
@@ -771,11 +772,15 @@ class Reviewer(ABC):
 
     ``name`` is a short stable label (e.g. ``"openai:gpt-5.4"``) used in
     logs and recorded on the produced ``Review``. ``role`` is the
-    ``RoleSpec`` the instance executes.
+    ``RoleSpec`` the instance executes. ``fallbacks`` are stand-in
+    reviewers ``review_with_turn_retries`` tries in order when this
+    reviewer's turns keep being ended by the provider; their own
+    ``fallbacks`` are not chained.
     """
 
     name: str
     role: RoleSpec
+    fallbacks: tuple["Reviewer", ...] = ()
 
     @abstractmethod
     def run(self, ctx: ReviewContext) -> dict[str, object]:
@@ -804,17 +809,39 @@ class Reviewer(ABC):
 
 def review_with_turn_retries(reviewer: Reviewer, ctx: ReviewContext,
                              attempts: int) -> Review:
-    """Run ``reviewer.review``, retrying only ``ProviderTurnFailed``, up
-    to ``attempts`` total attempts; the last failure propagates."""
-    for attempt in range(1, attempts + 1):
-        try:
-            return reviewer.review(ctx)
-        except ProviderTurnFailed as exc:
-            if attempt == attempts:
-                raise
-            logger.warning(
-                "%s: provider ended the turn (%s); attempt %d/%d",
-                reviewer.name, exc, attempt + 1, attempts)
+    """Run ``reviewer.review``, then its ``fallbacks`` in order.
+
+    The first reviewer retries ``ProviderTurnFailed`` up to ``attempts``
+    (>= 1) total attempts; ``ProviderContentFlagged`` switches to the
+    next reviewer at the first flag instead, when there is one. Each
+    fallback runs exactly once -- a stand-in may live on expensive API
+    credits, so a failing item must not multiply its cost. The last
+    reviewer's failure propagates."""
+    pending = list(reviewer.fallbacks)
+    budget = attempts
+    while True:
+        for attempt in range(1, budget + 1):
+            try:
+                return reviewer.review(ctx)
+            except ProviderTurnFailed as exc:
+                if isinstance(exc, ProviderContentFlagged) and pending:
+                    logger.warning(
+                        "%s: content flagged (%s); switching to %s",
+                        reviewer.name, exc, pending[0].name)
+                    break
+                if attempt < budget:
+                    logger.warning(
+                        "%s: provider ended the turn (%s); attempt %d/%d",
+                        reviewer.name, exc, attempt + 1, budget)
+                    continue
+                if not pending:
+                    raise
+                logger.warning(
+                    "%s: turn-failure budget spent (%s); switching to %s",
+                    reviewer.name, exc, pending[0].name)
+                break
+        reviewer = pending.pop(0)
+        budget = 1
 
 
 def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:

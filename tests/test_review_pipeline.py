@@ -63,8 +63,8 @@ if "anthropic" not in sys.modules:
 
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
-                            ProviderTurnFailed, Z_AI_ANTHROPIC_URL,
-                            review_with_turn_retries)
+                            ProviderContentFlagged, ProviderTurnFailed,
+                            Z_AI_ANTHROPIC_URL, review_with_turn_retries)
 import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
 import workset  # noqa: E402
@@ -113,11 +113,13 @@ class _FlaggedReviewer(Reviewer):
     """ProviderTurnFailed on the first ``fail_times`` calls, then a draft."""
 
     def __init__(self, name: str, review: Review, fail_times: int,
-                 error: str | None = None) -> None:
+                 error: str | None = None,
+                 exc_type: type[ProviderTurnFailed] = ProviderTurnFailed) -> None:
         self.name = name
         self._review = review
         self.fail_times = fail_times
         self.error = error or f"{name}: content flagged"
+        self.exc_type = exc_type
         self.calls = 0
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
@@ -126,7 +128,7 @@ class _FlaggedReviewer(Reviewer):
     def review(self, ctx: ReviewContext) -> Review:
         self.calls += 1
         if self.calls <= self.fail_times:
-            raise ProviderTurnFailed(self.error)
+            raise self.exc_type(self.error)
         return self._review
 
 
@@ -376,6 +378,80 @@ class TurnRetryWarningTests(unittest.TestCase):
             out = review_with_turn_retries(reviewer, _ctx(), attempts=4)
         self.assertIs(out, draft)
         self.assertIn(error, logs.output[0])
+
+
+class TurnRetryFallbackTests(unittest.TestCase):
+    DRAFT = Review("minor_issues_approve", "ok", model="fallback")
+
+    def test_content_flag_switches_at_the_first_attempt(self) -> None:
+        primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99,
+                                   exc_type=ProviderContentFlagged)
+        fallback = _FlaggedReviewer("zai:glm", self.DRAFT, fail_times=0)
+        primary.fallbacks = (fallback,)
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertIs(out, self.DRAFT)
+        self.assertEqual(1, primary.calls)
+        self.assertEqual(1, fallback.calls)
+
+    def test_other_turn_failures_spend_the_budget_first(self) -> None:
+        primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99)
+        fallback = _FlaggedReviewer("zai:glm", self.DRAFT, fail_times=0)
+        primary.fallbacks = (fallback,)
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertIs(out, self.DRAFT)
+        self.assertEqual(4, primary.calls)
+        self.assertEqual(1, fallback.calls)
+
+    def test_the_whole_chain_failing_propagates(self) -> None:
+        primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99,
+                                   exc_type=ProviderContentFlagged)
+        fallback = _FlaggedReviewer("codex:sol+second", self.DRAFT,
+                                    fail_times=99,
+                                    exc_type=ProviderContentFlagged)
+        primary.fallbacks = (fallback,)
+        with self.assertRaises(ProviderContentFlagged), \
+                self.assertLogs("llm_review_api", level="WARNING"):
+            review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertEqual(1, primary.calls)
+        self.assertEqual(1, fallback.calls)
+
+    def test_a_fallback_is_never_retried(self) -> None:
+        """A stand-in may run on expensive API credits: it gets exactly
+        one attempt even for a failure the primary would retry."""
+        primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99)
+        fallback = _FlaggedReviewer("openai:gpt-5.6+OPENAI_API_KEY_2",
+                                    self.DRAFT, fail_times=1)
+        primary.fallbacks = (fallback,)
+        with self.assertRaises(ProviderTurnFailed), \
+                self.assertLogs("llm_review_api", level="WARNING"):
+            review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertEqual(4, primary.calls)
+        self.assertEqual(1, fallback.calls)
+
+    def test_a_flag_without_fallbacks_keeps_the_retry_budget(self) -> None:
+        """Regression (review finding): splitting ProviderContentFlagged
+        out of ProviderTurnFailed dropped a flagged, fallback-less
+        reviewer from 4 in-run attempts to 1."""
+        primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=2,
+                                   exc_type=ProviderContentFlagged)
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertIs(out, self.DRAFT)
+        self.assertEqual(3, primary.calls)
+
+    def test_two_fallbacks_run_in_order(self) -> None:
+        primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99,
+                                   exc_type=ProviderContentFlagged)
+        cyber = _FlaggedReviewer("codex:sol+second", self.DRAFT, fail_times=99,
+                                 exc_type=ProviderContentFlagged)
+        glm = _FlaggedReviewer("zai:glm", self.DRAFT, fail_times=0)
+        primary.fallbacks = (cyber, glm)
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertIs(out, self.DRAFT)
+        self.assertEqual([1, 1, 1], [primary.calls, cyber.calls, glm.calls])
 
 
 class RunTriageTests(unittest.TestCase):

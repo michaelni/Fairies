@@ -520,6 +520,11 @@ def build_image_if_needed(
 # these to the model (llm_prompt), so change them here, not at call sites.
 CONTAINER_MEMORY = "8g"
 CONTAINER_CPUS = "8"
+# Fork-bomb backstop. Verified 2026-08-09 on the fairy-review image that
+# `apt-get install`, `make -j32`, and 300 concurrent processes all stay
+# under this cap, so it bounds a hostile PR's process count without
+# constraining real builds/fuzzing.
+CONTAINER_PIDS_LIMIT = 4096
 
 
 @dataclass(frozen=True)
@@ -598,6 +603,11 @@ def start_ephemeral_container(
         *([f"--network={network}"] if network else []),
         f"--memory={memory}",
         f"--cpus={cpus}",
+        f"--pids-limit={CONTAINER_PIDS_LIMIT}",
+        # PR code runs as root inside; block it from re-gaining privileges
+        # through a setuid binary. Reviews never need this (the image ships
+        # no sudo and apt runs as the container's own root).
+        "--security-opt=no-new-privileges",
         *extra_args,
         image, "sleep", "infinity",
     ]

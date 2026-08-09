@@ -344,7 +344,10 @@ class StartStopContainerTests(unittest.TestCase):
         self.assertEqual(SSH_PREFIX, argv[:len(SSH_PREFIX)])
         remote = argv[-1]
         for token in ("podman run -d --rm", "--network=fairy-isolated",
-                      "--memory=2g", "--cpus=1", "fairy:latest sleep infinity"):
+                      "--memory=2g", "--cpus=1",
+                      f"--pids-limit={lc.CONTAINER_PIDS_LIMIT}",
+                      "--security-opt=no-new-privileges",
+                      "fairy:latest sleep infinity"):
             self.assertIn(token, remote)
         # No `-w`: the image's WORKDIR sets the cwd; podman 4.9.3 rejects
         # `run --workdir` on the WORKDIR-created dir (see start_ephemeral_container).

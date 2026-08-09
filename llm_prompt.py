@@ -533,6 +533,8 @@ Pick exactly one value for ``route``:
   output guideline (Markdown, no HTML, no markdown fences, include
   the "LLM-..." prefix from the General Rules near the beginning,
   do not link to places that sell specifications).
+  "reply_no_verdict" is forbidden for questions related to actual
+  review, you do not have the information available to the reviewer.
 
 - engage: a full reviewer pass should run now. Typical cases:
   * After our last reply, the author has pushed new code that needs
@@ -546,6 +548,7 @@ Pick exactly one value for ``route``:
     review was right.
   * If a review seems expected from someone since over a week but
     no one else did a review.
+  * A direct question is asked to us about review.
   Leave ``message`` empty for engage; the full reviewer pass will
   produce the actual review comment.
 

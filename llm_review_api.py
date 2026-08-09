@@ -74,6 +74,7 @@ __all__ = [
     "REVIEW_SCHEMA",
     "Z_AI_ANTHROPIC_URL",
     "BadModelOutput",
+    "ProviderContentFlagged",
     "ProviderTurnFailed",
     "Review",
     "ReviewContext",
@@ -227,6 +228,10 @@ class ProviderTurnFailed(RuntimeError):
     nothing on our side is suspect and the flag has been observed not to
     reproduce, so ``review_with_turn_retries`` re-runs the stage before
     it is dropped (a reviewer) or the run fails (the combiner)."""
+
+
+class ProviderContentFlagged(ProviderTurnFailed):
+    pass
 
 
 # In-run retry budgets for ``ProviderTurnFailed``. The budget is spent

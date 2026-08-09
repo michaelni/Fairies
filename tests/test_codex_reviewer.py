@@ -54,7 +54,8 @@ from codex_reviewer import (
     resolve_web_search,
     summarize_codex_events,
 )
-from llm_review_api import BadModelOutput, ReviewContext, RoleSpec
+from llm_review_api import (BadModelOutput, ProviderContentFlagged,
+                            ReviewContext, RoleSpec)
 
 MACHINES = (
     podman_host.parse_shell_host("fairy@h1"),
@@ -479,10 +480,19 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
         ctx = _ctx(report_poisoned=poisoned.append)
-        with self.assertRaises(CodexTurnFailed):
+        with self.assertRaises(ProviderContentFlagged):
             self._run(ctx=ctx, jsonl=self._REAL_REFUSAL,
                       last_message=None, returncode=1)
         self.assertEqual([], poisoned)
+
+    def test_plain_turn_failure_is_not_content_flagged(self) -> None:
+        self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        jsonl = json.dumps({"type": "turn.failed",
+                            "error": {"message": "stream disconnected"}})
+        with self.assertRaises(CodexTurnFailed) as caught:
+            self._run(jsonl=jsonl, last_message=None, returncode=1)
+        self.assertNotIsInstance(caught.exception, ProviderContentFlagged)
 
     def test_halted_run_does_not_poison(self) -> None:
         self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]

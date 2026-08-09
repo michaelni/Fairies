@@ -67,7 +67,8 @@ from codex_container import (
 import concurrency
 from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
-from llm_review_api import (BadModelOutput, ProviderTurnFailed, ReviewContext,
+from llm_review_api import (BadModelOutput, ProviderContentFlagged,
+                            ProviderTurnFailed, ReviewContext,
                             Reviewer, RoleSpec)
 from podman_host import ShellHostSpec
 import shell_tool
@@ -498,8 +499,11 @@ class CodexReviewer(Reviewer):
                 # itself, which says nothing about the review containers.
                 # Observed 2026-07-28: gpt-5.6-sol was refused mid-review of
                 # PR #23750 with "flagged for possible cybersecurity risk".
-                raise (CodexTurnFailed if '"turn.failed"' in error_text
-                       else RuntimeError)(
+                raise (
+                    ProviderContentFlagged
+                    if "flagged for possible cybersecurity risk" in error_text
+                    else CodexTurnFailed if '"turn.failed"' in error_text
+                    else RuntimeError)(
                     f"{self.name}: codex exec produced no final message "
                     f"(rc={proc.returncode}); errors: "
                     f"{error_text or proc.stderr.strip()[-2000:] or '-'}"
@@ -515,7 +519,7 @@ class CodexReviewer(Reviewer):
                 verdict = result.get("classification") or result.get("route") or "-"
                 logger.debug("codex %s verdict=%s", self.role.name, verdict)
             return result
-        except (CodexUsageLimit, CodexTurnFailed):
+        except (CodexUsageLimit, ProviderTurnFailed):
             raise  # clean provider-side stop; the containers are not suspect
         except BadModelOutput:
             raise  # codex ran fine, only the final JSON was malformed

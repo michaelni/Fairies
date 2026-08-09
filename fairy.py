@@ -2044,14 +2044,13 @@ def apply_llm_review(
             ),
         )
     except Exception as exc:
-        max_attempts = max(1, int(getattr(args, "llm_max_attempts", 1) or 1))
         return Decision(
             number,
             title,
             author,
             auto_merge,
             "skip",
-            f"LLM review failed after {max_attempts} attempt(s): {exc}",
+            f"LLM review failed: {exc}",
             last_activity,
             "error",
             "",

@@ -382,6 +382,26 @@ class LLMPayloadTests(unittest.TestCase):
             d = issue_fairy.evaluate_issue(args, p)
         self.assertEqual(d.action, "skip")
 
+    def test_failure_reason_does_not_claim_an_attempt_count(self) -> None:
+        """Regression: with --llm-max-attempts 3, a ReviewTurnFailed
+        aborts on attempt 1 (call_llm_with_retries re-raises it
+        immediately) yet the failures were reported as
+        "LLM analysis failed after 3 attempt(s)". The reason states no
+        attempt count; the per-attempt story lives in the retry loop's
+        own log lines."""
+        args = make_args(llm_max_attempts=3)
+        p = prepare(args, real_issue(),
+                    now=PrepareIssueGateTests.LAST_COMMENT + timedelta(days=2))
+        with mock.patch.object(
+            issue_fairy, "run_llm_issue",
+            side_effect=fairy.ReviewTurnFailed("provider ended the turns"),
+        ):
+            d = issue_fairy.evaluate_issue(args, p)
+        self.assertEqual(d.action, "skip")
+        self.assertEqual(d.llm_classification, "error")
+        self.assertEqual(d.reason,
+                         "LLM analysis failed: provider ended the turns")
+
 
 class AttachmentTests(unittest.TestCase):
     """Issue 20572's reproduction ZIP was attached to the issue but never

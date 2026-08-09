@@ -373,10 +373,9 @@ def evaluate_issue(args: argparse.Namespace, prepared: PreparedIssue) -> Decisio
             lambda extra: run_llm_issue(args, prepared, extra),
         )
     except Exception as exc:
-        max_attempts = max(1, int(args.llm_max_attempts or 1))
         return Decision(
             prepared.number, prepared.title, prepared.author, "-", "skip",
-            f"LLM analysis failed after {max_attempts} attempt(s): {exc}",
+            f"LLM analysis failed: {exc}",
             prepared.last_activity, "error", "",
         )
     return issue_decision_from_review(prepared, review)

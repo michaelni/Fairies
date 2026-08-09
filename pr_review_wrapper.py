@@ -97,6 +97,7 @@ from llm_review_api import (
     BadModelOutput,
     ProviderTurnFailed,
     ReviewContext,
+    Reviewer,
 )
 from codex_container import DEFAULT_CODEX_IMAGE
 import review_pipeline
@@ -240,6 +241,26 @@ def parse_args() -> argparse.Namespace:
             "Reviewer that verifies and combines the ensemble drafts into the "
             "final review (e.g. 'openai:gpt-5.4'). Required when more than one "
             "model reviewer is configured."
+        ),
+    )
+    p.add_argument(
+        "--fallback-model",
+        default=None,
+        metavar="PROVIDER:MODEL[@EFFORT]",
+        help=(
+            "Reviewer run instead when a sole main reviewer or the combiner "
+            "spends its provider-ended-turn budget or is content-flagged "
+            "(e.g. 'zai:glm-4.6@low'). Give it an @EFFORT; it does not "
+            "inherit a requested effort, whose vocabulary is per provider."
+        ),
+    )
+    p.add_argument(
+        "--cyber-fallback-model",
+        default=None,
+        metavar="PROVIDER:MODEL[@EFFORT][:OPT=V]",
+        help=(
+            "Reviewer tried when a turn is ended by the provider's "
+            "cybersecurity content flag"
         ),
     )
     p.add_argument(
@@ -1166,6 +1187,28 @@ def build_patch_bundle(patch: str, max_patch_bytes: int) -> tuple[str, bool]:
     return bundle, truncated
 
 
+def attach_turn_fallbacks(
+    reviewer: Reviewer,
+    *,
+    args: argparse.Namespace,
+    resources: OpenAIResources | None,
+    verbosity: str | None,
+    failure_fails_run: bool,
+) -> None:
+    """Set ``reviewer.fallbacks`` for provider-ended turns: the
+    --cyber-fallback-model reviewer first, then, with
+    ``failure_fails_run`` (a sole main reviewer or the combiner), the
+    --fallback-model reviewer. Both are built with the primary's
+    role."""
+    specs = [args.cyber_fallback_model] + \
+        [args.fallback_model] * failure_fails_run
+    reviewer.fallbacks = tuple(
+        make_reviewer(spec, args=args, resources=resources,
+                      role=reviewer.role, verbose=args.verbose,
+                      verbosity=verbosity)
+        for spec in specs if spec)
+
+
 def emit_review_stdout(
     classification: str,
     message: str,
@@ -1748,6 +1791,15 @@ def main() -> int:
                 "combining with %s", len(model_reviewers), args.model,
             )
             combiner = make_reviewer(args.model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose, verbosity=final_verbosity)
+        for reviewer in model_reviewers:
+            attach_turn_fallbacks(
+                reviewer, args=args, resources=openai_resources,
+                verbosity=main_verbosity,
+                failure_fails_run=len(model_reviewers) == 1)
+        if combiner is not None:
+            attach_turn_fallbacks(
+                combiner, args=args, resources=openai_resources,
+                verbosity=final_verbosity, failure_fails_run=True)
         workset_note_stage(args, "review")
         try:
             review = review_pr(

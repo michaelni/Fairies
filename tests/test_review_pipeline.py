@@ -67,6 +67,7 @@ from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
                             Z_AI_ANTHROPIC_URL, review_with_turn_retries)
 import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
+from codex_reviewer import CodexReviewer  # noqa: E402
 import workset  # noqa: E402
 from openai_reviewer import OpenAIReviewer  # noqa: E402
 from anthropic_reviewer import AnthropicReviewer  # noqa: E402
@@ -443,6 +444,61 @@ class TurnRetryWarningTests(unittest.TestCase):
             out = review_with_turn_retries(reviewer, _ctx(), attempts=4)
         self.assertIs(out, draft)
         self.assertIn(error, logs.output[0])
+
+
+class AttachTurnFallbacksTests(unittest.TestCase):
+    def _args(self, **overrides: object) -> argparse.Namespace:
+        a = _codex_args()
+        a.cyber_fallback_model = None
+        a.fallback_model = None
+        a.verbose = False
+        vars(a).update(overrides)
+        return a
+
+    def _primary(self) -> _FakeReviewer:
+        r = _FakeReviewer("codex:gpt-5.6-sol",
+                          Review("minor_issues_approve", "ok", model="gpt"))
+        r.role = REVIEWER_ROLE
+        return r
+
+    def test_cyber_fallback_then_fallback_model(self) -> None:
+        args = self._args(
+            cyber_fallback_model="codex:gpt-5.6-sol@high:codex-home=/second-home",
+            fallback_model="zai:glm-4.6@low")
+        r = self._primary()
+        pr_review_wrapper.attach_turn_fallbacks(
+            r, args=args, resources=None, verbosity="high", failure_fails_run=True)
+        cyber, fb = r.fallbacks
+        self.assertEqual("codex:gpt-5.6-sol+second-home", cyber.name)
+        self.assertEqual("/second-home", cyber.codex_home)
+        self.assertEqual("zai:glm-4.6", fb.name)
+        self.assertEqual("low", fb.effort)
+        self.assertIs(r.role, cyber.role)
+        self.assertIs(r.role, fb.role)
+
+    def test_ensemble_member_gets_no_model_fallback(self) -> None:
+        args = self._args(
+            cyber_fallback_model="codex:gpt-5.6-sol:codex-home=/second-home",
+            fallback_model="zai:glm-4.6")
+        r = self._primary()
+        pr_review_wrapper.attach_turn_fallbacks(
+            r, args=args, resources=None, verbosity="high", failure_fails_run=False)
+        self.assertEqual(["codex:gpt-5.6-sol+second-home"],
+                         [f.name for f in r.fallbacks])
+
+    def test_the_cyber_fallback_may_be_another_provider(self) -> None:
+        args = self._args(cyber_fallback_model="zai:glm-4.6")
+        r = self._primary()
+        pr_review_wrapper.attach_turn_fallbacks(
+            r, args=args, resources=None, verbosity="high", failure_fails_run=False)
+        self.assertEqual(["zai:glm-4.6"], [f.name for f in r.fallbacks])
+
+    def test_unconfigured_flags_leave_no_fallbacks(self) -> None:
+        r = self._primary()
+        pr_review_wrapper.attach_turn_fallbacks(
+            r, args=self._args(), resources=None, verbosity="high",
+            failure_fails_run=True)
+        self.assertEqual((), r.fallbacks)
 
 
 class TurnRetryFallbackTests(unittest.TestCase):

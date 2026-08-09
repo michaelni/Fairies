@@ -80,6 +80,12 @@ implements the same small `Reviewer` interface (`llm_review_api.py`):
 `review(ctx) -> Review`. The stages are plain Python in `review_pr`, so
 adding, removing or reordering them is an edit, not a restructuring.
 
+models can fail to review a PR about crashes or undefined behavior with
+("flagged for possible cybersecurity risk"). use `--cyber-fallback-model`
+to select an alternative model for cases that are refused by your main model
+you can use `--fallback-model PROVIDER:MODEL[@EFFORT]` for other failures
+
+
 ### Using fairy with your project
 
 1. Configure a gcli account for your fairy user.

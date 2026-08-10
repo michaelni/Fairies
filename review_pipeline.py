@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
+from pathlib import Path
 from typing import Callable
 
 from llm_review_api import (
@@ -71,6 +73,27 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 
+_SPEC_OPTION = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*=")
+
+
+def _split_spec_options(spec: str) -> tuple[str, dict[str, str]]:
+    """``provider:model[@effort][:key=value]...`` -> body and options.
+
+    Any segment containing ``=`` starts the options; a value may itself
+    contain ``:`` (e.g. a Windows path). Misspelled keys thus surface
+    as unsupported options instead of dissolving into the model name."""
+    segments = spec.split(":")
+    head, opts = [segments[0]], []
+    for seg in segments[1:]:
+        if not opts and "=" not in seg:
+            head.append(seg)
+        elif _SPEC_OPTION.match(seg) or not opts:
+            opts.append(seg)
+        else:
+            opts[-1] += ":" + seg
+    return ":".join(head), dict(o.split("=", 1) for o in opts)
+
+
 def make_reviewer(
     spec: str,
     *,
@@ -83,7 +106,15 @@ def make_reviewer(
     service_tier: str | None = INHERIT_SERVICE_TIER,
     verbosity: str | None = None,
 ) -> Reviewer:
-    """Build a ``Reviewer`` from a ``provider:model[@effort]`` spec.
+    """Build a ``Reviewer`` from a ``provider:model[@effort][:key=value]``
+    spec.
+
+    Options select a credential other than the deployment default, so
+    one spec can name e.g. the same codex model on a different login:
+    ``codex-home=DIR`` (codex) overrides --codex-home, ``api-key-env=VAR``
+    (anthropic/zai) overrides the provider's key variable. A reviewer
+    built with an option carries a ``+`` name suffix so logs tell the
+    credentials apart.
 
     ``openai:<m>`` -> OpenAIReviewer reusing the shared
     OpenAI resources (``resources`` must not be None for this provider).
@@ -106,7 +137,12 @@ def make_reviewer(
     parameter) overrides ``--verbosity`` for this reviewer; ``None``
     inherits ``--verbosity``.
     """
-    spec_body, sep, spec_effort = spec.partition("@")
+    spec_head, options = _split_spec_options(spec)
+    if empty := [k for k, v in options.items() if not v]:
+        raise SystemExit(
+            f"--model {spec!r}: empty value for option(s): {', '.join(empty)}"
+        )
+    spec_body, sep, spec_effort = spec_head.partition("@")
     effort = spec_effort if sep else default_effort
     provider, sep, model = spec_body.partition(":")
     if not sep:
@@ -115,6 +151,13 @@ def make_reviewer(
         )
     if not model:
         raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
+    codex_home = options.pop("codex-home", None) if provider == "codex" else None
+    api_key_env = (options.pop("api-key-env", None)
+                   if provider in ("anthropic", "zai") else None)
+    if options:
+        raise SystemExit(
+            f"--model {spec!r}: unsupported option(s): {', '.join(sorted(options))}"
+        )
 
     if provider == "openai":
         return OpenAIReviewer(
@@ -126,14 +169,14 @@ def make_reviewer(
         from anthropic_reviewer import AnthropicReviewer
 
         base_url = Z_AI_ANTHROPIC_URL if provider == "zai" else None
-        api_key_env = "ZAI_API_KEY" if provider == "zai" else "ANTHROPIC_API_KEY"
         try:
             return AnthropicReviewer(
                 model,
-                name=f"{provider}:{model}",
+                name=f"{provider}:{model}" + (f"+{api_key_env}" if api_key_env else ""),
                 role=role,
                 base_url=base_url,
-                api_key_env=api_key_env,
+                api_key_env=api_key_env or (
+                    "ZAI_API_KEY" if provider == "zai" else "ANTHROPIC_API_KEY"),
                 max_tool_rounds=args.podman_max_tool_rounds,
                 exec_timeout_s=args.podman_exec_timeout,
                 effort=effort,
@@ -157,10 +200,11 @@ def make_reviewer(
         try:
             return CodexReviewer(
                 model,
-                name=f"codex:{model}",
+                name=f"codex:{model}" + (
+                    f"+{Path(codex_home).name}" if codex_home else ""),
                 role=role,
                 codex_bin=args.codex_bin,
-                codex_home=args.codex_home,
+                codex_home=codex_home or args.codex_home,
                 codex_host=args.codex_host,
                 codex_image=args.codex_image,
                 exec_timeout_s=args.podman_exec_timeout,

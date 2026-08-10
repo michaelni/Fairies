@@ -87,6 +87,17 @@ def _args() -> argparse.Namespace:
     )
 
 
+def _codex_args() -> argparse.Namespace:
+    a = _args()
+    a.codex_host = object()
+    a.codex_bin = "codex"
+    a.codex_home = None
+    a.codex_image = "img"
+    a.web_search = "cached"
+    a.codex_timeout_seconds = 0.0
+    return a
+
+
 class _FakeReviewer(Reviewer):
     def __init__(self, name: str, review: Review) -> None:
         self.name = name
@@ -183,6 +194,60 @@ class MakeReviewerTests(unittest.TestCase):
     def test_invalid_anthropic_effort_rejected(self) -> None:
         with self.assertRaises(SystemExit):
             review_pipeline.make_reviewer("zai:glm-5.2@turbo", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+
+    def test_codex_home_option_selects_the_login(self) -> None:
+        r = review_pipeline.make_reviewer(
+            "codex:gpt-5.6-sol@high:codex-home=/second-home",
+            args=_codex_args(), resources=None, role=REVIEWER_ROLE,
+            verbose=False)
+        self.assertEqual("/second-home", r.codex_home)
+        self.assertEqual("high", r.effort)
+        self.assertEqual("codex:gpt-5.6-sol+second-home", r.name)
+
+    def test_api_key_env_option_selects_the_key(self) -> None:
+        r = review_pipeline.make_reviewer(
+            "zai:glm-4.6:api-key-env=ZAI_API_KEY_2",
+            args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+        self.assertEqual("ZAI_API_KEY_2", r.api_key_env)
+        self.assertEqual("zai:glm-4.6+ZAI_API_KEY_2", r.name)
+
+    def test_option_value_may_contain_colons(self) -> None:
+        """A Windows codex home like C:\\codex-home survives the split."""
+        r = review_pipeline.make_reviewer(
+            "codex:gpt-5.6-sol:codex-home=C:\\codex-home",
+            args=_codex_args(), resources=None, role=REVIEWER_ROLE,
+            verbose=False)
+        self.assertEqual("C:\\codex-home", r.codex_home)
+
+    def test_unknown_option_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            review_pipeline.make_reviewer(
+                "zai:glm-4.6:frobnicate=1", args=_args(), resources=None,
+                role=REVIEWER_ROLE, verbose=False)
+
+    def test_misspelled_option_key_rejected_not_swallowed(self) -> None:
+        """Regression (review finding): keys outside [a-z-] dissolved
+        into the model name, silently keeping the default login."""
+        for spec in ("codex:gpt-5.6-sol:CODEX-HOME=/x",
+                     "codex:gpt-5.6-sol:codex_home=/x"):
+            with self.subTest(spec=spec), self.assertRaises(SystemExit):
+                review_pipeline.make_reviewer(
+                    spec, args=_codex_args(), resources=None,
+                    role=REVIEWER_ROLE, verbose=False)
+
+    def test_empty_option_value_rejected(self) -> None:
+        """Regression (review finding): codex-home= (an unset shell
+        variable) silently selected the default login."""
+        with self.assertRaises(SystemExit):
+            review_pipeline.make_reviewer(
+                "codex:gpt-5.6-sol:codex-home=", args=_codex_args(),
+                resources=None, role=REVIEWER_ROLE, verbose=False)
+
+    def test_option_on_the_wrong_provider_rejected(self) -> None:
+        with self.assertRaises(SystemExit):
+            review_pipeline.make_reviewer(
+                "zai:glm-4.6:codex-home=/x", args=_args(), resources=None,
+                role=REVIEWER_ROLE, verbose=False)
 
     def test_explicit_none_service_tier_is_not_inherited(self) -> None:
         # Regression: the triager passes --triage-service-tier verbatim,

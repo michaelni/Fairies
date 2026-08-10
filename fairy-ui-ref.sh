@@ -147,6 +147,18 @@ mkdir -p logs
 ./configurator.py --db-root "$FAIRIES_DB" \
     --owner michaelni --repo Fairies "${COMMON[@]}" --log-file logs/fairies.log \
     --prs "${FAIRIES_PR[@]}" --issues "${FAIRIES_ISSUES[@]}"
+# Codex model catalogs carry the models' prompts: nothing refreshes
+# them automatically. Verify each login's cache exists before anything
+# starts; the operator refreshes by hand with
+# tools/refresh_codex_catalog.sh (shows the diff, keeps a ~ backup).
+# A codex deployment sets CODEX_HOMES to its login dirs.
+case "$MODEL" in codex:*)
+    for h in ${CODEX_HOMES:?set CODEX_HOMES to the codex login dirs}; do
+        [ -r "$h/models_cache.json" ] || \
+            { echo "no codex model catalog in $h" >&2; exit 1; }
+    done
+    ;;
+esac
 # console output goes to .console files: a backgrounded process's
 # stderr handlers would otherwise scribble over the blessed screen
 ./agent.py  --db-root "$FFMPEG_DB" --loop 600 >"logs/agent-ffmpeg.console" 2>&1 &

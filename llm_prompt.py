@@ -173,6 +173,7 @@ R_PROMPT_DESIGN_REVIEWER_ROLE = """##In your Design Reviewer role
 - Check competing projects / competitors and learn from their solution
 - Consider portability (older and latest) x (windows, macosx, linux, bsd)
 - Check if this project is the right place for any fix/workaround, and if not say so clearly.
+- Tests should use existing code-pathes, dont add a tool to generate a specific bitstream if theres a tool that can do that in the project already.
 """ + CR_PROMPT_WORKAROUND_LANGUAGE
 
 R_PROMPT_PROJECT_ASSISTANT_ROLE = """##In your project assistant role.

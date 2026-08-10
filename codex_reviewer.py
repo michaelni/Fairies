@@ -61,6 +61,7 @@ from codex_container import (
     RELAY_SOCKET_PATH,
     CodexContainer,
     CodexShellRelay,
+    persist_refreshed_auth,
 )
 import concurrency
 from common import JsonObject, dump_response_debug_artifacts
@@ -109,7 +110,6 @@ MCP_TOOL_TIMEOUT_S = 86_400
 # Read-back caps for the untrusted codex container: an oversized file
 # arrives truncated, so its JSON parse fails closed.
 MAX_LAST_MESSAGE_BYTES = 8 * 1024 * 1024
-MAX_AUTH_BYTES = 256 * 1024
 
 _REPO_DIR = Path(__file__).resolve().parent
 _BRIDGE_PATH = str(_REPO_DIR / "codex_bridge.py")
@@ -474,7 +474,7 @@ class CodexReviewer(Reviewer):
                 elapsed = time.monotonic() - started
                 # Codex may have rotated the OAuth tokens mid-run, and --rm is
                 # about to discard the container's copy.
-                self._persist_refreshed_auth(container, auth_local)
+                persist_refreshed_auth(container, auth_local)
 
             usage, error_text = summarize_codex_events(proc.stdout)
             logger.info(
@@ -536,49 +536,6 @@ class CodexReviewer(Reviewer):
                 relay.stop()
             container.stop()
             shutil.rmtree(scratch, ignore_errors=True)
-
-    def _persist_refreshed_auth(
-        self, container: CodexContainer, auth_local: Path,
-    ) -> None:
-        """Copy a mid-run token refresh back to the host auth.json.
-
-        Best-effort: reads the container's copy, and if it is valid JSON
-        that differs from the host file, atomically replaces it (0600).
-        A read/parse failure just logs -- the run already succeeded, so a
-        stale host token surfaces as an auth error on a later run rather
-        than failing this one.
-        """
-        try:
-            refreshed = container.read_file(
-                f"{CONTAINER_CODEX_HOME}/auth.json", max_bytes=MAX_AUTH_BYTES)
-        except Exception:
-            logger.warning("codex: could not read back auth.json for refresh "
-                           "persistence", exc_info=True)
-            return
-        if not refreshed:
-            return
-        try:
-            parsed = json.loads(refreshed)
-        except ValueError:
-            logger.warning("codex: refreshed auth.json is not valid JSON; "
-                           "not persisting")
-            return
-        if not isinstance(parsed, dict):
-            logger.warning("codex: refreshed auth.json is not a JSON object; "
-                           "not persisting")
-            return
-        current = auth_local.read_text(encoding="utf-8") \
-            if auth_local.is_file() else ""
-        if refreshed == current:
-            return
-        tmp = auth_local.with_name(auth_local.name + ".tmp")
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        try:
-            os.write(fd, refreshed.encode("utf-8"))
-        finally:
-            os.close(fd)
-        os.replace(tmp, auth_local)
-        logger.info("codex: persisted refreshed auth.json from container")
 
     def _dump_debug_artifacts(
         self, ctx: ReviewContext, prompt: str, cmd: list[str],

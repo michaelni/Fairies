@@ -45,7 +45,9 @@ socket ever crosses the host boundary.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import subprocess
 import tempfile
 import threading
@@ -180,6 +182,53 @@ class CodexContainer:
         if self.handle is not None:
             stop_container(self.handle)
             self.handle = None
+
+
+MAX_AUTH_BYTES = 256 * 1024
+
+
+def persist_refreshed_auth(
+    container: CodexContainer, auth_local: Path,
+) -> None:
+    """Copy a mid-run token refresh back to the host auth.json.
+
+    Best-effort: reads the container's copy, and if it is valid JSON
+    that differs from the host file, atomically replaces it (0600).
+    A read/parse failure just logs -- the run already succeeded, so a
+    stale host token surfaces as an auth error on a later run rather
+    than failing this one.
+    """
+    try:
+        refreshed = container.read_file(
+            f"{CONTAINER_CODEX_HOME}/auth.json", max_bytes=MAX_AUTH_BYTES)
+    except Exception:
+        logger.warning("codex: could not read back auth.json for refresh "
+                       "persistence", exc_info=True)
+        return
+    if not refreshed:
+        return
+    try:
+        parsed = json.loads(refreshed)
+    except ValueError:
+        logger.warning("codex: refreshed auth.json is not valid JSON; "
+                       "not persisting")
+        return
+    if not isinstance(parsed, dict):
+        logger.warning("codex: refreshed auth.json is not a JSON object; "
+                       "not persisting")
+        return
+    current = auth_local.read_text(encoding="utf-8") \
+        if auth_local.is_file() else ""
+    if refreshed == current:
+        return
+    tmp = auth_local.with_name(auth_local.name + ".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, refreshed.encode("utf-8"))
+    finally:
+        os.close(fd)
+    os.replace(tmp, auth_local)
+    logger.info("codex: persisted refreshed auth.json from container")
 
 
 class CodexShellRelay:

@@ -65,6 +65,9 @@ MACHINES = (
 CODEX_HOST = podman_host.parse_shell_host("fairy@codexbox")
 
 
+_CATALOG_JSON = json.dumps({"models": [{"slug": "gpt-5.6-sol"}]})
+
+
 def _codex_home_with_auth(**files) -> str:
     """A temp CODEX_HOME containing auth.json (+ optional extra files)."""
     home = tempfile.mkdtemp(prefix="codex-home-")
@@ -72,6 +75,13 @@ def _codex_home_with_auth(**files) -> str:
     for name, content in files.items():
         Path(home, name).write_text(content, encoding="utf-8")
     return home
+
+
+def _codex_home_ready(**files) -> str:
+    """A CODEX_HOME a pass can run from: auth.json plus a models_cache.json
+    carrying the test model."""
+    return _codex_home_with_auth(
+        **{"models_cache.json": _CATALOG_JSON, **files})
 
 
 class _FakeCodexContainer:
@@ -87,6 +97,7 @@ class _FakeCodexContainer:
         # harness knob: read_file(auth.json) returns this instead of the copied auth
         self._refreshed_auth = refreshed_auth
         self.copied = {}       # basename -> local text content
+        self.run_cmds = []     # every exec'd argv, in order
         self.cmd = None
         self.input_text = None
         self.env = None
@@ -104,6 +115,7 @@ class _FakeCodexContainer:
             self.copied[p.name] = None
 
     def run(self, cmd, *, input_text=None, env=None, timeout_s=None):
+        self.run_cmds.append(cmd)
         self.cmd = cmd
         self.input_text = input_text
         self.env = env
@@ -274,7 +286,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         return CodexReviewer(
             "gpt-5.6-sol", name="codex:gpt-5.6-sol", role=ROLE,
             codex_host=CODEX_HOST,
-            codex_home=codex_home or _codex_home_with_auth(), **kw)
+            codex_home=codex_home or _codex_home_ready(), **kw)
 
     def _run(self, *, jsonl="", stderr="", returncode=0,
              last_message='{"classification": "approve", "message": "ok"}',
@@ -352,13 +364,19 @@ class CodexReviewerRunTests(unittest.TestCase):
             self.container.env,
         )
 
-    def test_hardened_catalog_copied_and_passed(self) -> None:
+    def test_hardened_cached_catalog_passed_without_fetching(self) -> None:
+        """The pass hardens the host cache and execs nothing but the
+        review itself; the cache is refreshed only by
+        --ensure-codex-catalogs-only before the workers start, so
+        parallel passes never fetch concurrently."""
         home = _codex_home_with_auth(**{"models_cache.json": json.dumps({
             "models": [{"slug": "gpt-5.6-sol",
                         "input_modalities": ["text", "image"],
                         "apply_patch_tool_type": "freeform",
                         "tool_mode": "code_mode_only"}]})})
         self._run(reviewer=self._reviewer(codex_home=home))
+        (exec_cmd,) = self.container.run_cmds
+        self.assertEqual("exec", exec_cmd[1])
         self.assertIn("hardened_catalog.json", self.container.copied)
         entry = json.loads(
             self.container.copied["hardened_catalog.json"])["models"][0]
@@ -368,11 +386,32 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.assertTrue(any(c.startswith("model_catalog_json=")
                             for c in self.container.cmd))
 
-    def test_missing_catalog_skips_override(self) -> None:
-        self._run()  # auth only, no models_cache.json
-        self.assertNotIn("hardened_catalog.json", self.container.copied)
-        self.assertFalse(
-            any("model_catalog_json" in c for c in self.container.cmd))
+    def test_no_catalog_refuses_to_run_unhardened(self) -> None:
+        """A pass without a hardening override never reaches codex:
+        dropping the view_image/apply_patch lock silently would trade
+        security for availability without operator approval."""
+        with self.assertRaisesRegex(RuntimeError, "refusing to run"):
+            self._run(reviewer=self._reviewer(
+                codex_home=_codex_home_with_auth()))  # no models_cache.json
+        self.assertIsNone(self.container.cmd)
+
+    def test_model_absent_from_catalog_refuses_to_run(self) -> None:
+        home = _codex_home_with_auth(**{"models_cache.json": json.dumps(
+            {"models": [{"slug": "some-other-model"}]})})
+        with self.assertRaisesRegex(RuntimeError, "absent from the codex"):
+            self._run(reviewer=self._reviewer(codex_home=home))
+        self.assertIsNone(self.container.cmd)
+
+    def test_stale_cache_is_used_as_is(self) -> None:
+        stale = json.dumps({"models": [{"slug": "gpt-5.6-sol"}]})
+        home = _codex_home_with_auth(**{"models_cache.json": stale})
+        os.utime(Path(home, "models_cache.json"), (1, 1))
+        self._run(reviewer=self._reviewer(codex_home=home))
+        (exec_cmd,) = self.container.run_cmds
+        self.assertEqual("exec", exec_cmd[1])
+        self.assertEqual(stale, Path(home, "models_cache.json")
+                         .read_text(encoding="utf-8"))
+        self.assertIn("hardened_catalog.json", self.container.copied)
 
     def test_usage_limit_is_hard_failure(self) -> None:
         jsonl = json.dumps({"type": "turn.failed", "error": {
@@ -400,7 +439,7 @@ class CodexReviewerRunTests(unittest.TestCase):
             self._run(last_message="I approve of this patch.")
 
     def test_refreshed_auth_persisted_back(self) -> None:
-        home = _codex_home_with_auth()
+        home = _codex_home_ready()
         reviewer = self._reviewer(codex_home=home)
         rotated = '{"tokens": {"refresh_token": "rotated"}}'
         self._run(reviewer=reviewer, refreshed_auth=rotated)
@@ -409,7 +448,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.assertEqual(0o600, auth_path.stat().st_mode & 0o777)
 
     def test_unchanged_auth_not_rewritten(self) -> None:
-        home = _codex_home_with_auth()
+        home = _codex_home_ready()
         auth_path = Path(home, "auth.json")
         before = auth_path.read_text(encoding="utf-8")
         # refreshed_auth defaults to the copied auth (identical) -> no write.
@@ -417,7 +456,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.assertEqual(before, auth_path.read_text(encoding="utf-8"))
 
     def test_non_object_refreshed_auth_not_persisted(self) -> None:
-        home = _codex_home_with_auth()
+        home = _codex_home_ready()
         before = Path(home, "auth.json").read_text(encoding="utf-8")
         for planted in ('["not", "auth"]', '"a-string"', "not json at all"):
             self._run(reviewer=self._reviewer(codex_home=home),
@@ -531,7 +570,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         # an assert in a worker never fails the test -- assert peak on the main thread
         import threading
         import time
-        reviewer = self._reviewer(codex_home=_codex_home_with_auth())
+        reviewer = self._reviewer()
         peak, active = [], 0
         counter_lock = threading.Lock()
 

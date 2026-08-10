@@ -133,8 +133,7 @@ def _is_code_mode(tool_mode: object) -> bool:
 
 def _load_codex_catalog(codex_home: str | None) -> JsonObject | None:
     """Read ``<CODEX_HOME>/models_cache.json``, or ``None`` if absent or
-    unparseable -- availability must not hinge on this inner lock.
-    """
+    unparseable."""
     cache = os.path.join(resolve_codex_home(codex_home), "models_cache.json")
     try:
         with open(cache, encoding="utf-8") as f:
@@ -307,22 +306,21 @@ class CodexReviewer(Reviewer):
         self.verbose = verbose
         self.debug_dir = debug_dir
 
-    def _write_hardened_catalog(self, scratch: str) -> str | None:
-        """Write a host-hardened copy of codex's model catalog into scratch.
+    def _write_hardened_catalog(self, scratch: str) -> str:
+        """Write a host-hardened copy of codex's model catalog into scratch
+        and return its path for ``-c model_catalog_json=``.
 
-        Returns its path for ``-c model_catalog_json=``, or ``None`` (logged)
-        when the catalog cannot be sourced or does not contain this pass's
-        model -- in which case the pass runs without the override rather than
-        failing. See ``harden_codex_catalog``.
+        Raises when there is no catalog or it does not contain this
+        pass's model: codex never runs without the view_image /
+        apply_patch hardening. See ``harden_codex_catalog``.
         """
         catalog = _load_codex_catalog(self.codex_home)
         if not isinstance(catalog, dict):
-            logger.warning(
-                "codex: no model catalog to harden; running without the "
-                "view_image/apply_patch lock -- rely on container isolation "
-                "for %s", self.name,
+            raise RuntimeError(
+                f"{self.name}: no codex model catalog cache; refusing to "
+                "run codex without the view_image/apply_patch hardening "
+                "(refresh: tools/refresh_codex_catalog.sh)"
             )
-            return None
         models = catalog.get("models")
         entry = next(
             (m for m in models
@@ -330,11 +328,12 @@ class CodexReviewer(Reviewer):
             None,
         ) if isinstance(models, list) else None
         if entry is None:
-            logger.warning(
-                "codex: model %r absent from cached catalog; skipping tool "
-                "hardening override for %s", self.model, self.name,
+            raise RuntimeError(
+                f"{self.name}: model {self.model!r} absent from the codex "
+                "catalog; refusing to run codex without the "
+                "view_image/apply_patch hardening "
+                "(refresh: tools/refresh_codex_catalog.sh)"
             )
-            return None
         if _is_code_mode(entry.get("tool_mode")):
             logger.warning(
                 "codex: model %r uses code_mode (tool_mode=%r) -- a JS-exec "
@@ -406,22 +405,20 @@ class CodexReviewer(Reviewer):
             schema_local = Path(scratch) / "output_schema.json"
             schema_local.write_text(
                 json.dumps(self.role.schema["schema"]), encoding="utf-8")
-            catalog_local = self._write_hardened_catalog(scratch)
             auth_local = Path(resolve_codex_home(self.codex_home)) / "auth.json"
             if not auth_local.is_file():
                 raise RuntimeError(
                     f"{self.name}: codex auth.json not found at {auth_local} "
                     "(run `codex login` for the deployment's CODEX_HOME)"
                 )
+            catalog_local = self._write_hardened_catalog(scratch)
 
             container.start()
             container.put_file(auth_local, CONTAINER_CODEX_HOME)
             container.put_file(schema_local, CONTAINER_RUN_DIR)
-            catalog_container: str | None = None
-            if catalog_local:
-                container.put_file(Path(catalog_local), CONTAINER_RUN_DIR)
-                catalog_container = \
-                    f"{CONTAINER_RUN_DIR}/{Path(catalog_local).name}"
+            container.put_file(Path(catalog_local), CONTAINER_RUN_DIR)
+            catalog_container = \
+                f"{CONTAINER_RUN_DIR}/{Path(catalog_local).name}"
             if use_shell:
                 for local in (Path(_BRIDGE_PATH), _BRIDGE_CLIENT_PATH,
                               _RELAY_PATH):

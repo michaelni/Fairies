@@ -46,7 +46,7 @@ from dataclasses import dataclass
 from itertools import islice
 from threading import Lock
 
-__all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "MARKDOWN_STYLES",
+__all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "MARKDOWN_STYLES", "wrap",
            "render_markdown", "sanitize", "tile_blocks", "token_at"]
 
 # (style, text) segments; the painter treats an unknown style as "text".
@@ -342,7 +342,7 @@ def _atoms(segs: list[tuple[str, str]]) -> list[StyledLine]:
     return atoms
 
 
-def _wrap(
+def wrap(
     segs: list[tuple[str, str]],
     width: int,
     initial: tuple[str, str] = ("text", ""),
@@ -397,10 +397,10 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
 
     def flush() -> None:
         if para:
-            out.extend(_wrap(_inline(" ".join(para)), width))
+            out.extend(wrap(_inline(" ".join(para)), width))
             para.clear()
         if quote:
-            for ln in _wrap(_inline(" ".join(quote), base="quote"), width - 2):
+            for ln in wrap(_inline(" ".join(quote), base="quote"), width - 2):
                 out.append([("quote_bar", "▌ "), *ln])
             quote.clear()
         if table:
@@ -441,7 +441,7 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
             flush()
             blank()
             style = f"h{min(len(heading.group(1)), 4)}"
-            out.extend(_wrap([(style, heading.group(2))], width))
+            out.extend(wrap([(style, heading.group(2))], width))
             continue
         if _HR_RE.fullmatch(line):
             flush()
@@ -459,7 +459,7 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
             indent, marker, rest = bullet.groups()
             if (box := _CHECKBOX_RE.match(rest)):
                 done = box.group(1).lower() == "x"
-                out.extend(_wrap(
+                out.extend(wrap(
                     _inline(box.group(2)), width,
                     initial=("checkbox_on" if done else "checkbox_off",
                              f"{indent}{'✔' if done else '☐'} "),
@@ -467,7 +467,7 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
                 ))
                 continue
             marker_out = "• " if marker in "-*+" else f"{marker} "
-            out.extend(_wrap(
+            out.extend(wrap(
                 _inline(rest), width,
                 initial=("bullet", f"{indent}{marker_out}"),
                 subsequent=" " * (len(indent) + len(marker_out)),

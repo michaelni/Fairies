@@ -44,7 +44,6 @@ run_parallel drops the pass, keeping surviving drafts.
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import os
@@ -55,6 +54,7 @@ import sys
 import tempfile
 import time
 
+from codex_catalog import harden_codex_catalog, resolve_codex_home
 from codex_container import (
     CONTAINER_CODEX_HOME,
     CONTAINER_RUN_DIR,
@@ -77,7 +77,6 @@ __all__ = [
     "CodexTurnFailed",
     "CodexUsageLimit",
     "build_codex_exec_command",
-    "harden_codex_catalog",
     "resolve_web_search",
 ]
 
@@ -118,10 +117,6 @@ _BRIDGE_CLIENT_PATH = _REPO_DIR / "shell_bridge_client.py"
 _RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
 
 
-def _resolve_codex_home(codex_home: str | None) -> str:
-    return codex_home or os.environ.get("CODEX_HOME") \
-        or os.path.expanduser("~/.codex")
-
 class CodexUsageLimit(RuntimeError):
     """The usage window is exhausted; do not retry."""
 
@@ -135,47 +130,11 @@ def _is_code_mode(tool_mode: object) -> bool:
     return isinstance(tool_mode, str) and tool_mode.startswith("code_mode")
 
 
-def harden_codex_catalog(catalog: JsonObject) -> JsonObject:
-    """Return a copy of a codex model catalog with the two direct host-file
-    tools closed on every model entry.
-
-    Fairy's codex only ever needs to drive the review container via the MCP
-    shell tool; codex's own host-side tools are pure attack surface on a
-    PR-derived (untrusted) prompt. The model catalog is the only lever codex
-    exposes for them:
-
-    * ``input_modalities`` loses ``image`` -- the ``view_image`` handler then
-      rejects every call ("view_image is not allowed because you do not
-      support image inputs"), so no local file is base64'd into the
-      conversation. The tool stays listed but is inert.
-    * ``apply_patch_tool_type`` -> ``None`` -- the ``apply_patch`` tool
-      (which reads and writes host files) is not offered at all.
-
-    ``tool_mode`` is deliberately left untouched: forcing a ``code_mode``
-    model (gpt-5.6-*) to standard tool calling does not shrink its surface,
-    it *explodes* it (``run``, ``spawn_agent``, multi-agent + plugin tools
-    that code_mode otherwise consolidates). code_mode models are instead
-    flagged by ``_write_hardened_catalog`` -- their JS-exec path is not
-    lockable at the catalog layer and belongs behind the container boundary.
-    """
-    hardened = copy.deepcopy(catalog)
-    models = hardened.get("models")
-    if isinstance(models, list):
-        for entry in models:
-            if not isinstance(entry, dict):
-                continue
-            mods = entry.get("input_modalities")
-            if isinstance(mods, list):
-                entry["input_modalities"] = [m for m in mods if m != "image"]
-            entry["apply_patch_tool_type"] = None
-    return hardened
-
-
 def _load_codex_catalog(codex_home: str | None) -> JsonObject | None:
     """Read ``<CODEX_HOME>/models_cache.json``, or ``None`` if absent or
     unparseable -- availability must not hinge on this inner lock.
     """
-    cache = os.path.join(_resolve_codex_home(codex_home), "models_cache.json")
+    cache = os.path.join(resolve_codex_home(codex_home), "models_cache.json")
     try:
         with open(cache, encoding="utf-8") as f:
             data = json.load(f)
@@ -447,7 +406,7 @@ class CodexReviewer(Reviewer):
             schema_local.write_text(
                 json.dumps(self.role.schema["schema"]), encoding="utf-8")
             catalog_local = self._write_hardened_catalog(scratch)
-            auth_local = Path(_resolve_codex_home(self.codex_home)) / "auth.json"
+            auth_local = Path(resolve_codex_home(self.codex_home)) / "auth.json"
             if not auth_local.is_file():
                 raise RuntimeError(
                     f"{self.name}: codex auth.json not found at {auth_local} "

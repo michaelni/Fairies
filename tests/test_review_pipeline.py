@@ -365,6 +365,35 @@ class ReviewPrTests(unittest.TestCase):
                 ctx, [_FakeReviewer("zai:glm", d1)], combiner)
         self.assertEqual(8, combiner.calls)
 
+    def test_all_reviewers_turn_failed_skips_the_outer_loop(self) -> None:
+        """An all-flagged (or all-turn-failed) ensemble aborts as
+        ProviderTurnFailed so the wrapper exits EXIT_TURN_FAILED and
+        fairy's --llm-max-attempts loop does not re-run the ensemble
+        against the same provider condition."""
+        ctx = _ctx()
+        d = Review("moderate_issues", "issue", model="x")
+        a = _FlaggedReviewer("codex:a", d, fail_times=99,
+                             exc_type=ProviderContentFlagged)
+        b = _FlaggedReviewer("codex:b", d, fail_times=99,
+                             exc_type=ProviderContentFlagged)
+        with self.assertRaises(ProviderTurnFailed) as caught, \
+                self.assertLogs("llm_review_api", level="ERROR"):
+            review_pipeline.review_pr(ctx, [a, b], _FakeReviewer("combiner", d))
+        self.assertEqual(4, a.calls)
+        self.assertEqual(4, b.calls)
+        self.assertIn("codex:a", str(caught.exception))
+        self.assertIn("content flagged", str(caught.exception))
+
+    def test_a_non_turn_failure_keeps_the_generic_abort(self) -> None:
+        ctx = _ctx()
+        d = Review("moderate_issues", "issue", model="x")
+        a = _FlaggedReviewer("codex:a", d, fail_times=99)
+        b = _FailingReviewer("openai:b")
+        with self.assertRaises(RuntimeError) as caught, \
+                self.assertLogs("llm_review_api", level="ERROR"):
+            review_pipeline.review_pr(ctx, [a, b], _FakeReviewer("combiner", d))
+        self.assertNotIsInstance(caught.exception, ProviderTurnFailed)
+
     def test_an_exhausted_reviewer_is_dropped_and_named(self) -> None:
         ctx = _ctx()
         d1 = Review("minor_issues_approve", "ok", model="glm")

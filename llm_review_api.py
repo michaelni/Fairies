@@ -856,7 +856,9 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
 
     A reviewer that raises (provider outage, exhausted quota, ...) is
     dropped with a logged traceback so the surviving drafts still produce
-    a review; only when every reviewer fails is the run aborted. A
+    a review; only when every reviewer fails is the run aborted -- as
+    ``ProviderTurnFailed`` when each of them died of one, so the wrapper
+    exits ``EXIT_TURN_FAILED`` like an exhausted combiner does. A
     provider-ended turn is re-run in the reviewer's own thread, up to
     ``TURN_FAILED_REVIEWER_ATTEMPTS`` attempts, before the drop.
 
@@ -877,10 +879,9 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
                                    TURN_FAILED_REVIEWER_ATTEMPTS)
                    for r in reviewers]
     drafts: list[Review] = []
-    failed: list[str] = []
+    all_turn_failed = True
 
     def drop(reviewer: Reviewer, exc: Exception) -> None:
-        failed.append(reviewer.name)
         reason = (str(exc).splitlines() or [exc.__class__.__name__])[0]
         ctx.failed_reviewers.append(f"{reviewer.name}: {reason[:160]}")
         logger.exception(
@@ -893,6 +894,8 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
             drafts.append(future.result())
         except Exception as exc:
             drop(reviewer, exc)
+            all_turn_failed &= isinstance(exc, ProviderTurnFailed)
     if not drafts:
-        raise RuntimeError(f"all reviewers failed: {', '.join(failed)}")
+        raise (ProviderTurnFailed if all_turn_failed else RuntimeError)(
+            f"all reviewers failed: {'; '.join(ctx.failed_reviewers)}")
     return drafts

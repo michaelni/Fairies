@@ -888,6 +888,25 @@ class DetailTests(DbCase):
         self.assertIn("reviewer failed: codex:gpt-5.6-sol: content flagged",
                       self._detail_text())
 
+    def test_long_error_wraps_instead_of_clipping(self) -> None:
+        """Regression (review finding): the error line was clipped at
+        terminal width, hiding the provider's actual failure text
+        behind ~190 chars of prefixes (observed with the cybersecurity
+        content flag)."""
+        error = ("LLM analysis failed: LLM review gave up: provider-ended "
+                 "turns exhausted the wrapper's in-run retry budget: "
+                 "codex:gpt-5.6-sol: codex exec produced no final message "
+                 '(rc=1); errors: {"type": "error", "message": "This '
+                 "content was flagged for possible cybersecurity risk. If "
+                 "this seems wrong, try rephrasing your request. To get "
+                 "authorized for security work, join the Trusted Access "
+                 'for Cyber program: https://chatgpt.com/cyber"}')
+        self.db.push("reviewed", "pr", "5", verdict(5, error=error))
+        self.model.poll()
+        text = " ".join(self._detail_text().split())
+        self.assertIn("flagged for possible cybersecurity risk", text)
+        self.assertIn("https://chatgpt.com/cyber", text)
+
     def test_send_blocked_note_is_shown(self) -> None:
         self.db.push("reviewed", "pr", "5",
                      verdict(5, send_blocked="PR updated_at changed"))

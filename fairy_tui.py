@@ -1057,16 +1057,20 @@ class UILoop:
                            ("text", str(data["head_branch"])[:width])]
             head.append(byline)
         if item.error:
-            head.append([("log_err", f"file invalid: {item.error}"[:width])])
+            head += tui_core.wrap([("log_err", str(item.error))], width,
+                                  initial=("log_err", "file invalid: "))
         if data.get("error"):
             when = _when(data.get("llm_at") or data.get("state_changed_at"))
-            head.append([("log_err",
-                          (f"error {when}: {data['error']}" if when
-                           else f"error: {data['error']}")[:width])])
+            head += tui_core.wrap(
+                [("log_err", str(data["error"]))], width,
+                initial=("log_err", f"error {when}: " if when else "error: "))
         if data.get("send_blocked"):
-            head.append([("log_warn", f"send blocked: {data['send_blocked']}"[:width])])
+            head += tui_core.wrap(
+                [("log_warn", str(data["send_blocked"]))], width,
+                initial=("log_warn", "send blocked: "))
         for failed in data.get("failed_reviewers") or []:
-            head.append([("log_warn", f"reviewer failed: {failed}"[:width])])
+            head += tui_core.wrap([("log_warn", str(failed))], width,
+                                  initial=("log_warn", "reviewer failed: "))
         review = data.get("review") or {}
         decision = agent.ticket_decision(item.kind, item.number, data)
         if decision is not None:

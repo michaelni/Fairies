@@ -99,6 +99,7 @@ from llm_review_api import (
     ProviderTurnFailed,
     ReviewContext,
 )
+from codex_container import DEFAULT_CODEX_IMAGE
 import review_pipeline
 from review_pipeline import make_reviewer, review_pr, run_triage
 import workset
@@ -153,9 +154,6 @@ DEFAULT_PODMAN_NETWORK = ""
 AGENT_LOCAL_PATH = Path(__file__).resolve().parent / "containers" / "fairy_agent.py"
 AGENT_CONTAINER_DIR = "/work/.fairy"
 AGENT_CONTAINER_PATH = f"{AGENT_CONTAINER_DIR}/fairy_agent.py"
-
-# Must match codex_reviewer.DEFAULT_CODEX_IMAGE.
-CODEX_DEFAULT_IMAGE = "localhost/fairy-codex:latest"
 
 
 # Default budget for the mini-model triage pre-check when ``--triage-model``
@@ -523,7 +521,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--codex-image",
-        default=CODEX_DEFAULT_IMAGE,
+        default=DEFAULT_CODEX_IMAGE,
         metavar="TAG",
         help="Container image for the codex pass (default: %(default)s); "
              "build it with containers/Containerfile.codex.",

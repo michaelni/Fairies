@@ -73,6 +73,8 @@ CONTAINER_RUN_DIR = "/work/.codex-run"
 CONTAINER_CODEX_HOME = "/work/.codex-home"
 RELAY_SOCKET_PATH = f"{CONTAINER_RUN_DIR}/shell.sock"
 
+DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
+
 
 class CodexContainer:
     """One ephemeral codex container on a remote podman host.

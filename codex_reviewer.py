@@ -57,6 +57,7 @@ import time
 from codex_catalog import harden_codex_catalog, resolve_codex_home
 from codex_container import (
     CONTAINER_CODEX_HOME,
+    DEFAULT_CODEX_IMAGE,
     CONTAINER_RUN_DIR,
     RELAY_SOCKET_PATH,
     CodexContainer,
@@ -83,7 +84,6 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
 
 # The union across models; an unsupported pairing still fails server-side.
 # 2026-07-17: gpt-5.6 rejected codex's documented "minimal" with

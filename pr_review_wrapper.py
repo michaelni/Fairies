@@ -1307,12 +1307,15 @@ def main() -> int:
         openai_container_pool.logger,
         podman_host.logger,
         podman_repos.logger,
-        # By name, not module attribute: the anthropic modules are imported
-        # lazily (only when an anthropic/zai model is requested) and fetching
-        # a logger from the registry does not import the module.
+        # By name, not module attribute: the anthropic and codex modules
+        # are imported lazily (only when such a model is requested) and
+        # fetching a logger from the registry does not import the module.
         logging.getLogger("shell_tool"),
         logging.getLogger("anthropic_common"),
         logging.getLogger("anthropic_reviewer"),
+        logging.getLogger("codex_catalog"),
+        logging.getLogger("codex_container"),
+        logging.getLogger("codex_reviewer"),
         color=args.color,
     )
     concurrency.configure(args.concurrency)

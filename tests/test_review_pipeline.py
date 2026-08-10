@@ -471,6 +471,8 @@ class AttachTurnFallbacksTests(unittest.TestCase):
         cyber, fb = r.fallbacks
         self.assertEqual("codex:gpt-5.6-sol+second-home", cyber.name)
         self.assertEqual("/second-home", cyber.codex_home)
+        self.assertTrue(cyber.flag_only)
+        self.assertFalse(fb.flag_only)
         self.assertEqual("zai:glm-4.6", fb.name)
         self.assertEqual("low", fb.effort)
         self.assertIs(r.role, cyber.role)
@@ -524,6 +526,31 @@ class TurnRetryFallbackTests(unittest.TestCase):
         self.assertIs(out, self.DRAFT)
         self.assertEqual(4, primary.calls)
         self.assertEqual(1, fallback.calls)
+
+    def test_non_flag_failures_skip_a_flag_only_fallback(self) -> None:
+        primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99)
+        cyber = _FlaggedReviewer("codex:sol+second", self.DRAFT, fail_times=0)
+        cyber.flag_only = True
+        glm = _FlaggedReviewer("zai:glm", self.DRAFT, fail_times=0)
+        primary.fallbacks = (cyber, glm)
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertIs(out, self.DRAFT)
+        self.assertEqual(4, primary.calls)
+        self.assertEqual(0, cyber.calls)
+        self.assertEqual(1, glm.calls)
+
+    def test_a_content_flag_reaches_the_flag_only_fallback(self) -> None:
+        primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99,
+                                   exc_type=ProviderContentFlagged)
+        cyber = _FlaggedReviewer("codex:sol+second", self.DRAFT, fail_times=0)
+        cyber.flag_only = True
+        primary.fallbacks = (cyber,)
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertIs(out, self.DRAFT)
+        self.assertEqual(1, primary.calls)
+        self.assertEqual(1, cyber.calls)
 
     def test_the_whole_chain_failing_propagates(self) -> None:
         primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99,

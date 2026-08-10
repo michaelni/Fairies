@@ -775,12 +775,14 @@ class Reviewer(ABC):
     ``RoleSpec`` the instance executes. ``fallbacks`` are stand-in
     reviewers ``review_with_turn_retries`` tries in order when this
     reviewer's turns keep being ended by the provider; their own
-    ``fallbacks`` are not chained.
+    ``fallbacks`` are not chained. A fallback with ``flag_only`` set
+    is used only for ``ProviderContentFlagged``; other turn failures skip it.
     """
 
     name: str
     role: RoleSpec
     fallbacks: tuple["Reviewer", ...] = ()
+    flag_only: bool = False
 
     @abstractmethod
     def run(self, ctx: ReviewContext) -> dict[str, object]:
@@ -815,8 +817,10 @@ def review_with_turn_retries(reviewer: Reviewer, ctx: ReviewContext,
     (>= 1) total attempts; ``ProviderContentFlagged`` switches to the
     next reviewer at the first flag instead, when there is one. Each
     fallback runs exactly once -- a stand-in may live on expensive API
-    credits, so a failing item must not multiply its cost. The last
-    reviewer's failure propagates."""
+    credits, so a failing item must not multiply its cost. A
+    ``flag_only`` fallback is reached only via a content flag; any
+    other failure skips past it. The walk is forward only; the last
+    eligible reviewer's failure propagates."""
     pending = list(reviewer.fallbacks)
     budget = attempts
     while True:
@@ -834,6 +838,9 @@ def review_with_turn_retries(reviewer: Reviewer, ctx: ReviewContext,
                         "%s: provider ended the turn (%s); attempt %d/%d",
                         reviewer.name, exc, attempt + 1, budget)
                     continue
+                while pending and pending[0].flag_only:
+                    logger.info("%s handles only content flags; skipped",
+                                pending.pop(0).name)
                 if not pending:
                     raise
                 logger.warning(

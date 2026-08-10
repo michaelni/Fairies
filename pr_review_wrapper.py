@@ -1196,17 +1196,20 @@ def attach_turn_fallbacks(
     failure_fails_run: bool,
 ) -> None:
     """Set ``reviewer.fallbacks`` for provider-ended turns: the
-    --cyber-fallback-model reviewer first, then, with
+    flag-only --cyber-fallback-model reviewer first, then, with
     ``failure_fails_run`` (a sole main reviewer or the combiner), the
     --fallback-model reviewer. Both are built with the primary's
     role."""
     specs = [args.cyber_fallback_model] + \
         [args.fallback_model] * failure_fails_run
-    reviewer.fallbacks = tuple(
+    chain = [
         make_reviewer(spec, args=args, resources=resources,
                       role=reviewer.role, verbose=args.verbose,
                       verbosity=verbosity)
-        for spec in specs if spec)
+        for spec in specs if spec]
+    if args.cyber_fallback_model:
+        chain[0].flag_only = True
+    reviewer.fallbacks = tuple(chain)
 
 
 def emit_review_stdout(

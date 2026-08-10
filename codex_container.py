@@ -195,7 +195,8 @@ def persist_refreshed_auth(
     """Copy a mid-run token refresh back to the host auth.json.
 
     Best-effort: reads the container's copy, and if it is valid JSON
-    that differs from the host file, atomically replaces it (0600).
+    that differs from the host file, atomically replaces it (0600),
+    keeping the replaced credentials as ``auth.json.bak`` (0600).
     A read/parse failure just logs -- the run already succeeded, so a
     stale host token surfaces as an auth error on a later run rather
     than failing this one.
@@ -223,14 +224,21 @@ def persist_refreshed_auth(
         if auth_local.is_file() else ""
     if refreshed == current:
         return
+
+    def write_0600(path: Path, text: str) -> None:
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.write(fd, text.encode("utf-8"))
+        finally:
+            os.close(fd)
+
+    if current:
+        write_0600(auth_local.with_name(auth_local.name + ".bak"), current)
     tmp = auth_local.with_name(auth_local.name + ".tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        os.write(fd, refreshed.encode("utf-8"))
-    finally:
-        os.close(fd)
+    write_0600(tmp, refreshed)
     os.replace(tmp, auth_local)
-    logger.info("codex: persisted refreshed auth.json from container")
+    logger.info("codex: persisted refreshed auth.json from container "
+                "(previous kept as auth.json.bak)")
 
 
 class CodexShellRelay:

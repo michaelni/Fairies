@@ -438,14 +438,18 @@ class CodexReviewerRunTests(unittest.TestCase):
         with self.assertRaises(BadModelOutput):
             self._run(last_message="I approve of this patch.")
 
-    def test_refreshed_auth_persisted_back(self) -> None:
+    def test_refreshed_auth_persisted_back_with_backup(self) -> None:
         home = _codex_home_ready()
         reviewer = self._reviewer(codex_home=home)
+        before = Path(home, "auth.json").read_text(encoding="utf-8")
         rotated = '{"tokens": {"refresh_token": "rotated"}}'
         self._run(reviewer=reviewer, refreshed_auth=rotated)
         auth_path = Path(home, "auth.json")
         self.assertEqual(rotated, auth_path.read_text(encoding="utf-8"))
         self.assertEqual(0o600, auth_path.stat().st_mode & 0o777)
+        bak = Path(home, "auth.json.bak")
+        self.assertEqual(before, bak.read_text(encoding="utf-8"))
+        self.assertEqual(0o600, bak.stat().st_mode & 0o777)
 
     def test_unchanged_auth_not_rewritten(self) -> None:
         home = _codex_home_ready()

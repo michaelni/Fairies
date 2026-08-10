@@ -607,6 +607,25 @@ class TurnRetryFallbackTests(unittest.TestCase):
         self.assertEqual(4, primary.calls)
         self.assertEqual(1, fallback.calls)
 
+    def test_any_fallback_failure_skips_the_outer_loop(self) -> None:
+        """Regression: the cyber fallback died on a config error (a
+        RuntimeError, not a turn failure), the wrapper exited with a
+        generic error and fairy's outer --llm-max-attempts loop invoked
+        the fallback twice more (2026-08-10, attempts at
+        07:03/07:07/07:16). Every fallback failure is therefore raised
+        as ProviderTurnFailed, which maps to EXIT_TURN_FAILED and skips
+        the outer loop."""
+        primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99,
+                                   exc_type=ProviderContentFlagged)
+        fallback = _FailingReviewer("codex:sol+second")
+        primary.fallbacks = (fallback,)
+        with self.assertRaises(ProviderTurnFailed) as caught, \
+                self.assertLogs("llm_review_api", level="WARNING"):
+            review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertNotIsInstance(caught.exception, ProviderContentFlagged)
+        self.assertIn("simulated provider failure", str(caught.exception))
+        self.assertEqual(1, primary.calls)
+
     def test_a_flag_without_fallbacks_keeps_the_retry_budget(self) -> None:
         """Regression (review finding): splitting ProviderContentFlagged
         out of ProviderTurnFailed dropped a flagged, fallback-less

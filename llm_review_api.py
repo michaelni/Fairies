@@ -815,14 +815,16 @@ def review_with_turn_retries(reviewer: Reviewer, ctx: ReviewContext,
 
     The first reviewer retries ``ProviderTurnFailed`` up to ``attempts``
     (>= 1) total attempts; ``ProviderContentFlagged`` switches to the
-    next reviewer at the first flag instead, when there is one. Each
-    fallback runs exactly once -- a stand-in may live on expensive API
-    credits, so a failing item must not multiply its cost. A
-    ``flag_only`` fallback is reached only via a content flag; any
-    other failure skips past it. The walk is forward only; the last
-    eligible reviewer's failure propagates."""
+    next reviewer at the first flag instead, when there is one. A
+    fallback is invoked at most once per run: a stand-in may live on
+    expensive API credits, so every failure of one -- whatever the
+    kind -- is raised as ``ProviderTurnFailed``, which exits the
+    wrapper EXIT_TURN_FAILED and thereby keeps the outer
+    --llm-max-attempts loop from invoking it again. A ``flag_only``
+    fallback is reached only via a content flag; a spent budget skips
+    past it. The walk is forward only."""
     pending = list(reviewer.fallbacks)
-    budget = attempts
+    budget, is_fallback = attempts, False
     while True:
         for attempt in range(1, budget + 1):
             try:
@@ -847,8 +849,13 @@ def review_with_turn_retries(reviewer: Reviewer, ctx: ReviewContext,
                     "%s: turn-failure budget spent (%s); switching to %s",
                     reviewer.name, exc, pending[0].name)
                 break
+            except Exception as exc:
+                if not is_fallback:
+                    raise
+                raise ProviderTurnFailed(
+                    f"fallback {reviewer.name} failed: {exc}") from exc
         reviewer = pending.pop(0)
-        budget = 1
+        budget, is_fallback = 1, True
 
 
 def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:

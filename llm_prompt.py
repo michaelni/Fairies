@@ -321,6 +321,8 @@ Additional Major issues:
 
 These lists supplement the class definitions with specific calls; they are not exhaustive.
 
+Changes to previously undocumented API which has no known specific user is NOT a regression.
+
 """
 
 

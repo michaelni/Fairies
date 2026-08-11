@@ -145,6 +145,42 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
     }
 
 
+def _discussion(ns: argparse.Namespace, kind: str, item: dict, cache,
+                cache_age: timedelta) -> list[dict]:
+    """The item's discussion, through the same cache the gates read;
+    fetched first in the pass, so a prepare of the same item hits the
+    cache."""
+    if kind == "pr":
+        reviews, comments, review_comments = fairy.get_pr_discussion(
+            ns, item, cache=cache, cache_max_age=cache_age)
+        timeline = fairy.get_pr_timeline(ns, item, cache=cache,
+                                         cache_max_age=cache_age)
+    else:
+        comments, timeline = issue_fairy.get_issue_discussion(
+            ns, item, cache=cache, cache_max_age=cache_age)
+        reviews = review_comments = []
+    return fairy.build_llm_discussion(reviews, comments, review_comments,
+                                      timeline)
+
+
+def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
+                  token: filedb.TicketId, item: dict, cache,
+                  cache_age: timedelta) -> None:
+    """Refresh the item's filedb snapshot; a failure costs freshness,
+    never the scan of the item."""
+    try:
+        db.push(filedb.ITEM_STATE, kind, token, {
+            "title": str(item.get("title") or ""),
+            "author": fairy.get_pr_author(item),
+            "body": str(item.get("body") or ""),
+            "html_url": str(item.get("html_url") or ""),
+            "discussion": _discussion(ns, kind, item, cache, cache_age),
+        })
+    except Exception as exc:
+        logger.warning("%s #%s: item snapshot not refreshed: %s",
+                       kind, token, exc)
+
+
 def _route(db: filedb.Db, kind: str, number: filedb.TicketId, state: str,
            data: dict, prior: str | None) -> None:
     """Scan-time routing: dst-first, and refused when the item moved at
@@ -233,6 +269,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                                              int(i["number"]))):
         number = int(item["number"])
         token = str(number)
+        _put_snapshot(db, ns, kind, token, item, cache, cache_age)
         prior = db.find(kind, token)
         if prior in IN_FLIGHT:
             continue
@@ -271,9 +308,9 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # New activity bypasses the wait outright: a push, comment
             # or @-mention must reach the gates now, not in days. An
             # unchanged updated_at means nothing at all changed, so the
-            # wait is served without any further fetch; a moved
-            # updated_at is judged after prepare (below), because only
-            # the discussion tells label edits apart from real activity.
+            # wait is served; a moved updated_at is judged after
+            # prepare (below), because only the discussion tells label
+            # edits apart from real activity.
             wait = backoff_wait_h(prior_data.get("skip_backoff_h", 0))
             # the window is measured from the LLM run or the operator's
             # s-press, whichever is later -- so skipping an old verdict

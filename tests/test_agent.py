@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -81,6 +82,9 @@ class AgentCase(unittest.TestCase):
         self.db = filedb.Db(Path(tmp.name))
         self.ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.prepare = mock.Mock(side_effect=lambda ns, pr, **kw: prepared_for(pr))
+        patcher = mock.patch.object(agent, "_discussion", return_value=[])
+        self.discussion = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def scan(self, prs: list[dict], fetch=None) -> None:
         with mock.patch.object(fairy, "list_open_prs", return_value=prs), \
@@ -887,6 +891,94 @@ class ForcedOnlyTests(AgentCase):
             agent.scan_pass(self.db, self.ns, None, now=NOW)
         listing.assert_not_called()
         self.assertEqual(self.db.find("pr", "7"), "queued")
+
+
+class ItemSnapshotScanTests(AgentCase):
+    """The scan mirrors every listed item into the filedb items/
+    state, where the UI reads the discussion between reviews."""
+
+    def test_scan_refreshes_the_snapshot(self) -> None:
+        self.discussion.return_value = [
+            {"kind": "comment", "author": "carol", "body": "ping"}]
+        self.scan([make_pr(1)])
+        snap = self.db.get("items", "pr", "1")
+        self.assertEqual(snap["title"], "t1")
+        self.assertEqual(snap["author"], "a")
+        self.assertEqual(snap["discussion"], self.discussion.return_value)
+        self.assertEqual(self.db.list_state("items"), [("pr", "1")])
+
+    def test_parked_items_still_snapshot(self) -> None:
+        """The whole point of the placement: rows the scan leaves alone
+        (standing verdict, served skip backoff) keep a fresh thread."""
+        self.db.push("reviewed", "pr", "1", {
+            "review": {"classification": "reply"},
+            "expected_updated_at": "2026-07-19T10:00:00Z",
+            "expected_head_ref": "b1"})
+        self.db.push("skipped", "pr", "2", {
+            "llm_at": NOW.isoformat(), "skip_backoff_h": 24,
+            "expected_updated_at": "2026-07-19T10:00:00Z"})
+        self.scan([make_pr(1), make_pr(2)])
+        self.assertEqual(self.db.find("pr", "1"), "reviewed")
+        self.assertEqual(self.db.find("pr", "2"), "skipped")
+        self.assertIsNotNone(self.db.get("items", "pr", "1"))
+        self.assertIsNotNone(self.db.get("items", "pr", "2"))
+
+    def test_departed_items_snapshot_stays(self) -> None:
+        self.scan([make_pr(1)])
+        self.scan([])
+        self.assertIsNotNone(self.db.get("items", "pr", "1"))
+
+    def test_snapshot_failure_never_breaks_the_scan(self) -> None:
+        self.discussion.side_effect = RuntimeError("forge down")
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", "1"), "queued")
+        self.assertIsNone(self.db.get("items", "pr", "1"))
+
+    def test_forced_closed_items_snapshot_too(self) -> None:
+        self.ns.force_review_prs = {7}
+        self.scan([], fetch=lambda ns, n: {**make_pr(n), "state": "closed"})
+        self.assertEqual(self.db.get("items", "pr", "7")["title"], "t7")
+
+
+class DiscussionWiringTests(unittest.TestCase):
+    """agent._discussion feeds the per-kind fetchers into
+    build_llm_discussion in its argument order."""
+
+    FIXTURES = Path(__file__).parent / "fixtures" / "issue_fairy"
+
+    def test_pr_fetchers_feed_build_llm_discussion(self) -> None:
+        comments = json.loads(
+            (self.FIXTURES / "ffmpeg_issue_23738_comments.json")
+            .read_text(encoding="utf-8"))
+        ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
+        cache = object()
+        with mock.patch.object(fairy, "get_pr_discussion",
+                               return_value=([], comments, [])) as fetch, \
+                mock.patch.object(fairy, "get_pr_timeline",
+                                  return_value=[]) as timeline:
+            got = agent._discussion(ns, "pr", {"number": 1}, cache,
+                                    timedelta(hours=24))
+        self.assertEqual(got, fairy.build_llm_discussion([], comments, [], []))
+        self.assertEqual(len(got), len(comments))
+        for call in (fetch, timeline):
+            self.assertIs(call.call_args.kwargs["cache"], cache)
+            self.assertEqual(call.call_args.kwargs["cache_max_age"],
+                             timedelta(hours=24))
+
+    def test_issue_fetchers_feed_build_llm_discussion(self) -> None:
+        comments = json.loads(
+            (self.FIXTURES / "ffmpeg_issue_23738_comments.json")
+            .read_text(encoding="utf-8"))
+        timeline = json.loads(
+            (self.FIXTURES / "ffmpeg_issue_23738_timeline.json")
+            .read_text(encoding="utf-8"))
+        ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
+        with mock.patch.object(issue_fairy, "get_issue_discussion",
+                               return_value=(comments, timeline)):
+            got = agent._discussion(ns, "issue", {"number": 1}, object(),
+                                    timedelta(hours=24))
+        self.assertEqual(got, fairy.build_llm_discussion(
+            [], comments, [], timeline))
 
 
 class BackoffMathTests(unittest.TestCase):

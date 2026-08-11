@@ -85,7 +85,8 @@ from fairy import (
     post_label_explanations,
 )
 
-__all__ = ["make_parser", "parse_args", "prepare_issue", "evaluate_issue"]
+__all__ = ["make_parser", "parse_args", "prepare_issue", "evaluate_issue",
+           "get_issue_discussion"]
 
 logger = fairy.logger
 

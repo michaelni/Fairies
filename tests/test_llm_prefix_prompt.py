@@ -57,6 +57,15 @@ class ModelLabelTests(unittest.TestCase):
         self.assertEqual("GPT-5.4", llm_prompt.model_label("gpt-5.4"))
         self.assertEqual("UNKNOWN", llm_prompt.model_label(""))
 
+    def test_account_suffix_stays_out_of_the_label(self) -> None:
+        """A reviewer name carries the login as ``+<codex-home basename>``
+        or ``+<api-key-env>``; that is deployment configuration and must
+        not surface in prompts or posted messages."""
+        self.assertEqual("GPT-5.6-SOL",
+                         llm_prompt.model_label("codex:gpt-5.6-sol+second-home"))
+        self.assertEqual("GLM-5.2",
+                         llm_prompt.model_label("zai:glm-5.2+ZAI_API_KEY_2"))
+
 
 class PromptForTests(unittest.TestCase):
     def test_derived_identity_facts(self) -> None:

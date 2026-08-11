@@ -161,6 +161,29 @@ class NoOpWriteTests(DbCase):
             self.db.path("ci-blocked", "pr", "5").stat().st_mtime_ns, stamp)
 
 
+class ItemSnapshotTests(DbCase):
+    SNAP = {"title": "t", "author": "a", "body": "b",
+            "discussion": [{"kind": "comment", "author": "a", "body": "hi"}]}
+
+    def test_the_item_state_is_ordinary_but_outside_the_pipeline(self) -> None:
+        self.db.push("items", "pr", "5", self.SNAP)
+        self.assertEqual(self.db.get("items", "pr", "5")["title"], "t")
+        self.assertEqual(self.db.list_state("items"), [("pr", "5")])
+        self.assertIsNone(self.db.find("pr", "5"))
+        self.assertEqual(self.db.list_state("queued"), [])
+
+    def test_a_snapshot_coexists_with_a_claimed_ticket(self) -> None:
+        """A claim is about a ticket's review; the same item's snapshot
+        must stay writable while the review runs."""
+        self.db.push("queued", "pr", "5", {"title": "t"})
+        held = self.db.claim("queued", "llm", "pr", "5")
+        self.assertIsNotNone(held)
+        self.db.push("items", "pr", "5", self.SNAP)
+        self.assertEqual(self.db.get("items", "pr", "5")["discussion"],
+                         self.SNAP["discussion"])
+        held.abort()
+
+
 class TornTicketTests(DbCase):
     def test_torn_tickets_degrade_instead_of_wedging(self) -> None:
         self.db.push("skipped", "pr", "5", {"a": 1})

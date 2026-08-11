@@ -67,6 +67,12 @@ caller decides again. ``reap(state, None)`` deletes the shadowed
 file, and the agent sweeps every state with it after a scan -- except
 requests/, a command channel that coexists with any state by design.
 
+items/ holds one snapshot of the forge item itself per ticket -- its
+fields and its discussion, written by the agent's scan alone. It is
+an ordinary state to the API, but outside the pipeline: no
+find()/reap() precedence and no pruning. A snapshot stops updating
+when its item leaves the open listing; nothing deletes one.
+
 Which operation:
 
     claim/finish  work that spans a whole review
@@ -83,8 +89,10 @@ replace/try_move/try_pop, the worker claim protocol (lock -> rename ->
 work -> finish), reaping dead workers' claims, and retention pruning.
 
 What does NOT belong: ticket schemas and validation (workset), gates,
-forge access, review logic, and any policy about which state an item
-should be in next (fairy).
+forge access, review logic, any policy about which state an item
+should be in next (fairy), and per-key duplicated functionality --
+a new key kind reshapes the shared API where that helps; it never
+gets parallel functions of its own.
 """
 
 from __future__ import annotations
@@ -99,7 +107,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-__all__ = ["Db", "Claim", "STATES", "KINDS", "TicketId",
+__all__ = ["Db", "Claim", "STATES", "KINDS", "ITEM_STATE", "TicketId",
            "forge_number", "is_base", "logger"]
 
 logger = logging.getLogger(__name__)
@@ -110,6 +118,7 @@ STATES = ("requests", "queued", "llm", "reviewed", "outgoing",
           "ci-blocked", "merge-ready", "awaiting-approver",
           "posted", "skipped", "cancelled", "error")
 KINDS = ("pr", "issue")
+ITEM_STATE = "items"
 _TMP = "tmp"
 _LOCKS = "locks"
 # Ticket identity: the forge number, optionally refined by a sample
@@ -201,14 +210,14 @@ class Db:
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
-        for d in (*STATES, _TMP, _LOCKS):
+        for d in (*STATES, ITEM_STATE, _TMP, _LOCKS):
             (self.root / d).mkdir(parents=True, exist_ok=True)
 
     def path(self, state: str, kind: str, number: TicketId) -> Path:
         """Where the item's ticket lives while in ``state``; the file
         need not exist. ValueError for an unknown state, kind or
         token."""
-        if state not in STATES:
+        if state not in STATES and state != ITEM_STATE:
             raise ValueError(f"unknown state {state!r}")
         return self.root / state / _name(kind, number)
 

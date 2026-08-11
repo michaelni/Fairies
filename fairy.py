@@ -872,6 +872,26 @@ def get_pr_discussion(
     )
 
 
+def get_pr_timeline(
+    args: argparse.Namespace,
+    pr: ApiObject,
+    *,
+    cache: gcli_cache.Cache,
+    cache_max_age: timedelta,
+) -> list[ApiObject]:
+    """Timeline events for ``pr`` via the cache; [] when ``updated_at``
+    is unusable. A failed fetch raises -- the caller decides whether
+    the timeline is optional."""
+    live_updated_at = iso_to_dt(pr.get("updated_at"))
+    if live_updated_at is None:
+        return []
+    fields = gcli_cache.get(
+        cache, args, "pulls", args.owner, args.repo, int(pr["number"]),
+        live_updated_at, "timeline", max_age=cache_max_age,
+    )
+    return list(fields["timeline"])
+
+
 def list_commit_statuses(args: argparse.Namespace, ref: str) -> list[ApiObject]:
     """CI rows for ``ref``, less anything --simulate-past puts in the future."""
     return filter_activity_after(
@@ -2225,23 +2245,16 @@ def prepare_pr(
     # detection via ``auto_merge_state_from_timeline``, LLM-discussion
     # enrichment via ``push_events_from_timeline``) see the same single
     # live copy without an extra in-process memo.
-    live_updated_at = iso_to_dt(pr.get("updated_at"))
-
     def get_timeline() -> list[ApiObject]:
-        if live_updated_at is None:
-            return []
         try:
-            fields = gcli_cache.get(
-                cache, args, "pulls", args.owner, args.repo, number, live_updated_at,
-                "timeline", max_age=discussion_cache_max_age,
-            )
+            return get_pr_timeline(args, pr, cache=cache,
+                                   cache_max_age=discussion_cache_max_age)
         except Exception as exc:
             logger.warning(
                 "LLM discussion enrichment: failed to fetch timeline for "
                 "PR #%d: %s", number, exc,
             )
             return []
-        return list(fields["timeline"])
 
     auto_merge: str | None = None
 

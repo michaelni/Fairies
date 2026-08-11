@@ -1206,10 +1206,20 @@ class UILoop:
             + (" *[posted]*" if c.get("post") else "")
             for c in review.get("label_changes") or []
             if isinstance(c, dict)), width)
+        message = tui_core.render_markdown(review.get("message") or "",
+                                           width)
+        if not labels and not message:
+            return head + tail
+        w = width - len("fairy")
+        if item.state == "posted":
+            when = _when(data.get("posted_at") or data.get("llm_at"))
+            byline = [("label", f"  review  {when}"[:w])]
+        else:
+            byline = [("st_reviewed", ("  review — NOT POSTED  "
+                                       + _when(data.get("llm_at")))[:w])]
         if labels:
             labels.append([])
-        return head + labels + tui_core.render_markdown(
-            review.get("message") or "", width) + tail
+        return head + tail + [[], [("h4", "fairy")] + byline] + labels + message
 
     def paint(self) -> None:
         self._last_paint = time.monotonic()

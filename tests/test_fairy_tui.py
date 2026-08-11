@@ -807,7 +807,29 @@ class DetailTests(DbCase):
         self.assertIn("the initial message", text)
         self.assertLess(text.index("the initial message"), text.index("ack"))
 
-    def test_discussion_thread_renders_below_the_message(self) -> None:
+    def test_the_review_renders_at_the_threads_end_marked_unposted(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(
+            5, msg="persisted body", discussion=[
+                {"kind": "comment", "author": "carol",
+                 "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"}]))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertLess(text.index("please rebase"),
+                        text.index("persisted body"))
+        self.assertLess(text.index("NOT POSTED"), text.index("persisted body"))
+
+    def test_a_posted_review_loses_the_unposted_mark(self) -> None:
+        self.model.filter_mode = "all"  # posted rows hide from "relevant"
+        self.db.push("posted", "pr", "5", verdict(
+            5, msg="persisted body",
+            posted_at="2026-07-21T00:00:00+00:00"))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("persisted body", text)
+        self.assertIn("review  2026-07-21", text)
+        self.assertNotIn("NOT POSTED", text)
+
+    def test_the_unposted_review_renders_below_the_thread(self) -> None:
         disc = [
             {"kind": "comment", "author": "carol",
              "created_at": "2026-07-18T09:00:00Z", "body": "please **rebase**",
@@ -833,7 +855,7 @@ class DetailTests(DbCase):
         self.assertIn("dave  review APPROVED", text)
         self.assertIn("erin  review_comment  src/x.c:42", text)
         self.assertIn("a  force-pushed 2 commit(s) abcdef1234", text)
-        self.assertLess(text.index("persisted body"), text.index("carol"))
+        self.assertLess(text.index("carol"), text.index("persisted body"))
 
     def test_queued_ticket_shows_the_thread_from_its_prepared_payload(self) -> None:
         self.db.push("queued", "pr", "5", {"title": "t", "prepared": {

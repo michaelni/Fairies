@@ -39,11 +39,11 @@ last row).
   title. The title bar shows the active lens, the bottom bar the keys.
 - **≣ logs** — merged tail of every side's agent/worker log plus the
   TUI's own, one padded source tag per line, level-colored.
-- **¶ message** — the selected ticket: its review and the action `y`
-  would perform, then the discussion. The thread is kept current by
-  the agent's scan; a `── sampled … ──` line marks how far the review
-  saw. The byline's branch is the PR's head branch — in the author's
-  fork unless it lives in the reviewed repo.
+- **¶ message** — the selected ticket: the action `y` would perform,
+  then the discussion with the review at its end, where posting will
+  put it, marked `NOT POSTED` until it is. The thread is kept current
+  by the agent's scan; a `── sampled for the review … ──` line marks
+  how far the review saw.
 
 ## The list
 

@@ -286,9 +286,9 @@ class Db:
             except OSError:
                 os.close(fd)
                 raise
-            # prune unlinks dead items' lock files: a flock acquired on
-            # an inode that no longer is the file at ``path`` excludes
-            # nobody -- retry on the current file.
+            # a lock file can vanish under us (hand cleanup): a flock
+            # acquired on an inode that no longer is the file at
+            # ``path`` excludes nobody -- retry on the current file.
             try:
                 if os.fstat(fd).st_ino == os.stat(path).st_ino:
                     return fd
@@ -515,9 +515,4 @@ class Db:
                     removed += 1
                     logger.info("pruned %s/%s-%s (settled since %s)",
                                 state, kind, number, changed)
-                    if self.find(kind, number) is None:
-                        # last trace gone: drop the item's lock file too,
-                        # or locks/ grows one inode per item forever
-                        self._lock_path(kind, number).unlink(missing_ok=True)
-                        self._lock_path(kind, number, "claim").unlink(missing_ok=True)
         return removed

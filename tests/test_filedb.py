@@ -66,23 +66,6 @@ class HygieneTests(DbCase):
     def cutoff(self) -> datetime:
         return datetime.now(timezone.utc) - timedelta(days=14)
 
-    def test_prune_drops_the_lock_file_with_the_last_trace(self) -> None:
-        self.db.push("posted", "pr", "5", {"title": "t"})
-        self.age("posted", "pr", "5")
-        self.assertTrue(self.db._lock_path("pr", "5").exists())
-        self.db.prune("posted", self.cutoff())
-        self.assertFalse(self.db._lock_path("pr", "5").exists())
-        # the item can come back: locking must still work on a fresh file
-        self.db.push("queued", "pr", "5", {"title": "again"})
-        self.assertEqual(self.db.find("pr", "5"), "queued")
-
-    def test_prune_keeps_the_lock_while_another_state_remains(self) -> None:
-        self.db.push("posted", "pr", "5", {"title": "t"})
-        self.db.push("skipped", "pr", "5", {"llm_at": "x"})
-        self.age("posted", "pr", "5")
-        self.db.prune("posted", self.cutoff())
-        self.assertTrue(self.db._lock_path("pr", "5").exists())
-
     def test_reap_cleans_the_dead_workers_sidecar_litter(self) -> None:
         self.db.push("llm", "pr", "5", {"title": "t"})
         path = self.db.path("llm", "pr", "5")

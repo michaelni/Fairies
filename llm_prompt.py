@@ -299,6 +299,7 @@ For classifying the PR please also see Coding Rules, Development Policy, New cod
 
 Non issues:
 * partly fixing a bug that cannot be fully fixed. Example an OOM fix using the filesize is not invalid with an argument "the filesize is not always known" if theres no better way to do it.
+* an assertion that replaces a out of array access, double free or other security issue
 
 Additional Minor issues:
 * Unrelated changes should be in separate patches.

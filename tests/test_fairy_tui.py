@@ -914,6 +914,158 @@ class DetailTests(DbCase):
         self.assertIn("send blocked: PR updated_at changed",
                       self._detail_text())
 
+    def test_snapshot_replaces_the_thread_with_a_separator(self) -> None:
+        old = {"kind": "comment", "author": "carol",
+               "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"}
+        new = {"kind": "comment", "author": "dave",
+               "created_at": "2026-07-20T09:00:00Z", "body": "rebased now"}
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=[old]))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "the initial message",
+            "updated_at": "2026-07-20T09:00:00Z", "discussion": [old, new]})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertIn("discussion (3)", text)  # description + both comments
+        self.assertIn("rebased now", text)
+        self.assertLess(text.index("please rebase"),
+                        text.index("sampled for the review"))
+        self.assertLess(text.index("sampled for the review"),
+                        text.index("rebased now"))
+
+    def test_separator_trails_a_thread_without_new_activity(self) -> None:
+        old = [{"kind": "comment", "author": "carol",
+                "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"},
+               {"kind": "comment", "author": "carol",
+                "created_at": "2026-07-18T10:00:00Z", "body": "last word"}]
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=old))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "discussion": old})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertLess(text.index("last word"),
+                        text.index("sampled for the review"))
+
+    def test_no_review_row_gets_the_plain_sampled_wording(self) -> None:
+        self.db.push("merge-ready", "pr", "5", {
+            "title": "t", "reason": "approved",
+            "expected_updated_at": "2026-07-19T10:00:00Z"})
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "discussion": [
+                {"kind": "comment", "author": "carol",
+                 "created_at": "2026-07-18T09:00:00Z", "body": "hi"}]})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertIn("── sampled 2026-07-19", text)
+        self.assertNotIn("sampled for the review", text)
+
+    def test_no_separator_without_a_sampling_stamp(self) -> None:
+        self.db.push("queued", "pr", "5", {"title": "t"})
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "discussion": [
+                {"kind": "comment", "author": "carol",
+                 "created_at": "2026-07-18T09:00:00Z", "body": "hi"}]})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.assertNotIn("sampled", self._detail_text())
+
+    def test_empty_thread_renders_no_lone_separator(self) -> None:
+        self.db.push("reviewed", "pr", "5",
+                     verdict(5, body="", discussion=[]))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.assertNotIn("sampled", self._detail_text())
+
+    def test_junk_entries_do_not_shift_the_separator(self) -> None:
+        disc = [{"kind": "comment", "author": "carol",
+                 "created_at": "2026-07-18T09:00:00Z", "body": "old one"},
+                "junk",
+                {"kind": "comment", "author": "carol",
+                 "created_at": "2026-07-18T10:00:00Z", "body": "old two"},
+                {"kind": "comment", "author": "dave",
+                 "created_at": "2026-07-20T09:00:00Z", "body": "new one"}]
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "discussion": disc})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertLess(text.index("old two"), text.index("sampled"))
+        self.assertLess(text.index("sampled"), text.index("new one"))
+
+    def test_description_survives_an_emptied_snapshot_body(self) -> None:
+        self.db.push("reviewed", "pr", "5",
+                     verdict(5, body="the initial message"))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.assertIn("the initial message", self._detail_text())
+
+    def test_header_prefers_the_snapshot_title(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))  # title "from disk"
+        self.db.push("items", "pr", "5", {
+            "title": "renamed since", "author": "a", "body": "",
+            "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertIn("renamed since", text)
+        self.assertNotIn("from disk", text.split("\n")[0])
+
+    def test_without_a_snapshot_the_ticket_thread_renders(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
+            {"kind": "comment", "author": "carol",
+             "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"}]))
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertIn("please rebase", text)
+        self.assertNotIn("sampled for the review", text)
+
+    def test_sample_ticket_reads_the_base_items_snapshot(self) -> None:
+        self.db.push("reviewed", "pr", "5s1", verdict(5))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "",
+            "updated_at": "2026-07-19T10:00:00Z", "discussion": [
+                {"kind": "comment", "author": "dave",
+                 "created_at": "2026-07-20T09:00:00Z", "body": "fresh word"}]})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.assertIn("fresh word", self._detail_text())
+
+    def test_closed_snapshots_keep_serving_the_pane(self) -> None:
+        self.model.filter_mode = "all"  # cancelled rows hide from "relevant"
+        self.db.push("cancelled", "pr", "5", verdict(5, reason="merged"))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "",
+            "updated_at": "2026-07-19T10:00:00Z", "discussion": [
+                {"kind": "comment", "author": "dave",
+                 "created_at": "2026-07-18T09:00:00Z", "body": "final word"}]})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.assertIn("final word", self._detail_text())
+
+    def test_poll_snapshot_is_quiet_while_nothing_changes(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "",
+            "updated_at": "2026-07-19T10:00:00Z", "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.model.dirty.clear()
+        self.model.poll_snapshot()
+        self.assertFalse(self.model.dirty.is_set())
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "",
+            "updated_at": "2026-07-21T00:00:00Z", "discussion": []})
+        self.model.poll_snapshot()
+        self.assertTrue(self.model.dirty.is_set())
+
     def test_invalid_file_shows_reason(self) -> None:
         self.db.path("reviewed", "pr", "5").write_text("{ broken",
                                                      encoding="utf-8")

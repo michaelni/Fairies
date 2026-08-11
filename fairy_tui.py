@@ -82,7 +82,7 @@ import fairy
 import filedb
 import tui_core
 import workset
-from common import setup_logging, watch_paths
+from common import iso_to_dt, setup_logging, watch_paths
 
 __all__ = ["main"]
 
@@ -188,12 +188,20 @@ class Model:
         self.cursor = 0
         self.cursor_key: tuple[str, str, int] | None = None
         self.cursor_shown = False
+        # items/ snapshot behind the cursor row (single slot: the
+        # message pane is its only consumer); the slot names the
+        # snapshot file as (repo, kind, forge number, mtime)
+        self.snapshot: dict | None = None
+        self._snapshot_slot: tuple[str, str, int, float] | None = None
         self.missing: dict[tuple[str, str, int], int] = {}
         self.quit_flag = False
         self.started = time.monotonic()
 
     def db(self, item: Item) -> filedb.Db:
-        return dict(self.sides)[item.repo]
+        return self.db_for(item.repo)
+
+    def db_for(self, repo: str) -> filedb.Db:
+        return dict(self.sides)[repo]
 
     def poll(self) -> None:
         """Rescan every side's state directories: the files are the whole
@@ -300,6 +308,42 @@ class Model:
                     # the item is re-ticketed hours later
                     self.cursor_key = None
         self.dirty.set()
+
+    def poll_snapshot(self) -> None:
+        """Refresh the items/ snapshot behind the cursor row when the
+        row or its file changed; quiet otherwise, so calling this every
+        UI tick costs a stat and never a repaint loop."""
+        with self.lock:
+            cursor = self._cursor_key() or self.cursor_key
+            slot = None
+            if cursor is not None:
+                repo, kind, number = cursor
+                base = str(filedb.forge_number(number))
+                db = self.db_for(repo)
+                try:
+                    mtime = db.path(filedb.ITEM_STATE, kind,
+                                    base).stat().st_mtime
+                    slot = (repo, kind, filedb.forge_number(number), mtime)
+                except OSError:
+                    pass
+            if slot == self._snapshot_slot:
+                return
+            self.snapshot = db.get(filedb.ITEM_STATE, kind, base) \
+                if slot else None
+            self._snapshot_slot = slot
+        self.dirty.set()
+
+    def snapshot_for(self, key: tuple[str, str, filedb.TicketId] | None
+                     ) -> dict | None:
+        """The polled snapshot, when it is of ``key``'s forge item
+        (sample tickets share their base item's snapshot)."""
+        if key is None or self._snapshot_slot is None:
+            return None
+        repo, kind, number = key
+        if self._snapshot_slot[:3] == (repo, kind,
+                                       filedb.forge_number(number)):
+            return self.snapshot
+        return None
 
     # ---- UI-thread side ----
 
@@ -568,6 +612,13 @@ def _age(iso: str | None, now: datetime | None = None) -> str:
     seconds = max(0.0, ((now or datetime.now(timezone.utc)) - then).total_seconds())
     return f"{int(seconds // 86400)}d" if seconds >= 86400 \
         else f"{int(seconds // 3600)}h"
+
+
+def _entry_time(entry: dict) -> datetime | None:
+    """A discussion entry's effective time, in the field precedence the
+    message pane displays."""
+    return iso_to_dt(str(entry.get("submitted_at") or entry.get("updated_at")
+                         or entry.get("created_at") or ""))
 
 
 def _when(iso: str | None) -> str:
@@ -1043,15 +1094,21 @@ class UILoop:
         if item is None:
             return [[("text", "(no item selected)")]]
         data = item.data
+        # the items/ snapshot outdates the ticket wherever both carry a
+        # field, so what it has wins
+        snapshot = m.snapshot_for(key)
+        shown = data if snapshot is None else snapshot
+        title = shown.get("title") or data.get("title") or ""
+        url = shown.get("html_url") or data.get("html_url")
+        author = shown.get("author") or data.get("author")
         where = f"{item.repo}#{item.number}" if self._repo_w else f"#{item.number}"
         head: list[tui_core.StyledLine] = [
-            [("h2", f"{_KIND_DISP[item.kind]} {where}  {data.get('title') or ''}"[:width])],
+            [("h2", f"{_KIND_DISP[item.kind]} {where}  {title}"[:width])],
         ]
-        if data.get("html_url"):
-            head.append([("link", str(data["html_url"])[:width])])
-        if data.get("author") or data.get("head_branch"):
-            byline = [("label", "author "),
-                      ("text", str(data.get("author") or "?"))]
+        if url:
+            head.append([("link", str(url)[:width])])
+        if author or data.get("head_branch"):
+            byline = [("label", "author "), ("text", str(author or "?"))]
             if data.get("head_branch"):
                 byline += [("label", "   branch "),
                            ("text", str(data["head_branch"])[:width])]
@@ -1095,32 +1152,52 @@ class UILoop:
                              ("text", ", ".join(map(str, vals))[:width])])
         head.append([])
         tail: list[tui_core.StyledLine] = []
-        disc = data.get("discussion") or []
-        if data.get("body"):
-            disc = [{"kind": "description", "author": data.get("author"),
-                     "body": data["body"]}] + disc
+        disc = shown.get("discussion") or []
+        separator_at = None
+        if snapshot is not None:
+            sampled = iso_to_dt(str(data.get("expected_updated_at") or ""))
+            if sampled is not None:
+                # an edited entry compares by its updated_at, and edits
+                # do not advance the item's updated_at (see gcli_cache),
+                # so placement is approximate for edited messages
+                separator_at = sum(
+                    1 for entry in disc if not isinstance(entry, dict)
+                    or (_entry_time(entry) or sampled) <= sampled)
+        body = shown.get("body") or data.get("body")
+        if body:
+            disc = [{"kind": "description", "author": author,
+                     "body": body}] + disc
+            if separator_at is not None:
+                separator_at += 1
         if disc:
             tail += [[], [("h3", f"discussion ({len(disc)})"[:width])]]
-        for c in disc:
-            if not isinstance(c, dict):
-                continue
-            when = _when(str(c.get("submitted_at") or c.get("updated_at")
-                             or c.get("created_at") or ""))
-            if c.get("kind") == "push":
-                what = ("force-pushed" if c.get("is_force_push") else "pushed") \
-                    + f" {c.get('commit_count')} commit(s) {str(c.get('head_sha') or '')[:10]}"
-            else:
-                what = " ".join(str(c[k]) for k in ("kind", "state") if c.get(k))
-                if c.get("path"):
-                    what += f"  {c['path']}" \
-                        + (f":{c['line']}" if c.get("line") is not None else "")
-            tail.append([])
-            tail.append([("h4", str(c.get("author") or "?")),
-                         ("label", f"  {what}  {when}"[:width])])
-            if c.get("body"):
-                tail += tui_core.render_markdown(str(c["body"]), width)
-            for url in c.get("attachment_urls") or []:
-                tail.append([("link", str(url)[:width])])
+            separator = [("label", (
+                f"── sampled {'for the review ' if review else ''}"
+                f"{_when(data.get('expected_updated_at'))} ──")[:width])]
+            for i, c in enumerate(disc):
+                if i == separator_at:
+                    tail += [[], separator]
+                if not isinstance(c, dict):
+                    continue
+                when = _when(str(c.get("submitted_at") or c.get("updated_at")
+                                 or c.get("created_at") or ""))
+                if c.get("kind") == "push":
+                    what = ("force-pushed" if c.get("is_force_push") else "pushed") \
+                        + f" {c.get('commit_count')} commit(s) {str(c.get('head_sha') or '')[:10]}"
+                else:
+                    what = " ".join(str(c[k]) for k in ("kind", "state") if c.get(k))
+                    if c.get("path"):
+                        what += f"  {c['path']}" \
+                            + (f":{c['line']}" if c.get("line") is not None else "")
+                tail.append([])
+                tail.append([("h4", str(c.get("author") or "?")),
+                             ("label", f"  {what}  {when}"[:width])])
+                if c.get("body"):
+                    tail += tui_core.render_markdown(str(c["body"]), width)
+                for att in c.get("attachment_urls") or []:
+                    tail.append([("link", str(att)[:width])])
+            if separator_at == len(disc):
+                tail += [[], separator]
         if not review:
             return head + [[("text", f"({item.state}: no review)")]] + tail
         labels = tui_core.render_markdown("\n".join(
@@ -1301,6 +1378,7 @@ class UILoop:
                 if size != self._last_size:
                     self._last_size = size
                 self._maybe_poll()
+                self.model.poll_snapshot()
                 self.paint()
         except KeyboardInterrupt:
             pass

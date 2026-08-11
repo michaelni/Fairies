@@ -39,16 +39,11 @@ last row).
   title. The title bar shows the active lens, the bottom bar the keys.
 - **≣ logs** — merged tail of every side's agent/worker log plus the
   TUI's own, one padded source tag per line, level-colored.
-- **¶ message** — everything on the selected ticket: title, URL, an
-  `author … branch …` byline (the branch is the PR's head branch — in
-  the author's fork unless it lives in the reviewed repo), errors and
-  send blocks with local date and age, dropped reviewers, the action a
-  `y` would perform, state and verdict with when the review was
-  generated, gate reasons, CI contexts, label changes, the
-  markdown-rendered review message, and below it the discussion the
-  review replied to — the opening description, then every comment,
-  review, inline review comment and push, each under an
-  `author  kind  date` header line.
+- **¶ message** — the selected ticket: its review and the action `y`
+  would perform, then the discussion. The thread is kept current by
+  the agent's scan; a `── sampled … ──` line marks how far the review
+  saw. The byline's branch is the PR's head branch — in the author's
+  fork unless it lives in the reviewed repo.
 
 ## The list
 

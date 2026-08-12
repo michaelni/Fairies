@@ -1559,6 +1559,11 @@ class UILoop:
             self._scroll_pane(self.focus, self._page())
         elif name in ("KEY_HOME", "KEY_END"):
             self._jump_pane(self.focus, top=name == "KEY_HOME")
+        elif name in ("KEY_LEFT", "KEY_RIGHT") and self.focus == "br":
+            # flip through tickets while reading: each lands at its top
+            self.scroll["br"] = 0
+            self._scroll_pane("tr", (-1 if name == "KEY_LEFT" else 1)
+                              * self._take_count())
         elif ks == "q":
             self.model.quit_all()
         elif ks == "a":

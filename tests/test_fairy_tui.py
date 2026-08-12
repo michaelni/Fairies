@@ -647,6 +647,23 @@ class WheelTests(DbCase):
         ui.paint()
         self.assertEqual(ui.list_top, 3)  # timer repaints do not snap back
 
+    def test_message_pane_arrows_step_the_list_cursor(self) -> None:
+        ui = self._ui_with_rows()
+        ui.focus = "br"
+        ui.scroll["br"] = 4
+        with self.model.lock:
+            self.model.select_index(1)
+        ui.dispatch(NamedKey("KEY_RIGHT"))
+        with self.model.lock:
+            self.model._sync_cursor()
+            self.assertEqual(self.model.cursor, 2)
+        self.assertEqual(ui.scroll["br"], 0)  # the next ticket reads from its top
+        ui.dispatch(NamedKey("KEY_LEFT"))
+        ui.dispatch(NamedKey("KEY_LEFT"))
+        with self.model.lock:
+            self.model._sync_cursor()
+            self.assertEqual(self.model.cursor, 0)
+
     def test_home_and_end_jump_the_cursor(self) -> None:
         ui = self._ui_with_rows()
         with self.model.lock:

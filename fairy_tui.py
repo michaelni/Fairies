@@ -835,6 +835,7 @@ def _styles(t: blessed.Terminal) -> dict:
             "st_invalid": mix(t.bold, c(196)),
             "st_ci-blocked": c(209),          "st_merge-ready": mix(t.bold, c(78)),
             "st_awaiting-approver": c(179),
+            "sampled": c(114),
             "cursor": t.reverse,
             # log-pane levels; palette mirrors common._ColorFormatter
             "log_debug": t.dim_bright_black,  "log_warn": t.bold_yellow,
@@ -867,6 +868,7 @@ def _styles(t: blessed.Terminal) -> dict:
         "st_invalid": t.bold_red,
         "st_ci-blocked": t.red, "st_merge-ready": t.bold_green,
         "st_awaiting-approver": t.yellow,
+        "sampled": t.green,
         "cursor": t.reverse,
         "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
         "log_err": t.bold_red,
@@ -1171,7 +1173,7 @@ class UILoop:
                 separator_at += 1
         if disc:
             tail += [[], [("h3", f"discussion ({len(disc)})"[:width])]]
-            separator = [("label", (
+            separator = [("sampled", (
                 f"── sampled {'for the review ' if review else ''}"
                 f"{_when(data.get('expected_updated_at'))} ──")[:width])]
             for i, c in enumerate(disc):

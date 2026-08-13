@@ -47,6 +47,7 @@ import concurrency
 import podman_host
 import review_pipeline
 from codex_reviewer import (
+    CodexAuthFailed,
     CodexReviewer,
     CodexTurnFailed,
     CodexUsageLimit,
@@ -423,6 +424,51 @@ class CodexReviewerRunTests(unittest.TestCase):
     def test_missing_final_message_is_error(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "no final message"):
             self._run(last_message=None)
+
+    # message text as shipped in codex-cli 0.147.0
+    _DEAD_REFRESH_TOKEN_EVENT = json.dumps({"type": "error", "message":
+        "Your access token could not be refreshed because your refresh "
+        "token has expired. Please log out and sign in again."})
+
+    def test_auth_failure_sets_auth_json_aside(self) -> None:
+        home = _codex_home_ready()
+        with self.assertRaises(CodexAuthFailed):
+            self._run(reviewer=self._reviewer(codex_home=home),
+                      jsonl=self._DEAD_REFRESH_TOKEN_EVENT,
+                      last_message=None, returncode=1)
+        self.assertFalse(Path(home, "auth.json").exists())
+        self.assertEqual('{"tokens": {}}', Path(home, "auth.json.invalid")
+                         .read_text(encoding="utf-8"))
+
+    def test_auth_failure_on_stderr_sets_auth_json_aside(self) -> None:
+        home = _codex_home_ready()
+        # message text as shipped in codex-cli 0.147.0
+        stderr = ("ERROR: no Codex credentials were found. Run codex login "
+                  "or provide an API key\n")
+        with self.assertRaises(CodexAuthFailed):
+            self._run(reviewer=self._reviewer(codex_home=home),
+                      stderr=stderr, last_message=None, returncode=1)
+        self.assertFalse(Path(home, "auth.json").exists())
+        self.assertTrue(Path(home, "auth.json.invalid").is_file())
+
+    def test_plain_turn_failure_leaves_auth_alone(self) -> None:
+        home = _codex_home_ready()
+        jsonl = json.dumps({"type": "turn.failed",
+                            "error": {"message": "stream disconnected"}})
+        with self.assertRaises(CodexTurnFailed):
+            self._run(reviewer=self._reviewer(codex_home=home),
+                      jsonl=jsonl, last_message=None, returncode=1)
+        self.assertTrue(Path(home, "auth.json").is_file())
+
+    def test_auth_failure_does_not_poison(self) -> None:
+        self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        poisoned = []
+        ctx = _ctx(report_poisoned=poisoned.append)
+        with self.assertRaises(CodexAuthFailed):
+            self._run(ctx=ctx, jsonl=self._DEAD_REFRESH_TOKEN_EVENT,
+                      last_message=None, returncode=1)
+        self.assertEqual([], poisoned)
 
     def test_cancel_killed_run_skips_poisoning(self) -> None:
         poisoned = []

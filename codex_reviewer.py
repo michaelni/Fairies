@@ -76,6 +76,7 @@ import shell_tool
 __all__ = [
     "CODEX_EFFORTS",
     "CODEX_WEB_SEARCH_MODES",
+    "CodexAuthFailed",
     "CodexReviewer",
     "CodexTurnFailed",
     "CodexUsageLimit",
@@ -120,6 +121,11 @@ _RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
 
 class CodexUsageLimit(RuntimeError):
     """The usage window is exhausted; do not retry."""
+
+
+class CodexAuthFailed(RuntimeError):
+    """Codex rejected the stored credentials; only a human ``codex login``
+    can restore service, so do not retry."""
 
 
 class CodexTurnFailed(ProviderTurnFailed):
@@ -248,6 +254,16 @@ def _is_usage_limit(error_text: str) -> bool:
     return "usage_limit_reached" in lowered or "usage limit" in lowered
 
 
+def _is_auth_failure(error_text: str) -> bool:
+    # codex-cli 0.147.0's terminal credential failures (strings(1) over the
+    # binary): dead refresh tokens end in "Please log out and sign in
+    # again.", absent or incomplete credentials point at "codex login".
+    # Its "Failed to refresh token:" can wrap a transient transport error,
+    # so it deliberately does not match.
+    lowered = error_text.lower()
+    return "log out and sign in again" in lowered or "codex login" in lowered
+
+
 class CodexReviewer(Reviewer):
     """One ``codex exec`` pass of a ``RoleSpec`` behind the shared interface.
 
@@ -257,6 +273,11 @@ class CodexReviewer(Reviewer):
     with the role. Raises ``CodexUsageLimit`` on an exhausted plan window,
     ``CodexTurnFailed`` when the provider ended the turn, and
     ``BadModelOutput`` when the final message fails validation.
+
+    A login failure raises ``CodexAuthFailed`` after setting the host
+    auth.json aside as auth.json.invalid: fairy cannot log in itself, so
+    later passes fail fast instead of retrying the dead credentials until
+    a human runs ``codex login``.
     """
 
     def __init__(
@@ -479,6 +500,22 @@ class CodexReviewer(Reviewer):
                 f"{CONTAINER_RUN_DIR}/last_message.json",
                 max_bytes=MAX_LAST_MESSAGE_BYTES) or "").strip()
             if not last_message:
+                if _is_auth_failure(error_text) or _is_auth_failure(proc.stderr):
+                    invalidated = auth_local.with_name("auth.json.invalid")
+                    try:
+                        auth_local.replace(invalidated)
+                    except FileNotFoundError:
+                        pass  # a parallel pass already set it aside
+                    logger.error(
+                        "codex: credentials rejected; %s set aside as %s so "
+                        "no further logins are attempted until a human runs "
+                        "`codex login`", auth_local, invalidated.name)
+                    raise CodexAuthFailed(
+                        f"{self.name}: codex rejected the credentials; "
+                        f"{auth_local} set aside as {invalidated.name}, run "
+                        f"`codex login` to restore service; errors: "
+                        f"{error_text or proc.stderr.strip()[-2000:] or '-'}"
+                    )
                 # A ``turn.failed`` event means the provider ended the turn
                 # itself, which says nothing about the review containers.
                 # Observed 2026-07-28: gpt-5.6-sol was refused mid-review of
@@ -503,7 +540,7 @@ class CodexReviewer(Reviewer):
                 verdict = result.get("classification") or result.get("route") or "-"
                 logger.debug("codex %s verdict=%s", self.role.name, verdict)
             return result
-        except (CodexUsageLimit, ProviderTurnFailed):
+        except (CodexAuthFailed, CodexUsageLimit, ProviderTurnFailed):
             raise  # clean provider-side stop; the containers are not suspect
         except BadModelOutput:
             raise  # codex ran fine, only the final JSON was malformed

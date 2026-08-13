@@ -170,6 +170,12 @@ class RelayCancelTests(unittest.TestCase):
     def test_normal_eof_stops_nothing(self) -> None:
         self._serve(None).stop.assert_not_called()
 
+    def test_closed_relay_pipe_neither_raises_nor_stops(self) -> None:
+        """A shell call that outlives codex writes its response to the
+        stopped relay's closed stdin; the dispatch thread must end quietly
+        instead of dying with the traceback seen in production 2026-08-14."""
+        self._serve(ValueError("write to closed file")).stop.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

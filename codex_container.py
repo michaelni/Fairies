@@ -311,6 +311,11 @@ class CodexShellRelay:
             logger.warning("run stopped (operator cancel or halted review); "
                            "stopping the codex container")
             self.container.stop()
+        except ValueError as exc:
+            # The relay's pipes raise this once stop() closed them: a shell
+            # call outlived codex and its response has nowhere to go.
+            logger.info("codex shell dispatch: relay already stopped; "
+                        "dropping the late shell-call response (%s)", exc)
 
     def _drain_stderr(self) -> None:
         buffered = 0

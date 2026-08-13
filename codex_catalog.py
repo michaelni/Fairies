@@ -72,9 +72,9 @@ def harden_codex_catalog(catalog: JsonObject) -> JsonObject:
     ``tool_mode`` is deliberately left untouched: forcing a ``code_mode``
     model (gpt-5.6-*) to standard tool calling does not shrink its surface,
     it *explodes* it (``run``, ``spawn_agent``, multi-agent + plugin tools
-    that code_mode otherwise consolidates). code_mode models are instead
-    flagged by ``_write_hardened_catalog`` -- their JS-exec path is not
-    lockable at the catalog layer and belongs behind the container boundary.
+    that code_mode otherwise consolidates). A code_mode model's JS-exec
+    path is not lockable at the catalog layer; the podman container every
+    codex pass runs in contains it.
     """
     hardened = copy.deepcopy(catalog)
     models = hardened.get("models")

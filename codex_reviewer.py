@@ -126,11 +126,6 @@ class CodexTurnFailed(ProviderTurnFailed):
     """The provider ended the turn itself, so no final message exists."""
 
 
-def _is_code_mode(tool_mode: object) -> bool:
-    """Whether a catalog ``tool_mode`` puts the model in a code_mode runtime."""
-    return isinstance(tool_mode, str) and tool_mode.startswith("code_mode")
-
-
 def _load_codex_catalog(codex_home: str | None) -> JsonObject | None:
     """Read ``<CODEX_HOME>/models_cache.json``, or ``None`` if absent or
     unparseable."""
@@ -333,14 +328,6 @@ class CodexReviewer(Reviewer):
                 "catalog; refusing to run codex without the "
                 "view_image/apply_patch hardening "
                 "(refresh: tools/refresh_codex_catalog.sh)"
-            )
-        if _is_code_mode(entry.get("tool_mode")):
-            logger.warning(
-                "codex: model %r uses code_mode (tool_mode=%r) -- a JS-exec "
-                "path not containable by config; run it behind the podman "
-                "boundary or switch to a tool_mode=None model. Hardening "
-                "view_image/apply_patch only for %s.",
-                self.model, entry.get("tool_mode"), self.name,
             )
         path = os.path.join(scratch, "hardened_catalog.json")
         with open(path, "w", encoding="utf-8") as f:

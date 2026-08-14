@@ -78,6 +78,7 @@ import gcli_cache
 import issue_fairy
 import worker
 import workset
+from forgejo_export import labels
 from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     config_option_groups, default_cache_path, grouped_help,
                     iso_to_dt, options_argv, parse_scoped_overrides,
@@ -145,36 +146,61 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
     }
 
 
-def _discussion(ns: argparse.Namespace, kind: str, item: dict, cache,
-                cache_age: timedelta) -> list[dict]:
-    """The item's discussion, through the same cache the gates read;
-    fetched first in the pass, so a prepare of the same item hits the
-    cache."""
+def _fetch_thread(ns: argparse.Namespace, kind: str, item: dict, cache,
+                  cache_age: timedelta) -> tuple[list, list, list, list]:
+    """The item's (reviews, comments, review comments, timeline) --
+    ``build_llm_discussion``'s argument order -- through the same cache
+    the gates read; fetched first in the pass, so a prepare of the same
+    item hits the cache. Issues have no reviews or review comments."""
     if kind == "pr":
         reviews, comments, review_comments = fairy.get_pr_discussion(
             ns, item, cache=cache, cache_max_age=cache_age)
         timeline = fairy.get_pr_timeline(ns, item, cache=cache,
                                          cache_max_age=cache_age)
-    else:
-        comments, timeline = issue_fairy.get_issue_discussion(
-            ns, item, cache=cache, cache_max_age=cache_age)
-        reviews = review_comments = []
-    return fairy.build_llm_discussion(reviews, comments, review_comments,
-                                      timeline)
+        return reviews, comments, review_comments, timeline
+    comments, timeline = issue_fairy.get_issue_discussion(
+        ns, item, cache=cache, cache_max_age=cache_age)
+    return [], comments, [], timeline
 
 
 def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                   token: filedb.TicketId, item: dict, cache,
                   cache_age: timedelta) -> None:
-    """Refresh the item's filedb snapshot; a failure costs freshness,
+    """Refresh the item's filedb snapshot: its fields, discussion and
+    forge status -- for a PR the "open"/"closed"/"merged" state, the
+    auto-merge schedule and the approval and change-request counts
+    (latest non-stale review per author), for an issue the
+    "open"/"closed" state and its labels. A failure costs freshness,
     never the scan of the item."""
     try:
+        reviews, comments, review_comments, timeline = _fetch_thread(
+            ns, kind, item, cache, cache_age)
+        if kind == "pr":
+            live = [s for s in
+                    fairy.effective_review_states(reviews).values()
+                    if not s.stale]
+            status = {
+                "state": ("merged" if item.get("merged")
+                          else str(item.get("state") or "")),
+                "auto_merge": fairy.get_auto_merge_info(ns, item,
+                                                        timeline=timeline),
+                "approvals": sum(s.state == "APPROVED" for s in live),
+                "change_requests": sum(s.state == "CHANGES_REQUESTED"
+                                       for s in live),
+            }
+        else:
+            status = {
+                "state": str(item.get("state") or ""),
+                "labels": labels(item),
+            }
         db.push(filedb.ITEM_STATE, kind, token, {
             "title": str(item.get("title") or ""),
             "author": fairy.get_pr_author(item),
             "body": str(item.get("body") or ""),
             "html_url": str(item.get("html_url") or ""),
-            "discussion": _discussion(ns, kind, item, cache, cache_age),
+            **status,
+            "discussion": fairy.build_llm_discussion(
+                reviews, comments, review_comments, timeline),
         })
     except Exception as exc:
         logger.warning("%s #%s: item snapshot not refreshed: %s",

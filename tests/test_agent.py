@@ -82,8 +82,9 @@ class AgentCase(unittest.TestCase):
         self.db = filedb.Db(Path(tmp.name))
         self.ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.prepare = mock.Mock(side_effect=lambda ns, pr, **kw: prepared_for(pr))
-        patcher = mock.patch.object(agent, "_discussion", return_value=[])
-        self.discussion = patcher.start()
+        patcher = mock.patch.object(agent, "_fetch_thread",
+                                    return_value=([], [], [], []))
+        self.thread = patcher.start()
         self.addCleanup(patcher.stop)
 
     def scan(self, prs: list[dict], fetch=None) -> None:
@@ -898,14 +899,50 @@ class ItemSnapshotScanTests(AgentCase):
     state, where the UI reads the discussion between reviews."""
 
     def test_scan_refreshes_the_snapshot(self) -> None:
-        self.discussion.return_value = [
-            {"kind": "comment", "author": "carol", "body": "ping"}]
+        self.thread.return_value = ([], [
+            {"user": {"login": "carol"}, "body": "ping",
+             "created_at": "2026-07-19T10:00:00Z"}], [], [])
         self.scan([make_pr(1)])
         snap = self.db.get("items", "pr", "1")
         self.assertEqual(snap["title"], "t1")
         self.assertEqual(snap["author"], "a")
-        self.assertEqual(snap["discussion"], self.discussion.return_value)
+        self.assertEqual([(c["kind"], c["author"], c["body"])
+                          for c in snap["discussion"]],
+                         [("comment", "carol", "ping")])
         self.assertEqual(self.db.list_state("items"), [("pr", "1")])
+
+    def test_pr_snapshot_records_forge_status(self) -> None:
+        self.thread.return_value = ([
+            {"user": {"login": "alice"}, "state": "APPROVED",
+             "submitted_at": "2026-07-19T10:00:00Z"},
+            {"user": {"login": "bob"}, "state": "REQUEST_CHANGES",
+             "submitted_at": "2026-07-19T11:00:00Z"},
+            {"user": {"login": "eve"}, "state": "APPROVED", "stale": True,
+             "submitted_at": "2026-07-19T09:00:00Z"},
+        ], [], [], [])
+        self.scan([{**make_pr(1), "state": "open"}])
+        snap = self.db.get("items", "pr", "1")
+        self.assertEqual(snap["state"], "open")
+        self.assertEqual(snap["approvals"], 1)
+        self.assertEqual(snap["change_requests"], 1)
+        self.assertEqual(snap["auto_merge"], "no")
+
+    def test_merged_pr_snapshot_state_is_merged(self) -> None:
+        self.ns.force_review_prs = {7}
+        self.scan([], fetch=lambda ns, n: {**make_pr(n), "state": "closed",
+                                           "merged": True})
+        self.assertEqual(self.db.get("items", "pr", "7")["state"], "merged")
+
+    def test_issue_snapshot_records_state_and_labels(self) -> None:
+        issue = {"number": 3, "title": "crash", "user": {"login": "u"},
+                 "state": "open",
+                 "labels": [{"name": "bug"}, {"name": "repro/yes"}]}
+        agent._put_snapshot(
+            self.db, issue_fairy.parse_args(["--owner", "o", "--repo", "r"]),
+            "issue", "3", issue, None, timedelta(hours=1))
+        snap = self.db.get("items", "issue", "3")
+        self.assertEqual(snap["state"], "open")
+        self.assertEqual(snap["labels"], ["bug", "repro/yes"])
 
     def test_parked_items_still_snapshot(self) -> None:
         """The whole point of the placement: rows the scan leaves alone
@@ -929,7 +966,7 @@ class ItemSnapshotScanTests(AgentCase):
         self.assertIsNotNone(self.db.get("items", "pr", "1"))
 
     def test_snapshot_failure_never_breaks_the_scan(self) -> None:
-        self.discussion.side_effect = RuntimeError("forge down")
+        self.thread.side_effect = RuntimeError("forge down")
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "queued")
         self.assertIsNone(self.db.get("items", "pr", "1"))
@@ -941,12 +978,13 @@ class ItemSnapshotScanTests(AgentCase):
 
 
 class DiscussionWiringTests(unittest.TestCase):
-    """agent._discussion feeds the per-kind fetchers into
-    build_llm_discussion in its argument order."""
+    """agent._fetch_thread returns the per-kind fetches in
+    build_llm_discussion's argument order, which _put_snapshot relies
+    on when it builds the snapshot's discussion."""
 
     FIXTURES = Path(__file__).parent / "fixtures" / "issue_fairy"
 
-    def test_pr_fetchers_feed_build_llm_discussion(self) -> None:
+    def test_pr_fetchers_in_argument_order(self) -> None:
         comments = json.loads(
             (self.FIXTURES / "ffmpeg_issue_23738_comments.json")
             .read_text(encoding="utf-8"))
@@ -956,16 +994,15 @@ class DiscussionWiringTests(unittest.TestCase):
                                return_value=([], comments, [])) as fetch, \
                 mock.patch.object(fairy, "get_pr_timeline",
                                   return_value=[]) as timeline:
-            got = agent._discussion(ns, "pr", {"number": 1}, cache,
-                                    timedelta(hours=24))
-        self.assertEqual(got, fairy.build_llm_discussion([], comments, [], []))
-        self.assertEqual(len(got), len(comments))
+            got = agent._fetch_thread(ns, "pr", {"number": 1}, cache,
+                                      timedelta(hours=24))
+        self.assertEqual(got, ([], comments, [], []))
         for call in (fetch, timeline):
             self.assertIs(call.call_args.kwargs["cache"], cache)
             self.assertEqual(call.call_args.kwargs["cache_max_age"],
                              timedelta(hours=24))
 
-    def test_issue_fetchers_feed_build_llm_discussion(self) -> None:
+    def test_issue_fetchers_in_argument_order(self) -> None:
         comments = json.loads(
             (self.FIXTURES / "ffmpeg_issue_23738_comments.json")
             .read_text(encoding="utf-8"))
@@ -975,10 +1012,9 @@ class DiscussionWiringTests(unittest.TestCase):
         ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
         with mock.patch.object(issue_fairy, "get_issue_discussion",
                                return_value=(comments, timeline)):
-            got = agent._discussion(ns, "issue", {"number": 1}, object(),
-                                    timedelta(hours=24))
-        self.assertEqual(got, fairy.build_llm_discussion(
-            [], comments, [], timeline))
+            got = agent._fetch_thread(ns, "issue", {"number": 1}, object(),
+                                      timedelta(hours=24))
+        self.assertEqual(got, ([], comments, [], timeline))
 
 
 class BackoffMathTests(unittest.TestCase):

@@ -165,13 +165,14 @@ def _fetch_thread(ns: argparse.Namespace, kind: str, item: dict, cache,
 
 def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                   token: filedb.TicketId, item: dict, cache,
-                  cache_age: timedelta) -> None:
+                  cache_age: timedelta) -> bool:
     """Refresh the item's filedb snapshot: its fields, discussion and
     forge status -- for a PR the "open"/"closed"/"merged" state, the
     auto-merge schedule and the approval and change-request counts
     (latest non-stale review per author), for an issue the
     "open"/"closed" state and its labels. A failure costs freshness,
-    never the scan of the item."""
+    never the scan of the item; returns whether the snapshot is
+    current."""
     try:
         reviews, comments, review_comments, timeline = _fetch_thread(
             ns, kind, item, cache, cache_age)
@@ -180,7 +181,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                     fairy.effective_review_states(reviews).values()
                     if not s.stale]
             status = {
-                "state": ("merged" if item.get("merged")
+                "state": ("merged" if forge_gcli.pr_merged(item)
                           else str(item.get("state") or "")),
                 "auto_merge": fairy.get_auto_merge_info(ns, item,
                                                         timeline=timeline),
@@ -202,9 +203,11 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
             "discussion": fairy.build_llm_discussion(
                 reviews, comments, review_comments, timeline),
         })
+        return True
     except Exception as exc:
         logger.warning("%s #%s: item snapshot not refreshed: %s",
                        kind, token, exc)
+        return False
 
 
 def _route(db: filedb.Db, kind: str, number: filedb.TicketId, state: str,
@@ -220,8 +223,18 @@ def _route(db: filedb.Db, kind: str, number: filedb.TicketId, state: str,
 
 def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
               now: datetime, cache, self_login,
-              forced: set[filedb.TicketId]) -> set[tuple[str, int]]:
-    """One gate pass over the side's open items; returns the open set."""
+              forced: set[filedb.TicketId],
+              closed_items: list[dict] | tuple = (),
+              snapshot_memo: dict[tuple[str, filedb.TicketId],
+                                  str | None] | None = None,
+              ) -> set[tuple[str, int]]:
+    """One gate pass over the side's open items; returns the open set.
+    ``closed_items`` (the --scan-closed-days window, caller-fetched)
+    are snapshotted and nothing else; ``snapshot_memo`` remembers each
+    one's snapshotted updated_at across passes so unchanged items cost
+    no rebuild."""
+    if snapshot_memo is None:
+        snapshot_memo = {}
     if kind == "pr":
         fetch_one, list_open, forced_ns = fairy.get_pr, fairy.list_open_prs, \
             ns.force_review_prs
@@ -284,6 +297,21 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
                     template_only=template_only)
     finally:
         forced_ns -= added_forced
+    # --scan-closed-days: snapshot-only visibility. Deliberately
+    # NOT fed to the gates and NOT part of the returned set: a
+    # closed ticket must never become a review candidate by mere
+    # listing, and closure cancels/pruning must proceed as if the
+    # option were off. The infinite cache age skips the edit-catching
+    # discussion TTL for these items only, and the memo skips the
+    # whole rebuild while an item's updated_at stands still.
+    for item in closed_items:
+        token = str(item.get("number"))
+        if not token.isdigit():
+            continue
+        if snapshot_memo.get((kind, token)) == item.get("updated_at"):
+            continue
+        if _put_snapshot(db, ns, kind, token, item, cache, timedelta.max):
+            snapshot_memo[(kind, token)] = item.get("updated_at")
     return open_set
 
 
@@ -503,7 +531,7 @@ def closure_reason(ns: argparse.Namespace, kind: str, number) -> str | None:
         logger.warning("%s #%s left the listing but the fate fetch "
                        "failed: %s", kind, number, exc)
         return "not open"
-    if kind == "pr" and item.get("merged"):
+    if kind == "pr" and forge_gcli.pr_merged(item):
         return "merged"
     if item.get("state") == "closed":
         return "closed without merge" if kind == "pr" else "closed"
@@ -532,9 +560,37 @@ def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
 
 def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
               issue_ns: argparse.Namespace | None,
-              now: datetime | None = None) -> None:
+              now: datetime | None = None,
+              snapshot_memo: dict | None = None) -> None:
     now = now or datetime.now(timezone.utc)
+    if snapshot_memo is None:
+        snapshot_memo = {}
     forced = consume_requests(db)
+    closed_pulls: dict[float, list[dict]] = {}
+
+    def closed_pulls_for(ns: argparse.Namespace) -> list[dict]:
+        """The ns's closed-PR window, fetched once per distinct
+        --scan-closed-days: both sides usually share the window, and
+        the issue side needs the PR numbers again for subtraction."""
+        if ns.scan_closed_days not in closed_pulls:
+            closed_pulls[ns.scan_closed_days] = \
+                fairy.list_recently_closed_prs(ns)
+        return closed_pulls[ns.scan_closed_days]
+
+    def closed_for(ns: argparse.Namespace, kind: str) -> list[dict]:
+        """The side's closed-window items; a listing failure costs this
+        pass's snapshot freshness, never the scan (the per-item
+        _put_snapshot guard's contract, extended to the fetch)."""
+        try:
+            if kind == "pr":
+                return closed_pulls_for(ns)
+            return issue_fairy.list_recently_closed_issues(
+                ns, closed_pr_numbers={p["number"]
+                                       for p in closed_pulls_for(ns)})
+        except Exception as exc:
+            logger.warning("%s: closed listing failed; snapshots not "
+                           "refreshed this pass: %s", kind, exc)
+            return []
     open_set: set[tuple[str, int]] = set()
     kinds: set[str] = set()
     # A --forced-only side's open_set is just the named items, not the
@@ -550,8 +606,11 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         cache = gcli_cache.load_cache(ns.cache)
         try:
             self_login = forge_gcli.self_login(ns)
-            open_set |= scan_side(db, ns, kind, now=now, cache=cache,
-                                  self_login=self_login, forced=forced[kind])
+            open_set |= scan_side(
+                db, ns, kind, now=now, cache=cache, self_login=self_login,
+                forced=forced[kind],
+                closed_items=() if ns.forced_only else closed_for(ns, kind),
+                snapshot_memo=snapshot_memo)
         finally:
             gcli_cache.save_cache(ns.cache, cache)
     finish_requests(db, forced, kinds)
@@ -889,12 +948,13 @@ def warn_simulate_past_limitations(ignore_after: datetime) -> None:
 
 def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
              issue_ns: argparse.Namespace | None,
-             args: argparse.Namespace) -> None:
+             args: argparse.Namespace,
+             snapshot_memo: dict | None = None) -> None:
     sides = {k: v for k, v in (("pr", pr_ns), ("issue", issue_ns))
              if v is not None}
 
     def review_cycle() -> None:
-        scan_pass(db, pr_ns, issue_ns)
+        scan_pass(db, pr_ns, issue_ns, snapshot_memo=snapshot_memo)
         if args.drain:
             worker.drain(db, sides, parallel=args.drain)
 
@@ -981,10 +1041,12 @@ def main() -> int:
     wake = Event()
     watch_paths([db.root / "requests", db.root / "outgoing"], wake.set)
     next_scan = 0.0
+    snapshot_memo: dict = {}
     while True:
         try:
             if time.monotonic() >= next_scan:
-                one_pass(db, pr_ns, issue_ns, args)
+                one_pass(db, pr_ns, issue_ns, args,
+                         snapshot_memo=snapshot_memo)
                 next_scan = time.monotonic() + args.loop
             elif db.list_state("requests"):
                 requests_pass(db, pr_ns, issue_ns, args)

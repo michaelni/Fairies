@@ -417,6 +417,18 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
              "in the open listing are never pruned (default: 14).",
     )
     p.add_argument(
+        "--scan-closed-days",
+        type=float,
+        default=0.0,
+        help="Keep the filedb items/ snapshots (state, labels, discussion) "
+             "of closed PRs/issues fresh while their last update lies "
+             "within this many days -- visibility only: closed items are "
+             "never gated, queued or reviewed by this option. Their cached "
+             "discussion is refetched only when their updated_at moves; "
+             "the --discussion-cache-max-age-hours TTL applies to open "
+             "items only. 0 disables (default).",
+    )
+    p.add_argument(
         "--discussion-cache-max-age-hours",
         type=float,
         default=24.0,
@@ -827,6 +839,24 @@ def list_open_prs(args: argparse.Namespace) -> list[ApiObject]:
     if not isinstance(data, list):
         raise RuntimeError(f"expected list of PRs, got {type(data).__name__}")
     return [pr for pr in data if isinstance(pr, dict)]
+
+
+def scan_closed_cutoff(args: argparse.Namespace) -> datetime | None:
+    """The oldest ``updated_at`` --scan-closed-days still covers, from
+    the simulated clock under --simulate-past; None when the option is
+    off."""
+    if args.scan_closed_days <= 0:
+        return None
+    now = getattr(args, "simulate_past", None) or datetime.now(timezone.utc)
+    return now - timedelta(days=args.scan_closed_days)
+
+
+def list_recently_closed_prs(args: argparse.Namespace) -> list[ApiObject]:
+    """Closed PRs inside the --scan-closed-days window; [] when off."""
+    cutoff = scan_closed_cutoff(args)
+    if cutoff is None:
+        return []
+    return forge_gcli.list_closed_since(args, "pulls", cutoff)
 
 
 def get_pr(args: argparse.Namespace, pr_number: int) -> ApiObject:

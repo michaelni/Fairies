@@ -99,10 +99,11 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from threading import Thread
-from urllib.parse import quote
+from itertools import count
+from urllib.parse import quote, urlencode
 
 import github_app
-from common import JsonValue
+from common import JsonValue, iso_to_dt
 
 __all__ = [
     "AUTO_MERGE_CANCEL_EVENT",
@@ -116,7 +117,9 @@ __all__ = [
     "build_repo_path",
     "gcli_api",
     "gcli_prefix",
+    "list_closed_since",
     "list_commit_statuses",
+    "pr_merged",
     "list_issue_comments",
     "list_issue_timeline",
     "list_pr_commits",
@@ -620,6 +623,58 @@ def build_repo_path(owner: str, repo: str, suffix: str) -> str:
     if not suffix.startswith("/"):
         suffix = "/" + suffix
     return f"/repos/{owner_q}/{repo_q}{suffix}"
+
+
+def pr_merged(pr: dict) -> bool:
+    """Whether a PR object says the PR is merged. GitHub's listing
+    payload (pull-request-simple,
+    https://docs.github.com/en/rest/pulls/pulls#list-pull-requests)
+    carries only ``merged_at``; the single-PR payload and
+    Forgejo/Gitea carry the ``merged`` boolean too."""
+    return bool(pr.get("merged") or pr.get("merged_at"))
+
+
+def list_closed_since(args: argparse.Namespace, endpoint: str,
+                      cutoff: datetime) -> list[dict]:
+    """Closed ``pulls`` / ``issues`` entries whose ``updated_at`` is at
+    or after ``cutoff``, most recently updated first.
+
+    Pages the listing and stops at the first entry past the cutoff --
+    the recency sort makes that the end of the window -- so the cost
+    scales with the window, not the repo's closed history. Both the
+    sort and the page-size parameter are forge-switched, because each
+    forge silently ignores the other's spelling: GitHub sorts with
+    ``sort=updated&direction=desc`` and pages with ``per_page``
+    (https://docs.github.com/en/rest/pulls/pulls); Forgejo/Gitea sort
+    with ``sort=recentupdate`` and page with ``limit``, capped by the
+    server's MAX_RESPONSE_ITEMS (50 by default,
+    https://forgejo.org/docs/latest/admin/config-cheat-sheet/). The
+    served page length therefore proves nothing about being on the
+    last page: paging ends only at the cutoff or on an empty page.
+    An entry without a parsable ``updated_at`` is skipped, never
+    trusted to end the window."""
+    params = ({"per_page": 100, "sort": "updated", "direction": "desc"}
+              if _forge_type(args) == "github"
+              else {"limit": 50, "sort": "recentupdate"})
+    out: list[dict] = []
+    for page in count(1):
+        query = urlencode({"state": "closed", "page": page, **params})
+        data = gcli_api(args, build_repo_path(
+            args.owner, args.repo, f"/{endpoint}?{query}"))
+        if not isinstance(data, list):
+            raise RuntimeError(
+                f"expected list of closed {endpoint}, got {type(data).__name__}")
+        if not data:
+            return out
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            updated = iso_to_dt(item.get("updated_at"))
+            if updated is None:
+                continue
+            if updated < cutoff:
+                return out
+            out.append(item)
 
 
 def _list_repo_endpoint(

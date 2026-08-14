@@ -83,6 +83,7 @@ from fairy import (
     llm_skip_reason,
     max_dt,
     post_label_explanations,
+    scan_closed_cutoff,
 )
 
 __all__ = ["make_parser", "parse_args", "prepare_issue", "evaluate_issue",
@@ -162,6 +163,32 @@ def list_open_issues(args: argparse.Namespace) -> list[ApiObject]:
     ]
     logger.debug(
         "issue listing: %d item(s), %d after removing open PRs",
+        len(data), len(issues),
+    )
+    return issues
+
+
+def list_recently_closed_issues(
+    args: argparse.Namespace,
+    closed_pr_numbers: set[int] | None = None,
+) -> list[ApiObject]:
+    """Closed real issues inside the --scan-closed-days window; []
+    when off. Closed PRs surface in the closed ``/issues`` listing the
+    same way open ones do in the open listing, and are subtracted by
+    number -- a closed PR and its issue twin share their updated_at,
+    so the same cutoff bounds both listings. A caller that already
+    fetched the closed-PR window passes its numbers as
+    ``closed_pr_numbers``; fetched here when omitted."""
+    cutoff = scan_closed_cutoff(args)
+    if cutoff is None:
+        return []
+    data = forge_gcli.list_closed_since(args, "issues", cutoff)
+    if closed_pr_numbers is None:
+        closed_pr_numbers = {pr["number"] for pr in
+                             forge_gcli.list_closed_since(args, "pulls", cutoff)}
+    issues = [i for i in data if i.get("number") not in closed_pr_numbers]
+    logger.debug(
+        "closed issue listing: %d item(s), %d after removing closed PRs",
         len(data), len(issues),
     )
     return issues

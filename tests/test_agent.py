@@ -87,7 +87,8 @@ class AgentCase(unittest.TestCase):
         self.thread = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def scan(self, prs: list[dict], fetch=None) -> None:
+    def scan(self, prs: list[dict], fetch=None,
+             snapshot_memo: dict | None = None) -> None:
         with mock.patch.object(fairy, "list_open_prs", return_value=prs), \
                 mock.patch.object(fairy, "get_pr",
                                   side_effect=fetch or (lambda ns, n: make_pr(n))), \
@@ -96,7 +97,8 @@ class AgentCase(unittest.TestCase):
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):
-            agent.scan_pass(self.db, self.ns, None, now=NOW)
+            agent.scan_pass(self.db, self.ns, None, now=NOW,
+                            snapshot_memo=snapshot_memo)
 
     def age(self, state: str, kind: str, number: int, hours: float) -> None:
         data = self.db.get(state, kind, number)
@@ -1257,7 +1259,7 @@ class OverrideTests(unittest.TestCase):
                                 "min-age-days": "5"}, None)
         captured: dict = {}
 
-        def one_pass(db, pr_ns, issue_ns, args) -> None:
+        def one_pass(db, pr_ns, issue_ns, args, **kw) -> None:
             captured["pr"] = pr_ns
 
         with mock.patch.object(agent, "one_pass", side_effect=one_pass), \
@@ -1276,7 +1278,7 @@ class OverrideTests(unittest.TestCase):
                                {"owner": "o", "repo": "r"}, None)
         captured: dict = {}
 
-        def one_pass(db, pr_ns, issue_ns, args) -> None:
+        def one_pass(db, pr_ns, issue_ns, args, **kw) -> None:
             captured["pr"] = pr_ns
 
         with mock.patch.object(agent, "one_pass", side_effect=one_pass), \

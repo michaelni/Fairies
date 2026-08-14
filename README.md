@@ -146,7 +146,7 @@ files, which are tailed automatically; `--tail FILE` adds extras):
 The list is a table over the ticket files: select any row and act on
 it at any time; every action is a rename or a `requests/` file, so the
 UI can quit and restart freely. The full pane, key, lens and mouse
-reference lives in [README-FAIRY-UI.md](README-FAIRY-UI.md); see
+reference lives in [README-TUI.md](README-TUI.md); see
 `fairy-ui-ref.sh` for a launcher example.
 
 ### Self-hosted Podman container

@@ -1249,10 +1249,11 @@ def open_review_container_shell(
     and open a shell.
 
     One isolated container per call, so concurrent ensemble reviewers never
-    share a working tree. ``session_commands`` run in every container so
-    state they create exists for each reviewer; the returned transcript is
-    what the prompt splices in. On any provisioning failure the
-    half-started container is stopped before the error propagates.
+    share a working tree. ``session_commands`` run in every container, in
+    the primary repo's mount, so state they create exists for each
+    reviewer; the returned transcript is what the prompt splices in. On
+    any provisioning failure the half-started container is stopped before
+    the error propagates.
     """
     handle = podman_host.start_ephemeral_container(
         image=args.podman_image,
@@ -1276,6 +1277,7 @@ def open_review_container_shell(
         transcript = shell_tool.run_session_commands(
             session, list(session_commands),
             max_timeout_s=args.podman_exec_timeout,
+            cwd=repo_specs[0].container_path if repo_specs else None,
         ) if session_commands else ""
     except Exception:
         podman_host.stop_container(handle)

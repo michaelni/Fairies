@@ -83,6 +83,16 @@ class RunSessionCommandsTests(unittest.TestCase):
         self.assertIn("$ git bad\nfatal: nope\n(exit 128)\n", t)
         self.assertIn("$ git log\nbig\n(output truncated)\n", t)
 
+    def test_cwd_reaches_exec_and_the_transcript_prompt(self) -> None:
+        session = mock.Mock(spec=podman_host.ContainerShellSession)
+        session.exec.return_value = _result(out="clean\n")
+        t = shell_tool.run_session_commands(
+            session, ["git status --short"], max_timeout_s=60.0,
+            cwd="/work/ffmpeg",
+        )
+        self.assertEqual("/work/ffmpeg", session.exec.call_args.kwargs["cwd"])
+        self.assertIn("/work/ffmpeg $ git status --short\nclean\n", t)
+
     def test_session_commands_get_full_timeout_budget(self) -> None:
         # Operator commands (e.g. a future git fetch) must not be capped at
         # the model-call default, but at the operator's exec timeout.

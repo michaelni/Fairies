@@ -213,20 +213,25 @@ def run_session_commands(
     commands: list[str],
     *,
     max_timeout_s: float,
+    cwd: str | None = None,
 ) -> str:
     """Run operator-configured commands on ``session``; return a transcript.
 
-    The transcript shows each command and its output the way a terminal
-    would, for splicing into the model's prompt. Failures are recorded
-    (``(exit N)``), not raised: the session stays usable either way.
+    ``cwd`` is the container path the commands run in (``None`` = the
+    session's start directory) and is shown as the transcript's prompt so
+    the model knows where they ran. The transcript shows each command and
+    its output the way a terminal would, for splicing into the model's
+    prompt. Failures are recorded (``(exit N)``), not raised: the session
+    stays usable either way.
     """
     parts: list[str] = []
     for command in commands:
         payload = exec_shell_call(
-            session, {"command": command}, max_timeout_s=max_timeout_s,
+            session, {"command": command, "cwd": cwd},
+            max_timeout_s=max_timeout_s,
             default_timeout_s=max_timeout_s,
         )
-        block = f"$ {command}\n"
+        block = f"{cwd + ' ' if cwd else ''}$ {command}\n"
         block += str(payload.get("stdout") or "")
         stderr = str(payload.get("stderr") or "")
         if stderr:

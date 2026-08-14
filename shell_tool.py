@@ -243,5 +243,8 @@ def run_session_commands(
         exit_code = payload.get("exit_code")
         if exit_code not in (0, None):
             block += f"(exit {exit_code})\n"
+            logger.warning(
+                "session command failed (exit %s) cwd=%s cmd=%s",
+                exit_code, cwd or "-", command)
         parts.append(block)
     return "\n".join(parts)

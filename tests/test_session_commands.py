@@ -83,6 +83,14 @@ class RunSessionCommandsTests(unittest.TestCase):
         self.assertIn("$ git bad\nfatal: nope\n(exit 128)\n", t)
         self.assertIn("$ git log\nbig\n(output truncated)\n", t)
 
+    def test_failed_command_logs_a_warning(self) -> None:
+        session = mock.Mock(spec=podman_host.ContainerShellSession)
+        session.exec.return_value = _result(rc=128, err="fatal: nope\n")
+        with self.assertLogs(shell_tool.logger, level="WARNING") as logs:
+            shell_tool.run_session_commands(
+                session, ["git status --short"], max_timeout_s=60.0)
+        self.assertIn("session command failed (exit 128)", logs.output[0])
+
     def test_cwd_reaches_exec_and_the_transcript_prompt(self) -> None:
         session = mock.Mock(spec=podman_host.ContainerShellSession)
         session.exec.return_value = _result(out="clean\n")

@@ -34,6 +34,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -228,9 +229,9 @@ class DirMtimeGateTests(DbCase):
 
     def listing_calls(self) -> list[str]:
         calls: list[str] = []
-        orig = filedb.Db.list_state
+        orig = filedb.Db.list_state_stat
         with mock.patch.object(
-                filedb.Db, "list_state", autospec=True,
+                filedb.Db, "list_state_stat", autospec=True,
                 side_effect=lambda db, s: (calls.append(s), orig(db, s))[1]):
             self.model.poll()
         return calls
@@ -257,6 +258,26 @@ class DirMtimeGateTests(DbCase):
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()  # dir mtimes are "now": nothing may be cached
         self.assertIn("reviewed", self.listing_calls())
+
+    def test_a_vanished_root_still_counts_misses(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.age_dirs()
+        self.model.poll()
+        shutil.rmtree(self.db.root)
+        for _ in range(fairy_tui.GONE_POLLS):
+            self.model.poll()
+        self.assertNotIn((R1, "pr", "5"), self.model.items)
+
+    def test_a_crash_remnant_recovers_when_the_shadow_dies(self) -> None:
+        self.db.push("queued", "pr", "5", verdict(5))
+        self.db.push("skipped", "pr", "5", verdict(5))
+        self.age_dirs()
+        self.model.poll()
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "skipped")
+        # hand cleanup deletes the shadow; queued/ itself stays quiet
+        self.db.path("skipped", "pr", "5").unlink()
+        self.model.poll()
+        self.assertEqual(self.model.items[(R1, "pr", "5")].state, "queued")
 
 
 class ActTests(DbCase):
@@ -432,6 +453,12 @@ class MultiSideTests(DbCase):
         with model.lock:
             rows = ui.list_rows()
         return fairy_tui._plain(rows).split("\n")
+
+    def test_a_dash_classification_stays_out_of_the_stats(self) -> None:
+        self.db.push("skipped", "pr", "5", verdict(5, classification="-"))
+        self.model.poll()
+        with self.model.lock:
+            self.assertEqual(self.model.side_stats()[R1]["cls"], {})
 
     def test_repo_column_only_when_sides_span_repos(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
@@ -1371,17 +1398,42 @@ class FsWatchTests(DbCase):
         (root / "queued" / "pr-1.json").write_text("{}", encoding="utf-8")
         self.assertFalse(fired.wait(1.0))
 
-    def test_needs_poll_triggers_an_immediate_refresh(self) -> None:
-        import time
+    def test_needs_poll_wakes_the_poll_thread(self) -> None:
+        from threading import Thread
         ui = make_ui(self.model)
-        ui._last_poll = time.monotonic()  # the 1s fallback is not due
-        with mock.patch.object(self.model, "poll") as poll:
-            ui._maybe_poll()
-            poll.assert_not_called()
+        polled = Event()
+        with mock.patch.object(self.model, "poll", side_effect=polled.set):
+            thread = Thread(target=ui._poll_loop, daemon=True)
+            thread.start()
             ui.needs_poll.set()
-            ui._maybe_poll()
-            poll.assert_called_once()
-        self.assertFalse(ui.needs_poll.is_set())
+            self.assertTrue(polled.wait(2.0), "poll thread did not wake")
+            self.model.quit_flag = True
+            ui.needs_poll.set()
+            thread.join(2.0)
+        self.assertFalse(thread.is_alive())
+
+    def test_the_poll_thread_survives_a_poll_exception(self) -> None:
+        from threading import Thread
+        ui = make_ui(self.model)
+        calls: list[int] = []
+
+        def poll() -> None:
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("bad ticket json")
+
+        with mock.patch.object(self.model, "poll", side_effect=poll):
+            thread = Thread(target=ui._poll_loop, daemon=True)
+            thread.start()
+            for _ in range(200):
+                if len(calls) >= 2:
+                    break
+                ui.needs_poll.set()
+                time.sleep(0.01)
+            self.model.quit_flag = True
+            ui.needs_poll.set()
+            thread.join(2.0)
+        self.assertGreaterEqual(len(calls), 2)
 
 
 class CountAndSearchTests(DbCase):

@@ -186,7 +186,8 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
              ("text", " ")),
         ("text", " ") if resolution is None
         else _RESOLUTION_CODES.get(resolution, ("sc_dim", "?")),
-        ("sc_done", "C") if snap.get("state") == "closed" or reason == "closed"
+        ("sc_done", "C") if snap.get("state") == "closed"
+        or reason == "closed"
         else ("sc_good", "O") if snap.get("state") == "open"
         else ("text", " "),
     ]
@@ -231,10 +232,16 @@ class Model:
         self.sides = sides
         self.items: dict[tuple[str, str, int], Item] = {}
         self.order: list[tuple[str, str, int]] = []
-        self._read: dict[tuple[str, str, int], tuple[Path, float]] = {}
+        self._read: dict[tuple[str, str, int], tuple[str, float]] = {}
         self.status: dict[tuple[str, str, filedb.TicketId], dict] = {}
-        self._snap_read: dict[tuple[str, str, filedb.TicketId],
-                              tuple[Path, float]] = {}
+        self._snap_read: dict[tuple[str, str, filedb.TicketId], float] = {}
+        # Bumped under ``lock`` on every change that can alter list
+        # membership; the O(N) visible/stats work is cached against it
+        # so a repaint costs O(window) even with 100k tickets.
+        self.revision = 0
+        self._vis_cache: tuple[tuple, list[Item],
+                               dict[tuple[str, str, int], int]] | None = None
+        self._stats_agg: tuple[int, dict[str, dict[str, Counter]]] | None = None
         # (repo, state) -> (dir mtime, listing): an unchanged state dir
         # is not re-listed and its files are not re-stat'ed.
         self._dirs: dict[tuple[str, str],
@@ -281,21 +288,25 @@ class Model:
         status letters -- the message pane reads its one full snapshot
         through poll_snapshot instead."""
         now = time.time()
-        found: dict[tuple[str, str, int], tuple[str, filedb.Db, bool]] = {}
-        snaps: dict[tuple[str, str, filedb.TicketId],
-                    tuple[filedb.Db, bool]] = {}
-        requested: set[tuple[str, str, int]] = set()
+        listings: list[tuple[str, str, filedb.Db,
+                             list[tuple[str, filedb.TicketId, float]] | None,
+                             list[tuple[str, filedb.TicketId]]]] = []
+        any_rescanned = False
         for repo, db in self.sides:
             for state in (*filedb.STATES, filedb.ITEM_STATE):
                 try:
                     dir_mtime = (db.root / state).stat().st_mtime
                 except OSError:
+                    # a vanished dir IS a change: without the rescan flag
+                    # the early return below would skip the miss counting
+                    # forever and freeze the table
                     self._dirs.pop((repo, state), None)
+                    any_rescanned = True
                     continue
                 cached = self._dirs.get((repo, state))
-                rescanned = cached is None or cached[0] != dir_mtime
-                if rescanned:
-                    listing = db.list_state(state)
+                if cached is None or cached[0] != dir_mtime:
+                    stat_listing = db.list_state_stat(state)
+                    listing = [(k, n) for k, n, _ in stat_listing]
                     # Linux file timestamps come from the coarse clock: a
                     # rename in the same tick as this scan could leave the
                     # mtime unchanged, so a just-modified directory is
@@ -304,29 +315,43 @@ class Model:
                         self._dirs[(repo, state)] = (dir_mtime, listing)
                     else:
                         self._dirs.pop((repo, state), None)
+                    any_rescanned = True
                 else:
+                    stat_listing = None
                     listing = cached[1]
-                for kind, number in listing:
-                    if state == filedb.ITEM_STATE:
-                        snaps[(repo, kind, number)] = (db, rescanned)
-                        continue
-                    # later directory wins: crash-remnant precedence
-                    found[(repo, kind, number)] = (state, db, rescanned)
-                    if state == "requests":
-                        requested.add((repo, kind, number))
-        updates: list[tuple[tuple[str, str, int], str, dict | None, str]] = []
-        for key in sorted(found):
-            state, db, rescanned = found[key]
-            item = self.items.get(key)
-            if not rescanned and item is not None and item.state == state:
-                continue  # unchanged dir => unchanged files inside it
-            path = db.path(state, key[1], key[2])
-            try:
-                tag = (path, path.stat().st_mtime)
-            except OSError:
-                continue  # racing a rename; the next poll sees the new dir
-            if self._read.get(key) == tag:
+                listings.append((repo, state, db, stat_listing, listing))
+        if not any_rescanned and not self.missing:
+            # every dir unchanged: same membership, same content, same
+            # request set -- the poll is over after a dozen stats, and
+            # the per-ticket work below never scales with a quiet 100k
+            # backlog
+            return
+        found: dict[tuple[str, str, int], str] = {}
+        todo: list[tuple[tuple[str, str, int], str, filedb.Db, float]] = []
+        snaps: list[tuple[tuple[str, str, filedb.TicketId],
+                          filedb.Db, float]] = []
+        requested: set[tuple[str, str, int]] = set()
+        for repo, state, db, stat_listing, listing in listings:
+            if state == filedb.ITEM_STATE:
+                if stat_listing is not None:
+                    snaps += (((repo, k, n), db, mt)
+                              for k, n, mt in stat_listing)
                 continue
+            for kind, number in listing:
+                # later directory wins: crash-remnant precedence
+                found[(repo, kind, number)] = state
+            if stat_listing is not None:
+                todo += (((repo, k, n), state, db, mt)
+                         for k, n, mt in stat_listing)
+            if state == "requests":
+                requested.update((repo, k, n) for k, n in listing)
+        updates: list[tuple[tuple[str, str, int], str, dict | None, str]] = []
+
+        def read_ticket(key: tuple[str, str, int], state: str,
+                        db: filedb.Db, mtime: float) -> None:
+            if self._read.get(key) == (state, mtime):
+                return
+            path = db.path(state, key[1], key[2])
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 # multi-MB payload; only its discussion is shown
@@ -335,33 +360,46 @@ class Model:
                     data.setdefault("discussion", prepared["discussion"])
                 updates.append((key, state, data, ""))
             except (FileNotFoundError, IsADirectoryError):
-                continue
+                return  # racing a rename; the next poll sees the new dir
             except (OSError, ValueError) as exc:
                 updates.append((key, state, None, str(exc)))
-            self._read[key] = tag
+            self._read[key] = (state, mtime)
+
+        for key, state, db, mtime in todo:
+            if found[key] != state:
+                continue  # a later state dir won; its own entry decides
+            read_ticket(key, state, db, mtime)
         status_updates: list[tuple[tuple[str, str, filedb.TicketId],
                                    dict]] = []
-        for key, (db, rescanned) in sorted(snaps.items()):
-            if not rescanned and key in self.status:
-                continue
-            path = db.path(filedb.ITEM_STATE, key[1], key[2])
-            try:
-                tag = (path, path.stat().st_mtime)
-            except OSError:
-                continue
-            if self._snap_read.get(key) == tag:
+        for key, db, mtime in snaps:
+            if self._snap_read.get(key) == mtime:
                 continue
             try:
-                snap = json.loads(path.read_text(encoding="utf-8"))
+                snap = json.loads(db.path(filedb.ITEM_STATE, key[1], key[2])
+                                  .read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            self._snap_read[key] = tag
+            if not isinstance(snap, dict):
+                continue  # hand-edited/foreign file of unknown shape
+            self._snap_read[key] = mtime
             status_updates.append(
                 (key, {f: snap[f] for f in STATUS_FIELDS if f in snap}))
+        dbs = dict(self.sides)
         removed = []
-        for key in self.items:
-            if key in found:
+        for key, item in self.items.items():
+            state = found.get(key)
+            if state is not None:
                 self.missing.pop(key, None)
+                if item.state != state:
+                    # the winning dir was served from cache while a
+                    # remnant in a rescanned dir vanished: re-check the
+                    # surviving file (tag-gated: one stat, rarely a read)
+                    try:
+                        mtime = dbs[key[0]].path(
+                            state, key[1], key[2]).stat().st_mtime
+                    except OSError:
+                        continue
+                    read_ticket(key, state, dbs[key[0]], mtime)
                 continue
             misses = self.missing[key] = self.missing.get(key, 0) + 1
             if misses == 1:
@@ -373,10 +411,12 @@ class Model:
                             "polls; dropping the row", key[1], key[0],
                             key[2], misses)
                 removed.append(key)
+        updates.sort(key=lambda u: u[0])  # deterministic arrival order
         if not updates and not removed and not status_updates \
                 and requested == self.requested:
             return
         with self.lock:
+            self.revision += 1
             self.requested = requested
             self.status.update(status_updates)
             for key, state, data, error in updates:
@@ -400,6 +440,10 @@ class Model:
                     # a dead key must not teleport the cursor back if
                     # the item is re-ticketed hours later
                     self.cursor_key = None
+            # warmed here, on the polling thread, so the repaint this
+            # wakes finds them cached instead of paying the O(N) pass
+            self.visible()
+            self.reviewed_count()
         self.dirty.set()
 
     def poll_snapshot(self) -> None:
@@ -442,8 +486,12 @@ class Model:
 
     def visible(self) -> list[Item]:
         """Items for the list pane, honoring the all/relevant filter and
-        the sort mode (stable, so arrival order breaks ties). Caller
-        holds ``lock``."""
+        the sort mode (stable, so arrival order breaks ties). Cached
+        against (revision, filter, sort): repaints between changes cost
+        nothing here. Caller holds ``lock``."""
+        sig = (self.revision, self.filter_mode, self.sort_mode)
+        if self._vis_cache is not None and self._vis_cache[0] == sig:
+            return self._vis_cache[1]
         items = [self.items[k] for k in self.order]
         if self.filter_mode == "relevant":
             items = [it for it in items if self._relevant(it)]
@@ -452,7 +500,45 @@ class Model:
             items = [it for it in items if it.state in allowed]
         if self.sort_mode != "arrival":
             items.sort(key=_SORT_KEYS[self.sort_mode])
+        self._vis_cache = (sig, items, {
+            (it.repo, it.kind, it.number): i for i, it in enumerate(items)})
         return items
+
+    def reviewed_count(self) -> int:
+        """How many rows await the operator; cached like ``visible``.
+        Caller holds ``lock``."""
+        return sum(agg["by"]["reviewed"] for agg in self.side_stats().values())
+
+    def side_stats(self) -> dict[str, dict[str, Counter]]:
+        """Per-repo aggregates for the stats pane -- one pass over the
+        items instead of one Counter pass per fact, cached against the
+        revision and warmed on the polling thread. Keys per repo:
+        ``kinds``, ``by`` (state), ``ready`` (postable action of
+        reviewed rows), ``stages`` (llm), ``cls`` (verdicts), ``acts``
+        (posted actions). Caller holds ``lock``."""
+        if self._stats_agg is not None and self._stats_agg[0] == self.revision:
+            return self._stats_agg[1]
+        per = {repo: {name: Counter() for name in
+                      ("kinds", "by", "ready", "stages", "cls", "acts")}
+               for repo, _db in self.sides}
+        for it in self.items.values():
+            agg = per[it.repo]
+            agg["kinds"][it.kind] += 1
+            agg["by"][it.state] += 1
+            data = it.data
+            action = data.get("action")
+            if it.state == "reviewed" and action in fairy.ACTIONABLE_DECISIONS:
+                agg["ready"][action] += 1
+            elif it.state == "llm":
+                agg["stages"][data.get("stage") or "starting"] += 1
+            elif it.state == "posted" and action:
+                agg["acts"][action] += 1
+            classification = (data.get("review") or {}).get("classification")
+            if classification and classification != "-":
+                agg["cls"][fairy.format_llm_classification(
+                    classification)] += 1
+        self._stats_agg = (self.revision, per)
+        return per
 
     def cycle_sort(self) -> str:
         self.sort_mode = SORT_MODES[
@@ -576,6 +662,7 @@ class Model:
                     return
                 self.acted.add(key)
                 logger.info("%s -> %s/", label, dst)
+            self.revision += 1
         self.dirty.set()
 
     def quit_all(self) -> None:
@@ -617,12 +704,13 @@ class Model:
         if not vis:
             self.cursor_shown = False
             return vis
-        keys = [(it.repo, it.kind, it.number) for it in vis]
+        index = self._vis_cache[2]
         if self.cursor_key is None:
-            self.cursor_key = keys[0]
-        self.cursor_shown = self.cursor_key in keys
+            it = vis[0]
+            self.cursor_key = (it.repo, it.kind, it.number)
+        self.cursor_shown = self.cursor_key in index
         if self.cursor_shown:
-            self.cursor = keys.index(self.cursor_key)
+            self.cursor = index[self.cursor_key]
         return vis
 
     def select_index(self, i: int) -> None:
@@ -1035,14 +1123,15 @@ class UILoop:
         self._clip_cmd = _clipboard_cmd()
         self.styles = _styles(term)
         self.needs_poll = Event()  # set by the filesystem watcher
-        self._last_poll = 0.0
-        self.count_buf = ""     # 0-9 prefix for r/f and arrow scrolling
         self.help_text: str | None = None
         self.help_scroll = 0
+        self.count_buf = ""     # 0-9 prefix for r/f and arrow scrolling
         self.search_mode = False
         self.search_buf = ""
         self.last_search = ""
         self.paused: list[int] = []
+        self._stats_cache: tuple[tuple[int, int],
+                                 list[tui_core.StyledLine]] | None = None
         self._build_status()
 
     def _build_status(self) -> None:
@@ -1065,10 +1154,11 @@ class UILoop:
     def stats_lines(self, width: int) -> list[tui_core.StyledLine]:
         """Full-width header, then one block per repo tiled into as many
         columns as ``width`` fits. The counts are simply the number of
-        files per state directory."""
+        files per state directory. The per-repo blocks are cached
+        against (model revision, width); only the ticking header is
+        rebuilt per paint."""
         m = self.model
-        items = [m.items[k] for k in m.order]
-        actionable = sum(1 for it in items if it.state == "reviewed")
+        actionable = m.reviewed_count()
         header: tui_core.StyledLine = [
             ("label", "elapsed "),
             ("num", f"{int(time.monotonic() - m.started)}s"),
@@ -1077,17 +1167,19 @@ class UILoop:
         ]
         if self.paused:
             header[:0] = [("log_err", "PAUSED   ")]
+        sig = (m.revision, width)
+        if self._stats_cache is not None and self._stats_cache[0] == sig:
+            return [header, []] + self._stats_cache[1]
         blocks: list[list[tui_core.StyledLine]] = []
-        for repo, _db in m.sides:
-            group = [it for it in items if it.repo == repo]
-            kinds = Counter(it.kind for it in group)
+        for repo, agg in m.side_stats().items():
+            kinds = agg["kinds"]
             block: list[tui_core.StyledLine] = [[
                 ("title", f"{self._repo_disp[repo]}  "),
                 ("kind_pr", f"{kinds['pr']} PRs"),
                 ("text", "  "),
                 ("kind_issue", f"{kinds['issue']} issues"),
             ]]
-            by = Counter(it.state for it in group)
+            by = agg["by"]
             if by:
                 counts: list[tuple[str, str]] = []
                 for s in (*filedb.STATES, INVALID):
@@ -1110,33 +1202,23 @@ class UILoop:
                 block.append(row)
             # what could be applied right now, by action -- distinct
             # from the review/investigate rows
-            ready = Counter(it.data.get("action") for it in group
-                            if it.state == "reviewed"
-                            and it.data.get("action") in fairy.ACTIONABLE_DECISIONS)
-            if ready:
+            if agg["ready"]:
                 block.append([("text", "  "), ("label", "awaiting you: "),
                               ("st_reviewed", ", ".join(
-                                  f"{k}={v}" for k, v in sorted(ready.items())))])
-            stages = Counter((it.data.get("stage") or "starting")
-                             for it in group if it.state == "llm")
-            if stages:
+                                  f"{k}={v}" for k, v in
+                                  sorted(agg["ready"].items())))])
+            if agg["stages"]:
                 block.append([("text", "  "), ("label", "llm stage: "), ("st_llm",
-                    ", ".join(f"{k}={v}" for k, v in sorted(stages.items())))])
-            cls = Counter(
-                fairy.format_llm_classification(
-                    (it.data.get("review") or {}).get("classification") or "-")
-                for it in group if it.data.get("review"))
-            cls.pop("-", None)
-            if cls:
+                    ", ".join(f"{k}={v}" for k, v in sorted(agg["stages"].items())))])
+            if agg["cls"]:
                 block.append([("text", "  "), ("label", "llm: "), ("llm",
-                    ", ".join(f"{k}={v}" for k, v in sorted(cls.items())))])
-            acts = Counter(it.data.get("action") for it in group
-                           if it.state == "posted" and it.data.get("action"))
-            if acts:
+                    ", ".join(f"{k}={v}" for k, v in sorted(agg["cls"].items())))])
+            if agg["acts"]:
                 block.append([("text", "  "), ("label", "posted: "), ("st_posted",
-                    ", ".join(f"{k}={v}" for k, v in sorted(acts.items())))])
+                    ", ".join(f"{k}={v}" for k, v in sorted(agg["acts"].items())))])
             blocks.append(block)
-        return [header, []] + tui_core.tile_blocks(blocks, width)
+        self._stats_cache = (sig, tui_core.tile_blocks(blocks, width))
+        return [header, []] + self._stats_cache[1]
 
     def _llm_col(self, it: Item) -> str:
         if it.state == "llm":
@@ -1153,47 +1235,51 @@ class UILoop:
             return fairy.format_llm_classification(review["classification"])
         return ""
 
+    def _row(self, it: Item, is_cursor: bool) -> list | tuple:
+        m = self.model
+        llm = self._llm_col(it)
+        mark = "▶" if it.state == "reviewed" else " "
+        repo_col = (f"{self._repo_disp[it.repo]:<{self._repo_w}} "
+                    if self._repo_w else "")
+        act = _age(it.data.get("last_activity_iso")
+                   or it.data.get("expected_updated_at"))
+        title = it.data.get("title") or ""
+        state_disp = _STATE_DISP.get(it.state, it.state)
+        if it.state == "cancelled" and it.data.get("reason") == "merged":
+            state_disp = "merged"
+        if it.state in ("queued", "llm") and it.data.get("forced"):
+            state_disp += "+"
+        if (it.repo, it.kind, it.number) in m.missing:
+            state_disp += "?"
+        status = _status_cols(it, m.status.get(
+            (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {})
+        if is_cursor:
+            return ("cursor",
+                    f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<6} "
+                    f"{''.join(c for _, c in status)} "
+                    f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  {title}")
+        return [
+            ("mark", mark),
+            ("kind_pr" if it.kind == "pr" else "kind_issue",
+             f"{_KIND_DISP[it.kind]:<5} "),
+            ("label", repo_col),
+            ("num", f"#{it.number:<6} "),
+            *status,
+            ("text", " "),
+            (f"st_{it.state}", f"{state_disp:<{STATE_W}} "),
+            ("llm", f"{llm:<9} "),
+            ("num", f"{act:>4}  "),
+            ("title", title),
+        ]
+
     def list_rows(self) -> list:
+        """Every visible row, formatted; the e/E exports and tests read
+        this. Painting goes through _list_window instead, which formats
+        only the rows on screen."""
         m = self.model
         vis = m._sync_cursor()
-        rows: list = []
-        for i, it in enumerate(vis):
-            llm = self._llm_col(it)
-            mark = "▶" if it.state == "reviewed" else " "
-            repo_col = (f"{self._repo_disp[it.repo]:<{self._repo_w}} "
-                        if self._repo_w else "")
-            act = _age(it.data.get("last_activity_iso")
-                       or it.data.get("expected_updated_at"))
-            title = it.data.get("title") or ""
-            state_disp = _STATE_DISP.get(it.state, it.state)
-            if it.state == "cancelled" and it.data.get("reason") == "merged":
-                state_disp = "merged"
-            if it.state in ("queued", "llm") and it.data.get("forced"):
-                state_disp += "+"
-            if (it.repo, it.kind, it.number) in m.missing:
-                state_disp += "?"
-            status = _status_cols(it, m.status.get(
-                (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {})
-            if i == m.cursor and m.cursor_shown:
-                rows.append(("cursor",
-                             f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<6} "
-                             f"{''.join(c for _, c in status)} "
-                             f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  {title}"))
-                continue
-            rows.append([
-                ("mark", mark),
-                ("kind_pr" if it.kind == "pr" else "kind_issue",
-                 f"{_KIND_DISP[it.kind]:<5} "),
-                ("label", repo_col),
-                ("num", f"#{it.number:<6} "),
-                *status,
-                ("text", " "),
-                (f"st_{it.state}", f"{state_disp:<{STATE_W}} "),
-                ("llm", f"{llm:<9} "),
-                ("num", f"{act:>4}  "),
-                ("title", title),
-            ])
-        return rows
+        return [self._row(it, i == m.cursor and m.cursor_shown)
+                for i, it in enumerate(vis)]
 
     def detail_lines(self, width: int) -> list[tui_core.StyledLine]:
         m = self.model
@@ -1347,14 +1433,13 @@ class UILoop:
             content: dict[str, list] = {
                 "tl": self._scrolled("tl", self.stats_lines(self._text_width(rects["tl"])),
                                      rects["tl"].h - 1),
-                "tr": self._list_window(self.list_rows(), rects["tr"].h - 1),
+                "tr": self._list_window(rects["tr"].h - 1),
                 "bl": [(self._log_style(tag), text) for tag, text in
                        self.ring.view(self.scroll["bl"], rects["bl"].h - 1)],
                 "br": self._scrolled("br", self.detail_lines(self._text_width(rects["br"])),
                                      rects["br"].h - 1),
             }
-            nact = sum(1 for it in self.model.items.values()
-                       if it.state == "reviewed")
+            nact = self.model.reviewed_count()
         buf = []
         for pane, rect in rects.items():
             self._blit(buf, rect, pane, content[pane])
@@ -1419,19 +1504,25 @@ class UILoop:
         self.scroll[pane] = max(0, min(self.scroll[pane], len(lines) - inner_h))
         return lines[self.scroll[pane]:self.scroll[pane] + inner_h]
 
-    def _list_window(self, rows: list, inner_h: int) -> list:
-        """The view chases the cursor only right after a cursor move
-        (the consumed ``follow_cursor``): a wheel-scrolled window must
-        stay where the operator put it across timer repaints."""
-        cursor = self.model.cursor
-        if self.model.cursor_shown and self.follow_cursor:
+    def _list_window(self, inner_h: int) -> list:
+        """The on-screen slice of the list, formatted; only these rows
+        pay the formatting cost. The view chases the cursor only right
+        after a cursor move (the consumed ``follow_cursor``): a
+        wheel-scrolled window must stay where the operator put it
+        across timer repaints. Caller holds ``model.lock``."""
+        m = self.model
+        vis = m._sync_cursor()
+        cursor = m.cursor
+        if m.cursor_shown and self.follow_cursor:
             if cursor < self.list_top:
                 self.list_top = cursor
             if inner_h > 0 and cursor >= self.list_top + inner_h:
                 self.list_top = cursor - inner_h + 1
         self.follow_cursor = False
-        self.list_top = max(0, min(self.list_top, max(0, len(rows) - inner_h)))
-        return rows[self.list_top:self.list_top + inner_h]
+        self.list_top = max(0, min(self.list_top, max(0, len(vis) - inner_h)))
+        return [self._row(it, m.cursor_shown and self.list_top + i == cursor)
+                for i, it in enumerate(
+                    vis[self.list_top:self.list_top + inner_h])]
 
     def _blit(self, buf: list, rect: tui_core.Rect, pane: str, lines: list) -> None:
         t = self.term
@@ -1481,17 +1572,22 @@ class UILoop:
             used += len(text)
         return "".join(out) + " " * ((pad_to or width) - used)
 
-    def _maybe_poll(self) -> None:
-        """Refresh from disk when the filesystem watcher fired (within
-        one input tick, <=100ms) or on the 1s fallback interval."""
-        if not self.needs_poll.is_set() \
-                and time.monotonic() - self._last_poll < 1.0:
-            return
-        self.needs_poll.clear()
-        self._last_poll = time.monotonic()
-        self.model.poll()
-        self.tail.poll()
-        self.model.dirty.set()
+    def _poll_loop(self) -> None:
+        """Polling thread: the directory scans, ticket parses and log
+        tailing run off the UI thread, so a heavy poll (an agent scan
+        pass churning a 100k-file dir) delays repaints by lock time
+        only, never by IO time. Wakes on the filesystem watcher within
+        one tick, or on the 1s fallback interval; results land in the
+        model under its lock and reach the painter through ``dirty``."""
+        while not self.model.quit_flag:
+            self.needs_poll.wait(1.0)
+            self.needs_poll.clear()
+            try:
+                self.model.poll()
+                self.tail.poll()
+            except Exception:
+                logger.exception("poll failed; the next tick retries")
+            self.model.dirty.set()
 
     def _read_keys(self) -> None:
         """Input thread: ``inkey(timeout=None)`` sits in select() and
@@ -1506,6 +1602,7 @@ class UILoop:
 
     def run(self) -> None:
         Thread(target=self._read_keys, name="input", daemon=True).start()
+        Thread(target=self._poll_loop, name="poll", daemon=True).start()
         try:
             while not self.model.quit_flag:
                 # keys, watcher events and repaints wake this instantly;
@@ -1520,7 +1617,6 @@ class UILoop:
                 size = (self.term.width, self.term.height)
                 if size != self._last_size:
                     self._last_size = size
-                self._maybe_poll()
                 self.model.poll_snapshot()
                 self.paint()
         except KeyboardInterrupt:
@@ -1883,10 +1979,8 @@ class UILoop:
                     EXPORT_FULL_W if full else self._text_width(rects["tl"]))
                 text = _plain(lines if full else self._scrolled("tl", lines, inner_h))
             elif pane == "tr":
-                rows = self.list_rows()
-                if not full:
-                    rows = self._list_window(rows, inner_h)
-                text = _plain(rows)
+                text = _plain(self.list_rows() if full
+                              else self._list_window(inner_h))
             else:
                 lines = self.detail_lines(
                     EXPORT_FULL_W if full else self._text_width(rects["br"]))

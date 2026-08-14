@@ -163,11 +163,12 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
     snapshot's last-seen state."""
     reason = item.data.get("reason") if item.state == "cancelled" else None
     if item.kind == "pr":
-        if snap.get("state") == "merged" or reason == "merged":
+        if snap.get("state") == "merged" or reason == agent.REASON_MERGED:
             auto = (snap.get("auto_merge")
                     or item.data.get("auto_merge")) == "merge"
             return [("sc_done", "M" if auto else "m"), ("text", "   ")]
-        if snap.get("state") == "closed" or reason == "closed without merge":
+        if snap.get("state") == "closed" \
+                or reason == agent.REASON_CLOSED_UNMERGED:
             return [("sc_bad", "R"), ("text", "   ")]
         return [
             ("sc_info", "a") if snap.get("auto_merge") == "merge"
@@ -187,7 +188,7 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
         ("text", " ") if resolution is None
         else _RESOLUTION_CODES.get(resolution, ("sc_dim", "?")),
         ("sc_done", "C") if snap.get("state") == "closed"
-        or reason == "closed"
+        or reason == agent.REASON_CLOSED
         else ("sc_good", "O") if snap.get("state") == "open"
         else ("text", " "),
     ]
@@ -1245,7 +1246,8 @@ class UILoop:
                    or it.data.get("expected_updated_at"))
         title = it.data.get("title") or ""
         state_disp = _STATE_DISP.get(it.state, it.state)
-        if it.state == "cancelled" and it.data.get("reason") == "merged":
+        if it.state == "cancelled" \
+                and it.data.get("reason") == agent.REASON_MERGED:
             state_disp = "merged"
         if it.state in ("queued", "llm") and it.data.get("forced"):
             state_disp += "+"

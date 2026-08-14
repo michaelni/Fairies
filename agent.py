@@ -85,7 +85,8 @@ from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     side_actions, setup_logging, split_side_actions,
                     watch_paths)
 
-__all__ = ["main", "scan_pass", "send_pass"]
+__all__ = ["main", "scan_pass", "send_pass",
+           "REASON_MERGED", "REASON_CLOSED_UNMERGED", "REASON_CLOSED"]
 
 logger = logging.getLogger(__name__)
 
@@ -515,6 +516,11 @@ def finish_requests(db: filedb.Db, forced: dict[str, set[filedb.TicketId]],
                 db.try_pop("requests", kind, number)
 
 
+REASON_MERGED = "merged"
+REASON_CLOSED_UNMERGED = "closed without merge"
+REASON_CLOSED = "closed"
+
+
 def closure_reason(ns: argparse.Namespace, kind: str, number) -> str | None:
     """One fetch to name WHY an item left the open listing: "merged" is
     the success story and must not read as a failure in the UI
@@ -532,9 +538,9 @@ def closure_reason(ns: argparse.Namespace, kind: str, number) -> str | None:
                        "failed: %s", kind, number, exc)
         return "not open"
     if kind == "pr" and forge_gcli.pr_merged(item):
-        return "merged"
+        return REASON_MERGED
     if item.get("state") == "closed":
-        return "closed without merge" if kind == "pr" else "closed"
+        return REASON_CLOSED_UNMERGED if kind == "pr" else REASON_CLOSED
     return None
 
 

@@ -87,6 +87,7 @@ from fairy import (
 )
 
 __all__ = ["make_parser", "parse_args", "prepare_issue", "evaluate_issue",
+           "list_recently_closed_issues",
            "get_issue_discussion"]
 
 logger = fairy.logger

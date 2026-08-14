@@ -54,7 +54,10 @@ last row).
 posts it), `posted`, `skipped`, `cancelled`, `ci-blocked`,
 `merge-ready`, `awaiting-approver` (displayed `merge-ready*`),
 `error`, plus `invalid` for an unparsable file. A cancelled row whose
-PR turned out merged displays as `merged`. A state suffixed `?` means
+PR turned out merged displays as `merged`. A `+` after `queued`/`llm`
+marks a force-requested review (`r`/`R`/`f` or `--force-review`):
+prepared first and claimed by the worker ahead of the scan's own
+queue. A state suffixed `?` means
 the last poll found the file in no directory — almost always a poll
 racing a rename; the row dies only after 10 consecutive misses (both
 events are logged).

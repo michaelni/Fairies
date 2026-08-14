@@ -784,6 +784,17 @@ class StatusColumnTests(DbCase):
         clusters = [r[18:22] for r in self.rows()]
         self.assertEqual(clusters, ["BYfO", "EnwC"])
 
+    def test_forced_reviews_carry_a_plus_through_queued_and_llm(self) -> None:
+        self.db.push("queued", "pr", "5", dict(verdict(5), forced=True))
+        self.db.push("queued", "pr", "6", dict(verdict(6), forced=False))
+        self.model.poll()
+        self.assertIn("queued+", self.rows()[0])
+        self.assertIn("queued ", self.rows()[1])
+        self.db.try_move("queued", "llm", "pr", "5",
+                         mutate=lambda d: d.update(stage="triage"))
+        self.model.poll()
+        self.assertIn("llm+", self.rows()[0])
+
     def test_without_a_snapshot_the_cluster_is_blank(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()

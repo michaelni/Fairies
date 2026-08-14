@@ -1168,6 +1168,8 @@ class UILoop:
             state_disp = _STATE_DISP.get(it.state, it.state)
             if it.state == "cancelled" and it.data.get("reason") == "merged":
                 state_disp = "merged"
+            if it.state in ("queued", "llm") and it.data.get("forced"):
+                state_disp += "+"
             if (it.repo, it.kind, it.number) in m.missing:
                 state_disp += "?"
             status = _status_cols(it, m.status.get(

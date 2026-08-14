@@ -45,10 +45,13 @@ shipped one names the repo pair that turns on every conditional prompt
 section (spec store, forge export, FATE, recollq).
 
 Usage:
-  tools/prompt_diff.py [--color[=WHEN]] [--word-diff] [--keep] [-v] REV1 REV2
+  tools/prompt_diff.py [--color[=WHEN]] [--word-diff] [--keep] [-v] REV1 [REV2]
+
+With a single revision the generated prompts are printed instead of
+diffed.
 
 Exit status is git diff's: 0 when all prompts are identical, 1 when they
-differ.
+differ; with a single revision it is 0.
 """
 
 from __future__ import annotations
@@ -213,7 +216,8 @@ def export_revision(repo: Path, rev: str, dest: Path) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Diff the assembled LLM prompts of two git revisions.")
+        description="Diff the assembled LLM prompts of two git revisions,"
+                    " or print one revision's prompts.")
     ap.add_argument("revisions", nargs="*", metavar="REV")
     ap.add_argument("--color", nargs="?", const="always", default="auto",
                     choices=("auto", "always", "never"))
@@ -232,8 +236,8 @@ def main() -> int:
     ap.add_argument("--dump", type=Path, help=argparse.SUPPRESS)
     ap.add_argument("--checkout", type=Path, help=argparse.SUPPRESS)
     args = ap.parse_args()
-    if not args.dump and len(args.revisions) != 2:
-        ap.error("exactly two revisions required")
+    if not args.dump and len(args.revisions) not in (1, 2):
+        ap.error("one or two revisions required")
 
     root = args.checkout if args.dump else Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(root))
@@ -250,7 +254,7 @@ def main() -> int:
     tmp = Path(tempfile.mkdtemp(prefix="prompt_diff_"))
     try:
         labels = [re.sub(r'[\\/:*?"<>|\s]+', "_", rev) for rev in args.revisions]
-        if labels[0] == labels[1]:
+        if len(labels) == 2 and labels[0] == labels[1]:
             labels = [labels[0] + "-a", labels[1] + "-b"]
         prompt_dirs = []
         for rev, label in zip(args.revisions, labels):
@@ -267,6 +271,12 @@ def main() -> int:
                         rev, sha[:12], shlex.join(cmd))
             subprocess.run(cmd, check=True)
             prompt_dirs.append(out)
+
+        if len(prompt_dirs) == 1:
+            for prompt_file in sorted(prompt_dirs[0].iterdir()):
+                print(f"======== {prompt_file.stem} ========")
+                print(prompt_file.read_text(encoding="utf-8"))
+            return 0
 
         diff_cmd = (["git", "diff", "--no-index", f"--color={args.color}"]
                     + ["--word-diff"] * args.word_diff

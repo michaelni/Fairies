@@ -133,6 +133,65 @@ def _repo_short(repo: str) -> str:
     return repo.rsplit("/", 1)[-1]
 
 
+STATUS_FIELDS = ("state", "auto_merge", "approvals", "change_requests",
+                 "labels")
+_REPRO_CODES = {"repro/yes": ("sc_good", "Y"),
+                "repro/flaky": ("sc_warn", "F"),
+                "repro/no(env)": ("sc_warn", "n"),
+                "repro/no": ("sc_bad", "N")}
+_RESOLUTION_CODES = {"duplicate": ("sc_warn", "d"),
+                     "external": ("sc_info", "e"),
+                     "fixed": ("sc_good", "f"),
+                     "invalid": ("sc_bad", "i"),
+                     "wontfix": ("sc_dim", "w")}
+
+
+def _count_col(count, style: str) -> tuple[str, str]:
+    """A 0-9 review-count cell; blank when the snapshot has no count,
+    dim when it is zero. ``count`` is snapshot JSON: int when present."""
+    if count is None:
+        return ("text", " ")
+    return (style if count else "sc_dim", str(min(int(count), 9)))
+
+
+def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
+    """The row's forge-status letters, 4 cells wide (README-TUI.md
+    documents the codes). ``snap`` is the item's polled STATUS_FIELDS,
+    {} when no snapshot exists yet -- every cell blank then. Closure
+    outlives the snapshot (the scan stops refreshing a closed item),
+    so the ticket's cancelled/ reason takes precedence over the
+    snapshot's last-seen state."""
+    reason = item.data.get("reason") if item.state == "cancelled" else None
+    if item.kind == "pr":
+        if snap.get("state") == "merged" or reason == "merged":
+            auto = (snap.get("auto_merge")
+                    or item.data.get("auto_merge")) == "merge"
+            return [("sc_done", "M" if auto else "m"), ("text", "   ")]
+        if snap.get("state") == "closed" or reason == "closed without merge":
+            return [("sc_bad", "R"), ("text", "   ")]
+        return [
+            ("sc_info", "a") if snap.get("auto_merge") == "merge"
+            else ("text", " "),
+            _count_col(snap.get("approvals"), "sc_good"),
+            _count_col(snap.get("change_requests"), "sc_bad"),
+            ("text", " "),
+        ]
+    labels = snap.get("labels") or []
+    resolution = next((l.removeprefix("resolution/") for l in labels
+                       if l.startswith("resolution/")), None)
+    return [
+        ("sc_bad", "B") if {"bug", "regression"} & set(labels)
+        else ("sc_info", "E") if "enhancement" in labels else ("text", " "),
+        next((_REPRO_CODES[l] for l in _REPRO_CODES if l in labels),
+             ("text", " ")),
+        ("text", " ") if resolution is None
+        else _RESOLUTION_CODES.get(resolution, ("sc_dim", "?")),
+        ("sc_done", "C") if snap.get("state") == "closed" or reason == "closed"
+        else ("sc_good", "O") if snap.get("state") == "open"
+        else ("text", " "),
+    ]
+
+
 SORT_MODES = ("arrival", "status", "repo", "number")
 # the a key cycles these lenses: the default working view, then one
 # per attention surface (review/merge/CI are different jobs), any of
@@ -173,6 +232,9 @@ class Model:
         self.items: dict[tuple[str, str, int], Item] = {}
         self.order: list[tuple[str, str, int]] = []
         self._read: dict[tuple[str, str, int], tuple[Path, float]] = {}
+        self.status: dict[tuple[str, str, filedb.TicketId], dict] = {}
+        self._snap_read: dict[tuple[str, str, filedb.TicketId],
+                              tuple[Path, float]] = {}
         # (repo, state) -> (dir mtime, listing): an unchanged state dir
         # is not re-listed and its files are not re-stat'ed.
         self._dirs: dict[tuple[str, str],
@@ -212,12 +274,19 @@ class Model:
         (content rewrites included), so a directory whose mtime has not
         moved needs no re-listing and none of its files re-stat'ed:
         steady state costs a dozen directory stats per side, not one
-        stat per ticket."""
+        stat per ticket.
+
+        The items/ snapshots go through the same gate; only their
+        STATUS_FIELDS are kept (into ``status``), feeding the list's
+        status letters -- the message pane reads its one full snapshot
+        through poll_snapshot instead."""
         now = time.time()
         found: dict[tuple[str, str, int], tuple[str, filedb.Db, bool]] = {}
+        snaps: dict[tuple[str, str, filedb.TicketId],
+                    tuple[filedb.Db, bool]] = {}
         requested: set[tuple[str, str, int]] = set()
         for repo, db in self.sides:
-            for state in filedb.STATES:
+            for state in (*filedb.STATES, filedb.ITEM_STATE):
                 try:
                     dir_mtime = (db.root / state).stat().st_mtime
                 except OSError:
@@ -238,6 +307,9 @@ class Model:
                 else:
                     listing = cached[1]
                 for kind, number in listing:
+                    if state == filedb.ITEM_STATE:
+                        snaps[(repo, kind, number)] = (db, rescanned)
+                        continue
                     # later directory wins: crash-remnant precedence
                     found[(repo, kind, number)] = (state, db, rescanned)
                     if state == "requests":
@@ -267,6 +339,25 @@ class Model:
             except (OSError, ValueError) as exc:
                 updates.append((key, state, None, str(exc)))
             self._read[key] = tag
+        status_updates: list[tuple[tuple[str, str, filedb.TicketId],
+                                   dict]] = []
+        for key, (db, rescanned) in sorted(snaps.items()):
+            if not rescanned and key in self.status:
+                continue
+            path = db.path(filedb.ITEM_STATE, key[1], key[2])
+            try:
+                tag = (path, path.stat().st_mtime)
+            except OSError:
+                continue
+            if self._snap_read.get(key) == tag:
+                continue
+            try:
+                snap = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            self._snap_read[key] = tag
+            status_updates.append(
+                (key, {f: snap[f] for f in STATUS_FIELDS if f in snap}))
         removed = []
         for key in self.items:
             if key in found:
@@ -282,10 +373,12 @@ class Model:
                             "polls; dropping the row", key[1], key[0],
                             key[2], misses)
                 removed.append(key)
-        if not updates and not removed and requested == self.requested:
+        if not updates and not removed and not status_updates \
+                and requested == self.requested:
             return
         with self.lock:
             self.requested = requested
+            self.status.update(status_updates)
             for key, state, data, error in updates:
                 item = self.items.get(key)
                 if item is None:
@@ -835,6 +928,9 @@ def _styles(t: blessed.Terminal) -> dict:
             "st_invalid": mix(t.bold, c(196)),
             "st_ci-blocked": c(209),          "st_merge-ready": mix(t.bold, c(78)),
             "st_awaiting-approver": c(179),
+            "sc_good": c(78),                 "sc_bad": c(203),
+            "sc_warn": c(179),                "sc_info": c(75),
+            "sc_done": c(135),                "sc_dim": c(244),
             "sampled": c(114),
             "cursor": t.reverse,
             # log-pane levels; palette mirrors common._ColorFormatter
@@ -868,6 +964,9 @@ def _styles(t: blessed.Terminal) -> dict:
         "st_invalid": t.bold_red,
         "st_ci-blocked": t.red, "st_merge-ready": t.bold_green,
         "st_awaiting-approver": t.yellow,
+        "sc_good": t.green,     "sc_bad": t.red,
+        "sc_warn": t.yellow,    "sc_info": t.cyan,
+        "sc_done": t.magenta,   "sc_dim": t.bright_black,
         "sampled": t.green,
         "cursor": t.reverse,
         "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
@@ -1071,9 +1170,12 @@ class UILoop:
                 state_disp = "merged"
             if (it.repo, it.kind, it.number) in m.missing:
                 state_disp += "?"
+            status = _status_cols(it, m.status.get(
+                (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {})
             if i == m.cursor and m.cursor_shown:
                 rows.append(("cursor",
                              f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<6} "
+                             f"{''.join(c for _, c in status)} "
                              f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  {title}"))
                 continue
             rows.append([
@@ -1082,6 +1184,8 @@ class UILoop:
                  f"{_KIND_DISP[it.kind]:<5} "),
                 ("label", repo_col),
                 ("num", f"#{it.number:<6} "),
+                *status,
+                ("text", " "),
                 (f"st_{it.state}", f"{state_disp:<{STATE_W}} "),
                 ("llm", f"{llm:<9} "),
                 ("num", f"{act:>4}  "),

@@ -222,7 +222,7 @@ class DirMtimeGateTests(DbCase):
 
     def age_dirs(self, seconds: float = 10) -> None:
         for db in (self.db, self.db2):
-            for state in filedb.STATES:
+            for state in (*filedb.STATES, filedb.ITEM_STATE):
                 t = time.time() - seconds
                 os.utime(db.root / state, (t, t))
 
@@ -732,6 +732,73 @@ class ErrorAgeColumnTests(DbCase):
         rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
                 for r in ui.list_rows()]
         self.assertTrue(any("err=2d" in t for t in rows), rows)
+
+
+class StatusColumnTests(DbCase):
+    """The letter cluster between #number and state is drawn from the
+    items/ snapshot's status fields, with the cancelled ticket's reason
+    taking over once the item is closed and no longer snapshotted."""
+
+    def rows(self) -> list[str]:
+        ui = make_ui(self.model)
+        return ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in ui.list_rows()]
+
+    def test_open_pr_shows_automerge_and_review_counts(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("items", "pr", "5", {
+            "title": "t", "state": "open", "auto_merge": "merge",
+            "approvals": 2, "change_requests": 1, "discussion": []})
+        self.model.poll()
+        self.assertIn("#5      a21", self.rows()[0])
+
+    def test_sample_tickets_share_the_base_items_status(self) -> None:
+        self.db.push("reviewed", "pr", "5s2", verdict(5))
+        self.db.push("items", "pr", "5", {
+            "state": "open", "approvals": 1, "change_requests": 0})
+        self.model.poll()
+        self.assertIn("#5s2    " + " 10", self.rows()[0])
+
+    def test_merged_pr_distinguishes_auto_from_manual(self) -> None:
+        self.db.push("cancelled", "pr", "5",
+                     dict(verdict(5), reason="merged", auto_merge="merge"))
+        self.db.push("cancelled", "pr", "6", dict(verdict(6), reason="merged"))
+        self.db.push("cancelled", "pr", "7",
+                     dict(verdict(7), reason="closed without merge"))
+        with self.model.lock:
+            self.model.filter_mode = "all"
+        self.model.poll()
+        clusters = [r[18:22] for r in self.rows()]
+        self.assertEqual(clusters, ["M   ", "m   ", "R   "])
+
+    def test_issue_letters_come_from_labels_and_state(self) -> None:
+        self.db.push("reviewed", "issue", "3", verdict(3))
+        self.db.push("items", "issue", "3", {
+            "state": "open",
+            "labels": ["bug", "repro/yes", "resolution/fixed"]})
+        self.db.push("reviewed", "issue", "4", verdict(4))
+        self.db.push("items", "issue", "4", {
+            "state": "closed", "labels": ["enhancement", "repro/no(env)",
+                                          "resolution/wontfix"]})
+        self.model.poll()
+        clusters = [r[18:22] for r in self.rows()]
+        self.assertEqual(clusters, ["BYfO", "EnwC"])
+
+    def test_without_a_snapshot_the_cluster_is_blank(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.model.poll()
+        self.assertIn("#5           reviewed", self.rows()[0])
+
+    def test_a_snapshot_rewrite_updates_the_status(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("items", "pr", "5", {"state": "open", "approvals": 0,
+                                          "change_requests": 0})
+        self.model.poll()
+        self.assertIn("#5       00", self.rows()[0])
+        self.db.push("items", "pr", "5", {"state": "open", "approvals": 3,
+                                          "change_requests": 0})
+        self.model.poll()
+        self.assertIn("#5       30", self.rows()[0])
 
 
 class HelpTests(DbCase):

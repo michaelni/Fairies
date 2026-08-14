@@ -35,8 +35,9 @@ last row).
   in the list, were approved by someone else). A red `PAUSED` appears
   while `p` holds the daemons stopped.
 - **☰ list** — the table. Columns: `▶` marks reviewed rows, kind,
-  repo (only when sides span several), `#number`, state, llm, age,
-  title. The title bar shows the active lens, the bottom bar the keys.
+  repo (only when sides span several), `#number`, the status letters,
+  state, llm, age, title. The title bar shows the active lens, the
+  bottom bar the keys.
 - **≣ logs** — merged tail of every side's agent/worker log plus the
   TUI's own, one padded source tag per line, level-colored.
 - **¶ message** — the selected ticket: the action `y` would perform,
@@ -63,6 +64,37 @@ in `llm/`, `requested` while an `r`/`R`/`f` request is pending,
 `appr=<age>` on merge-ready rows (how long the merge has waited),
 `err=<age>` on error rows (how old the failure is), otherwise the
 verdict classification.
+
+**The status letters** between `#number` and the state show the
+item's forge status, one character per column, drawn from the agent's
+`items/` snapshots — blank until a scan pass has written one. The
+colors follow the letter's meaning: green good/confirmed, red
+blocking/negative, yellow caution, cyan/blue informational, purple
+settled, gray inert.
+
+An open PR shows three columns:
+
+| col | codes |
+|-----|-------|
+| 1 | `a` (cyan) auto-merge is scheduled |
+| 2 | `0`–`9` (green, gray zero) approvals — the latest non-stale review per author |
+| 3 | `0`–`9` (red, gray zero) outstanding change requests |
+
+A closed PR shows a single code instead: `M` (purple) merged with
+auto-merge scheduled at last sight, `m` (purple) merged — manually,
+as far as fairy can tell, `R` (red) closed without merging.
+
+An issue shows four columns:
+
+| col | codes |
+|-----|-------|
+| 1 | `B` (red) bug or regression · `E` (cyan) enhancement |
+| 2 | reproduction: `Y` (green) yes · `F` (yellow) flaky · `n` (yellow) no, needs an environment the analysis lacks · `N` (red) no |
+| 3 | resolution: `d` (yellow) duplicate · `e` (blue) external · `f` (green) fixed · `i` (red) invalid · `w` (gray) wontfix |
+| 4 | `O` (green) open · `C` (purple) closed |
+
+Columns 1–3 mirror the issue's `bug`/`regression`/`enhancement`,
+`repro/*` and `resolution/*` labels; an unlabeled aspect stays blank.
 
 **Lenses** (`a` cycles): `relevant` (default — everything except
 settled rows you never interacted with), `review` (the y-session:

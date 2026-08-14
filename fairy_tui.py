@@ -740,7 +740,7 @@ ACTION_KEYS = {"y": "apply", "Y": "apply-force", "s": "skip", "S": "snooze",
 KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("S", "snooze"), ("r", "rerun"), ("R", "+eval"), ("f", "force"),
           ("x", "drop"), ("o", "edit msg"), ("p", "pause"), ("a", "filter"),
-          ("t", "sort"), ("/", "search"), ("e/E", "export"),
+          ("t", "sort"), ("/", "search"), ("e/E", "export"), ("?", "help"),
           ("Tab/click", "focus"), ("↑↓ PgUp/PgDn Home/End", "scroll"))
 
 
@@ -938,6 +938,8 @@ class UILoop:
         self.needs_poll = Event()  # set by the filesystem watcher
         self._last_poll = 0.0
         self.count_buf = ""     # 0-9 prefix for r/f and arrow scrolling
+        self.help_text: str | None = None
+        self.help_scroll = 0
         self.search_mode = False
         self.search_buf = ""
         self.last_search = ""
@@ -1225,6 +1227,9 @@ class UILoop:
 
     def paint(self) -> None:
         self._last_paint = time.monotonic()
+        if self.help_text is not None:
+            self._paint_help()
+            return
         t = self.term
         w, h = t.width, t.height
         body_h = max(3, h - 1)
@@ -1271,6 +1276,26 @@ class UILoop:
             status = ((mark(note) if nact else note) + self._status_styled
                       + " " * (w - len(note) - len(self._status_plain)))
         buf.append(t.move_xy(0, h - 1) + status)
+        print("".join(buf), end="", flush=True, file=t.stream)
+
+    def _paint_help(self) -> None:
+        """Full-screen render of README-TUI.md; any key returns."""
+        t = self.term
+        w, h = t.width, t.height
+        lines = tui_core.render_markdown(self.help_text, max(MIN_TEXT_W, w - 2))
+        inner_h = max(1, h - 2)
+        self.help_scroll = max(0, min(self.help_scroll, len(lines) - inner_h))
+        bar = self.styles.get("bar_focus") or t.reverse
+        buf = [t.move_xy(0, 0) + bar(" ? help — README-TUI.md"[:w].ljust(w))]
+        for i in range(inner_h):
+            row = self.help_scroll + i
+            line = lines[row] if row < len(lines) else []
+            buf.append(t.move_xy(0, 1 + i) + " "
+                       + self._styled_line(line, w - 1))
+        label = self.styles.get("label") or (lambda s: s)
+        buf.append(t.move_xy(0, h - 1)
+                   + label(" ↑↓ PgUp/PgDn Home/End scroll   any other key "
+                           "closes"[:w].ljust(w)))
         print("".join(buf), end="", flush=True, file=t.stream)
 
     def _log_style(self, level: int | None) -> str:
@@ -1491,6 +1516,21 @@ class UILoop:
 
     def dispatch(self, ks) -> None:
         name = ks.name or ""
+        if self.help_text is not None:
+            page = max(1, self.term.height - 3)
+            delta = {"KEY_UP": -1, "KEY_DOWN": 1, "KEY_PGUP": -page,
+                     "KEY_PGDOWN": page, "MOUSE_SCROLL_UP": -3,
+                     "MOUSE_SCROLL_DOWN": 3}.get(name)
+            if delta is not None:
+                self.help_scroll = max(0, self.help_scroll + delta)
+            elif name == "KEY_HOME":
+                self.help_scroll = 0
+            elif name == "KEY_END":
+                self.help_scroll = 10 ** 9
+            elif not name.startswith("MOUSE_"):
+                self.help_text = None
+            self.model.dirty.set()
+            return
         if self.search_mode:
             if name == "KEY_ENTER" or str(ks) in ("\n", "\r"):
                 self.search_mode = False
@@ -1587,6 +1627,13 @@ class UILoop:
         elif ks == "/":
             self.search_mode = True
             self.search_buf = ""
+        elif ks == "?":
+            try:
+                self.help_text = Path(__file__).with_name(
+                    "README-TUI.md").read_text(encoding="utf-8")
+                self.help_scroll = 0
+            except OSError as exc:
+                logger.error("cannot read README-TUI.md: %s", exc)
         elif ks == "n":
             self._search_jump()
         elif ks == "o":

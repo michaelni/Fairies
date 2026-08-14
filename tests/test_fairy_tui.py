@@ -734,6 +734,25 @@ class ErrorAgeColumnTests(DbCase):
         self.assertTrue(any("err=2d" in t for t in rows), rows)
 
 
+class HelpTests(DbCase):
+    """? renders README-TUI.md full-screen until any non-scroll key."""
+
+    def test_help_opens_scrolls_and_any_key_returns(self) -> None:
+        stream = io.StringIO()
+        ui = make_ui(self.model, stream)
+        ui.dispatch(Key("?"))
+        self.assertIn("fairy_tui.py", ui.help_text)
+        ui.paint()
+        self.assertIn("README-TUI.md", stream.getvalue())
+        ui.dispatch(NamedKey("KEY_UP"))
+        self.assertEqual(ui.help_scroll, 0)  # never above the top
+        ui.dispatch(NamedKey("KEY_DOWN"))
+        self.assertEqual(ui.help_scroll, 1)
+        ui.dispatch(Key("q"))
+        self.assertIsNone(ui.help_text)
+        self.assertFalse(ui.model.quit_flag)  # q closed help, not the app
+
+
 class PauseTests(DbCase):
     """p freezes the session's agents/workers; a second p thaws them."""
 

@@ -119,15 +119,19 @@ ISSUE_REQUEST = {
 
 def dump_prompts(checkout: Path, outdir: Path, project_facts: str,
                  inputs_path: Path) -> int:
-    import llm_prompt
-    import podman_host
-
     inputs = json.loads(inputs_path.read_text(encoding="utf-8"))
 
     def write(name: str, text: str) -> None:
         (outdir / (name + ".txt")).write_text(
             text.replace(str(checkout), "<checkout>"),
             encoding="utf-8", newline="\n")
+
+    try:
+        import llm_prompt
+    except Exception:
+        write("llm_prompt_error", "ERROR importing llm_prompt:\n"
+              + traceback.format_exc())
+        return 0
 
     def generate(name: str, thunk) -> None:
         try:
@@ -138,6 +142,7 @@ def dump_prompts(checkout: Path, outdir: Path, project_facts: str,
         write(name, text)
 
     try:
+        import podman_host
         machines = [podman_host.parse_shell_host(s) for s in MACHINE_SPECS]
     except Exception:
         machines = []
@@ -233,7 +238,10 @@ def main() -> int:
     root = args.checkout if args.dump else Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(root))
     from common import setup_logging
-    setup_logging(logger, args.verbose, color=args.color)
+    if "color" in inspect.signature(setup_logging).parameters:
+        setup_logging(logger, args.verbose, color=args.color)
+    else:
+        setup_logging(logger, args.verbose)
 
     if args.dump:
         return dump_prompts(args.checkout, args.dump, args.project_facts,

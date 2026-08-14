@@ -392,12 +392,30 @@ class Db:
     def list_state(self, state: str) -> list[tuple[str, TicketId]]:
         """Every ticket in ``state`` as (kind, token), ordered by kind
         then forge number."""
-        out = []
-        for p in (self.root / state).glob("*.json"):
-            kind, _, num = p.stem.partition("-")
-            if kind in KINDS and _TOKEN_RE.fullmatch(num):
-                out.append((kind, num))
+        out = [(kind, num) for kind, num, _ in self.list_state_stat(state)]
         return sorted(out, key=lambda kn: (kn[0], forge_number(kn[1]), kn[1]))
+
+    def list_state_stat(self, state: str) -> list[tuple[str, TicketId, float]]:
+        """Every ticket in ``state`` as (kind, token, file mtime),
+        unsorted, from one scandir pass -- per-entry stats come with
+        the directory scan, so a viewer diffing a 100k-file state dir
+        pays one pass, not one stat call per ticket."""
+        out = []
+        try:
+            entries = os.scandir(self.root / state)
+        except OSError:
+            return out
+        with entries:
+            for entry in entries:
+                if not entry.name.endswith(".json"):
+                    continue
+                kind, _, num = entry.name[:-len(".json")].partition("-")
+                if kind in KINDS and _TOKEN_RE.fullmatch(num):
+                    try:
+                        out.append((kind, num, entry.stat().st_mtime))
+                    except OSError:
+                        continue  # racing an unlink/rename
+        return out
 
     def find(self, kind: str, number: TicketId) -> str | None:
         """The item's state; with crash remnants, the latest one."""

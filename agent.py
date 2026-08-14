@@ -80,7 +80,7 @@ import worker
 import workset
 from forgejo_export import labels
 from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
-                    config_option_groups, default_cache_path, grouped_help,
+                    config_option_groups, grouped_help,
                     iso_to_dt, options_argv, parse_scoped_overrides,
                     side_actions, setup_logging, split_side_actions,
                     watch_paths)

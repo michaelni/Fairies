@@ -65,7 +65,7 @@ from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
                             ProviderContentFlagged, ProviderTurnFailed,
                             Z_AI_ANTHROPIC_URL, review_with_turn_retries)
-from podman_host import ContainerShellError  # noqa: E402
+from podman_host import ContainerInfraError, ContainerShellError  # noqa: E402
 import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
 from codex_reviewer import CodexReviewer  # noqa: E402
@@ -345,33 +345,39 @@ class ReviewPrTests(unittest.TestCase):
         self.assertEqual({"openai:gpt-5.4": "reviewer~openai:gpt-5.4",
                           "zai:glm-5.3": "reviewer~zai:glm-5.3"}, seen)
 
-    def test_a_shell_channel_death_is_attributed_to_infrastructure(self) -> None:
+    def test_a_container_fault_is_attributed_to_infrastructure(self) -> None:
         # Regression: PR #23998 (2026-08-15) -- a dead container shell
         # channel was logged as a bare "reviewer zai:glm-5.3 failed",
         # reading like a model fault and hiding the cause from an
         # error-level grep. The E line must carry both the infrastructure
         # attribution and the reason.
-        class _ShellDeadReviewer(Reviewer):
+        class _InfraDeadReviewer(Reviewer):
             name = "zai:glm-5.3"
 
-            def run(self, ctx: ReviewContext) -> dict[str, object]:
-                raise ContainerShellError(
-                    "container shell timed out waiting for response")
+            def __init__(self, exc: Exception) -> None:
+                self._exc = exc
 
-        ctx = _ctx()
-        survivor = Review("approve", "ok", model="openai:gpt-5.4")
-        merged = Review("approve", "ok", model="combiner")
-        with self.assertLogs("llm_review_api", level="ERROR") as logs:
-            review_pipeline.review_pr(
-                ctx, [_FakeReviewer("a", survivor), _ShellDeadReviewer()],
-                _FakeReviewer("combiner", merged),
-            )
-        self.assertEqual(
-            ["zai:glm-5.3: container shell timed out waiting for response"],
-            ctx.failed_reviewers)
-        self.assertIn("lost its container shell (infrastructure, not the model): "
-                      "container shell timed out waiting for response",
-                      logs.output[0])
+            def run(self, ctx: ReviewContext) -> dict[str, object]:
+                raise self._exc
+
+        for exc in (
+            ContainerShellError("container shell timed out waiting for response"),
+            ContainerInfraError("podman run failed: no space left on device"),
+        ):
+            with self.subTest(exc=exc):
+                ctx = _ctx()
+                survivor = Review("approve", "ok", model="openai:gpt-5.4")
+                merged = Review("approve", "ok", model="combiner")
+                with self.assertLogs("llm_review_api", level="ERROR") as logs:
+                    review_pipeline.review_pr(
+                        ctx,
+                        [_FakeReviewer("a", survivor), _InfraDeadReviewer(exc)],
+                        _FakeReviewer("combiner", merged),
+                    )
+                self.assertEqual([f"zai:glm-5.3: {exc}"], ctx.failed_reviewers)
+                self.assertIn(
+                    "failed on container infrastructure (not the model): "
+                    f"{exc}", logs.output[0])
 
     def test_a_provider_ended_turn_is_retried_and_recovers(self) -> None:
         """gpt-5.6-sol's "possible cybersecurity risk" flag on PR #23901:

@@ -58,7 +58,8 @@ from typing import Sequence
 
 from common import dedup_with_suffix, sanitize_repo_name
 from git_util import get_repo_head_sha, git_push_refspecs
-from podman_host import ContainerHandle, RemoteHost, run_on_remote_host
+from podman_host import (ContainerHandle, ContainerInfraError, RemoteHost,
+                         run_on_remote_host)
 
 logger = logging.getLogger(__name__)
 
@@ -265,7 +266,7 @@ def _ssh_podman(host: RemoteHost, *args: str, timeout_s: float = 120.0) -> None:
 
 def _check_remote(result, what: str, host: RemoteHost) -> None:
     if result.returncode != 0:
-        raise RuntimeError(
+        raise ContainerInfraError(
             f"remote-local {what!r} on {host.ssh_dest} failed (rc={result.returncode}): "
             f"{result.stderr.decode(errors='replace').strip()}"
         )

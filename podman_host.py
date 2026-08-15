@@ -155,10 +155,14 @@ _RESPONSE_QUEUE_MAX = 32
 _OVERSIZED_FRAME = object()
 
 
-class ContainerShellError(RuntimeError):
-    """The persistent container shell channel failed: a fault in fairy's
-    sandbox infrastructure (or the transport to it), never in the model
-    or provider being reviewed with."""
+class ContainerInfraError(RuntimeError):
+    """A fault in fairy's container infrastructure -- the podman control
+    plane or the transport to it -- never in the model or provider being
+    reviewed with."""
+
+
+class ContainerShellError(ContainerInfraError):
+    """The persistent container shell channel into a container failed."""
 
 
 class ContainerShellSession:
@@ -426,7 +430,7 @@ def ensure_isolated_network(name: str, *, host: RemoteHost) -> None:
     logger.info("creating isolated podman network name=%s", name)
     cp = _podman(host, "network", "create", name)
     if cp.returncode != 0:
-        raise RuntimeError(
+        raise ContainerInfraError(
             f"podman network create {name!r} failed: {cp.stderr.decode(errors='replace').strip()}"
         )
 
@@ -450,7 +454,7 @@ def _build_over_ssh(
     try:
         rel_dockerfile = str(dockerfile.relative_to(context_dir))
     except ValueError as exc:
-        raise RuntimeError(
+        raise ContainerInfraError(
             f"dockerfile {dockerfile} must live inside build context {context_dir}"
         ) from exc
     tar_argv = ["tar", "-C", str(context_dir), "-cf", "-", "."]
@@ -521,7 +525,7 @@ def build_image_if_needed(
         context_dir=context_dir, label_args=label_args, timeout_s=build_timeout_s,
     )
     if rc != 0:
-        raise RuntimeError(
+        raise ContainerInfraError(
             f"podman build {image_tag!r} failed (rc={rc}); see streamed output above"
         )
 
@@ -627,12 +631,12 @@ def start_ephemeral_container(
     )
     cp = _podman(host, *args, timeout_s=120.0)
     if cp.returncode != 0:
-        raise RuntimeError(
+        raise ContainerInfraError(
             f"podman run failed: {cp.stderr.decode(errors='replace').strip()}"
         )
     container_id = cp.stdout.decode(errors="replace").strip()
     if not container_id:
-        raise RuntimeError("podman run returned empty container id")
+        raise ContainerInfraError("podman run returned empty container id")
     logger.info(
         "ephemeral container started id=%s image=%s network=%s",
         container_id[:12], image, network,
@@ -743,7 +747,7 @@ def copy_into_container(
     cp = _podman(handle.host, "exec", handle.container_id, "mkdir", "-p", dest_dir,
                  timeout_s=timeout_s)
     if cp.returncode != 0:
-        raise RuntimeError(
+        raise ContainerInfraError(
             f"mkdir -p {dest_dir} in container failed: "
             f"{cp.stderr.decode(errors='replace').strip()}"
         )
@@ -765,7 +769,7 @@ def copy_into_container(
         raise
     tar.wait()
     if cpp.returncode != 0:
-        raise RuntimeError(
+        raise ContainerInfraError(
             f"podman cp into container failed: {err.decode(errors='replace').strip()}"
         )
 

@@ -59,6 +59,7 @@ from podman_host import (
     CONTAINER_CPUS,
     CONTAINER_MEMORY,
     ContainerHandle,
+    ContainerInfraError,
     ContainerShellSession,
     RemoteHost,
     copy_into_container,
@@ -295,7 +296,7 @@ class CodexShellRelay:
         ready = b"".join(self._ready_lines)
         if b"RELAY-READY" not in ready:
             self.stop()
-            raise RuntimeError(f"codex relay failed to start: {ready!r}")
+            raise ContainerInfraError(f"codex relay failed to start: {ready!r}")
         self._thread = threading.Thread(
             target=self._serve, daemon=True,
             name=tagged_thread_name("codex-shell-dispatch"),

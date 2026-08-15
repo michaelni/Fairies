@@ -57,7 +57,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from common import JsonObject
-from podman_host import ContainerShellError, ContainerShellSession, ShellHostSpec
+from podman_host import ContainerInfraError, ContainerShellSession, ShellHostSpec
 
 __all__ = [
     "CLASSIFICATIONS",
@@ -904,8 +904,8 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     for reviewer, future in zip(reviewers, futures):
         try:
             drafts.append(future.result())
-        except ContainerShellError as exc:
-            drop(reviewer, exc, "lost its container shell (infrastructure, not the model)")
+        except ContainerInfraError as exc:
+            drop(reviewer, exc, "failed on container infrastructure (not the model)")
             all_turn_failed = False
         except Exception as exc:
             drop(reviewer, exc, "failed")

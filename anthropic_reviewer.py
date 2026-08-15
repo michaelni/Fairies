@@ -253,11 +253,10 @@ class AnthropicReviewer(Reviewer):
                 request_kwargs["thinking"] = {"type": "disabled"}
             elif self.effort is not None:
                 thinking: JsonObject = {"type": "adaptive"}
-                # Probed one call per variant: anthropic claude-opus-5
-                # returns empty thinking text with display unset or
-                # "omitted" and a summary with "summarized" (2026-08-09);
-                # z.ai glm-5.3 accepts every display variant (2026-08-15),
-                # so no per-backend branch.
+                # claude-opus-5 returns a thinking summary only with
+                # display=summarized (probed 2026-08-09); z.ai glm-5.3
+                # accepts it and still returns thinking (probed
+                # 2026-08-15), so no per-backend branch.
                 if self.reasoning_summary in ("concise", "detailed"):
                     thinking["display"] = "summarized"
                 request_kwargs["thinking"] = thinking

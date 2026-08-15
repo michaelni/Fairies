@@ -289,11 +289,10 @@ class EffortThinkingTests(unittest.TestCase):
         self.assertEqual({"type": "disabled"}, self._run("off")["thinking"])
 
     def test_reasoning_summary_requests_summarized_display(self) -> None:
-        # Probed one call per variant: anthropic claude-opus-5 returns a
-        # thinking summary only with display=summarized (empty text with
-        # it unset or "omitted", 2026-08-09); z.ai glm-5.3 accepts
-        # display=summarized (2026-08-15), so the same request shape
-        # serves both backends.
+        # claude-opus-5 returns a thinking summary only with
+        # display=summarized (probed 2026-08-09); z.ai glm-5.3 accepts it
+        # and still returns thinking (probed 2026-08-15), so the same
+        # request shape serves both backends.
         for summary in ("concise", "detailed"):
             call = self._run("high", summary)
             self.assertEqual(

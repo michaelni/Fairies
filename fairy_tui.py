@@ -1259,7 +1259,7 @@ class UILoop:
             (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {})
         if is_cursor:
             return ("cursor",
-                    f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<6} "
+                    f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<7} "
                     f"{''.join(c for _, c in status)} "
                     f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  {title}")
         return [
@@ -1267,7 +1267,7 @@ class UILoop:
             ("kind_pr" if it.kind == "pr" else "kind_issue",
              f"{_KIND_DISP[it.kind]:<5} "),
             ("label", repo_col),
-            ("num", f"#{it.number:<6} "),
+            ("num", f"#{it.number:<7} "),
             *status,
             ("text", " "),
             (f"st_{it.state}", f"{state_disp:<{STATE_W}} "),

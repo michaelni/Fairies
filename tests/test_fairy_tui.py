@@ -777,14 +777,20 @@ class StatusColumnTests(DbCase):
             "title": "t", "state": "open", "auto_merge": "merge",
             "approvals": 2, "change_requests": 1, "discussion": []})
         self.model.poll()
-        self.assertIn("#5      a21", self.rows()[0])
+        self.assertIn("#5       a21", self.rows()[0])
 
     def test_sample_tickets_share_the_base_items_status(self) -> None:
         self.db.push("reviewed", "pr", "5s2", verdict(5))
         self.db.push("items", "pr", "5", {
             "state": "open", "approvals": 1, "change_requests": 0})
         self.model.poll()
-        self.assertIn("#5s2    " + " 10", self.rows()[0])
+        self.assertIn("#5s2     " + " 10", self.rows()[0])
+
+    def test_a_long_sample_token_keeps_the_columns_aligned(self) -> None:
+        self.db.push("reviewed", "pr", "21684s1", verdict(21684))
+        self.db.push("reviewed", "pr", "9", verdict(9))
+        self.model.poll()
+        self.assertEqual(len({r.index("reviewed") for r in self.rows()}), 1)
 
     def test_merged_pr_distinguishes_auto_from_manual(self) -> None:
         self.db.push("cancelled", "pr", "5",
@@ -795,7 +801,7 @@ class StatusColumnTests(DbCase):
         with self.model.lock:
             self.model.filter_mode = "all"
         self.model.poll()
-        clusters = [r[18:22] for r in self.rows()]
+        clusters = [r[19:23] for r in self.rows()]
         self.assertEqual(clusters, ["M   ", "m   ", "R   "])
 
     def test_issue_letters_come_from_labels_and_state(self) -> None:
@@ -808,7 +814,7 @@ class StatusColumnTests(DbCase):
             "state": "closed", "labels": ["enhancement", "repro/no(env)",
                                           "resolution/wontfix"]})
         self.model.poll()
-        clusters = [r[18:22] for r in self.rows()]
+        clusters = [r[19:23] for r in self.rows()]
         self.assertEqual(clusters, ["BYfO", "EnwC"])
 
     def test_forced_reviews_carry_a_plus_through_queued_and_llm(self) -> None:
@@ -825,18 +831,18 @@ class StatusColumnTests(DbCase):
     def test_without_a_snapshot_the_cluster_is_blank(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
-        self.assertIn("#5           reviewed", self.rows()[0])
+        self.assertIn("#5            reviewed", self.rows()[0])
 
     def test_a_snapshot_rewrite_updates_the_status(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.db.push("items", "pr", "5", {"state": "open", "approvals": 0,
                                           "change_requests": 0})
         self.model.poll()
-        self.assertIn("#5       00", self.rows()[0])
+        self.assertIn("#5        00", self.rows()[0])
         self.db.push("items", "pr", "5", {"state": "open", "approvals": 3,
                                           "change_requests": 0})
         self.model.poll()
-        self.assertIn("#5       30", self.rows()[0])
+        self.assertIn("#5        30", self.rows()[0])
 
 
 class HelpTests(DbCase):

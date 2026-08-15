@@ -169,15 +169,21 @@ class ValidateReviewTests(unittest.TestCase):
         return reviewer.review(ctx=None)
 
     def test_self_reported_diff_evidence_rejects_affected_models(self) -> None:
-        for name in ("openai:gpt-5.4", "zai:glm-5.3@high"):
+        # The observed versions (gpt-5.4, glm-5.2) and everything older.
+        for name in ("openai:gpt-5.4", "zai:glm-5.2@high", "zai:glm-4.6"):
             with self.assertRaises(llm_review_api.SelfReportedViolation) as ctx:
                 self._review_flagged(name)
             self.assertIn("major_issues", str(ctx.exception))
 
     def test_self_reported_diff_evidence_ignored_for_unaffected_model(self) -> None:
-        # gpt-5.5 has set the flag spuriously; its verdict must survive.
-        review = self._review_flagged("openai:gpt-5.5")
-        self.assertEqual("major_issues", review.classification)
+        # Anything newer than the observed versions has set the flag
+        # spuriously; its verdict must survive. glm-5.20 and gpt-5.41 pin
+        # that a higher version never matches as a string prefix of the
+        # observed one.
+        for name in ("openai:gpt-5.5", "zai:glm-5.3", "zai:glm-5.4",
+                     "openai:gpt-5.41", "zai:glm-5.20"):
+            review = self._review_flagged(name)
+            self.assertEqual("major_issues", review.classification)
 
 
 if __name__ == "__main__":

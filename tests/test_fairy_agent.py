@@ -48,8 +48,13 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 AGENT = Path(__file__).resolve().parent.parent / "containers" / "fairy_agent.py"
+if str(AGENT.parent) not in sys.path:
+    sys.path.insert(0, str(AGENT.parent))
+
+import fairy_agent  # noqa: E402
 
 
 class AgentProc:
@@ -146,6 +151,44 @@ class FairyAgentTests(unittest.TestCase):
         self.assertIsNone(bad["id"])
         good = self.agent.request(id=9, command="echo still-here")
         self.assertEqual(b"still-here\n", _stdout(good))
+
+
+class PipeHoldingSurvivorTests(unittest.TestCase):
+    """``run_command`` called directly, with the pump graces shortened so
+    each scenario costs well under a second instead of the production 5s.
+
+    ``create=True`` keeps the patch from erroring out where the constants
+    do not exist, so a regression fails on the timing assertions."""
+
+    def setUp(self) -> None:
+        self.enterContext(mock.patch.object(
+            fairy_agent, "_PUMP_JOIN_GRACE_S", 0.5, create=True))
+        self.enterContext(mock.patch.object(
+            fairy_agent, "_PUMP_DRAIN_GRACE_S", 0.2, create=True))
+
+    def test_pgroup_escapee_does_not_delay_the_reply(self) -> None:
+        # GNU timeout(1) moves itself out of bash's process group (unless
+        # it is the last command, which bash execs), so the watchdog's
+        # group kill misses it and it keeps the output pipes open long
+        # after bash is dead (observed 2026-08-15, PR #23998: the delayed
+        # reply got the whole channel declared dead). The agent must
+        # answer within its own grace, not when the escapee exits.
+        t0 = time.monotonic()
+        r = fairy_agent.run_command("timeout 3 sleep 3; echo tail",
+                                    None, 0.3, 65536)
+        self.assertEqual(124, r["exit_code"])
+        self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertTrue(r["stdout_truncated"])
+
+    def test_background_job_exits_fast_complete_and_untruncated(self) -> None:
+        t0 = time.monotonic()
+        r = fairy_agent.run_command("echo hello; setsid sleep 3 & exit 0",
+                                    None, 5.0, 65536)
+        self.assertEqual(0, r["exit_code"])
+        self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertEqual(b"hello\n", base64.b64decode(r["stdout_b64"]))
+        self.assertFalse(r["stdout_truncated"])
+        self.assertFalse(r["stderr_truncated"])
 
 
 if __name__ == "__main__":

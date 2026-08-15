@@ -68,6 +68,8 @@ DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024
 TIMEOUT_EXIT_CODE = 124
 SPAWN_FAILED_EXIT_CODE = 127
 _KILL_GRACE_S = 5.0
+_PUMP_JOIN_GRACE_S = 5.0
+_PUMP_DRAIN_GRACE_S = 0.5
 
 
 def _pump_capped(stream, out_buf: bytearray, cap: int, truncated: list[bool]) -> None:
@@ -131,16 +133,34 @@ def run_command(command: str, cwd: str | None, timeout_s: float,
     for t in threads:
         t.start()
 
+    timed_out = False
     try:
         exit_code = proc.wait(timeout=timeout_s)
     except subprocess.TimeoutExpired:
         _kill_process_group(proc)
         exit_code = TIMEOUT_EXIT_CODE
+        timed_out = True
+    # A process that moved to its own group (GNU timeout(1), setsid, a
+    # backgrounded daemon) survives the group kill and keeps the output
+    # pipes open, so waiting for pipe EOF could delay the reply past the
+    # runner's response deadline and get the whole channel declared dead.
+    # Give the pumps a bounded grace and answer with what was captured:
+    # after a clean exit the holder is a deliberate background job, so
+    # drain briefly and report the output complete; after a kill it may
+    # still have been producing, hence truncated.
+    deadline = time.monotonic() + (
+        _PUMP_JOIN_GRACE_S if timed_out else _PUMP_DRAIN_GRACE_S)
     for t in threads:
-        t.join()
+        t.join(max(0.0, deadline - time.monotonic()))
 
+    # An abandoned pump keeps its pipe fd and its thread until the
+    # surviving writer exits -- a daemon left running leaks both for the
+    # agent's lifetime. Needs fixing: a raw-fd reader whose close is
+    # safe under a concurrent read.
     return _result(exit_code, bytes(out_buf), bytes(err_buf),
-                   out_trunc[0], err_trunc[0], time.monotonic() - t0)
+                   out_trunc[0] or (timed_out and threads[0].is_alive()),
+                   err_trunc[0] or (timed_out and threads[1].is_alive()),
+                   time.monotonic() - t0)
 
 
 def _result(exit_code: int, stdout: bytes, stderr: bytes,

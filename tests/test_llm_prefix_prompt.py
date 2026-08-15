@@ -53,7 +53,7 @@ from llm_review_api import Review  # noqa: E402
 
 class ModelLabelTests(unittest.TestCase):
     def test_vendor_prefix_stripped_and_uppercased(self) -> None:
-        self.assertEqual("GLM-5.2", llm_prompt.model_label("zai:glm-5.2"))
+        self.assertEqual("GLM-5.3", llm_prompt.model_label("zai:glm-5.3"))
         self.assertEqual("GPT-5.4", llm_prompt.model_label("gpt-5.4"))
         self.assertEqual("UNKNOWN", llm_prompt.model_label(""))
 
@@ -63,8 +63,8 @@ class ModelLabelTests(unittest.TestCase):
         not surface in prompts or posted messages."""
         self.assertEqual("GPT-5.6-SOL",
                          llm_prompt.model_label("codex:gpt-5.6-sol+second-home"))
-        self.assertEqual("GLM-5.2",
-                         llm_prompt.model_label("zai:glm-5.2+ZAI_API_KEY_2"))
+        self.assertEqual("GLM-5.3",
+                         llm_prompt.model_label("zai:glm-5.3+ZAI_API_KEY_2"))
 
 
 class PromptForTests(unittest.TestCase):
@@ -98,7 +98,7 @@ class LlmPrefixPromptTests(unittest.TestCase):
         for role, model, label in (
             ("combiner", "gpt-5.4", "LLM-GPT-5.4"),
             ("triager", "gpt-5.4-mini", "LLM-GPT-5.4-MINI"),
-            ("issue_investigator", "zai:glm-5.2", "LLM-GLM-5.2"),
+            ("issue_investigator", "zai:glm-5.3", "LLM-GLM-5.3"),
             ("issue_combiner", "gpt-5.4", "LLM-GPT-5.4"),
             ("issue_triager", "gpt-5.4-mini", "LLM-GPT-5.4-MINI"),
         ):
@@ -107,17 +107,17 @@ class LlmPrefixPromptTests(unittest.TestCase):
 
     def test_draft_reviewer_identifies_with_the_bare_label(self) -> None:
         for role in llm_prompt.REVIEW_PROMPTS:
-            prompt = self._prompt(role, "zai:glm-5.2")
-            self.assertIn('Include "GLM-5.2"', prompt, role)
+            prompt = self._prompt(role, "zai:glm-5.3")
+            self.assertIn('Include "GLM-5.3"', prompt, role)
             self.assertNotIn('Include "LLM-', prompt, role)
 
     def test_combiner_user_text_uses_the_same_labels(self) -> None:
         text = llm_prompt.make_combiner_user_text([
             Review("minor_issues_approve", "a", model="openai:gpt-5.4"),
-            Review("major_issues", "b", model="zai:glm-5.2"),
+            Review("major_issues", "b", model="zai:glm-5.3"),
         ])
         self.assertIn("Draft review from GPT-5.4", text)
-        self.assertIn("Draft review from GLM-5.2", text)
+        self.assertIn("Draft review from GLM-5.3", text)
 
     def test_combiner_user_text_separates_one_model_two_prompts(self) -> None:
         """Without the prompt in the header the combiner cannot attribute
@@ -171,9 +171,9 @@ class LlmPrefixPromptTests(unittest.TestCase):
 
     def test_an_issue_draft_keeps_the_bare_review_header(self) -> None:
         text = llm_prompt.make_combiner_user_text([
-            Review("reply", "a", model="zai:glm-5.2", prompt="issue_investigator"),
+            Review("reply", "a", model="zai:glm-5.3", prompt="issue_investigator"),
         ])
-        self.assertIn("Draft review from GLM-5.2", text)
+        self.assertIn("Draft review from GLM-5.3", text)
 
 
 if __name__ == "__main__":

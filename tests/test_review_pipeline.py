@@ -184,17 +184,17 @@ class MakeReviewerTests(unittest.TestCase):
         self.assertIsNone(r.effort)
 
     def test_effort_suffix_sets_anthropic_thinking_effort(self) -> None:
-        r = review_pipeline.make_reviewer("zai:glm-5.2@low", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+        r = review_pipeline.make_reviewer("zai:glm-5.3@low", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
-        self.assertEqual("glm-5.2", r.model)
+        self.assertEqual("glm-5.3", r.model)
         self.assertEqual("low", r.effort)
         self.assertIsNone(
-            review_pipeline.make_reviewer("zai:glm-5.2", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False).effort
+            review_pipeline.make_reviewer("zai:glm-5.3", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False).effort
         )
 
     def test_invalid_anthropic_effort_rejected(self) -> None:
         with self.assertRaises(SystemExit):
-            review_pipeline.make_reviewer("zai:glm-5.2@turbo", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+            review_pipeline.make_reviewer("zai:glm-5.3@turbo", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
 
     def test_codex_home_option_selects_the_login(self) -> None:
         r = review_pipeline.make_reviewer(
@@ -313,14 +313,14 @@ class ReviewPrTests(unittest.TestCase):
         with self.assertLogs("llm_review_api", level="ERROR"):
             out = review_pipeline.review_pr(
                 ctx,
-                [_FakeReviewer("a", survivor), _FailingReviewer("zai:glm-5.2")],
+                [_FakeReviewer("a", survivor), _FailingReviewer("zai:glm-5.3")],
                 combiner,
             )
         self.assertIs(out, merged)
         self.assertEqual([survivor], ctx.drafts)
         self.assertEqual([survivor], combiner.seen_drafts)
         self.assertEqual(
-            ["zai:glm-5.2: zai:glm-5.2: simulated provider failure"],
+            ["zai:glm-5.3: zai:glm-5.3: simulated provider failure"],
             ctx.failed_reviewers)
 
     def test_a_provider_ended_turn_is_retried_and_recovers(self) -> None:

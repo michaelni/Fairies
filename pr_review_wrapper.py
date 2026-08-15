@@ -217,7 +217,7 @@ def parse_args() -> argparse.Namespace:
         metavar="[PROMPT=]PROVIDER:MODEL[@EFFORT]",
         help=(
             "Add another reviewer to the ensemble, e.g. 'anthropic:claude-opus-4' "
-            "or 'design_review=zai:glm-5.2'. Repeat for more; the same model may "
+            "or 'design_review=zai:glm-5.3'. Repeat for more; the same model may "
             "appear again under another prompt. All reviewers (--model plus each "
             "--extra-model) run on the same PR; with more than one "
             "you must pass --combine-model to merge their drafts. '@EFFORT' sets "

@@ -337,10 +337,10 @@ def check_schema(value: object, schema: dict[str, object], path: str = "$") -> N
 
 def model_needs_diff_tripwire(model: str) -> bool:
     """gpt-5.4 and glm-5.2 produced PR #23553's head-vs-target-tip verdicts
-    (gpt-5.5 did not): only they get flag enforcement and, in ``llm_prompt``,
-    the extra merge-semantics text. ``model`` is a name/spec like
-    ``openai:gpt-5.4[@high]``."""
-    return model.rpartition(":")[2].partition("@")[0].lower().startswith(("gpt-5.4", "glm-5.2"))
+    (gpt-5.5 did not): gpt-5.4 and glm-5.2's successor glm-5.3 get flag
+    enforcement and, in ``llm_prompt``, the extra merge-semantics text.
+    ``model`` is a name/spec like ``openai:gpt-5.4[@high]``."""
+    return model.rpartition(":")[2].partition("@")[0].lower().startswith(("gpt-5.4", "glm-5.3"))
 
 
 def validate_review(obj: object) -> dict[str, object]:

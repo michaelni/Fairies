@@ -255,7 +255,7 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         ])
         role = make_triager_role(allowed_models=[], allowed_labels=[])
         reviewer = anthropic_reviewer.AnthropicReviewer(
-            "glm-5.2", name="zai:glm-5.2", role=role,
+            "glm-5.3", name="zai:glm-5.3", role=role,
         )
         reviewer._client = lambda: client  # type: ignore[method-assign]
 
@@ -275,7 +275,7 @@ class EffortThinkingTests(unittest.TestCase):
     def _run(self, effort: str | None, reasoning_summary: str | None = None) -> dict:
         client = _ScriptedClient([self._submit()])
         reviewer = anthropic_reviewer.AnthropicReviewer(
-            "glm-5.2", name="zai:glm-5.2", effort=effort,
+            "glm-5.3", name="zai:glm-5.3", effort=effort,
             reasoning_summary=reasoning_summary,
         )
         reviewer._client = lambda: client  # type: ignore[method-assign]
@@ -289,10 +289,11 @@ class EffortThinkingTests(unittest.TestCase):
         self.assertEqual({"type": "disabled"}, self._run("off")["thinking"])
 
     def test_reasoning_summary_requests_summarized_display(self) -> None:
-        # Probed 2026-08-09 (one call per variant): anthropic claude-opus-5
-        # returns a thinking summary only with display=summarized (empty
-        # text with it unset or "omitted"); z.ai glm-5.2 accepts display
-        # and ignores it, so the same request shape serves both backends.
+        # Probed one call per variant: anthropic claude-opus-5 returns a
+        # thinking summary only with display=summarized (empty text with
+        # it unset or "omitted", 2026-08-09); z.ai glm-5.3 accepts
+        # display=summarized (2026-08-15), so the same request shape
+        # serves both backends.
         for summary in ("concise", "detailed"):
             call = self._run("high", summary)
             self.assertEqual(
@@ -320,7 +321,7 @@ class EffortThinkingTests(unittest.TestCase):
 
     def test_unknown_effort_rejected(self) -> None:
         with self.assertRaises(ValueError):
-            anthropic_reviewer.AnthropicReviewer("glm-5.2", name="zai:glm-5.2", effort="turbo")
+            anthropic_reviewer.AnthropicReviewer("glm-5.3", name="zai:glm-5.3", effort="turbo")
 
     def test_client_gets_explicit_timeout(self) -> None:
         # Regression (production 2026-07-03, PR 22592): with the SDK-default
@@ -341,7 +342,7 @@ class EffortThinkingTests(unittest.TestCase):
                 mock.patch.object(anthropic_reviewer, "load_api_key",
                                   return_value="k"):
             anthropic_reviewer.AnthropicReviewer(
-                "glm-5.2", name="zai:glm-5.2", effort="medium",
+                "glm-5.3", name="zai:glm-5.3", effort="medium",
             )._client()
         self.assertEqual(
             anthropic_reviewer.ANTHROPIC_TIMEOUT_S, recorded["timeout"],
@@ -360,7 +361,7 @@ class EffortThinkingTests(unittest.TestCase):
             self._submit(),
         ])
         reviewer = anthropic_reviewer.AnthropicReviewer(
-            "glm-5.2", name="zai:glm-5.2", effort="medium",
+            "glm-5.3", name="zai:glm-5.3", effort="medium",
         )
         reviewer._client = lambda: client  # type: ignore[method-assign]
         reviewer.review(_ctx(shell))

@@ -123,16 +123,16 @@ class CheckSchemaTests(unittest.TestCase):
     def test_max_items_is_enforced(self) -> None:
         # requested_models advertises maxItems=2 to the API; the local
         # checker must enforce the same bound to stay in lockstep.
-        schema = llm_review_api.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])["schema"]
+        schema = llm_review_api.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.3"])["schema"]
         base = {"route": "engage", "message": "", "reason": "ok",
                 "prompt_injection": False, "requested_effort": None,
                 "requested_verbosity": None}
         llm_review_api.check_schema(
-            {**base, "requested_models": ["gpt-5.4", "zai:glm-5.2"]}, schema,
+            {**base, "requested_models": ["gpt-5.4", "zai:glm-5.3"]}, schema,
         )
         with self.assertRaises(llm_review_api.SchemaError):
             llm_review_api.check_schema(
-                {**base, "requested_models": ["gpt-5.4", "gpt-5.5", "zai:glm-5.2"]},
+                {**base, "requested_models": ["gpt-5.4", "gpt-5.5", "zai:glm-5.3"]},
                 schema,
             )
 
@@ -169,7 +169,7 @@ class ValidateReviewTests(unittest.TestCase):
         return reviewer.review(ctx=None)
 
     def test_self_reported_diff_evidence_rejects_affected_models(self) -> None:
-        for name in ("openai:gpt-5.4", "zai:glm-5.2@high"):
+        for name in ("openai:gpt-5.4", "zai:glm-5.3@high"):
             with self.assertRaises(llm_review_api.SelfReportedViolation) as ctx:
                 self._review_flagged(name)
             self.assertIn("major_issues", str(ctx.exception))

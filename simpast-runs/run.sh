@@ -57,7 +57,7 @@
 #               reasoning effort comes ONLY from the @suffix (bare = API default)
 #   PODMAN_SSH  ssh dest for the podman host   (e.g. fairy@podman-host)
 #   TREE        checkout to run fairy from     (default this repo)
-#   WRAPPER_EXTRA  extra wrapper args, e.g. "--extra-model zai:glm-5.2 --combine-model openai:gpt-5.4"
+#   WRAPPER_EXTRA  extra wrapper args, e.g. "--extra-model zai:glm-5.3 --combine-model openai:gpt-5.4"
 #
 # The LLM shell always runs in an ephemeral Podman container on
 # PODMAN_SSH, matching production; OpenAI-hosted containers are

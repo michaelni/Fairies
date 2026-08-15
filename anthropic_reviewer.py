@@ -122,7 +122,7 @@ class AnthropicReviewer(Reviewer):
     ``base_url`` + ``api_key_env`` select the backend: defaults reach
     Anthropic; pass z.ai's Anthropic endpoint + ``ZAI_API_KEY`` for GLM.
     ``name`` is the stable label recorded on the ``Review`` (e.g.
-    ``"anthropic:claude-opus-4"`` or ``"zai:glm-5.2"``).
+    ``"anthropic:claude-opus-4"`` or ``"zai:glm-5.3"``).
 
     ``effort`` is an ``ANTHROPIC_EFFORTS`` name controlling extended
     thinking; ``None`` (default) sends no ``thinking`` parameter so the
@@ -253,11 +253,11 @@ class AnthropicReviewer(Reviewer):
                 request_kwargs["thinking"] = {"type": "disabled"}
             elif self.effort is not None:
                 thinking: JsonObject = {"type": "adaptive"}
-                # Probed 2026-08-09 (one call per variant): anthropic
-                # claude-opus-5 returns empty thinking text with display
-                # unset or "omitted" and a summary with "summarized";
-                # z.ai glm-5.2 accepts display and ignores it (full
-                # thinking text either way), so no per-backend branch.
+                # Probed one call per variant: anthropic claude-opus-5
+                # returns empty thinking text with display unset or
+                # "omitted" and a summary with "summarized" (2026-08-09);
+                # z.ai glm-5.3 accepts every display variant (2026-08-15),
+                # so no per-backend branch.
                 if self.reasoning_summary in ("concise", "detailed"):
                     thinking["display"] = "summarized"
                 request_kwargs["thinking"] = thinking

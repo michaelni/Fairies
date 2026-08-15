@@ -75,10 +75,10 @@ class ModelEnsembleOptionTests(unittest.TestCase):
 
     def test_extra_model_is_repeatable_and_ordered(self) -> None:
         args = parse("--extra-model", "anthropic:claude-opus-4",
-                     "--extra-model", "zai:glm-5.2",
+                     "--extra-model", "zai:glm-5.3",
                      "--combine-model", "openai:gpt-5.4")
         self.assertEqual(args.extra_model,
-                         ["anthropic:claude-opus-4", "zai:glm-5.2"])
+                         ["anthropic:claude-opus-4", "zai:glm-5.3"])
         self.assertEqual(args.combine_model, "openai:gpt-5.4")
 
     def test_no_ensemble_by_default(self) -> None:
@@ -106,7 +106,7 @@ class MainPassPromptTests(unittest.TestCase):
     each reviewer its role; everything else must still see a bare spec."""
 
     def test_no_prefix_leaves_the_prompt_to_the_task(self) -> None:
-        args = parse("--extra-model", "zai:glm-5.2",
+        args = parse("--extra-model", "zai:glm-5.3",
                      "--combine-model", "openai:gpt-5.4")
         self.assertEqual([None, None], args.main_prompts)
 
@@ -114,7 +114,7 @@ class MainPassPromptTests(unittest.TestCase):
         with mock.patch.object(wrapper.sys, "argv", [
             "pr_review_wrapper.py",
             "--model", "code_review=openai:gpt-5.4",
-            "--extra-model", "design_review=zai:glm-5.2@high",
+            "--extra-model", "design_review=zai:glm-5.3@high",
             "--extra-model", "code_review=openai:gpt-5.4",
             "--combine-model", "openai:gpt-5.4",
         ]):
@@ -122,7 +122,7 @@ class MainPassPromptTests(unittest.TestCase):
         self.assertEqual(["code_review", "design_review", "code_review"],
                          args.main_prompts)
         self.assertEqual("openai:gpt-5.4", args.model)
-        self.assertEqual(["zai:glm-5.2@high", "openai:gpt-5.4"], args.extra_model)
+        self.assertEqual(["zai:glm-5.3@high", "openai:gpt-5.4"], args.extra_model)
 
     def test_unknown_prompt_is_a_cli_error(self) -> None:
         """Caught here it costs nothing; caught at review time it has

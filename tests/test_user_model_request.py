@@ -91,12 +91,12 @@ class TriageSchemaShapeTests(unittest.TestCase):
                 self.assertIn("requested_verbosity", schema["schema"]["required"])
 
     def test_enabled_schema_constrains_models_to_allowlist(self) -> None:
-        schema = llm_review_api.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.2"])
+        schema = llm_review_api.build_triage_schema(["gpt-5.4", "gpt-5.5", "zai:glm-5.3"])
         models_field = schema["schema"]["properties"]["requested_models"]
         # Strict-mode schema is the boundary: the LLM cannot return a
         # model name outside the allowlist, nor more than two entries.
         self.assertEqual(
-            models_field["items"]["enum"], ["gpt-5.4", "gpt-5.5", "zai:glm-5.2"],
+            models_field["items"]["enum"], ["gpt-5.4", "gpt-5.5", "zai:glm-5.3"],
         )
         self.assertEqual(2, models_field["maxItems"])
         # Required list per strict mode.
@@ -125,9 +125,9 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
 
     def test_two_models_pass_through_in_request_order(self) -> None:
         result = llm_review_api.validate_triage_result(
-            _engage(requested_models=["zai:glm-5.2", "gpt-5.5"]),
+            _engage(requested_models=["zai:glm-5.3", "gpt-5.5"]),
         )
-        self.assertEqual(result["requested_models"], ["zai:glm-5.2", "gpt-5.5"])
+        self.assertEqual(result["requested_models"], ["zai:glm-5.3", "gpt-5.5"])
 
     def test_duplicate_model_request_is_deduplicated(self) -> None:
         # "gpt-5.5 and gpt-5.5" means one run of gpt-5.5, not two.
@@ -193,9 +193,9 @@ class TriagePromptShapeTests(unittest.TestCase):
         self.assertIn("requested_verbosity", text)
 
     def test_allowlist_lists_supported_models_and_efforts(self) -> None:
-        text = llm_prompt.t_prompt_user_request(["gpt-5.4", "zai:glm-5.2"])
+        text = llm_prompt.t_prompt_user_request(["gpt-5.4", "zai:glm-5.3"])
         self.assertIn("gpt-5.4", text)
-        self.assertIn("zai:glm-5.2", text)
+        self.assertIn("zai:glm-5.3", text)
         self.assertIn("up to two", text)
         for effort in llm_review_api.TRIAGE_REQUESTABLE_EFFORTS:
             self.assertIn(effort, text)

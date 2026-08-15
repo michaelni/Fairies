@@ -56,7 +56,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from common import JsonObject
-from podman_host import ContainerShellSession, ShellHostSpec
+from podman_host import ContainerShellError, ContainerShellSession, ShellHostSpec
 
 __all__ = [
     "CLASSIFICATIONS",
@@ -888,19 +888,22 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     drafts: list[Review] = []
     all_turn_failed = True
 
-    def drop(reviewer: Reviewer, exc: Exception) -> None:
-        reason = (str(exc).splitlines() or [exc.__class__.__name__])[0]
-        ctx.failed_reviewers.append(f"{reviewer.name}: {reason[:160]}")
+    def drop(reviewer: Reviewer, exc: Exception, what: str) -> None:
+        reason = (str(exc).splitlines() or [exc.__class__.__name__])[0][:160]
+        ctx.failed_reviewers.append(f"{reviewer.name}: {reason}")
         logger.exception(
-            "reviewer %s failed; continuing with the surviving drafts",
-            reviewer.name,
+            "reviewer %s %s: %s; continuing with the surviving drafts",
+            reviewer.name, what, reason,
         )
 
     for reviewer, future in zip(reviewers, futures):
         try:
             drafts.append(future.result())
+        except ContainerShellError as exc:
+            drop(reviewer, exc, "lost its container shell (infrastructure, not the model)")
+            all_turn_failed = False
         except Exception as exc:
-            drop(reviewer, exc)
+            drop(reviewer, exc, "failed")
             all_turn_failed &= isinstance(exc, ProviderTurnFailed)
     if not drafts:
         raise (ProviderTurnFailed if all_turn_failed else RuntimeError)(

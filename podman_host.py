@@ -153,6 +153,12 @@ _RESPONSE_QUEUE_MAX = 32
 _OVERSIZED_FRAME = object()
 
 
+class ContainerShellError(RuntimeError):
+    """The persistent container shell channel failed: a fault in fairy's
+    sandbox infrastructure (or the transport to it), never in the model
+    or provider being reviewed with."""
+
+
 class ContainerShellSession:
     """A persistent shell channel into a review container.
 
@@ -225,14 +231,14 @@ class ContainerShellSession:
     def exec(self, command: str, *, cwd: str | None = None,
              timeout_s: float = 120.0) -> ExecResult:
         if self._proc is None:
-            raise RuntimeError("container shell session not started")
+            raise ContainerShellError("container shell session not started")
         with self._lock:
             return self._exec_locked(command, cwd, timeout_s)
 
     def _exec_locked(self, command: str, cwd: str | None,
                      timeout_s: float) -> ExecResult:
         if self._proc.poll() is not None:
-            raise RuntimeError(
+            raise ContainerShellError(
                 f"container shell channel closed (exit={self._proc.returncode})"
             )
         req_id = self._next_id
@@ -249,7 +255,7 @@ class ContainerShellSession:
             self._proc.stdin.flush()
         except (BrokenPipeError, OSError) as exc:
             self._terminate()
-            raise RuntimeError("container shell channel closed (write failed)") from exc
+            raise ContainerShellError("container shell channel closed (write failed)") from exc
         try:
             line = self._responses.get(timeout=timeout_s + HOST_RESPONSE_MARGIN_S)
         except queue.Empty:
@@ -258,13 +264,13 @@ class ContainerShellSession:
                 req_id, timeout_s,
             )
             self._terminate()
-            raise RuntimeError("container shell timed out waiting for response")
+            raise ContainerShellError("container shell timed out waiting for response")
         if line is None:
             self._terminate()
-            raise RuntimeError("container shell channel closed (eof)")
+            raise ContainerShellError("container shell channel closed (eof)")
         if line is _OVERSIZED_FRAME:
             self._terminate()
-            raise RuntimeError(
+            raise ContainerShellError(
                 f"container shell protocol violation: frame exceeds "
                 f"{self._max_frame_bytes} bytes"
             )
@@ -273,17 +279,17 @@ class ContainerShellSession:
             resp = json.loads(line)
         except ValueError as exc:
             self._terminate()
-            raise RuntimeError(
+            raise ContainerShellError(
                 "container shell protocol violation: undecodable frame"
             ) from exc
         if not isinstance(resp, dict):
             self._terminate()
-            raise RuntimeError(
+            raise ContainerShellError(
                 "container shell protocol violation: frame is not an object"
             )
         if resp.get("id") != req_id:
             self._terminate()
-            raise RuntimeError(
+            raise ContainerShellError(
                 f"container shell protocol desync: want id={req_id} got {resp.get('id')!r}"
             )
         dt = time.monotonic() - t0
@@ -296,7 +302,7 @@ class ContainerShellSession:
             stderr_truncated = bool(resp["stderr_truncated"])
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             self._terminate()
-            raise RuntimeError(
+            raise ContainerShellError(
                 f"container shell protocol violation: bad response field: {exc!r}"
             ) from exc
         if not math.isfinite(duration_s):

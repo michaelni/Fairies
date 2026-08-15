@@ -1736,11 +1736,9 @@ def build_llm_discussion(
         )
 
     items.sort(
-        key=lambda item: iso_to_dt(
-            item.get("submitted_at")
-            or item.get("updated_at")
-            or item.get("created_at")
-        ) or datetime.min.replace(tzinfo=timezone.utc)
+        key=lambda item: first_dt(item, "submitted_at", "created_at",
+                                  "updated_at")
+        or datetime.min.replace(tzinfo=timezone.utc)
     )
     return items
 

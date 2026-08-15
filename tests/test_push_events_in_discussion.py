@@ -151,6 +151,22 @@ class PushEventsFromTimelineTests(unittest.TestCase):
         self.assertEqual(pushes[0]["head_sha"], "deadbeef" * 5)
 
 
+class BuildLlmDiscussionSortTests(unittest.TestCase):
+    def test_edited_comment_sorts_by_creation_not_edit(self) -> None:
+        """An edit must not move a comment past a later arrival: the
+        list claims chronological order to the LLM prompt, and the
+        TUI's sampled separator is placed by counting arrivals in
+        list order. Creation/edit stamps from FFmpeg issue #22240."""
+        edited = {"user": {"login": "a"}, "body": "edited",
+                  "created_at": "2026-02-22T09:29:02Z",
+                  "updated_at": "2026-02-22T09:30:32Z"}
+        later = {"user": {"login": "b"}, "body": "later",
+                 "created_at": "2026-02-22T09:30:00Z",
+                 "updated_at": "2026-02-22T09:30:00Z"}
+        items = fairy.build_llm_discussion([], [later, edited], [])
+        self.assertEqual([i["body"] for i in items], ["edited", "later"])
+
+
 class BuildLlmDiscussionWithTimelineTests(unittest.TestCase):
     """Pin that the push events show up in the discussion list AND in
     chronological order relative to comments / reviews -- the bug was

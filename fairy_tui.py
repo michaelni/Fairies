@@ -797,10 +797,12 @@ def _age(iso: str | None, now: datetime | None = None) -> str:
 
 
 def _entry_time(entry: dict) -> datetime | None:
-    """A discussion entry's effective time, in the field precedence the
-    message pane displays."""
-    return iso_to_dt(str(entry.get("submitted_at") or entry.get("updated_at")
-                         or entry.get("created_at") or ""))
+    """A discussion entry's arrival time: forges bump the item's
+    updated_at watermark on arrivals, never on edits (see gcli_cache),
+    so an entry compares by creation, not by when it was last edited.
+    Must match build_llm_discussion's sort key -- the sampled-separator
+    index is a count over this key, valid only in that list order."""
+    return fairy.first_dt(entry, "submitted_at", "created_at", "updated_at")
 
 
 def _when(iso: str | None) -> str:
@@ -1355,9 +1357,6 @@ class UILoop:
         if snapshot is not None:
             sampled = iso_to_dt(str(data.get("expected_updated_at") or ""))
             if sampled is not None:
-                # an edited entry compares by its updated_at, and edits
-                # do not advance the item's updated_at (see gcli_cache),
-                # so placement is approximate for edited messages
                 separator_at = sum(
                     1 for entry in disc if not isinstance(entry, dict)
                     or (_entry_time(entry) or sampled) <= sampled)

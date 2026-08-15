@@ -1110,6 +1110,25 @@ class DetailTests(DbCase):
         self.assertLess(text.index("last word"),
                         text.index("sampled for the review"))
 
+    def test_edited_comment_stays_above_the_separator(self) -> None:
+        """A comment edit bumps the comment's updated_at but not the
+        item's (see gcli_cache), so the sampling watermark can predate
+        the edit; placement goes by arrival, keeping the comment above
+        the separator. Times from FFmpeg issue #22240."""
+        edited = {"kind": "comment", "author": "carol",
+                  "created_at": "2026-02-22T09:29:02Z",
+                  "updated_at": "2026-02-22T09:30:32Z", "body": "edited later"}
+        self.db.push("reviewed", "pr", "5", verdict(
+            5, expected_updated_at="2026-02-22T09:29:02Z",
+            discussion=[edited]))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "discussion": [edited]})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertLess(text.index("edited later"),
+                        text.index("sampled for the review"))
+
     def test_no_review_row_gets_the_plain_sampled_wording(self) -> None:
         self.db.push("merge-ready", "pr", "5", {
             "title": "t", "reason": "approved",

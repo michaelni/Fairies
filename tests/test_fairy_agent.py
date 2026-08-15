@@ -138,6 +138,11 @@ class FairyAgentTests(unittest.TestCase):
         self.assertFalse(marker.exists(),
                          "backgrounded child survived the group kill")
 
+    def test_command_stdin_is_devnull_not_the_protocol_pipe(self) -> None:
+        r = self.agent.request(id=12, command="cat", timeout_s=5)
+        self.assertEqual(0, r["exit_code"])
+        self.assertEqual(b"", _stdout(r))
+
     def test_output_capping_sets_truncated(self) -> None:
         r = self.agent.request(
             id=8, command="yes ABCDEFGH | head -c 100000", max_output_bytes=1024,

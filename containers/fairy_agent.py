@@ -112,6 +112,10 @@ def run_command(command: str, cwd: str | None, timeout_s: float,
         proc = subprocess.Popen(
             ["bash", "-lc", command],
             cwd=cwd or None,
+            # DEVNULL, never inherited: the agent's own stdin is the
+            # protocol pipe, and an stdin-reading command (ffmpeg without
+            # -nostdin, cat, ...) would eat protocol frames from it.
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,

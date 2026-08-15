@@ -54,6 +54,7 @@ import threading
 from pathlib import Path
 from typing import Callable, Sequence
 
+from common import tagged_thread_name
 from podman_host import (
     CONTAINER_CPUS,
     CONTAINER_MEMORY,
@@ -287,7 +288,8 @@ class CodexShellRelay:
         # relay.py prints RELAY-READY on stderr once its socket is bound;
         # codex must not start before that, or the bridge races an unbound socket.
         threading.Thread(
-            target=self._drain_stderr, name="codex-relay-stderr", daemon=True,
+            target=self._drain_stderr, daemon=True,
+            name=tagged_thread_name("codex-relay-stderr"),
         ).start()
         self._ready.wait(ready_timeout_s)
         ready = b"".join(self._ready_lines)
@@ -295,7 +297,8 @@ class CodexShellRelay:
             self.stop()
             raise RuntimeError(f"codex relay failed to start: {ready!r}")
         self._thread = threading.Thread(
-            target=self._serve, name="codex-shell-dispatch", daemon=True,
+            target=self._serve, daemon=True,
+            name=tagged_thread_name("codex-shell-dispatch"),
         )
         self._thread.start()
         return self

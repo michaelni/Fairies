@@ -216,16 +216,31 @@ class ThreadPrefixTests(unittest.TestCase):
         # ~owner/repo tag is what keeps their log lines attributable.
         f = common._ThreadPrefixFilter()
         rec = logging.LogRecord("x", logging.INFO, "f", 1, "m", (), None)
-        for name, expected in (
-            ("MainThread", "M "),
-            ("pr-prepare", "P "),
-            ("pr-prepare~FFmpeg/web", "P FFmpeg/web "),
-            ("pr-llm~michaelni/Fairies", "L michaelni/Fairies "),
-            ("PR-controller~FFmpeg/web", "T FFmpeg/web "),
+        for name, expected, expected_tag in (
+            ("MainThread", "M ", ""),
+            ("pr-prepare", "P ", ""),
+            ("pr-prepare~FFmpeg/web", "P FFmpeg/web ", "[FFmpeg/web] "),
+            ("pr-llm~michaelni/Fairies", "L michaelni/Fairies ", "[michaelni/Fairies] "),
+            ("PR-controller~FFmpeg/web", "T FFmpeg/web ", "[FFmpeg/web] "),
+            ("reviewer~zai:glm-5.3", "T zai:glm-5.3 ", "[zai:glm-5.3] "),
         ):
             rec.threadName = name
             f.filter(rec)
             self.assertEqual(rec.thread_prefix, expected, name)
+            self.assertEqual(rec.log_tag, expected_tag, name)
+
+    def test_helper_thread_name_inherits_the_tag(self) -> None:
+        import threading
+        names: list[str] = []
+
+        def spawn() -> None:
+            names.append(common.tagged_thread_name("shell-read"))
+
+        worker = threading.Thread(target=spawn, name="reviewer~zai:glm-5.3")
+        worker.start()
+        worker.join()
+        self.assertEqual(["shell-read~zai:glm-5.3"], names)
+        self.assertEqual("plain", common.tagged_thread_name("plain"))
 
 
 if __name__ == "__main__":
@@ -253,3 +268,17 @@ class WireFormatTests(unittest.TestCase):
         self.assertRegex(
             self._captured("boom"),
             r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d W boom\n$")
+
+    def test_wire_lines_carry_the_reviewer_tag(self) -> None:
+        # The relay on the other end of the pipe cannot reconstruct which
+        # reviewer thread a line came from, so the ~tag must ride the wire.
+        import threading
+        lines: list[str] = []
+        worker = threading.Thread(
+            target=lambda: lines.append(self._captured("boom")),
+            name="reviewer~zai:glm-5.3")
+        worker.start()
+        worker.join()
+        self.assertRegex(
+            lines[0],
+            r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d W \[zai:glm-5\.3\] boom\n$")

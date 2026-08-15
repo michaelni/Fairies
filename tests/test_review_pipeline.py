@@ -324,6 +324,27 @@ class ReviewPrTests(unittest.TestCase):
             ["zai:glm-5.3: zai:glm-5.3: simulated provider failure"],
             ctx.failed_reviewers)
 
+    def test_parallel_reviewers_run_on_threads_tagged_with_their_name(self) -> None:
+        import threading
+        seen: dict[str, str] = {}
+
+        class _NameCapturingReviewer(_FakeReviewer):
+            def review(self, ctx: ReviewContext) -> Review:
+                seen[self.name] = threading.current_thread().name
+                return super().review(ctx)
+
+        ctx = _ctx()
+        d1 = Review("approve", "ok", model="a")
+        d2 = Review("approve", "ok", model="b")
+        review_pipeline.review_pr(
+            ctx,
+            [_NameCapturingReviewer("openai:gpt-5.4", d1),
+             _NameCapturingReviewer("zai:glm-5.3", d2)],
+            _FakeReviewer("combiner", Review("approve", "ok", model="c")),
+        )
+        self.assertEqual({"openai:gpt-5.4": "reviewer~openai:gpt-5.4",
+                          "zai:glm-5.3": "reviewer~zai:glm-5.3"}, seen)
+
     def test_a_shell_channel_death_is_attributed_to_infrastructure(self) -> None:
         # Regression: PR #23998 (2026-08-15) -- a dead container shell
         # channel was logged as a bare "reviewer zai:glm-5.3 failed",

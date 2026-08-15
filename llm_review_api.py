@@ -49,6 +49,7 @@ those.
 from __future__ import annotations
 
 import logging
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -881,10 +882,14 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
         len(reviewers),
         ", ".join(r.name for r in reviewers),
     )
+    def run_tagged(reviewer: Reviewer) -> Review:
+        # common's log filter turns the ~tag into the line's [name] field
+        threading.current_thread().name = f"reviewer~{reviewer.name}"
+        return review_with_turn_retries(reviewer, ctx,
+                                        TURN_FAILED_REVIEWER_ATTEMPTS)
+
     with ThreadPoolExecutor(max_workers=len(reviewers)) as executor:
-        futures = [executor.submit(review_with_turn_retries, r, ctx,
-                                   TURN_FAILED_REVIEWER_ATTEMPTS)
-                   for r in reviewers]
+        futures = [executor.submit(run_tagged, r) for r in reviewers]
     drafts: list[Review] = []
     all_turn_failed = True
 

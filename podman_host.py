@@ -71,6 +71,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+from common import tagged_thread_name
+
 logger = logging.getLogger(__name__)
 
 
@@ -199,8 +201,10 @@ class ContainerShellSession:
             self._argv,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         )
-        threading.Thread(target=self._read_loop, daemon=True).start()
-        threading.Thread(target=self._drain_stderr, daemon=True).start()
+        threading.Thread(target=self._read_loop, daemon=True,
+                         name=tagged_thread_name("shell-read")).start()
+        threading.Thread(target=self._drain_stderr, daemon=True,
+                         name=tagged_thread_name("shell-stderr")).start()
         return self
 
     def _read_loop(self) -> None:

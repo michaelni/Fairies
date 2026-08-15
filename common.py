@@ -35,6 +35,7 @@ import logging
 import os
 import pickle
 import re
+import threading
 import time
 import tomllib
 from datetime import datetime, timezone
@@ -138,9 +139,10 @@ def dump_response_debug_artifacts(
 
 class _ThreadPrefixFilter(logging.Filter):
     """Maps thread names to short log prefixes. A ``~tag`` suffix on the
-    thread name (the side's owner/repo when several run in one process)
-    is carried into the prefix, so interleaved pipeline lines stay
-    attributable to their repo."""
+    thread name (the side's owner/repo when several run in one process,
+    or a wrapper reviewer's model name) is carried into the prefix --
+    and, as ``log_tag``, onto the FAIRY_LOG_WIRE format -- so
+    interleaved lines stay attributable to their repo or reviewer."""
 
     _PREFIXES = {
         "MainThread": "M ",
@@ -152,7 +154,15 @@ class _ThreadPrefixFilter(logging.Filter):
         base, _, tag = record.threadName.partition("~")
         prefix = self._PREFIXES.get(base, "T ")
         record.thread_prefix = f"{prefix.rstrip()} {tag} " if tag else prefix
+        record.log_tag = f"[{tag}] " if tag else ""
         return True
+
+
+def tagged_thread_name(base: str) -> str:
+    """``base`` plus the spawning thread's ``~tag`` suffix, for naming a
+    helper thread so its log lines keep the reviewer they serve."""
+    tag = threading.current_thread().name.partition("~")[2]
+    return f"{base}~{tag}" if tag else base
 
 
 # ANSI color codes used by ``_ColorFormatter`` to make non-INFO messages
@@ -593,10 +603,12 @@ def setup_logging(
         use_color = sys.stderr.isatty() and not os.environ.get("NO_COLOR")
     if os.environ.get("FAIRY_LOG_WIRE"):
         # a piped wrapper logs in add_file_log's exact shape so the
-        # relaying pump can recover level and time; color and thread
-        # prefixes would only litter the wire
+        # relaying pump can recover level and time; color would only
+        # litter the wire, but the thread's ``~tag`` rides inside the
+        # message field as ``log_tag`` -- the relay cannot reconstruct
+        # which reviewer a line came from
         formatter = logging.Formatter(
-            fmt='%(asctime)s %(levelname).1s %(message)s',
+            fmt='%(asctime)s %(levelname).1s %(log_tag)s%(message)s',
             datefmt='%Y-%m-%dT%H:%M:%S',
         )
     else:

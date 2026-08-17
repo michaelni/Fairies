@@ -196,14 +196,16 @@ class BuildLlmDiscussionWithTimelineTests(unittest.TestCase):
 
         kinds = [(i["kind"], i.get("created_at") or i.get("submitted_at"))
                  for i in items]
-        # Expected order: initial push (2026-05-21) -> bot comment
-        # (2026-05-25 01:52) -> force-push (2026-05-25 21:46).
+        # Expected order: initial push and the review request (same
+        # second, 2026-05-21) -> bot comment (2026-05-25 01:52) ->
+        # force-push (2026-05-25 21:46).
         self.assertEqual(
             kinds,
             [
-                ("push",    PR_23197_INITIAL_PUSH_AT),
-                ("comment", "2026-05-25T01:52:46Z"),
-                ("push",    PR_23197_FORCE_PUSH_AT),
+                ("push",           PR_23197_INITIAL_PUSH_AT),
+                ("review_request", PR_23197_INITIAL_PUSH_AT),
+                ("comment",        "2026-05-25T01:52:46Z"),
+                ("push",           PR_23197_FORCE_PUSH_AT),
             ],
         )
         # And the LATEST item is the force-push to the new head -- the
@@ -232,6 +234,43 @@ class BuildLlmDiscussionWithTimelineTests(unittest.TestCase):
         self.assertEqual(items_default, items_explicit_none)
         self.assertEqual(items_default, items_empty)
         self.assertEqual([i["kind"] for i in items_default], ["comment"])
+
+
+class ReviewRequestEventsTests(unittest.TestCase):
+    """The review_request timeline entry (real capture: FFmpeg #23197,
+    michaelni requested a review from kaweno) reaches the discussion."""
+
+    def test_pr_23197_yields_the_review_request(self) -> None:
+        timeline = _load_timeline("ffmpeg_pr_23197_timeline.json")
+        requests = fairy.review_request_events_from_timeline(timeline)
+        self.assertEqual(requests, [{
+            "kind": "review_request",
+            "author": "michaelni",
+            "reviewer": "kaweno",
+            "removed": False,
+            "created_at": "2026-05-21T21:23:41Z",
+        }])
+
+    def test_the_request_reaches_the_built_discussion(self) -> None:
+        timeline = _load_timeline("ffmpeg_pr_23197_timeline.json")
+        disc = fairy.build_llm_discussion([], [], [], timeline)
+        self.assertEqual(
+            [(d["author"], d["reviewer"]) for d in disc
+             if d["kind"] == "review_request"],
+            [("michaelni", "kaweno")])
+
+    def test_a_bare_verdict_is_kept_bare_noise_is_not(self) -> None:
+        reviews = [
+            {"user": {"login": "alice"}, "state": "APPROVED",
+             "submitted_at": "2026-05-22T00:00:00Z", "body": ""},
+            {"user": {"login": "bob"}, "state": "COMMENTED",
+             "submitted_at": "2026-05-22T01:00:00Z", "body": ""},
+            {"user": {"login": "carol"}, "state": "REQUEST_REVIEW",
+             "submitted_at": "2026-05-22T02:00:00Z", "body": ""},
+        ]
+        disc = fairy.build_llm_discussion(reviews, [], [])
+        self.assertEqual([(d["author"], d["state"], d["body"]) for d in disc],
+                         [("alice", "APPROVED", "")])
 
 
 if __name__ == "__main__":

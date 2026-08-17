@@ -940,6 +940,18 @@ class DetailTests(DbCase):
         self.assertIn("state reviewed", text)
         self.assertIn("comment", text)  # rebuilt decision's action
 
+    def test_a_review_request_line_names_requester_and_reviewer(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
+            {"kind": "review_request", "author": "michaelni",
+             "reviewer": "fairy", "removed": False,
+             "created_at": "2026-07-19T09:00:00Z"}]))
+        self.model.poll()
+        ui = make_ui(self.model)
+        with self.model.lock:
+            text = fairy_tui._plain(ui.detail_lines(90))
+        self.assertIn("michaelni", text)
+        self.assertIn("requested a review from fairy", text)
+
     def test_the_opening_description_leads_the_thread(self) -> None:
         """An item whose only text is its description (no comments yet)
         showed an empty thread while the forge web UI showed the post."""

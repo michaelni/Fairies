@@ -1344,6 +1344,31 @@ def push_events_from_timeline(timeline: list[ApiObject]) -> list[DiscussionItem]
         })
     return items
 
+def review_request_events_from_timeline(
+        timeline: list[ApiObject]) -> list[DiscussionItem]:
+    """``review_request`` timeline entries as ``kind="review_request"``
+    discussion items: who asked whom for a review, when, and whether
+    the request was withdrawn (``removed``). Valuable to the operator
+    and the LLM alike -- a review request IS the invitation the
+    reviewer acts on, and it was previously invisible in the
+    discussion."""
+    items: list[DiscussionItem] = []
+    for entry in timeline:
+        if entry.get("type") != forge_gcli.REVIEW_REQUEST_EVENT:
+            continue
+        user = entry.get("user") or {}
+        assignee = entry.get("assignee") or {}
+        items.append({
+            "kind": "review_request",
+            "author": user.get("login") or user.get("full_name") or "?",
+            "reviewer": assignee.get("login") or assignee.get("full_name")
+            or "?",
+            "removed": bool(entry.get("removed_assignee")),
+            "created_at": entry.get("created_at"),
+        })
+    return items
+
+
 class ReviewState(NamedTuple):
     state: str
     when: datetime | None
@@ -1665,17 +1690,23 @@ def build_llm_discussion(
     """Merge the PR's comments, reviews, review comments and (optionally)
     push events into a single chronologically-sorted list for the LLM.
 
-    ``timeline`` is the raw ``/issues/{n}/timeline`` payload; only its
-    ``pull_push`` entries are consumed (see ``push_events_from_timeline``).
+    ``timeline`` is the raw ``/issues/{n}/timeline`` payload; its
+    ``pull_push`` and ``review_request`` entries are consumed (see
+    ``push_events_from_timeline`` /
+    ``review_request_events_from_timeline``).
     Passing ``None`` (or omitting it) yields a comments-only discussion.
     The push items carry ``kind="push"`` plus ``head_sha`` /
     ``is_force_push`` so the triage LLM can tell unambiguously that
     new code arrived after its prior comment instead of guessing from
-    a SHA mentioned in the comment body.
+    a SHA mentioned in the comment body. A review without a body is
+    kept when it carries a verdict (APPROVED / CHANGES_REQUESTED):
+    a bare approve click is discussion-worthy for the operator and
+    the LLM alike.
     """
     items: list[DiscussionItem] = []
     if timeline:
         items.extend(push_events_from_timeline(timeline))
+        items.extend(review_request_events_from_timeline(timeline))
 
     for comment in comments:
         body = comment.get("body")
@@ -1701,7 +1732,10 @@ def build_llm_discussion(
     for review in reviews:
         body = review.get("body")
         if not isinstance(body, str) or not body.strip():
-            continue
+            if normalize_review_state(review.get("state")) \
+                    not in ("APPROVED", "CHANGES_REQUESTED"):
+                continue
+            body = ""
         user = review.get("user") or {}
         author = user.get("login") or user.get("username") or user.get("full_name") or "?"
         items.append(

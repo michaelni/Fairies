@@ -171,5 +171,44 @@ class ForgejoTimelineIsUnaffectedTests(unittest.TestCase):
         self.assertNotIn("committed", types)
 
 
+class ReviewRequestProjectionTests(unittest.TestCase):
+    """GitHub review requests fold into the Forgejo review_request
+    shape. Real capture: testrepo PR #5, where the fairy app requested
+    a review from michaelni and withdrew it again
+    (``review_requested`` / ``review_request_removed`` with ``actor``
+    and ``requested_reviewer``,
+    https://docs.github.com/en/rest/issues/timeline). A team request
+    carries ``requested_team`` instead and has no capture; the
+    synthetic event below follows the documented schema."""
+
+    def test_captured_events_fold_into_the_forgejo_shape(self) -> None:
+        got = _github("testrepo_review_request_timeline.json")
+        self.assertEqual(
+            [(e["type"], (e.get("assignee") or {}).get("login"),
+              e["removed_assignee"], e["user"]["login"])
+             for e in got if e["type"] == "review_request"],
+            [("review_request", "michaelni", False, "forgejo-fairy[bot]"),
+             ("review_request", "michaelni", True, "forgejo-fairy[bot]")])
+
+    def test_the_requests_reach_fairy_as_discussion_items(self) -> None:
+        items = fairy.review_request_events_from_timeline(
+            _github("testrepo_review_request_timeline.json"))
+        self.assertEqual(
+            [(i["author"], i["reviewer"], i["removed"]) for i in items],
+            [("forgejo-fairy[bot]", "michaelni", False),
+             ("forgejo-fairy[bot]", "michaelni", True)])
+
+    def test_a_team_request_projects_to_no_assignee(self) -> None:
+        got = _timeline("github", [
+            {"event": "review_requested", "id": 3,
+             "actor": {"login": "michaelni"},
+             "requested_team": {"name": "reviewers"},
+             "created_at": "2026-07-28T12:00:00Z"}])
+        self.assertEqual(
+            [(e["type"], e.get("assignee"), e["removed_assignee"])
+             for e in got],
+            [("review_request", None, False)])
+
+
 if __name__ == "__main__":
     unittest.main()

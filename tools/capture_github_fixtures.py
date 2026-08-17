@@ -97,6 +97,8 @@ MANIFEST: dict[str, str] = {
         "/repos/michaelni/testrepo/pulls/4/comments",
     "testrepo_pr2_forcepush_timeline.json":
         "/repos/michaelni/testrepo/issues/2/timeline?per_page=100",
+    "testrepo_review_request_timeline.json":
+        "/repos/michaelni/testrepo/issues/5/timeline?per_page=100",
 }
 
 

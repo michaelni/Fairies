@@ -111,6 +111,7 @@ __all__ = [
     "KIND_ISSUE",
     "KIND_PR",
     "PUSH_EVENT",
+    "REVIEW_REQUEST_EVENT",
     "add_forge_repo_args",
     "auto_merge_state",
     "apply_issue_label_changes",
@@ -775,6 +776,7 @@ def list_pr_review_comments(
 PUSH_EVENT = "pull_push"
 AUTO_MERGE_SCHEDULE_EVENT = "pull_scheduled_merge"
 AUTO_MERGE_CANCEL_EVENT = "pull_cancel_scheduled_merge"
+REVIEW_REQUEST_EVENT = "review_request"
 
 
 _AUTO_MERGE_EVENTS = frozenset({AUTO_MERGE_SCHEDULE_EVENT, AUTO_MERGE_CANCEL_EVENT})
@@ -832,7 +834,12 @@ def _push_fields(body: str) -> dict:
 
 
 def project_timeline_event(event: dict) -> dict:
-    """Project one raw timeline event to the keys this module hands out."""
+    """Project one raw timeline event to the keys this module hands out.
+
+    A ``review_request`` entry additionally carries ``assignee`` (the
+    requested reviewer) and ``removed_assignee`` (True when the request
+    was withdrawn) -- Forgejo/Gitea put the requester under ``user``
+    and the requestee under ``assignee`` (captured on FFmpeg #23197)."""
     projected = {
         "type": event.get("type"),
         "id": event.get("id"),
@@ -842,6 +849,9 @@ def project_timeline_event(event: dict) -> dict:
     }
     if projected["type"] == PUSH_EVENT:
         projected.update(_push_fields(projected["body"]))
+    elif projected["type"] == REVIEW_REQUEST_EVENT:
+        projected["assignee"] = norm_user(event.get("assignee"))
+        projected["removed_assignee"] = bool(event.get("removed_assignee"))
     return projected
 
 
@@ -901,6 +911,13 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
     after the rewritten commits, so ``is_force_push`` is taken from
     whether that marker closes the run. A marker with no commits before
     it still yields a push, carrying the sha the marker names.
+
+    Review requests are the events ``review_requested`` /
+    ``review_request_removed``, the requester under ``actor`` and the
+    requestee under ``requested_reviewer`` (``requested_team`` for a
+    team, which projects to no assignee) --
+    https://docs.github.com/en/rest/issues/timeline; folded into the
+    Forgejo ``review_request`` shape.
     """
     out: list[dict] = []
     run: list[dict] = []
@@ -928,6 +945,12 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
             flush(marker=event)
             continue
         flush()
+        if kind in ("review_requested", "review_request_removed"):
+            out.append({**_project_github_event(event),
+                        "type": REVIEW_REQUEST_EVENT,
+                        "assignee": norm_user(event.get("requested_reviewer")),
+                        "removed_assignee": kind == "review_request_removed"})
+            continue
         out.append(_project_github_event(event))
     flush()
     return out

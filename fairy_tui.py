@@ -1381,6 +1381,10 @@ class UILoop:
                 if c.get("kind") == "push":
                     what = ("force-pushed" if c.get("is_force_push") else "pushed") \
                         + f" {c.get('commit_count')} commit(s) {str(c.get('head_sha') or '')[:10]}"
+                elif c.get("kind") == "review_request":
+                    what = (f"withdrew the review request for {c.get('reviewer')}"
+                            if c.get("removed")
+                            else f"requested a review from {c.get('reviewer')}")
                 else:
                     what = " ".join(str(c[k]) for k in ("kind", "state") if c.get(k))
                     if c.get("path"):

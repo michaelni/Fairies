@@ -33,7 +33,7 @@ These do NOT touch real podman or nftables; every external command
 is mocked. The point is to lock down:
 - the exact nftables script that gets shipped to ``nft``
 - the podman network argv (subnet must be passed)
-- dry-run vs --apply behavior (no subprocess calls in dry-run)
+- dry-run vs --apply behavior (nothing state-changing runs in dry-run)
 - the sudo prefix gating
 """
 
@@ -111,7 +111,8 @@ class BuildPodmanNetworkArgvTests(unittest.TestCase):
 
 class ConfigureHostTests(unittest.TestCase):
     def test_dry_run_does_not_invoke_subprocess(self) -> None:
-        with mock.patch.object(setup_host.subprocess, "run") as run:
+        with mock.patch.object(setup_host.os, "geteuid", return_value=1000), \
+             mock.patch.object(setup_host.subprocess, "run") as run:
             rc = setup_host.configure_host(**_cfg_kwargs())
         self.assertEqual(0, rc)
         self.assertFalse(run.called)
@@ -213,11 +214,36 @@ class ConfigureRootlessEgressTests(unittest.TestCase):
     def test_dry_run_writes_nothing_and_runs_nothing(self) -> None:
         with mock.patch.object(setup_host.pwd, "getpwnam",
                                return_value=_pwd_entry(ROOTLESS_UID)), \
+             mock.patch.object(setup_host.os, "geteuid", return_value=1000), \
              mock.patch.object(setup_host.subprocess, "run") as run, \
              mock.patch.object(Path, "write_text") as write:
             rc = setup_host.configure_rootless_egress(**self._kwargs())
         self.assertEqual(0, rc)
         self.assertFalse(run.called)
+        self.assertFalse(write.called)
+
+    def test_root_dry_run_nft_checks_the_script(self) -> None:
+        with mock.patch.object(setup_host.pwd, "getpwnam",
+                               return_value=_pwd_entry(ROOTLESS_UID)), \
+             mock.patch.object(setup_host.os, "geteuid", return_value=0), \
+             mock.patch.object(setup_host.subprocess, "run",
+                               return_value=_completed(0)) as run, \
+             mock.patch.object(Path, "write_text") as write:
+            rc = setup_host.configure_rootless_egress(**self._kwargs())
+        self.assertEqual(0, rc)
+        self.assertFalse(write.called)
+        self.assertEqual(["nft", "--check", "-f", "-"], run.call_args.args[0])
+        self.assertIn(f"meta skuid {ROOTLESS_UID}", run.call_args.kwargs["input"])
+
+    def test_root_dry_run_fails_on_rejected_script(self) -> None:
+        with mock.patch.object(setup_host.pwd, "getpwnam",
+                               return_value=_pwd_entry(ROOTLESS_UID)), \
+             mock.patch.object(setup_host.os, "geteuid", return_value=0), \
+             mock.patch.object(setup_host.subprocess, "run",
+                               return_value=_completed(1, stderr="Error")), \
+             mock.patch.object(Path, "write_text") as write:
+            rc = setup_host.configure_rootless_egress(**self._kwargs())
+        self.assertEqual(1, rc)
         self.assertFalse(write.called)
 
     def test_unknown_user_fails(self) -> None:

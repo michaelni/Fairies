@@ -162,7 +162,9 @@ def configure_rootless_egress(
 
     ``--apply`` writes ``nft_file`` and ``unit_file``, loads the ruleset
     now with ``nft -f``, and enables the unit so it reloads on boot; it
-    must run as root. The dry-run prints exactly these steps.
+    must run as root. The dry-run prints exactly these steps; run as
+    root it also validates the script with ``nft --check`` (unprivileged
+    nft cannot open the netlink socket even to check).
 
     Loading is an explicit ``nft -f`` rather than starting the unit: the
     unit is ``RemainAfterExit`` so ``systemctl start`` is a no-op once it
@@ -191,6 +193,8 @@ def configure_rootless_egress(
         logger.info("write %s:\n%s", unit_file, unit)
         for cmd in commands:
             logger.info("$ %s", shlex.join(cmd))
+        if os.geteuid() == 0:
+            return _run(["nft", "--check", "-f", "-"], input_text=nft_script)
         return 0
 
     if os.geteuid() != 0:
@@ -264,6 +268,8 @@ def configure_host(
         logger.info("dry-run; pass --apply to execute the following:")
         logger.info("$ %s", shlex.join(podman_create_argv))
         logger.info("$ %s <<EOF\n%sEOF", shlex.join(nft_argv), nft_script)
+        if os.geteuid() == 0:
+            return _run(["nft", "--check", "-f", "-"], input_text=nft_script)
         return 0
 
     if _podman_network_exists(network):

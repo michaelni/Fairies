@@ -191,8 +191,12 @@ class BuildRootlessEgressNftTests(unittest.TestCase):
         for dest in setup_host.LAN_BLOCK_DESTS6:
             self.assertIn(dest, script)
         self.assertIn(f"meta skuid {ROOTLESS_UID} ip daddr", script)
+        self.assertIn(
+            f"meta skuid {ROOTLESS_UID} fib daddr type local drop", script)
         self.assertLess(script.index("dport 53 accept"),
                         script.index("ip daddr"))
+        self.assertLess(script.index("dport 53 accept"),
+                        script.index("fib daddr type local"))
 
 
 class ConfigureRootlessEgressTests(unittest.TestCase):

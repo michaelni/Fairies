@@ -198,7 +198,9 @@ A review runs untrusted PR code, so the container should not be able to reach
 your LAN (routers, other hosts, internal services) while it keeps internet
 access, which is useful during review. `containers/setup_host.py` installs a
 host nftables rule that drops the podman account's new connections to
-RFC1918 / link-local / CGNAT and lets everything else through. Dry-run, then
+RFC1918 / link-local / CGNAT and to the host's own addresses (loopback
+included, so no ssh to the host's sshd) and lets everything else
+through. Dry-run, then
 apply as root on the podman host:
 
     python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT

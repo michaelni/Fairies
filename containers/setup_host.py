@@ -29,21 +29,26 @@
  */
 
 One-shot host setup that blocks a review container's egress to the LAN
-(RFC1918 / link-local / CGNAT / private IPv6) while leaving
-public-internet egress intact -- internet access is useful during
-review. The filter lives on the HOST, outside the container, so a fully
-compromised container cannot remove it. Default mode is dry-run (every
+(RFC1918 / link-local / CGNAT / private IPv6) and to the host itself
+while leaving public-internet egress intact -- internet access is
+useful during review. The filter lives on the HOST, outside the
+container, so a fully compromised container cannot remove it. Default mode is dry-run (every
 command is printed, nothing runs); ``--apply`` executes.
 
 For rootless podman (``--rootless-user USER``, the production model): the
 network backend (slirp4netns or pasta) forwards container egress from a
 host socket owned by USER's uid, so the block is an OUTPUT drop keyed on
 ``meta skuid <uid>`` -- the container cannot change that uid or touch
-host nftables, so it is bypass-proof from inside. DNS (port 53) is
-exempted so name resolution still works when the host resolver is a LAN
-address. USER must be an account dedicated to running review containers
--- every LAN connection it opens is dropped, so it must not also run the
-fairy orchestrator or anything else that needs the LAN. ``--apply``
+host nftables, so it is bypass-proof from inside. Host-local
+destinations (``fib daddr type local``: loopback and every address the
+host owns, including its public one, which no LAN range covers) are
+dropped too, so the account cannot reach host-only services such as
+sshd on 127.0.0.1. DNS (port 53) is exempted so name resolution still
+works when the host resolver is a LAN or loopback address
+(e.g. systemd-resolved on 127.0.0.53). USER must be an account
+dedicated to running review containers -- every LAN connection it opens
+is dropped, so it must not also run the fairy orchestrator or anything
+else that needs the LAN. ``--apply``
 loads the ruleset now and installs a systemd unit that reloads it on
 boot; run it as root.
 
@@ -114,9 +119,9 @@ def build_nft_script(*, subnet: str, table: str) -> str:
 def build_rootless_egress_nft(*, uid: int, table: str) -> str:
     """Render the idempotent uid-keyed OUTPUT ruleset (see module docstring).
 
-    ``add``+``flush`` make re-running converge to the same state. Only new
-    connections from ``uid`` to the LAN ranges are dropped; DNS (port 53)
-    and everything to the public internet pass.
+    ``add``+``flush`` make re-running converge to the same state. Traffic
+    from ``uid`` to the LAN ranges and to host-local addresses is
+    dropped; DNS (port 53) and everything to the public internet pass.
     """
     dests = ", ".join(LAN_BLOCK_DESTS)
     dests6 = ", ".join(LAN_BLOCK_DESTS6)
@@ -130,6 +135,7 @@ def build_rootless_egress_nft(*, uid: int, table: str) -> str:
         f"# add rule inet {table} output meta skuid {uid} ip daddr 192.0.2.53 udp dport 53 accept\n"
         f"add rule inet {table} output meta skuid {uid} ip daddr {{ {dests} }} drop\n"
         f"add rule inet {table} output meta skuid {uid} ip6 daddr {{ {dests6} }} drop\n"
+        f"add rule inet {table} output meta skuid {uid} fib daddr type local drop\n"
     )
 
 

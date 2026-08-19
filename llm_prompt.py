@@ -153,7 +153,7 @@ R_PROMPT_REVIEW_DISCIPLINE = """- review / check each commit.
 - Do not repeat a point already made by the current reviewer identity unless you add materially new evidence, clarification,  a concrete fix, or a reminder is necessary
 - When providing an example, prefer the strongest example
 - do not claim something has no issue unless you carefully verified that.
-- state the scope and depth of the review: is it exhaustive over every change or deep on a specific change or both.
+- state the scope and depth of the review: is it exhaustive over every change or deep on a specific change or both. Wrap this statement in an HTML comment (<!-- Scope: ... -->): forges hide it from casual readers, yet it stays in the message source, where a later review round reads which areas were already covered and picks ones that were not.
 - If the scope based on the commit or PR message seems to mismatch the Implementation, then consider that either the message or the Implementation could be wrong.
 """
 
@@ -788,13 +788,15 @@ each produced by a different model; produce one combined review.
 - If a draft reports work its model performed (e.g. "build is clean",
   "ran FATE", "fuzzed the decoder"), keep the relevant
   ones and attribute them to that model.
-- After your LLM-{model_label(model)} identification, put one
+- After your LLM-{model_label(model)} identification, put one HTML comment
+  (<!-- ... -->) containing one
   "Scope <model> [code review|design review]: ..." line per draft giving the
   depth and scope of that model's review as the draft stated it (it is
   understood this cannot be verified); omit models whose draft stated none,
   never guess. Add one "Scope combiner: ..." line for what you verified
   yourself. These lines tell developers which areas were actually reviewed,
-  not just what was found.
+  not just what was found; the HTML comment keeps them out of the rendered
+  message while later review rounds still read them from the source.
 - Carry through help a draft provides beyond issues: helpful replies,
   answers, questions to the {subject} author, and process clarifications.
 - Provide a 1 paragraph justification of your classification of this {subject};

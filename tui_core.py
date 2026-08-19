@@ -56,7 +56,7 @@ MARKDOWN_STYLES = frozenset({
     "h1", "h2", "h3", "h4", "bold", "italic", "bold_italic", "strike",
     "code", "codeblock", "codeblock_lang", "quote", "quote_bar", "bullet",
     "checkbox_on", "checkbox_off", "link", "url", "hr",
-    "table_border", "th", "text",
+    "table_border", "th", "text", "comment",
 })
 
 
@@ -386,14 +386,16 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
     headings, bold/italic/strike/code/link spans, fenced blocks (verbatim,
     full-width for a background, language tag kept), pipe tables with
     alignment, ``-``/``*``/``1.`` lists with hanging indent and
-    checkboxes, gutter-barred re-wrapped quotes, horizontal rules and
-    wrapped paragraphs."""
+    checkboxes, gutter-barred re-wrapped quotes, horizontal rules,
+    wrapped paragraphs, and HTML comments -- which forges hide but a
+    review pane must show, dimmed, delimiters kept."""
     width = max(8, width)
     out: list[StyledLine] = []
     para: list[str] = []
     quote: list[str] = []
     table: list[str] = []
     in_fence = False
+    in_comment = False
 
     def flush() -> None:
         if para:
@@ -414,6 +416,14 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
     for raw in text.splitlines():
         line = raw.rstrip()
         stripped = line.strip()
+        if not in_fence and (in_comment or stripped.startswith("<!--")):
+            flush()
+            if stripped:
+                out.extend(wrap([("comment", stripped)], width))
+            else:
+                blank()
+            in_comment = "-->" not in stripped
+            continue
         if stripped.startswith("```"):
             flush()
             if not in_fence:

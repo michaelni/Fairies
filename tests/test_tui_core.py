@@ -209,10 +209,32 @@ class RenderMarkdownTests(unittest.TestCase):
         lines = render_markdown(
             "# h\n## h\n### h\n#### h\ntext **b** *i* ***bi*** `c` ~~s~~\n"
             "[l](http://u) http://bare\n> q\n- b\n1. n\n- [ ] t\n---\n"
-            "|a|b|\n|-|-|\n|1|2|\n```py\nx\n```\n",
+            "|a|b|\n|-|-|\n|1|2|\n```py\nx\n```\n<!-- hidden -->\n",
             width=40,
         )
         self.assertLessEqual(styles(lines), tui_core.MARKDOWN_STYLES)
+
+    def test_html_comment_block_shows_dimmed(self) -> None:
+        lines = render_markdown(
+            "LGTM overall.\n"
+            "\n"
+            "<!-- Scope gpt-5.6 code review: exhaustive over both commits,\n"
+            "deep on the seek path.\n"
+            "Scope combiner: verified the doxy claim. -->\n"
+            "\n"
+            "Please also update the docs.\n",
+            width=40,
+        )
+        texts = [line_text(x) for x in lines]
+        comment = [line_text(x) for x in lines if x and x[0][0] == "comment"]
+        self.assertTrue(comment[0].startswith("<!--"))
+        self.assertTrue(comment[-1].endswith("-->"))
+        self.assertIn("Scope combiner: verified the doxy",
+                      " ".join(comment))
+        self.assertTrue(all(len(t) <= 40 for t in texts))
+        for prose in ("LGTM overall.", "Please also update the docs."):
+            row = next(x for x in lines if line_text(x) == prose)
+            self.assertEqual(row[0][0], "text")
 
     def test_wrap_width_bound(self) -> None:
         lines = render_markdown("word " * 50, width=24)

@@ -317,6 +317,7 @@ Additional Moderate issues:
 * Major inconsistencies between commit message, documentation and implementation.
 * Commits should not span ABI boundaries, that is feature added to a library and its use outside the library should be seperate commits
 * moderate design issues, significant speed regressions in speed relevant code
+* Introduces an avoidable regression.
 
 Additional Major issues:
 {'''* Out of array access.
@@ -325,7 +326,7 @@ Additional Major issues:
 * Double free.
 * Infinite loop.
 ''' * code_issues}\
-* Introduces an avoidable regression.
+* a new bug which would have a significant impact on users, not merely a change in the consequences of an existing bug, nor an unavoidable consequence of an intentional fix
 
 These lists supplement the class definitions with specific calls; they are not exhaustive.
 

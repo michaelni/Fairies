@@ -289,7 +289,8 @@ Prefer adding new evidence, sharper explanation, or a concrete fix over restatin
 
 # Generic patch/commit hygiene, unlike the per-deployment project facts
 # it follows in the prompt.
-def crt_prompt_issue_policy(code_issues: bool) -> str:
+def crt_prompt_issue_policy(ctx: PromptFor) -> str:
+    code_issues = ctx.reviews_code or not ctx.draft
     return f"""
 For classifying the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
 
@@ -748,7 +749,7 @@ def make_developer_prompt(
         )
         + (CR_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
-        + crt_prompt_issue_policy(ctx.reviews_code)
+        + crt_prompt_issue_policy(ctx)
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
         + prompt_output_guideline(ctx)
         + cr_prompt_review_classifications(ctx)
@@ -843,7 +844,7 @@ def make_combiner_developer_prompt(
         )
         + (CR_PROMPT_CI_FAILURE_DATA if ci_failures_present else "")
         + project_facts
-        + crt_prompt_issue_policy(True)
+        + crt_prompt_issue_policy(ctx)
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
         + prompt_output_guideline(ctx)
         + cr_prompt_review_classifications(ctx)
@@ -887,7 +888,7 @@ def make_triage_developer_prompt(
             machines=machines,
         )
         + project_facts
-        + crt_prompt_issue_policy(True)
+        + crt_prompt_issue_policy(ctx)
         + prompt_output_guideline(ctx)
         + T_PROMPT_TRIAGE_TASK
         + t_prompt_user_request(allowed_models or [])

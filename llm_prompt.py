@@ -330,6 +330,7 @@ Additional Major issues:
 These lists supplement the class definitions with specific calls; they are not exhaustive.
 
 Changes to previously undocumented API which has no known specific user is NOT a regression.
+Changes to the details of how a pre-existing bug manifests is NOT a regression unless the manifestation becomes significantly worse, like a non security issue becoming a security issue.
 
 """
 

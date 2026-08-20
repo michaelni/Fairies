@@ -294,6 +294,8 @@ Prefer adding new evidence, sharper explanation, or a concrete fix over restatin
 # it follows in the prompt.
 def crt_prompt_issue_policy(ctx: PromptFor) -> str:
     code_issues = ctx.reviews_code or not ctx.draft
+    design_issues = ctx.reviews_design or not ctx.draft
+    combiner_triager = ctx.role == "triager" or not ctx.draft
     return f"""
 For classifying the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
 
@@ -307,7 +309,7 @@ Additional Minor issues:
 * Duplicated code should be avoided, existing helper functions should be used when appropriate.
 * Minor inconsistencies between commit message, documentation and implementation.
 {"* Signed integer overflows in timestamps or sample values as long as they don't lead to out of array accesses and don't affect normal real use cases.\n" * code_issues}\
-* minor design issues
+{"* minor design issues\n" * design_issues}\
 * working around an external bug, without reporting that bug upstream
 
 Additional Moderate issues:
@@ -316,7 +318,7 @@ Additional Moderate issues:
 * Public API should be documented.
 * Major inconsistencies between commit message, documentation and implementation.
 * Commits should not span ABI boundaries, that is feature added to a library and its use outside the library should be seperate commits
-* moderate design issues, significant speed regressions in speed relevant code
+{"* moderate design issues, significant speed regressions in speed relevant code\n" * design_issues}\
 * Introduces an avoidable regression.
 
 Additional Major issues:

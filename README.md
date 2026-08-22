@@ -149,6 +149,9 @@ UI can quit and restart freely. The full pane, key, lens and mouse
 reference lives in [README-TUI.md](README-TUI.md); see
 `fairy-ui-ref.sh` for a launcher example.
 
+The agent and the TUI also run without any reviewer, as a read-only
+view of the forge: [README-NO-LLM.md](README-NO-LLM.md).
+
 ### Self-hosted Podman container
 
 The LLM's shell tool runs in an ephemeral Podman container on an ssh host

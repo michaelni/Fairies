@@ -132,6 +132,23 @@ def git_format_patch_series(
     return cp.stdout
 
 
+def git_diff(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
+    """``git diff base head`` -- the accumulated change merging
+    ``head_sha`` would introduce onto ``base_sha``, with the same
+    histogram/minimal settings as git_format_patch_series."""
+    cp = subprocess.run(
+        ["git", "-C", str(repo_root), "diff",
+         "--diff-algorithm=histogram", "--minimal", base_sha, head_sha],
+        capture_output=True, check=False,
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"git diff {base_sha} {head_sha} in {repo_root} failed: "
+            f"{cp.stderr.decode('utf-8', errors='replace').strip()}"
+        )
+    return cp.stdout
+
+
 def git_fetch_all(repo_root: Path) -> None:
     """``git fetch --all`` -- the same refresh fairy_fetch_git.sh runs
     on its schedule; a failed fetch raises rather than reading as

@@ -31,8 +31,8 @@ Terminal-UI building blocks with no terminal dependency.
 
 What belongs here: pure data/logic for fairy_tui.py -- the 2x2 grid
 layout math, the block tiler, the scrollback ring buffer and the
-markdown-to-styled-lines renderer. Everything is unit-testable
-without a tty.
+markdown and git-diff renderers to styled lines. Everything is
+unit-testable without a tty.
 
 What does NOT belong: anything importing blessed or touching the
 terminal, and anything review-specific (decisions, pipelines, forges).
@@ -40,14 +40,21 @@ terminal, and anything review-specific (decisions, pipelines, forges).
 
 from __future__ import annotations
 
+import difflib
 import re
 from collections import deque
 from dataclasses import dataclass
-from itertools import islice
+from itertools import accumulate, groupby, islice
 from threading import Lock
 
-__all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "MARKDOWN_STYLES", "wrap",
-           "render_markdown", "sanitize", "tile_blocks", "token_at"]
+from pygments.lexer import Lexer
+from pygments.lexers import get_lexer_for_filename
+from pygments.token import Comment, Keyword, Name, Number, Operator, String
+from pygments.util import ClassNotFound
+
+__all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "MARKDOWN_STYLES",
+           "DIFF_STYLES", "wrap", "render_markdown", "render_diff", "sanitize",
+           "tile_blocks", "token_at"]
 
 # (style, text) segments; the painter treats an unknown style as "text".
 StyledLine = list[tuple[str, str]]
@@ -485,6 +492,165 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
             continue
         para.append(stripped)
     flush()
+    while out and not out[-1]:
+        out.pop()
+    return out
+
+
+DIFF_STYLES = frozenset(
+    {f"df_{bg}_{fg}" for bg in ("ctx", "add", "del", "addhl", "delhl")
+     for fg in ("tx", "kw", "ty", "fn", "str", "com", "num")}
+    | {"diff_file", "diff_hunk", "diff_meta", "diff_commit",
+       "text", "bold", "sc_good", "sc_bad"})
+
+# Most specific first: a token maps to the first ancestor listed, so
+# Comment.Preproc (C's #include/#define) must outrank Comment.
+_DIFF_TOKEN_FG = {
+    Comment.PreprocFile: "str", Comment.Preproc: "kw", Comment: "com",
+    String: "str", Number: "num",
+    Keyword.Type: "ty", Keyword: "kw", Operator.Word: "kw",
+    Name.Function: "fn", Name.Decorator: "fn", Name.Variable: "fn",
+    Name.Label: "fn", Name.Class: "ty", Name.Builtin: "kw",
+}
+
+_HUNK_RE = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+_MBOX_FROM_RE = re.compile(r"From [0-9a-f]{40} ")
+_DIFFSTAT_RE = re.compile(r"( \S.*\| +\d+ ?)(\+*)(-*)")
+_DIFF_WORD_RE = re.compile(r"\w+|\s+|[^\w\s]+")
+
+
+def _lexer_for(path: str, cache: dict[str, Lexer | None]) -> Lexer | None:
+    name = path.rsplit("/", 1)[-1]
+    key = name[name.rfind("."):] if "." in name else name
+    if key not in cache:
+        try:
+            cache[key] = get_lexer_for_filename(key)
+        except ClassNotFound:
+            cache[key] = None
+    return cache[key]
+
+
+def _changed_spans(
+    a: str, b: str,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Word-level change spans (char ranges) of a paired -/+ line;
+    ([], []) when the lines share too little for marks to help."""
+    ta, tb = _DIFF_WORD_RE.findall(a), _DIFF_WORD_RE.findall(b)
+    sm = difflib.SequenceMatcher(None, ta, tb, autojunk=False)
+    matched = sum(block.size for block in sm.get_matching_blocks())
+    if matched < max(1, min(len(ta), len(tb)) / 2):
+        return [], []
+    pa = list(accumulate(map(len, ta), initial=0))
+    pb = list(accumulate(map(len, tb), initial=0))
+    ops = sm.get_opcodes()
+    return ([(pa[i1], pa[i2]) for tag, i1, i2, _, _ in ops
+             if tag in ("replace", "delete") and i1 < i2],
+            [(pb[j1], pb[j2]) for tag, _, _, j1, j2 in ops
+             if tag in ("replace", "insert") and j1 < j2])
+
+
+def _code_line(prefix: str, code: str, bg: str, hl: list[tuple[int, int]],
+               lexer: Lexer | None) -> StyledLine:
+    marked = [False] * len(code)
+    for lo, hi in hl:
+        marked[lo:hi] = [True] * (hi - lo)
+    fg = ["tx"] * len(code)
+    pos = 0
+    if lexer is not None:
+        for token, text in lexer.get_tokens(code):
+            cls = next((c for t, c in _DIFF_TOKEN_FG.items() if token in t),
+                       "tx")
+            end = min(pos + len(text), len(code))
+            fg[pos:end] = [cls] * (end - pos)
+            pos = end
+    line: StyledLine = [(f"df_{bg}_tx", prefix)]
+    for style, run in groupby(
+            range(len(code)),
+            lambda i: f"df_{bg + 'hl' if marked[i] else bg}_{fg[i]}"):
+        run = list(run)
+        line.append((style, code[run[0]:run[-1] + 1]))
+    return line
+
+
+def _emit_run(out: list[StyledLine], minus: list[str], plus: list[str],
+              lexer: Lexer | None) -> None:
+    spans = [_changed_spans(a, b) for a, b in zip(minus, plus)]
+    for i, code in enumerate(minus):
+        out.append(_code_line("-", code, "del",
+                              spans[i][0] if i < len(spans) else [], lexer))
+    for i, code in enumerate(plus):
+        out.append(_code_line("+", code, "add",
+                              spans[i][1] if i < len(spans) else [], lexer))
+
+
+def render_diff(patch: str) -> list[StyledLine]:
+    """Render ``git diff`` / ``git format-patch --stdout`` text to styled
+    lines: commit, file and hunk headers, colored diffstat, and code with
+    added/removed line backgrounds, brighter word-level change marks and
+    per-file syntax coloring. Tabs are expanded; lines are emitted
+    unwrapped -- the painter clips them to the pane."""
+    out: list[StyledLine] = []
+    lexer: Lexer | None = None
+    lexer_cache: dict[str, Lexer | None] = {}
+    lines = patch.split("\n")
+    in_mail_header = False
+    i = 0
+    while i < len(lines):
+        line = lines[i].expandtabs()
+        i += 1
+        if in_mail_header:
+            in_mail_header = bool(line)
+            out.append([("bold" if line.startswith("Subject:")
+                         else "diff_meta", line)] if line else [])
+            continue
+        if (hunk := _HUNK_RE.match(line)):
+            out.append([("diff_hunk", line)])
+            rem_a, rem_b = int(hunk.group(1) or 1), int(hunk.group(2) or 1)
+            minus: list[str] = []
+            plus: list[str] = []
+            while (rem_a > 0 or rem_b > 0) and i < len(lines):
+                body = lines[i].expandtabs()
+                i += 1
+                op, code = body[:1], body[1:]
+                if op == "-":
+                    minus.append(code)
+                    rem_a -= 1
+                elif op == "+":
+                    plus.append(code)
+                    rem_b -= 1
+                elif op == "\\":
+                    _emit_run(out, minus, plus, lexer)
+                    minus, plus = [], []
+                    out.append([("diff_meta", body)])
+                else:
+                    _emit_run(out, minus, plus, lexer)
+                    minus, plus = [], []
+                    out.append(_code_line(" ", code, "ctx", [], lexer))
+                    rem_a -= 1
+                    rem_b -= 1
+            _emit_run(out, minus, plus, lexer)
+            continue
+        if line.startswith("diff --git "):
+            lexer = _lexer_for(line.rsplit(" b/", 1)[-1], lexer_cache)
+            out.append([("diff_file", line)])
+            continue
+        if _MBOX_FROM_RE.match(line):
+            in_mail_header = True
+            out.append([("diff_commit", line)])
+            continue
+        if line == "---" or line.startswith(
+                ("index ", "--- ", "+++ ", "old mode", "new mode", "new file",
+                 "deleted file", "similarity index", "dissimilarity",
+                 "rename from", "rename to", "copy from", "copy to",
+                 "Binary files")):
+            out.append([("diff_meta", line)])
+            continue
+        if (stat := _DIFFSTAT_RE.fullmatch(line)):
+            out.append([(style, text) for style, text in
+                        zip(("text", "sc_good", "sc_bad"), stat.groups())
+                        if text])
+            continue
+        out.append([("text", line)] if line else [])
     while out and not out[-1]:
         out.pop()
     return out

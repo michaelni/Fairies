@@ -130,7 +130,7 @@ the commit-status endpoint (third-party CI) and merged.
 
 ### Interactive TUI
 
-`fairy_tui.py` (requires `pip install blessed watchdog`) shows the
+`fairy_tui.py` (requires `pip install blessed watchdog pygments`) shows the
 filedb of one or more repositories in a 4-pane terminal UI: statistics
 (the per-state file counts), the ticket list, a merged tail of the
 agent/worker log files, and the rendered review message with its label

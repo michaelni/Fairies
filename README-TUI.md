@@ -19,7 +19,7 @@ pane automatically;
 `--tail FILE` adds extra files, and
 `--save-dir DIR` sets where `e`/`E` exports land (default: cwd).
 `fairy-ui-ref.sh` is a complete three-process launcher example.
-Requires `pip install blessed watchdog`.
+Requires `pip install blessed watchdog pygments`.
 
 ## Panes
 
@@ -44,7 +44,9 @@ last row).
   then the discussion with the review at its end, where posting will
   put it, marked `NOT POSTED` until it is. The thread is kept current
   by the agent's scan; a `── sampled for the review … ──` line marks
-  how far the review saw.
+  how far the review saw. `m` switches a PR to its patches or its
+  merge diff, syntax- and diff-colored from the side's local
+  `patch-repo` mirror.
 
 ## The list
 
@@ -129,6 +131,7 @@ ticket is adopted.
 | `f` | currently identical to `r` (historic: force). |
 | `x` | drop: ticket → `cancelled/`; sticks until new PR activity. On an `llm/` row it cancels the running review: the wrapper stops at the next shell call and the container is torn down. |
 | `o` | edit the review message in `$EDITOR` (markdown round-trip; refused while a worker holds the ticket). |
+| `m` | cycle the message pane: message → the PR's patches (`git format-patch`) → its accumulated merge diff, read from the side's `patch-repo` mirror at the base/head SHAs of the item's snapshot (blank until a scan pass, like the status letters). Long lines are clipped, not wrapped. |
 | `p` | pause: SIGSTOP every agent/worker the launcher started, with their whole subprocess trees; `p` again resumes. Remote containers keep computing — only local processing freezes. Quitting while paused thaws first. |
 | `a` / `t` | cycle lens / sort. |
 | `/text` | search number, title and state; `Enter` jumps, `Esc` cancels, `n` repeats. |

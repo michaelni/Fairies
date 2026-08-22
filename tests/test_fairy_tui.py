@@ -526,11 +526,21 @@ class SideBuildTests(unittest.TestCase):
              "--db-root", str(x),
              "--tail", str(self.base / "nosuch" / ".." / "x.log"),
              "--tail", "extra.log"])
-        sides, tails = fairy_tui.build_sides(args)
+        sides, tails, patch_repos = fairy_tui.build_sides(args)
         self.assertEqual([label for label, _ in sides], ["a/x", "a/y"])
         self.assertEqual([db.root for _, db in sides], [x, y])
         self.assertEqual(tails, [self.base / "x.log", self.base / "y.log",
                                  Path("extra.log")])
+        self.assertEqual(patch_repos, {})
+
+    def test_the_pr_sides_patch_repo_is_returned_per_label(self) -> None:
+        root = self.base / "a~x"
+        root.mkdir()
+        fairy_tui.db_config.write_config(
+            root, "a/x", set(), {"patch-repo": "mirror"}, None)
+        args = fairy_tui.parse_args(["--db-root", str(root)])
+        _, _, patch_repos = fairy_tui.build_sides(args)
+        self.assertEqual(patch_repos, {"a/x": Path("mirror")})
 
     def test_missing_config_names_a_case_sibling(self) -> None:
         self.root("FFmpeg~web", "FFmpeg/web", set())
@@ -1273,6 +1283,97 @@ class DetailTests(DbCase):
         self.assertIn("file invalid:", self._detail_text())
 
 
+class DiffViewTests(DbCase):
+    """m cycles the message pane through the git patch views."""
+
+    def push_pr(self, **fields) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, **fields))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "state": "open",
+            "base_sha": "b1", "head_sha": "h5", "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+
+    def detail_text(self, ui: fairy_tui.UILoop) -> str:
+        with self.model.lock:
+            return fairy_tui._plain(ui.detail_lines(100))
+
+    def test_m_cycles_the_modes_and_resets_the_scroll(self) -> None:
+        ui = make_ui(self.model)
+        ui.scroll["br"] = 7
+        ui.dispatch(Key("m"))
+        self.assertEqual(ui.detail_mode, "patches")
+        self.assertEqual(ui.scroll["br"], 0)
+        ui.dispatch(Key("m"))
+        self.assertEqual(ui.detail_mode, "merge diff")
+        ui.dispatch(Key("m"))
+        self.assertEqual(ui.detail_mode, "message")
+
+    def test_the_diff_replaces_the_message_and_is_cached(self) -> None:
+        self.push_pr()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.detail_mode = "merge diff"
+        diff = ("diff --git a/f.c b/f.c\nindex 1..2 100644\n--- a/f.c\n"
+                "+++ b/f.c\n@@ -1 +1 @@\n-int a;\n+int b;\n").encode()
+        with mock.patch.object(fairy_tui.git_util, "git_diff",
+                               return_value=diff) as run:
+            with self.model.lock:
+                lines = ui.detail_lines(100)
+                ui.detail_lines(100)
+        run.assert_called_once_with(Path("mirror"), "b1", "h5")
+        text = fairy_tui._plain(lines)
+        self.assertIn("+int b;", text)
+        self.assertNotIn("state reviewed", text)
+        minus = next(line for line in lines
+                     if fairy_tui._plain([line]) == "-int a;")
+        self.assertTrue(all(s.startswith("df_del") for s, _ in minus))
+
+    def test_patches_mode_runs_format_patch(self) -> None:
+        self.push_pr()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.detail_mode = "patches"
+        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+                               return_value=b"") as run:
+            self.assertIn("(empty diff)", self.detail_text(ui))
+        run.assert_called_once_with(Path("mirror"), "b1", "h5")
+
+    def test_a_failed_git_call_shows_the_error_and_a_fetch_hint(self) -> None:
+        self.push_pr()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.detail_mode = "patches"
+        with mock.patch.object(
+                fairy_tui.git_util, "git_format_patch_series",
+                side_effect=RuntimeError("git format-patch b1..h5 failed")):
+            text = self.detail_text(ui)
+        self.assertIn("git format-patch b1..h5 failed", text)
+        self.assertIn("fetch", text)
+
+    def test_without_a_patch_repo_the_view_warns_instead_of_running_git(
+            self) -> None:
+        self.push_pr()
+        ui = make_ui(self.model)
+        ui.detail_mode = "patches"
+        self.assertIn("no patch-repo", self.detail_text(ui))
+
+    def test_without_a_snapshot_the_view_warns(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.detail_mode = "patches"
+        self.assertIn("no item snapshot", self.detail_text(ui))
+
+    def test_issue_items_keep_the_message_view(self) -> None:
+        self.db.push("reviewed", "issue", "9", verdict(9, msg="issue body"))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.detail_mode = "patches"
+        self.assertIn("issue body", self.detail_text(ui))
+
+
 class EditReviewTests(DbCase):
     def test_o_key_round_trips_the_message_through_the_editor(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, msg="original"))
@@ -1683,6 +1784,10 @@ class PaintSmokeTests(DbCase):
         # "text" deliberately has no entry: it means unstyled.
         self.assertLessEqual(tui_core.MARKDOWN_STYLES - {"text"},
                              set(fairy_tui._styles(term)))
+
+    def test_palette_covers_every_diff_style(self) -> None:
+        self.assertLessEqual(tui_core.DIFF_STYLES - {"text"},
+                             set(fairy_tui._styles(make_term())))
 
     def test_paint_strips_hostile_escape_sequences(self) -> None:
         self.db.push("reviewed", "pr", "2",

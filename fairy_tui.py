@@ -80,6 +80,7 @@ import agent
 import db_config
 import fairy
 import filedb
+import git_util
 import tui_core
 import workset
 from common import iso_to_dt, setup_logging, watch_paths
@@ -924,8 +925,11 @@ ACTION_KEYS = {"y": "apply", "Y": "apply-force", "s": "skip", "S": "snooze",
 KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("S", "snooze"), ("r", "rerun"), ("R", "+eval"), ("f", "force"),
           ("x", "drop"), ("o", "edit msg"), ("p", "pause"), ("a", "filter"),
-          ("t", "sort"), ("/", "search"), ("e/E", "export"), ("?", "help"),
-          ("Tab/click", "focus"), ("↑↓ PgUp/PgDn Home/End", "scroll"))
+          ("t", "sort"), ("m", "diff"), ("/", "search"), ("e/E", "export"),
+          ("?", "help"), ("Tab/click", "focus"),
+          ("↑↓ PgUp/PgDn Home/End", "scroll"))
+DETAIL_MODES = ("message", "patches", "merge diff")
+DIFF_MAX_LINES = 20_000
 
 
 def _proc_children(pid: int) -> list[int]:
@@ -991,7 +995,7 @@ def _styles(t: blessed.Terminal) -> dict:
 
     if t.number_of_colors >= 256:
         c, on = t.color, t.on_color
-        return {
+        styles = {
             "h1": mix(t.bold, c(212)),        "h2": mix(t.bold, c(141)),
             "h3": mix(t.bold, c(75)),         "h4": mix(t.bold, c(73)),
             "bold": t.bold,                   "italic": t.italic,
@@ -1028,8 +1032,17 @@ def _styles(t: blessed.Terminal) -> dict:
             # log-pane levels; palette mirrors common._ColorFormatter
             "log_debug": t.dim_bright_black,  "log_warn": t.bold_yellow,
             "log_err": t.bold_red,
+            "diff_file": mix(t.bold, c(117)), "diff_hunk": c(73),
+            "diff_meta": c(244),              "diff_commit": mix(t.bold, c(179)),
         }
-    return {
+        for fg_name, fg in {"tx": c(252), "kw": c(176), "ty": c(116),
+                            "fn": c(75), "str": c(114), "com": c(245),
+                            "num": c(179)}.items():
+            for bg_name, bg in {"ctx": None, "add": on(22), "del": on(52),
+                                "addhl": on(28), "delhl": on(88)}.items():
+                styles[f"df_{bg_name}_{fg_name}"] = mix(bg, fg) if bg else fg
+        return styles
+    styles = {
         "h1": t.bold_magenta,   "h2": t.bold_blue,  "h3": t.bold_cyan,
         "h4": t.cyan,           "bold": t.bold,     "italic": t.italic,
         "bold_italic": t.bold,  "strike": strike,
@@ -1064,7 +1077,17 @@ def _styles(t: blessed.Terminal) -> dict:
         "cursor": t.reverse,
         "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
         "log_err": t.bold_red,
+        "diff_file": t.bold,    "diff_hunk": t.cyan,
+        "diff_meta": t.bright_black, "diff_commit": t.bold_yellow,
     }
+    # 16 colors cannot carry syntax foregrounds over add/del backgrounds:
+    # the whole line takes the diff color, word marks reverse it.
+    for bg_name, fn in {"add": t.green, "del": t.red,
+                        "addhl": mix(t.reverse, t.green),
+                        "delhl": mix(t.reverse, t.red)}.items():
+        for fg_name in ("tx", "kw", "ty", "fn", "str", "com", "num"):
+            styles[f"df_{bg_name}_{fg_name}"] = fn
+    return styles
 
 
 def _clipboard_cmd() -> list[str] | None:
@@ -1099,12 +1122,16 @@ def _plain(lines: list) -> str:
 
 class UILoop:
     def __init__(self, term: blessed.Terminal, model: Model, ring: tui_core.RingBuffer,
-                 save_dir: Path, tail: LogTail) -> None:
+                 save_dir: Path, tail: LogTail,
+                 patch_repos: dict[str, Path] | None = None) -> None:
         self.term = term
         self.model = model
         self.ring = ring
         self.save_dir = save_dir
         self.tail = tail
+        self.patch_repos = patch_repos or {}
+        self.detail_mode = DETAIL_MODES[0]
+        self._diff_cache: tuple[tuple, list[tui_core.StyledLine]] | None = None
         repos = [repo for repo, _ in model.sides]
         short = [_repo_short(r) for r in repos]
         self._repo_disp = {r: (s if short.count(s) == 1 else r)
@@ -1315,6 +1342,8 @@ class UILoop:
                 byline += [("label", "   branch "),
                            ("text", str(data["head_branch"])[:width])]
             head.append(byline)
+        if self.detail_mode != "message" and item.kind == "pr":
+            return head + self._diff_body(item, snapshot)
         if item.error:
             head += tui_core.wrap([("log_err", str(item.error))], width,
                                   initial=("log_err", "file invalid: "))
@@ -1423,6 +1452,51 @@ class UILoop:
         if labels:
             labels.append([])
         return head + tail + [[], [("h4", "fairy")] + byline] + labels + message
+
+    def _diff_body(self, item: Item,
+                   snapshot: dict | None) -> list[tui_core.StyledLine]:
+        """The rendered diff of ``m``'s non-message modes, at the
+        base/head SHAs ``item``'s items/ snapshot reports, cached until
+        the mode or those SHAs change (rendering re-runs git and
+        pygments; a repaint must not)."""
+        base_sha = (snapshot or {}).get("base_sha")
+        head_sha = (snapshot or {}).get("head_sha")
+        cache_key = (item.repo, item.number, self.detail_mode,
+                     base_sha, head_sha)
+        if self._diff_cache and self._diff_cache[0] == cache_key:
+            return self._diff_cache[1]
+        repo = self.patch_repos.get(item.repo)
+        caption = [("label", self.detail_mode
+                    + (f" {base_sha[:12]}..{head_sha[:12]}"
+                       if base_sha and head_sha else ""))]
+        if repo is None:
+            body = [[("log_warn", "no patch-repo configured for this repo")]]
+        elif not base_sha or not head_sha:
+            body = [[("log_warn", "no item snapshot with base/head SHAs "
+                                  "yet; the next agent scan writes it")]]
+        else:
+            try:
+                raw = (git_util.git_format_patch_series(repo, base_sha, head_sha)
+                       if self.detail_mode == "patches"
+                       else git_util.git_diff(repo, base_sha, head_sha))
+                patch_lines = raw.decode("utf-8", errors="replace").split("\n")
+                logger.info("%s %s#%s: %d lines from %s %s..%s",
+                            self.detail_mode, item.repo, item.number,
+                            len(patch_lines), repo, base_sha[:12],
+                            head_sha[:12])
+                body = tui_core.render_diff(
+                    "\n".join(patch_lines[:DIFF_MAX_LINES])) \
+                    or [[("label", "(empty diff)")]]
+                if len(patch_lines) > DIFF_MAX_LINES:
+                    body.append([("log_warn", f"… truncated at {DIFF_MAX_LINES}"
+                                              f" of {len(patch_lines)} lines")])
+            except RuntimeError as exc:
+                logger.error("%s", exc)
+                body = [[("log_err", line)] for line in str(exc).splitlines()]
+                body.append([("label", "if the head is not fetched yet: "
+                                       f"git -C {repo} fetch --all")])
+        self._diff_cache = (cache_key, [caption, []] + body)
+        return self._diff_cache[1]
 
     def paint(self) -> None:
         self._last_paint = time.monotonic()
@@ -1539,7 +1613,8 @@ class UILoop:
         if pane == "tr":
             title += f"[{self.model.filter_mode}] "
         elif pane == "br":
-            title += "⧉ "
+            title += "⧉ " if self.detail_mode == "message" \
+                else f"⧉ [{self.detail_mode}] "
         bar = title[:rect.w].ljust(rect.w)
         bar_fn = self.styles.get("bar_focus" if pane == self.focus else "bar_blur") \
             or (t.reverse if pane == self.focus else (lambda s: s))
@@ -1847,6 +1922,11 @@ class UILoop:
             self._search_jump()
         elif ks == "o":
             self.edit_review()
+        elif ks == "m":
+            self.detail_mode = DETAIL_MODES[
+                (DETAIL_MODES.index(self.detail_mode) + 1) % len(DETAIL_MODES)]
+            self.scroll["br"] = 0
+            logger.info("message pane: %s", self.detail_mode)
         elif ks in ("e", "E"):
             self.export(full=(ks == "E"))
         else:
@@ -2028,12 +2108,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def build_sides(
     args: argparse.Namespace,
-) -> tuple[list[tuple[str, filedb.Db]], list[Path]]:
+) -> tuple[list[tuple[str, filedb.Db]], list[Path], dict[str, Path]]:
     """One (repo label, filedb) side per distinct --db-root; each root's
-    config.toml, written by configurator.py, names the repo and the
-    log files the logs pane tails without separate --tail flags."""
+    config.toml, written by configurator.py, names the repo, the log
+    files the logs pane tails without separate --tail flags, and the
+    [pr] patch-repo mirror the ``m`` diff views read (label-keyed in
+    the returned dict; the path is relative to the agent's cwd, so the
+    TUI must run from the same directory)."""
     sides: list[tuple[str, filedb.Db]] = []
     tails: list[Path] = []
+    patch_repos: dict[str, Path] = {}
     seen: set[Path] = set()
 
     def add_tail(path: Path) -> None:
@@ -2048,15 +2132,17 @@ def build_sides(
         for f in map(Path, cfg["log_files"]):
             add_tail(f)
         sides.append((cfg["label"], filedb.Db(root)))
+        if (cfg.get("pr") or {}).get("patch-repo"):
+            patch_repos[cfg["label"]] = Path(cfg["pr"]["patch-repo"])
     for t in args.tail or []:
         add_tail(t)
-    return sides, tails
+    return sides, tails, patch_repos
 
 
 def main() -> int:
     args = parse_args()
     ring = tui_core.RingBuffer()
-    sides, tails = build_sides(args)
+    sides, tails, patch_repos = build_sides(args)
     model = Model(sides)
     sink = OutputSink(ring, model.dirty, args.log_file)
     setup_logging(logger, False, db_config.logger,
@@ -2068,7 +2154,8 @@ def main() -> int:
 
     term = blessed.Terminal(stream=sys.__stdout__)
     faulthandler.enable(file=sys.__stderr__)
-    ui = UILoop(term, model, ring, args.save_dir, LogTail(tails, sink))
+    ui = UILoop(term, model, ring, args.save_dir, LogTail(tails, sink),
+                patch_repos)
     # File changes repaint within one 100ms input tick instead of the
     # 1s fallback rescan; without watchdog only the fallback remains.
     watch_paths(

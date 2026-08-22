@@ -141,7 +141,7 @@ ticket is adopted.
 | `/text` | search number, title and state; `Enter` jumps, `Esc` cancels, `n` repeats. |
 | `e` / `E` | export the focused pane as painted / in full to `--save-dir`. |
 | `?` | help: this file, rendered full-screen; arrows / `PgUp` / `PgDn` / `Home` / `End` scroll, any other key returns. |
-| `←`/`→` | in the message pane: previous / next ticket, shown from its top. |
+| `←`/`→` | in the message or logs pane: previous / next ticket, shown from its top. |
 | `0-9` | count prefix for `r` and for arrow scrolling. |
 | `q` | quit. |
 

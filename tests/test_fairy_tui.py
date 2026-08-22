@@ -701,6 +701,18 @@ class WheelTests(DbCase):
             self.model._sync_cursor()
             self.assertEqual(self.model.cursor, 0)
 
+    def test_logs_pane_arrows_step_the_list_cursor_too(self) -> None:
+        ui = self._ui_with_rows()
+        ui.focus = "bl"
+        ui.scroll["bl"] = 4
+        with self.model.lock:
+            self.model.select_index(1)
+        ui.dispatch(NamedKey("KEY_RIGHT"))
+        with self.model.lock:
+            self.model._sync_cursor()
+            self.assertEqual(self.model.cursor, 2)
+        self.assertEqual(ui.scroll["bl"], 0)
+
     def test_home_and_end_jump_the_cursor(self) -> None:
         ui = self._ui_with_rows()
         with self.model.lock:

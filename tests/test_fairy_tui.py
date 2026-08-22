@@ -1373,6 +1373,62 @@ class DiffViewTests(DbCase):
         ui.detail_mode = "patches"
         self.assertIn("issue body", self.detail_text(ui))
 
+    def test_d_cycles_the_logs_modes_and_flips_bl_scroll_semantics(
+            self) -> None:
+        ui = make_ui(self.model)
+        ui.scroll["bl"] = 7
+        ui.dispatch(Key("d"))
+        self.assertEqual(ui.logs_mode, "patches")
+        self.assertEqual(ui.scroll["bl"], 0)
+        # a diff scrolls from the top, the log tail from its end
+        ui._scroll_pane("bl", 3)
+        self.assertEqual(ui.scroll["bl"], 3)
+        ui.dispatch(Key("d"))
+        ui.dispatch(Key("d"))
+        self.assertEqual(ui.logs_mode, "logs")
+        ui.scroll["bl"] = 3
+        ui._scroll_pane("bl", 3)
+        self.assertEqual(ui.scroll["bl"], 0)
+
+    def test_the_logs_pane_shows_the_cursor_prs_diff(self) -> None:
+        self.push_pr()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.logs_mode = "merge diff"
+        diff = b"diff --git a/f.c b/f.c\n@@ -1 +1 @@\n-int a;\n+int b;\n"
+        with mock.patch.object(fairy_tui.git_util, "git_diff",
+                               return_value=diff) as run:
+            with self.model.lock:
+                text = fairy_tui._plain(ui._logs_diff_lines())
+        run.assert_called_once_with(Path("mirror"), "b1", "h5")
+        self.assertIn("+int b;", text)
+
+    def test_both_panes_diffs_stay_cached_side_by_side(self) -> None:
+        self.push_pr()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.detail_mode = "patches"
+        ui.logs_mode = "merge diff"
+        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+                               return_value=b"") as patches, \
+                mock.patch.object(fairy_tui.git_util, "git_diff",
+                                  return_value=b"") as merge:
+            with self.model.lock:
+                for _ in range(3):
+                    ui.detail_lines(100)
+                    ui._logs_diff_lines()
+        patches.assert_called_once()
+        merge.assert_called_once()
+
+    def test_the_logs_diff_without_a_pr_says_so(self) -> None:
+        self.db.push("reviewed", "issue", "9", verdict(9))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.logs_mode = "patches"
+        with self.model.lock:
+            text = fairy_tui._plain(ui._logs_diff_lines())
+        self.assertIn("no PR selected", text)
+
 
 class EditReviewTests(DbCase):
     def test_o_key_round_trips_the_message_through_the_editor(self) -> None:

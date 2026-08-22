@@ -925,11 +925,17 @@ ACTION_KEYS = {"y": "apply", "Y": "apply-force", "s": "skip", "S": "snooze",
 KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("S", "snooze"), ("r", "rerun"), ("R", "+eval"), ("f", "force"),
           ("x", "drop"), ("o", "edit msg"), ("p", "pause"), ("a", "filter"),
-          ("t", "sort"), ("m", "diff"), ("/", "search"), ("e/E", "export"),
+          ("t", "sort"), ("m", "diff"), ("d", "logs diff"), ("/", "search"),
+          ("e/E", "export"),
           ("?", "help"), ("Tab/click", "focus"),
           ("↑↓ PgUp/PgDn Home/End", "scroll"))
 DETAIL_MODES = ("message", "patches", "merge diff")
+LOGS_MODES = ("logs", "patches", "merge diff")
 DIFF_MAX_LINES = 20_000
+
+
+def _next_mode(modes: tuple[str, ...], current: str) -> str:
+    return modes[(modes.index(current) + 1) % len(modes)]
 
 
 def _proc_children(pid: int) -> list[int]:
@@ -1131,7 +1137,8 @@ class UILoop:
         self.tail = tail
         self.patch_repos = patch_repos or {}
         self.detail_mode = DETAIL_MODES[0]
-        self._diff_cache: tuple[tuple, list[tui_core.StyledLine]] | None = None
+        self.logs_mode = LOGS_MODES[0]
+        self._diff_cache: dict[tuple, list[tui_core.StyledLine]] = {}
         repos = [repo for repo, _ in model.sides]
         short = [_repo_short(r) for r in repos]
         self._repo_disp = {r: (s if short.count(s) == 1 else r)
@@ -1343,7 +1350,7 @@ class UILoop:
                            ("text", str(data["head_branch"])[:width])]
             head.append(byline)
         if self.detail_mode != "message" and item.kind == "pr":
-            return head + self._diff_body(item, snapshot)
+            return head + self._diff_body(item, snapshot, self.detail_mode)
         if item.error:
             head += tui_core.wrap([("log_err", str(item.error))], width,
                                   initial=("log_err", "file invalid: "))
@@ -1453,22 +1460,22 @@ class UILoop:
             labels.append([])
         return head + tail + [[], [("h4", "fairy")] + byline] + labels + message
 
-    def _diff_body(self, item: Item,
-                   snapshot: dict | None) -> list[tui_core.StyledLine]:
-        """The rendered diff of ``m``'s non-message modes, at the
-        base/head SHAs ``item``'s items/ snapshot reports, cached until
-        the mode or those SHAs change (rendering re-runs git and
-        pygments; a repaint must not)."""
+    def _diff_body(self, item: Item, snapshot: dict | None,
+                   mode: str) -> list[tui_core.StyledLine]:
+        """The rendered "patches" / "merge diff" of ``item``, at the
+        base/head SHAs its items/ snapshot reports, cached until the
+        mode or those SHAs change (rendering re-runs git and pygments;
+        a repaint must not -- the message and logs panes each keep an
+        entry, so the cache holds a few)."""
         base_sha = (snapshot or {}).get("base_sha")
         head_sha = (snapshot or {}).get("head_sha")
-        cache_key = (item.repo, item.number, self.detail_mode,
-                     base_sha, head_sha)
-        if self._diff_cache and self._diff_cache[0] == cache_key:
-            return self._diff_cache[1]
+        cache_key = (item.repo, item.number, mode, base_sha, head_sha)
+        cached = self._diff_cache.get(cache_key)
+        if cached is not None:
+            return cached
         repo = self.patch_repos.get(item.repo)
-        caption = [("label", self.detail_mode
-                    + (f" {base_sha[:12]}..{head_sha[:12]}"
-                       if base_sha and head_sha else ""))]
+        caption = [("label", mode + (f" {base_sha[:12]}..{head_sha[:12]}"
+                                     if base_sha and head_sha else ""))]
         if repo is None:
             body = [[("log_warn", "no patch-repo configured for this repo")]]
         elif not base_sha or not head_sha:
@@ -1477,11 +1484,11 @@ class UILoop:
         else:
             try:
                 raw = (git_util.git_format_patch_series(repo, base_sha, head_sha)
-                       if self.detail_mode == "patches"
+                       if mode == "patches"
                        else git_util.git_diff(repo, base_sha, head_sha))
                 patch_lines = raw.decode("utf-8", errors="replace").split("\n")
                 logger.info("%s %s#%s: %d lines from %s %s..%s",
-                            self.detail_mode, item.repo, item.number,
+                            mode, item.repo, item.number,
                             len(patch_lines), repo, base_sha[:12],
                             head_sha[:12])
                 body = tui_core.render_diff(
@@ -1495,8 +1502,20 @@ class UILoop:
                 body = [[("log_err", line)] for line in str(exc).splitlines()]
                 body.append([("label", "if the head is not fetched yet: "
                                        f"git -C {repo} fetch --all")])
-        self._diff_cache = (cache_key, [caption, []] + body)
-        return self._diff_cache[1]
+        if len(self._diff_cache) >= 4:
+            self._diff_cache.pop(next(iter(self._diff_cache)))
+        self._diff_cache[cache_key] = [caption, []] + body
+        return self._diff_cache[cache_key]
+
+    def _logs_diff_lines(self) -> list[tui_core.StyledLine]:
+        """The logs pane's content for ``d``'s non-logs modes: the
+        cursor PR's diff. Caller holds ``model.lock``."""
+        m = self.model
+        key = m._cursor_key() or m.cursor_key
+        item = m.items.get(key) if key else None
+        if item is None or item.kind != "pr":
+            return [[("log_warn", "no PR selected")]]
+        return self._diff_body(item, m.snapshot_for(key), self.logs_mode)
 
     def paint(self) -> None:
         self._last_paint = time.monotonic()
@@ -1508,15 +1527,19 @@ class UILoop:
         body_h = max(3, h - 1)
         rects = self.layout.rects(w, body_h)
         col_t, col_b, row = self.layout.splits(w, body_h)
-        self.scroll["bl"] = min(self.scroll["bl"],
-                                max(0, len(self.ring) - (rects["bl"].h - 1)))
+        if self.logs_mode == "logs":
+            self.scroll["bl"] = min(self.scroll["bl"],
+                                    max(0, len(self.ring) - (rects["bl"].h - 1)))
         with self.model.lock:
             content: dict[str, list] = {
                 "tl": self._scrolled("tl", self.stats_lines(self._text_width(rects["tl"])),
                                      rects["tl"].h - 1),
                 "tr": self._list_window(rects["tr"].h - 1),
                 "bl": [(self._log_style(tag), text) for tag, text in
-                       self.ring.view(self.scroll["bl"], rects["bl"].h - 1)],
+                       self.ring.view(self.scroll["bl"], rects["bl"].h - 1)]
+                if self.logs_mode == "logs"
+                else self._scrolled("bl", self._logs_diff_lines(),
+                                    rects["bl"].h - 1),
                 "br": self._scrolled("br", self.detail_lines(self._text_width(rects["br"])),
                                      rects["br"].h - 1),
             }
@@ -1615,6 +1638,8 @@ class UILoop:
         elif pane == "br":
             title += "⧉ " if self.detail_mode == "message" \
                 else f"⧉ [{self.detail_mode}] "
+        elif pane == "bl" and self.logs_mode != "logs":
+            title += f"[{self.logs_mode}] "
         bar = title[:rect.w].ljust(rect.w)
         bar_fn = self.styles.get("bar_focus" if pane == self.focus else "bar_blur") \
             or (t.reverse if pane == self.focus else (lambda s: s))
@@ -1750,7 +1775,7 @@ class UILoop:
                     self.model.cursor + (delta if self.model.cursor_shown
                                          else 0))
             self.follow_cursor = True
-        elif pane == "bl":
+        elif pane == "bl" and self.logs_mode == "logs":
             # offset counts back from the newest line; 0 follows the tail
             self.scroll["bl"] = max(0, self.scroll["bl"] - delta)
         elif pane in self.scroll:
@@ -1766,7 +1791,7 @@ class UILoop:
                 vis = self.model._sync_cursor()
                 self.model.select_index(0 if top else len(vis) - 1)
             self.follow_cursor = True
-        elif pane == "bl":
+        elif pane == "bl" and self.logs_mode == "logs":
             self.scroll["bl"] = 10 ** 9 if top else 0
         elif pane in self.scroll:
             self.scroll[pane] = 0 if top else 10 ** 9
@@ -1923,10 +1948,13 @@ class UILoop:
         elif ks == "o":
             self.edit_review()
         elif ks == "m":
-            self.detail_mode = DETAIL_MODES[
-                (DETAIL_MODES.index(self.detail_mode) + 1) % len(DETAIL_MODES)]
+            self.detail_mode = _next_mode(DETAIL_MODES, self.detail_mode)
             self.scroll["br"] = 0
             logger.info("message pane: %s", self.detail_mode)
+        elif ks == "d":
+            self.logs_mode = _next_mode(LOGS_MODES, self.logs_mode)
+            self.scroll["bl"] = 0
+            logger.info("logs pane: %s", self.logs_mode)
         elif ks in ("e", "E"):
             self.export(full=(ks == "E"))
         else:
@@ -2057,7 +2085,11 @@ class UILoop:
         # scroll window) would differ from the screen.
         rects = self.layout.rects(self.term.width, max(3, self.term.height - 1))
         with self.model.lock:
-            if pane == "bl":
+            if pane == "bl" and self.logs_mode != "logs":
+                lines = self._logs_diff_lines()
+                text = _plain(lines if full
+                              else self._scrolled("bl", lines, inner_h))
+            elif pane == "bl":
                 text = (self.ring.all_text() if full
                         else "\n".join(t for _, t in
                                        self.ring.view(self.scroll["bl"], inner_h)))

@@ -69,6 +69,12 @@ FAILING_CI = [{"context": "/ build", "state": "failure",
                "target_url": "/o/r/actions/runs/1/jobs/0",
                "created_at": OLD, "updated_at": OLD}]
 
+GREEN_CI = [{"context": "/ build", "state": "success",
+             "created_at": OLD, "updated_at": OLD}]
+
+APPROVAL = {"user": {"login": "carol"}, "state": "APPROVED", "stale": False,
+            "submitted_at": OLD, "updated_at": OLD}
+
 
 def pr_ns(flags: str = "") -> argparse.Namespace:
     return fairy.parse_args(shlex.split("--owner o --repo r " + flags))
@@ -86,10 +92,10 @@ class PrepareCase(unittest.TestCase):
 
     def prepare(self, flags: str, comments: list | None = None,
                 self_login: str | None = None, statuses: list | None = None,
-                pr: dict | None = None):
+                pr: dict | None = None, reviews: list | None = None):
         with mock.patch.object(
                 fairy, "get_pr_discussion",
-                return_value=([], comments or [HUMAN_COMMENT], [])), \
+                return_value=(reviews or [], comments or [HUMAN_COMMENT], [])), \
                 mock.patch.object(fairy.gcli_cache, "get",
                                   return_value={"timeline": []}), \
                 mock.patch.object(fairy, "list_commit_statuses",
@@ -107,7 +113,7 @@ class PrepareCase(unittest.TestCase):
 
 class RedCiRoutingTests(PrepareCase):
     """A CI-red PR reaches the LLM pipeline with the failure payload;
-    only the no-LLM auto-approve mode still stops at a skip."""
+    with no reviewer command it stops at a skip."""
 
     def test_without_llm_review_cmd_red_ci_stops_at_a_skip(self) -> None:
         decision = self.prepare("")
@@ -123,8 +129,8 @@ class RedCiRoutingTests(PrepareCase):
 
 
 class MissingCiGateTests(PrepareCase):
-    """An empty commit-status list gates only the rule-only auto-approve
-    path; an LLM review proceeds without CI evidence.
+    """An empty commit-status list stops only a run without a reviewer
+    command; an LLM review proceeds without CI evidence.
 
     Regression: FFmpeg/fateserver runs no CI, so the statuses fetch for
     https://code.ffmpeg.org/FFmpeg/fateserver/pulls/2 (this fixture)
@@ -144,11 +150,27 @@ class MissingCiGateTests(PrepareCase):
         self.assertEqual(prepared.base_reason,
                          "matches all rules; CI contexts=0")
 
-    def test_the_rule_only_auto_approve_still_skips(self) -> None:
+    def test_without_a_reviewer_command_the_missing_ci_is_the_reason(self) -> None:
         decision = self.prepare("", statuses=[], pr=self.FATESERVER_PR2)
         self.assertEqual(decision.action, "skip")
         self.assertEqual(decision.reason,
                          "no commit statuses / CI results found")
+
+
+class NoReviewerCommandTests(PrepareCase):
+    """Passing every rule is not an approval: only a reviewer verdict is,
+    so without --llm-review-cmd even a green, rule-matching PR skips."""
+
+    def test_a_matching_pr_skips_naming_the_missing_command(self) -> None:
+        decision = self.prepare("", statuses=GREEN_CI)
+        self.assertEqual(decision.action, "skip")
+        self.assertEqual(decision.reason,
+                         "matches all rules; CI contexts=1; "
+                         "--llm-review-cmd not set (no approval)")
+
+    def test_the_skip_carries_the_external_approver(self) -> None:
+        decision = self.prepare("", statuses=GREEN_CI, reviews=[APPROVAL])
+        self.assertEqual(decision.external_approvers, ("carol",))
 
 
 class ApproveMessageTests(unittest.TestCase):

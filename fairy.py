@@ -39,13 +39,11 @@ Selection rules:
 4. The PR head commit has CI statuses reported. ERROR/FAILURE jobs do not
    block the LLM pipeline: the failure details and log tails ride along in
    the ``ci_triage`` payload so a full review can analyze the failure.
-   Without ``--llm-review-cmd`` a red head still skips (the no-LLM
-   auto-approve path never approves red CI).
 5. PR has had no activity for at least 7 days.
 
-Optional LLM review:
-When --llm-review-cmd is set, PRs that would otherwise be approved are sent to an
-external reviewer command. That command receives JSON on stdin containing a fixed
+The LLM review:
+A PR that passes the rules is sent to the external reviewer command in
+--llm-review-cmd. That command receives JSON on stdin containing a fixed
 review prompt, PR metadata, and the patch text. It must return JSON with one of
 these classifications:
 
@@ -60,9 +58,13 @@ Reads go through `gcli api`, approvals through `gcli pulls ... approve`.
 by itself; without it every verdict waits in reviewed/ for the operator.
 
 When a human @-mentions fairy or requests it as a reviewer, the run may enter a
-"forced review" path: the PR is *never* auto-approved in that case unless
-``--llm-review-cmd`` is set; without an LLM command the PR is simply skipped
-(no approval).
+"forced review" path, which bypasses the rules above but not the reviewer.
+
+Without ``--llm-review-cmd`` nothing is reviewed and nothing is approved:
+a PR that gets as far as the reviewer skips naming the missing command,
+and the attention classes (merge-ready, ci-blocked, awaiting-approver)
+are all that is left to act on. README-NO-LLM.md describes that
+deployment.
 """
 
 from __future__ import annotations
@@ -2672,8 +2674,9 @@ def prepare_pr(
         )
 
     commit_statuses = effective_commit_statuses(raw_status_list)
-    # Gates only the rule-only auto-approve, which cannot rest on zero CI
-    # evidence; an LLM review proceeds (a no-CI repo never gets a status).
+    # An LLM review proceeds without CI evidence (a no-CI repo never gets
+    # a status); with no reviewer command the absent statuses are the
+    # more precise skip reason than the rules the PR went on to match.
     if not commit_statuses and not args.llm_review_cmd:
         return skip(
             "no commit statuses / CI results found",
@@ -2712,8 +2715,9 @@ def prepare_pr(
                 blocked_ci_contexts=blocked_ctxs,
             )
         if not args.llm_review_cmd:
-            # Red CI is reviewable only through the LLM pipeline; the
-            # no-LLM auto-approve path must never approve a red head.
+            # Red CI is reviewable only through the LLM pipeline: with no
+            # reviewer command there is nobody to hand ci_triage to, and
+            # a queued ticket no worker can claim would sit forever.
             return skip(
                 f"CI not successful: {preview}",
                 last_activity_value=last_activity,
@@ -2746,32 +2750,22 @@ def prepare_pr(
             external_approvers=external_approvers,
         )
 
-    auto_merge_value = get_auto_merge()
     base_reason = f"matches all rules; CI contexts={len(commit_statuses)}"
-    if args.llm_review_cmd:
-        return PreparedPR(
-            pr=pr,
-            number=number,
-            title=title,
-            author=author,
-            auto_merge=auto_merge_value,
-            last_activity=last_activity,
-            base_reason=base_reason,
-            discussion=build_llm_discussion(reviews, comments, review_comments, get_timeline()),
-            reviewer_username=self_login,
-            external_approvers=external_approvers,
-        )
+    if not args.llm_review_cmd:
+        return skip(f"{base_reason}; --llm-review-cmd not set (no approval)",
+                    last_activity_value=last_activity)
 
-    return Decision(
-        number,
-        title,
-        author,
-        auto_merge_value,
-        "approve",
-        base_reason,
-        last_activity,
-        expected_pr_updated_at=pr.get("updated_at"),
-        expected_head_ref=get_pr_head_ref(pr),
+    return PreparedPR(
+        pr=pr,
+        number=number,
+        title=title,
+        author=author,
+        auto_merge=get_auto_merge(),
+        last_activity=last_activity,
+        base_reason=base_reason,
+        discussion=build_llm_discussion(reviews, comments, review_comments, get_timeline()),
+        reviewer_username=self_login,
+        external_approvers=external_approvers,
     )
 
 

@@ -149,6 +149,8 @@ UI can quit and restart freely. The full pane, key, lens and mouse
 reference lives in [README-TUI.md](README-TUI.md); see
 `fairy-ui-ref.sh` for a launcher example.
 
+![fairy_tui](https://ffmpeg.org/~michael/fairy-ui-2026-08-23.png)
+
 The agent and the TUI also run without any reviewer, as a read-only
 view of the forge: [README-NO-LLM.md](README-NO-LLM.md).
 

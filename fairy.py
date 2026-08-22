@@ -1278,6 +1278,19 @@ def get_pr_head_branch(pr: ApiObject) -> str | None:
     return None
 
 
+def get_pr_base_sha(pr: ApiObject) -> str | None:
+    """Base commit of the PR's patch: the forge-computed merge base
+    when present, else the base branch tip -- the same choice
+    patch_shas_for_run makes for a live review."""
+    merge_base = pr.get("merge_base")
+    if isinstance(merge_base, str) and merge_base:
+        return merge_base
+    base = pr.get("base")
+    if isinstance(base, dict) and isinstance(base.get("sha"), str):
+        return base["sha"] or None
+    return None
+
+
 def get_auto_merge_info(
     args: argparse.Namespace,
     pr: ApiObject,

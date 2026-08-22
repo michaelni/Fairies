@@ -189,6 +189,8 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                 "approvals": sum(s.state == "APPROVED" for s in live),
                 "change_requests": sum(s.state == "CHANGES_REQUESTED"
                                        for s in live),
+                "base_sha": fairy.get_pr_base_sha(item),
+                "head_sha": fairy.get_pr_head_ref(item),
             }
         else:
             status = {

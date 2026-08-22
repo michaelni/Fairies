@@ -60,6 +60,7 @@ def make_pr(n: int) -> dict:
     return {"number": n, "title": f"t{n}", "user": {"login": "a"},
             "updated_at": "2026-07-19T10:00:00Z",
             "head": {"sha": f"h{n}", "ref": f"b{n}"},
+            "base": {"sha": f"base{n}", "ref": "main"},
             "html_url": f"https://forge/pr/{n}"}
 
 
@@ -928,6 +929,13 @@ class ItemSnapshotScanTests(AgentCase):
         self.assertEqual(snap["approvals"], 1)
         self.assertEqual(snap["change_requests"], 1)
         self.assertEqual(snap["auto_merge"], "no")
+        self.assertEqual(snap["base_sha"], "base1")
+        self.assertEqual(snap["head_sha"], "h1")
+
+    def test_pr_snapshot_prefers_the_forge_merge_base(self) -> None:
+        self.thread.return_value = ([], [], [], [])
+        self.scan([dict(make_pr(1), merge_base="mb1")])
+        self.assertEqual(self.db.get("items", "pr", "1")["base_sha"], "mb1")
 
     def test_merged_pr_snapshot_state_is_merged(self) -> None:
         self.ns.force_review_prs = {7}

@@ -2678,12 +2678,13 @@ def prepare_pr(
     # Cohort: this runs only after WIP/conflict/CHANGES_REQUESTED/
     # self-approved/last_activity-None/threshold-fresh have all skipped,
     # so the extra API call is bounded to PRs fairy would have looked
-    # at anyway (just a bit later). Not cached: we have not verified
-    # that ``pr.updated_at`` reliably bumps on commit-status row changes
-    # in Forgejo, so the cache's (pr.updated_at + TTL) pattern cannot
-    # be mirrored here without risking stale CI surface -- and per
-    # CONTRIBUTING.md a cache that can lie is worse than no cache. A
-    # pure-TTL cache is also off the table for the same reason.
+    # at anyway (just a bit later). Not cached: commit-status rows were
+    # observed arriving without bumping ``pr.updated_at`` (a Forgejo
+    # instance, 2026-08-23, 2 PRs: status rows 34min and 2 days younger
+    # than an unmoving updated_at), so the cache's (pr.updated_at + TTL)
+    # pattern would serve stale CI -- and per CONTRIBUTING.md a cache
+    # that can lie is worse than no cache. A pure-TTL cache is also
+    # off the table for the same reason.
     head_ref = get_pr_head_ref(pr)
     if not head_ref:
         return skip("cannot determine PR head commit", last_activity_value=last_activity)

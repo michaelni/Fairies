@@ -904,6 +904,38 @@ def get_pr_discussion(
     )
 
 
+def get_pr_thread(
+    args: argparse.Namespace,
+    pr: ApiObject,
+    *,
+    cache: gcli_cache.Cache,
+    cache_max_age: timedelta,
+) -> tuple[list[ApiObject], list[ApiObject], list[ApiObject], list[ApiObject]]:
+    """``(reviews, comments, review_comments, timeline)`` for ``pr`` in
+    one ``gcli_cache.get``: the four fields share one entry stamp and
+    one ``updated_at`` refetch, where separate discussion and timeline
+    calls pay two -- and, on a changed PR, drop and refetch each
+    other's fields as non-refetched siblings."""
+    pr_number = int(pr["number"])
+    live_updated_at = iso_to_dt(pr.get("updated_at"))
+    if live_updated_at is None:
+        raise RuntimeError(
+            f"PR #{pr_number} is missing or has unparseable updated_at; "
+            f"refusing to cache against an unknown freshness key"
+        )
+    fields = gcli_cache.get(
+        cache, args, "pulls", args.owner, args.repo, pr_number,
+        live_updated_at, "reviews", "issue_comments", "review_comments",
+        "timeline", max_age=cache_max_age,
+    )
+    return (
+        list(fields["reviews"]),
+        list(fields["issue_comments"]),
+        list(fields["review_comments"]),
+        list(fields["timeline"]),
+    )
+
+
 def get_pr_timeline(
     args: argparse.Namespace,
     pr: ApiObject,

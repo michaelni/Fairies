@@ -154,11 +154,8 @@ def _fetch_thread(ns: argparse.Namespace, kind: str, item: dict, cache,
     the gates read; fetched first in the pass, so a prepare of the same
     item hits the cache. Issues have no reviews or review comments."""
     if kind == "pr":
-        reviews, comments, review_comments = fairy.get_pr_discussion(
-            ns, item, cache=cache, cache_max_age=cache_age)
-        timeline = fairy.get_pr_timeline(ns, item, cache=cache,
-                                         cache_max_age=cache_age)
-        return reviews, comments, review_comments, timeline
+        return fairy.get_pr_thread(ns, item, cache=cache,
+                                   cache_max_age=cache_age)
     comments, timeline = issue_fairy.get_issue_discussion(
         ns, item, cache=cache, cache_max_age=cache_age)
     return [], comments, [], timeline

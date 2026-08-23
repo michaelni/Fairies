@@ -1000,17 +1000,30 @@ class DiscussionWiringTests(unittest.TestCase):
             .read_text(encoding="utf-8"))
         ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
         cache = object()
-        with mock.patch.object(fairy, "get_pr_discussion",
-                               return_value=([], comments, [])) as fetch, \
-                mock.patch.object(fairy, "get_pr_timeline",
-                                  return_value=[]) as timeline:
+        with mock.patch.object(fairy, "get_pr_thread",
+                               return_value=([], comments, [], [])) as fetch:
             got = agent._fetch_thread(ns, "pr", {"number": 1}, cache,
                                       timedelta(hours=24))
         self.assertEqual(got, ([], comments, [], []))
-        for call in (fetch, timeline):
-            self.assertIs(call.call_args.kwargs["cache"], cache)
-            self.assertEqual(call.call_args.kwargs["cache_max_age"],
-                             timedelta(hours=24))
+        self.assertIs(fetch.call_args.kwargs["cache"], cache)
+        self.assertEqual(fetch.call_args.kwargs["cache_max_age"],
+                         timedelta(hours=24))
+
+    def test_a_pr_thread_is_one_cache_round_trip(self) -> None:
+        """Separate discussion and timeline gets each paid their own
+        updated_at refetch per PR; the thread fetch must stay a single
+        get carrying all four fields."""
+        ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
+        with mock.patch.object(fairy.gcli_cache, "get", return_value={
+                "reviews": (), "issue_comments": (),
+                "review_comments": (), "timeline": ()}) as get:
+            agent._fetch_thread(
+                ns, "pr", {"number": 1, "updated_at": "2026-08-23T00:00:00Z"},
+                object(), timedelta(hours=24))
+        get.assert_called_once()
+        self.assertEqual(set(get.call_args.args[7:]),
+                         {"reviews", "issue_comments", "review_comments",
+                          "timeline"})
 
     def test_issue_fetchers_in_argument_order(self) -> None:
         comments = json.loads(

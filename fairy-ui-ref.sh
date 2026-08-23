@@ -161,14 +161,14 @@ case "$MODEL" in codex:*)
 esac
 # console output goes to .console files: a backgrounded process's
 # stderr handlers would otherwise scribble over the blessed screen
-./agent.py  --db-root "$FFMPEG_DB" --loop 600 >"logs/agent-ffmpeg.console" 2>&1 &
-./worker.py --db-root "$FFMPEG_DB" --loop 600 >"logs/worker-ffmpeg.console" 2>&1 &
-./agent.py  --db-root "$WEB_DB" --loop 600 >"logs/agent-web.console" 2>&1 &
-./worker.py --db-root "$WEB_DB" --loop 600 >"logs/worker-web.console" 2>&1 &
-./agent.py  --db-root "$FATE_DB" --loop 600 >"logs/agent-fateserver.console" 2>&1 &
-./worker.py --db-root "$FATE_DB" --loop 600 >"logs/worker-fateserver.console" 2>&1 &
-./agent.py  --db-root "$FAIRIES_DB" --loop 600 >"logs/agent-fairies.console" 2>&1 &
-./worker.py --db-root "$FAIRIES_DB" --loop 600 >"logs/worker-fairies.console" 2>&1 &
+./agent.py  --db-root "$FFMPEG_DB" --loop 6000 >"logs/agent-ffmpeg.console" 2>&1 &
+./worker.py --db-root "$FFMPEG_DB" --loop 6000 >"logs/worker-ffmpeg.console" 2>&1 &
+./agent.py  --db-root "$WEB_DB" --loop 6000 >"logs/agent-web.console" 2>&1 &
+./worker.py --db-root "$WEB_DB" --loop 6000 >"logs/worker-web.console" 2>&1 &
+./agent.py  --db-root "$FATE_DB" --loop 6000 >"logs/agent-fateserver.console" 2>&1 &
+./worker.py --db-root "$FATE_DB" --loop 6000 >"logs/worker-fateserver.console" 2>&1 &
+./agent.py  --db-root "$FAIRIES_DB" --loop 6000 >"logs/agent-fairies.console" 2>&1 &
+./worker.py --db-root "$FAIRIES_DB" --loop 6000 >"logs/worker-fairies.console" 2>&1 &
 trap 'kill $(jobs -p) 2>/dev/null' EXIT
 
 ./fairy_tui.py --log-file fairy_tui.log \

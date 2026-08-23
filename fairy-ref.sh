@@ -37,7 +37,7 @@ cd ..
 
 # One-shot cron cycle: configurator writes the db root's config.toml,
 # then the agent runs scan -> inline worker -> send from it. Extra
-# arguments ($*) go to agent.py itself (e.g. --dry-run, --loop 600).
+# arguments ($*) go to agent.py itself (e.g. --dry-run, --loop 6000).
 # ./configurator.py --help documents the side options.
 # One db root is one config: the configurator writes the whole file,
 # so this PR-only deployment has its own root and issue-fairy-ref.sh

@@ -118,6 +118,7 @@ __all__ = [
     "build_repo_path",
     "gcli_api",
     "gcli_prefix",
+    "issues_listing_takes_type_filter",
     "list_closed_since",
     "list_commit_statuses",
     "pr_merged",
@@ -572,6 +573,15 @@ def post_issue_comment(
 def _forge_type(args: argparse.Namespace) -> str:
     """The backend gcli will talk to; empty means gcli's own default."""
     return (getattr(args, "forge_type", None) or "gitea").lower()
+
+
+def issues_listing_takes_type_filter(args: argparse.Namespace) -> bool:
+    """Whether the ``/issues`` listing filters its PR rows out
+    server-side with ``type=issues``: Forgejo/Gitea do (the instances'
+    swagger; gcli's own Gitea backend passes it, gcli
+    src/gitea/issues.c), GitHub's listing has no such parameter and
+    surfaces every PR as an issue."""
+    return _forge_type(args) in ("forgejo", "gitea")
 
 
 def self_login(args: argparse.Namespace) -> str | None:

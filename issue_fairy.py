@@ -146,17 +146,25 @@ def parse_args(argv: list[str] | None = None, *, agent: bool = True,
 
 
 def list_open_issues(args: argparse.Namespace) -> list[ApiObject]:
-    """Open real issues: the ``/issues`` listing minus open PRs.
+    """Open real issues.
 
-    Forgejo/Gitea and GitHub both surface every PR as an issue in the
-    ``/issues`` listing; subtracting the open-PR numbers (the same
-    approach forgejo_export.py uses) keeps this forge-generic.
+    Where the forge's ``/issues`` listing takes the ``type=issues``
+    filter (see ``forge_gcli.issues_listing_takes_type_filter``), the
+    server omits the PR rows; elsewhere every open PR surfaces as an
+    issue and its number is subtracted (the same approach
+    forgejo_export.py uses), at the price of an extra open-PR listing.
     """
-    query = urlencode({"state": "open", "sort": "leastupdate", "limit": 100})
+    prefiltered = forge_gcli.issues_listing_takes_type_filter(args)
+    query = urlencode({"state": "open", "sort": "leastupdate", "limit": 100,
+                       **({"type": "issues"} if prefiltered else {})})
     path = build_repo_path(args.owner, args.repo, f"/issues?{query}")
     data = gcli_api(args, path, all_pages=True, verbose_threshold=1)
     if not isinstance(data, list):
         raise RuntimeError(f"expected list of issues, got {type(data).__name__}")
+    if prefiltered:
+        issues = [item for item in data if isinstance(item, dict)]
+        logger.debug("issue listing: %d issue(s)", len(issues))
+        return issues
     pr_numbers = {pr["number"] for pr in list_open_prs(args)}
     issues = [
         item for item in data

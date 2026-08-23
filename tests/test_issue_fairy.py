@@ -121,17 +121,33 @@ class IssueReportSchemaTests(unittest.TestCase):
 
 
 class DiscoveryFilterTests(unittest.TestCase):
-    """The forge's /issues listing contains every open PR as an issue;
-    discovery must subtract them. Real capture: 20 open items of which
-    only 5 are real issues."""
+    """GitHub's /issues listing contains every open PR as an issue and
+    has no server-side filter, so discovery must subtract them;
+    Forgejo/Gitea filter with ``type=issues``. Real capture: 20 open
+    items of which only 5 are real issues."""
 
-    def test_open_prs_removed_from_listing(self) -> None:
+    def test_github_open_prs_removed_from_listing(self) -> None:
         listing = load_fixture("ffmpeg_issues_listing.json")
         pulls = load_fixture("ffmpeg_open_pulls.json")
-        args = make_args()
+        args = make_args(forge_type="github")
         with mock.patch.object(issue_fairy, "gcli_api", return_value=listing), \
              mock.patch.object(issue_fairy, "list_open_prs", return_value=pulls):
             issues = issue_fairy.list_open_issues(args)
+        self.assertEqual(
+            [i["number"] for i in issues],
+            [23757, 23749, 23746, 23738, 23737],
+        )
+
+    def test_forgejo_filters_server_side_without_a_pr_listing(self) -> None:
+        listing = [i for i in load_fixture("ffmpeg_issues_listing.json")
+                   if "pulls/" not in str(i.get("html_url"))]
+        args = make_args()
+        with mock.patch.object(issue_fairy, "gcli_api",
+                               return_value=listing) as api, \
+             mock.patch.object(issue_fairy, "list_open_prs") as prs:
+            issues = issue_fairy.list_open_issues(args)
+        prs.assert_not_called()
+        self.assertIn("type=issues", api.call_args.args[1])
         self.assertEqual(
             [i["number"] for i in issues],
             [23757, 23749, 23746, 23738, 23737],

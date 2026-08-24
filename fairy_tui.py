@@ -929,8 +929,9 @@ KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("e/E", "export"),
           ("?", "help"), ("Tab/click", "focus"),
           ("↑↓ PgUp/PgDn Home/End", "scroll"))
-DETAIL_MODES = ("message", "patches", "merge diff")
-LOGS_MODES = ("logs", "patches", "merge diff")
+DIFF_MODES = ("patches", "merge diff")
+DETAIL_MODES = ("message", *DIFF_MODES)
+LOGS_MODES = ("logs", *DIFF_MODES)
 DIFF_MAX_LINES = 20_000
 
 
@@ -1041,9 +1042,8 @@ def _styles(t: blessed.Terminal) -> dict:
             "diff_file": mix(t.bold, c(117)), "diff_hunk": c(73),
             "diff_meta": c(244),              "diff_commit": mix(t.bold, c(179)),
         }
-        for fg_name, fg in {"tx": c(252), "kw": c(176), "ty": c(116),
-                            "fn": c(75), "str": c(114), "com": c(245),
-                            "num": c(179)}.items():
+        for fg_name, fg in zip(tui_core.DIFF_FGS, (
+                c(252), c(176), c(116), c(75), c(114), c(245), c(179))):
             for bg_name, bg in {"ctx": None, "add": on(22), "del": on(52),
                                 "addhl": on(28), "delhl": on(88)}.items():
                 styles[f"df_{bg_name}_{fg_name}"] = mix(bg, fg) if bg else fg
@@ -1091,7 +1091,7 @@ def _styles(t: blessed.Terminal) -> dict:
     for bg_name, fn in {"add": t.green, "del": t.red,
                         "addhl": mix(t.reverse, t.green),
                         "delhl": mix(t.reverse, t.red)}.items():
-        for fg_name in ("tx", "kw", "ty", "fn", "str", "com", "num"):
+        for fg_name in tui_core.DIFF_FGS:
             styles[f"df_{bg_name}_{fg_name}"] = fn
     return styles
 
@@ -1349,7 +1349,7 @@ class UILoop:
                 byline += [("label", "   branch "),
                            ("text", str(data["head_branch"])[:width])]
             head.append(byline)
-        if self.detail_mode != "message" and item.kind == "pr":
+        if self.detail_mode in DIFF_MODES and item.kind == "pr":
             return head + self._diff_body(item, snapshot, self.detail_mode)
         if item.error:
             head += tui_core.wrap([("log_err", str(item.error))], width,
@@ -1527,7 +1527,7 @@ class UILoop:
         body_h = max(3, h - 1)
         rects = self.layout.rects(w, body_h)
         col_t, col_b, row = self.layout.splits(w, body_h)
-        if self.logs_mode == "logs":
+        if self.logs_mode not in DIFF_MODES:
             self.scroll["bl"] = min(self.scroll["bl"],
                                     max(0, len(self.ring) - (rects["bl"].h - 1)))
         with self.model.lock:
@@ -1537,7 +1537,7 @@ class UILoop:
                 "tr": self._list_window(rects["tr"].h - 1),
                 "bl": [(self._log_style(tag), text) for tag, text in
                        self.ring.view(self.scroll["bl"], rects["bl"].h - 1)]
-                if self.logs_mode == "logs"
+                if self.logs_mode not in DIFF_MODES
                 else self._scrolled("bl", self._logs_diff_lines(),
                                     rects["bl"].h - 1),
                 "br": self._scrolled("br", self.detail_lines(self._text_width(rects["br"])),
@@ -1636,9 +1636,9 @@ class UILoop:
         if pane == "tr":
             title += f"[{self.model.filter_mode}] "
         elif pane == "br":
-            title += "⧉ " if self.detail_mode == "message" \
+            title += "⧉ " if self.detail_mode not in DIFF_MODES \
                 else f"⧉ [{self.detail_mode}] "
-        elif pane == "bl" and self.logs_mode != "logs":
+        elif pane == "bl" and self.logs_mode in DIFF_MODES:
             title += f"[{self.logs_mode}] "
         bar = title[:rect.w].ljust(rect.w)
         bar_fn = self.styles.get("bar_focus" if pane == self.focus else "bar_blur") \
@@ -1775,7 +1775,7 @@ class UILoop:
                     self.model.cursor + (delta if self.model.cursor_shown
                                          else 0))
             self.follow_cursor = True
-        elif pane == "bl" and self.logs_mode == "logs":
+        elif pane == "bl" and self.logs_mode not in DIFF_MODES:
             # offset counts back from the newest line; 0 follows the tail
             self.scroll["bl"] = max(0, self.scroll["bl"] - delta)
         elif pane in self.scroll:
@@ -1791,7 +1791,7 @@ class UILoop:
                 vis = self.model._sync_cursor()
                 self.model.select_index(0 if top else len(vis) - 1)
             self.follow_cursor = True
-        elif pane == "bl" and self.logs_mode == "logs":
+        elif pane == "bl" and self.logs_mode not in DIFF_MODES:
             self.scroll["bl"] = 10 ** 9 if top else 0
         elif pane in self.scroll:
             self.scroll[pane] = 0 if top else 10 ** 9
@@ -2085,7 +2085,7 @@ class UILoop:
         # scroll window) would differ from the screen.
         rects = self.layout.rects(self.term.width, max(3, self.term.height - 1))
         with self.model.lock:
-            if pane == "bl" and self.logs_mode != "logs":
+            if pane == "bl" and self.logs_mode in DIFF_MODES:
                 lines = self._logs_diff_lines()
                 text = _plain(lines if full
                               else self._scrolled("bl", lines, inner_h))

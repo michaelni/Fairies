@@ -53,8 +53,8 @@ from pygments.token import Comment, Keyword, Name, Number, Operator, String
 from pygments.util import ClassNotFound
 
 __all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "MARKDOWN_STYLES",
-           "DIFF_STYLES", "wrap", "render_markdown", "render_diff", "sanitize",
-           "tile_blocks", "token_at"]
+           "DIFF_FGS", "DIFF_STYLES", "wrap", "render_markdown", "render_diff",
+           "sanitize", "tile_blocks", "token_at"]
 
 # (style, text) segments; the painter treats an unknown style as "text".
 StyledLine = list[tuple[str, str]]
@@ -497,9 +497,11 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
     return out
 
 
+DIFF_FGS = ("tx", "kw", "ty", "fn", "str", "com", "num")
+
 DIFF_STYLES = frozenset(
     {f"df_{bg}_{fg}" for bg in ("ctx", "add", "del", "addhl", "delhl")
-     for fg in ("tx", "kw", "ty", "fn", "str", "com", "num")}
+     for fg in DIFF_FGS}
     | {"diff_file", "diff_hunk", "diff_meta", "diff_commit",
        "text", "bold", "sc_good", "sc_bad"})
 

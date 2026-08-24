@@ -594,14 +594,25 @@ def render_diff(patch: str) -> list[StyledLine]:
     lexer_cache: dict[str, Lexer | None] = {}
     lines = patch.split("\n")
     in_mail_header = False
+    in_commit_msg = False
     i = 0
     while i < len(lines):
         line = lines[i].expandtabs()
         i += 1
         if in_mail_header:
             in_mail_header = bool(line)
+            in_commit_msg = not in_mail_header
             out.append([("bold" if line.startswith("Subject:")
                          else "diff_meta", line)] if line else [])
+            continue
+        if in_commit_msg:
+            # Message text runs to the "---" scissors line; a quoted
+            # hunk or header inside it must stay verbatim text.
+            if line == "---":
+                in_commit_msg = False
+                out.append([("diff_meta", line)])
+            else:
+                out.append([("text", line)] if line else [])
             continue
         if (hunk := _HUNK_RE.match(line)):
             out.append([("diff_hunk", line)])

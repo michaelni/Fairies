@@ -348,6 +348,32 @@ index a9c7a0a73c..4d79eee36b 100644
 """
 
 
+QUOTED_HUNK_PATCH = """\
+From 2c18311d59ac8b1a4ca2255750836b892179d27a Mon Sep 17 00:00:00 2001
+From: Michael Niedermayer <michael@niedermayer.cc>
+Date: Wed, 22 Jul 2026 22:46:55 +0200
+Subject: [PATCH] doc: explain the rejected hunk
+
+The submitted patch carried this hunk:
+
+@@ -1,2 +1,2 @@ some_function
+the line count in that header was wrong
+which git am rejects
+
+---
+ f.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/f.txt b/f.txt
+index 0000001..0000002 100644
+--- a/f.txt
++++ b/f.txt
+@@ -1 +1 @@
+-old line
++new line
+"""
+
+
 class RenderDiffTests(unittest.TestCase):
     def find(self, lines: list[tui_core.StyledLine],
              text: str) -> tui_core.StyledLine:
@@ -396,6 +422,15 @@ class RenderDiffTests(unittest.TestCase):
     def test_commit_message_lines_are_plain_text(self) -> None:
         lines = tui_core.render_diff(C_PATCH)
         self.assertEqual(self.find(lines, "2.43.0"), [("text", "2.43.0")])
+
+    def test_a_hunk_quoted_in_the_commit_message_stays_text(self) -> None:
+        lines = tui_core.render_diff(QUOTED_HUNK_PATCH)
+        self.assertEqual([line_text(l) for l in lines],
+                         QUOTED_HUNK_PATCH.split("\n")[:len(lines)])
+        self.assertEqual(self.find(lines, "@@ -1,2"),
+                         [("text", "@@ -1,2 +1,2 @@ some_function")])
+        self.assertEqual(styles([self.find(lines, "@@ -1 +1 @@")]),
+                         {"diff_hunk"})
 
     def test_context_lines_get_syntax_foregrounds(self) -> None:
         lines = tui_core.render_diff(C_PATCH)

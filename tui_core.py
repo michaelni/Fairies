@@ -524,7 +524,9 @@ def _lexer_for(path: str, cache: dict[str, Lexer | None]) -> Lexer | None:
     key = name[name.rfind("."):] if "." in name else name
     if key not in cache:
         try:
-            cache[key] = get_lexer_for_filename(key)
+            # stripnl would drop leading/trailing blank lines and shift
+            # _hunk_fgs' row mapping against the hunk's lines.
+            cache[key] = get_lexer_for_filename(key, stripnl=False)
         except ClassNotFound:
             cache[key] = None
     return cache[key]
@@ -549,20 +551,32 @@ def _changed_spans(
              if tag in ("replace", "insert") and j1 < j2])
 
 
+def _hunk_fgs(lexer: Lexer | None, side: list[str]) -> list[list[str]]:
+    """Per-character syntax classes for one side of a hunk. The side is
+    lexed as a single text so a construct spanning lines (a block
+    comment, a multi-line string) keeps its class on every line."""
+    fgs = [["tx"] * len(code) for code in side]
+    if lexer is None:
+        return fgs
+    row = col = 0
+    for token, text in lexer.get_tokens("\n".join(side)):
+        cls = next((c for t, c in _DIFF_TOKEN_FG.items() if token in t), "tx")
+        for j, part in enumerate(text.split("\n")):
+            if j:
+                row, col = row + 1, 0
+            if row >= len(fgs):
+                return fgs
+            end = min(col + len(part), len(fgs[row]))
+            fgs[row][col:end] = [cls] * (end - col)
+            col = end
+    return fgs
+
+
 def _code_line(prefix: str, code: str, bg: str, hl: list[tuple[int, int]],
-               lexer: Lexer | None) -> StyledLine:
+               fg: list[str]) -> StyledLine:
     marked = [False] * len(code)
     for lo, hi in hl:
         marked[lo:hi] = [True] * (hi - lo)
-    fg = ["tx"] * len(code)
-    pos = 0
-    if lexer is not None:
-        for token, text in lexer.get_tokens(code):
-            cls = next((c for t, c in _DIFF_TOKEN_FG.items() if token in t),
-                       "tx")
-            end = min(pos + len(text), len(code))
-            fg[pos:end] = [cls] * (end - pos)
-            pos = end
     line: StyledLine = [(f"df_{bg}_tx", prefix)]
     for style, run in groupby(
             range(len(code)),
@@ -572,15 +586,15 @@ def _code_line(prefix: str, code: str, bg: str, hl: list[tuple[int, int]],
     return line
 
 
-def _emit_run(out: list[StyledLine], minus: list[str], plus: list[str],
-              lexer: Lexer | None) -> None:
-    spans = [_changed_spans(a, b) for a, b in zip(minus, plus)]
-    for i, code in enumerate(minus):
+def _emit_run(out: list[StyledLine], minus: list[tuple[str, list[str]]],
+              plus: list[tuple[str, list[str]]]) -> None:
+    spans = [_changed_spans(a, b) for (a, _), (b, _) in zip(minus, plus)]
+    for i, (code, fg) in enumerate(minus):
         out.append(_code_line("-", code, "del",
-                              spans[i][0] if i < len(spans) else [], lexer))
-    for i, code in enumerate(plus):
+                              spans[i][0] if i < len(spans) else [], fg))
+    for i, (code, fg) in enumerate(plus):
         out.append(_code_line("+", code, "add",
-                              spans[i][1] if i < len(spans) else [], lexer))
+                              spans[i][1] if i < len(spans) else [], fg))
 
 
 def render_diff(patch: str) -> list[StyledLine]:
@@ -617,29 +631,44 @@ def render_diff(patch: str) -> list[StyledLine]:
         if (hunk := _HUNK_RE.match(line)):
             out.append([("diff_hunk", line)])
             rem_a, rem_b = int(hunk.group(1) or 1), int(hunk.group(2) or 1)
-            minus: list[str] = []
-            plus: list[str] = []
+            body: list[tuple[str, str]] = []
             while (rem_a > 0 or rem_b > 0) and i < len(lines):
-                body = lines[i].expandtabs()
+                raw = lines[i].expandtabs()
                 i += 1
-                op, code = body[:1], body[1:]
+                op, code = raw[:1], raw[1:]
+                body.append((op, code))
                 if op == "-":
-                    minus.append(code)
                     rem_a -= 1
                 elif op == "+":
-                    plus.append(code)
                     rem_b -= 1
-                elif op == "\\":
-                    _emit_run(out, minus, plus, lexer)
-                    minus, plus = [], []
-                    out.append([("diff_meta", body)])
-                else:
-                    _emit_run(out, minus, plus, lexer)
-                    minus, plus = [], []
-                    out.append(_code_line(" ", code, "ctx", [], lexer))
+                elif op != "\\":
                     rem_a -= 1
                     rem_b -= 1
-            _emit_run(out, minus, plus, lexer)
+            old = _hunk_fgs(lexer, [c for op, c in body
+                                    if op not in ("+", "\\")])
+            new = _hunk_fgs(lexer, [c for op, c in body
+                                    if op not in ("-", "\\")])
+            oi = ni = 0
+            minus: list[tuple[str, list[str]]] = []
+            plus: list[tuple[str, list[str]]] = []
+            for op, code in body:
+                if op == "-":
+                    minus.append((code, old[oi]))
+                    oi += 1
+                elif op == "+":
+                    plus.append((code, new[ni]))
+                    ni += 1
+                elif op == "\\":
+                    _emit_run(out, minus, plus)
+                    minus, plus = [], []
+                    out.append([("diff_meta", op + code)])
+                else:
+                    _emit_run(out, minus, plus)
+                    minus, plus = [], []
+                    out.append(_code_line(" ", code, "ctx", [], new[ni]))
+                    oi += 1
+                    ni += 1
+            _emit_run(out, minus, plus)
             continue
         if line.startswith("diff --git "):
             lexer = _lexer_for(line.rsplit(" b/", 1)[-1], lexer_cache)

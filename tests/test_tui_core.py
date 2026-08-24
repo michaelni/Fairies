@@ -450,6 +450,19 @@ class RenderDiffTests(unittest.TestCase):
         self.assertEqual("".join(t for s, t in marked
                                  if s.startswith("df_delhl")), "STRIPFLAGS")
 
+    def test_multiline_constructs_keep_their_style_across_lines(self) -> None:
+        patch = ("diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n"
+                 "@@ -1,2 +1,4 @@\n"
+                 " \n"
+                 " int x;\n"
+                 "+/* one\n"
+                 "+   two */\n")
+        lines = tui_core.render_diff(patch)
+        # the blank first context line must not shift the row mapping
+        self.assertIn(("df_ctx_ty", "int"), self.find(lines, "int x;"))
+        self.assertEqual(styles([self.find(lines, "two */")]),
+                         {"df_add_tx", "df_add_com"})
+
     def test_tabs_expand_consistently(self) -> None:
         lines = tui_core.render_diff("@@ -1 +1 @@\n-\tab\n+\tac\n")
         self.assertEqual(line_text(lines[1]), "-       ab")

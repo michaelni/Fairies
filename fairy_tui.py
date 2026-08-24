@@ -1529,6 +1529,22 @@ class UILoop:
             return [[("log_warn", "no PR selected")]]
         return self._diff_body(item, m.snapshot_for(key), self.logs_mode)
 
+    def _warm_diff_cache(self) -> None:
+        """Render every diff a pane is about to show, before paint takes
+        ``model.lock`` for good: git and pygments are too slow to run
+        under it (the poll thread would stall behind them), so paint's
+        locked pass must find the diffs already cached."""
+        modes = {self.detail_mode, self.logs_mode} & set(DIFF_MODES)
+        if not modes:
+            return
+        with self.model.lock:
+            key = self.model._cursor_key() or self.model.cursor_key
+            item = self.model.items.get(key) if key else None
+            snapshot = self.model.snapshot_for(key)
+        if item is not None and item.kind == "pr":
+            for mode in modes:
+                self._diff_body(item, snapshot, mode)
+
     def paint(self) -> None:
         self._last_paint = time.monotonic()
         if self.help_text is not None:
@@ -1542,6 +1558,7 @@ class UILoop:
         if self.logs_mode not in DIFF_MODES:
             self.scroll["bl"] = min(self.scroll["bl"],
                                     max(0, len(self.ring) - (rects["bl"].h - 1)))
+        self._warm_diff_cache()
         with self.model.lock:
             content: dict[str, list] = {
                 "tl": self._scrolled("tl", self.stats_lines(self._text_width(rects["tl"])),

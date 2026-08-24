@@ -1485,6 +1485,26 @@ class DiffViewTests(DbCase):
         # the repeated shows must all hit the cache
         self.assertEqual(run.call_count, 5)
 
+    def test_paint_renders_the_diff_outside_the_model_lock(self) -> None:
+        self.push_pr()
+        ui = make_ui(self.model, io.StringIO())
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.detail_mode = "merge diff"
+        ui.logs_mode = "patches"
+        locked_during_git = []
+
+        def record(*args) -> bytes:
+            locked_during_git.append(self.model.lock.locked())
+            return b""
+
+        with mock.patch.object(fairy_tui.git_util, "git_diff",
+                               side_effect=record), \
+                mock.patch.object(fairy_tui.git_util,
+                                  "git_format_patch_series",
+                                  side_effect=record):
+            ui.paint()
+        self.assertEqual(locked_during_git, [False, False])
+
     def test_the_logs_diff_without_a_pr_says_so(self) -> None:
         self.db.push("reviewed", "issue", "9", verdict(9))
         self.model.poll()

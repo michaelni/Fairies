@@ -514,6 +514,7 @@ _DIFF_TOKEN_FG = {
     Name.Function: "fn", Name.Decorator: "fn", Name.Variable: "fn",
     Name.Label: "fn", Name.Class: "ty", Name.Builtin: "kw",
 }
+_token_fg_memo: dict = {}
 
 _HUNK_RE = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 _MBOX_FROM_RE = re.compile(r"From [0-9a-f]{40} ")
@@ -562,7 +563,9 @@ def _hunk_fgs(lexer: Lexer | None, side: list[str]) -> list[list[str]]:
         return fgs
     row = col = 0
     for token, text in lexer.get_tokens("\n".join(side)):
-        cls = next((c for t, c in _DIFF_TOKEN_FG.items() if token in t), "tx")
+        if (cls := _token_fg_memo.get(token)) is None:
+            _token_fg_memo[token] = cls = next(
+                (c for t, c in _DIFF_TOKEN_FG.items() if token in t), "tx")
         for j, part in enumerate(text.split("\n")):
             if j:
                 row, col = row + 1, 0

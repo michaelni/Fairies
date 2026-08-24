@@ -1303,6 +1303,16 @@ def get_pr_head_ref(pr: ApiObject) -> str | None:
     return None
 
 
+def get_pr_head_sha(pr: ApiObject) -> str | None:
+    """The PR's head commit SHA; unlike get_pr_head_ref there is no
+    branch-name fallback, so the result is usable as a git revision
+    pin."""
+    head = pr.get("head")
+    candidates = [head.get("sha")] if isinstance(head, dict) else []
+    candidates += [pr.get("sha"), pr.get("head_sha")]
+    return next((v for v in candidates if isinstance(v, str) and v), None)
+
+
 def get_pr_head_branch(pr: ApiObject) -> str | None:
     head = pr.get("head")
     if isinstance(head, dict) and isinstance(head.get("ref"), str):

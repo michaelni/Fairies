@@ -932,6 +932,13 @@ class ItemSnapshotScanTests(AgentCase):
         self.assertEqual(snap["base_sha"], "base1")
         self.assertEqual(snap["head_sha"], "h1")
 
+    def test_snapshot_head_sha_is_never_a_branch_name(self) -> None:
+        self.thread.return_value = ([], [], [], [])
+        pr = make_pr(1)
+        del pr["head"]["sha"]
+        self.scan([pr])
+        self.assertIsNone(self.db.get("items", "pr", "1")["head_sha"])
+
     def test_pr_snapshot_prefers_the_forge_merge_base(self) -> None:
         self.thread.return_value = ([], [], [], [])
         self.scan([dict(make_pr(1), merge_base="mb1")])

@@ -187,7 +187,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                 "change_requests": sum(s.state == "CHANGES_REQUESTED"
                                        for s in live),
                 "base_sha": fairy.get_pr_base_sha(item),
-                "head_sha": fairy.get_pr_head_ref(item),
+                "head_sha": fairy.get_pr_head_sha(item),
             }
         else:
             status = {

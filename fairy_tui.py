@@ -1139,7 +1139,8 @@ class UILoop:
         self.patch_repos = patch_repos or {}
         self.detail_mode = DETAIL_MODES[0]
         self.logs_mode = LOGS_MODES[0]
-        self._diff_cache: dict[tuple, list[tui_core.StyledLine]] = {}
+        self._diff_cache: dict[
+            tuple, tuple[list[tui_core.StyledLine], float | None]] = {}
         repos = [repo for repo, _ in model.sides]
         short = [_repo_short(r) for r in repos]
         self._repo_disp = {r: (s if short.count(s) == 1 else r)
@@ -1467,14 +1468,18 @@ class UILoop:
         base/head SHAs its items/ snapshot reports, cached until the
         mode or those SHAs change (rendering re-runs git and pygments;
         a repaint must not -- the message and logs panes each keep an
-        entry, so the cache holds a few)."""
+        entry, so the cache holds a few). A git failure is cached only
+        briefly: it usually means the head is not fetched yet, and the
+        view must recover once the operator fetches the mirror."""
         base_sha = (snapshot or {}).get("base_sha")
         head_sha = (snapshot or {}).get("head_sha")
         cache_key = (item.repo, item.number, mode, base_sha, head_sha)
-        cached = self._diff_cache.get(cache_key)
-        if cached is not None:
+        cached, valid_until = self._diff_cache.get(cache_key, (None, None))
+        if cached is not None and (valid_until is None
+                                   or time.monotonic() < valid_until):
             return cached
         repo = self.patch_repos.get(item.repo)
+        retry_at = None
         caption = [("label", mode + (f" {base_sha[:12]}..{head_sha[:12]}"
                                      if base_sha and head_sha else ""))]
         if repo is None:
@@ -1500,13 +1505,15 @@ class UILoop:
                                               f" of {len(patch_lines)} lines")])
             except RuntimeError as exc:
                 logger.error("%s", exc)
+                retry_at = time.monotonic() + 5
                 body = [[("log_err", line)] for line in str(exc).splitlines()]
                 body.append([("label", "if the head is not fetched yet: "
                                        f"git -C {repo} fetch --all")])
         if len(self._diff_cache) >= 4:
             self._diff_cache.pop(next(iter(self._diff_cache)))
-        self._diff_cache[cache_key] = [caption, []] + body
-        return self._diff_cache[cache_key]
+        lines = [caption, []] + body
+        self._diff_cache[cache_key] = (lines, retry_at)
+        return lines
 
     def _logs_diff_lines(self) -> list[tui_core.StyledLine]:
         """The logs pane's content for ``d``'s non-logs modes: the

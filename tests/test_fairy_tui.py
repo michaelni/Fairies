@@ -1376,6 +1376,26 @@ class DiffViewTests(DbCase):
         self.assertIn("git format-patch b1..h5 failed", text)
         self.assertIn("fetch", text)
 
+    def test_a_git_failure_is_retried_once_the_operator_can_have_fetched(
+            self) -> None:
+        self.push_pr()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.detail_mode = "patches"
+        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+                               side_effect=RuntimeError("bad object h5")) as fail:
+            self.assertIn("bad object h5", self.detail_text(ui))
+            self.assertIn("bad object h5", self.detail_text(ui))
+        fail.assert_called_once()
+        later = time.monotonic() + 6
+        with mock.patch.object(fairy_tui.time, "monotonic",
+                               return_value=later), \
+                mock.patch.object(fairy_tui.git_util,
+                                  "git_format_patch_series",
+                                  return_value=b"") as run:
+            self.assertIn("(empty diff)", self.detail_text(ui))
+        run.assert_called_once()
+
     def test_without_a_patch_repo_the_view_warns_instead_of_running_git(
             self) -> None:
         self.push_pr()

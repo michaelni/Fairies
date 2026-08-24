@@ -1350,8 +1350,6 @@ class UILoop:
                 byline += [("label", "   branch "),
                            ("text", str(data["head_branch"])[:width])]
             head.append(byline)
-        if self.detail_mode in DIFF_MODES and item.kind == "pr":
-            return head + self._diff_body(item, snapshot, self.detail_mode)
         if item.error:
             head += tui_core.wrap([("log_err", str(item.error))], width,
                                   initial=("log_err", "file invalid: "))
@@ -1367,6 +1365,8 @@ class UILoop:
         for failed in data.get("failed_reviewers") or []:
             head += tui_core.wrap([("log_warn", str(failed))], width,
                                   initial=("log_warn", "reviewer failed: "))
+        if self.detail_mode in DIFF_MODES and item.kind == "pr":
+            return head + self._diff_body(item, snapshot, self.detail_mode)
         review = data.get("review") or {}
         decision = agent.ticket_decision(item.kind, item.number, data)
         if decision is not None:

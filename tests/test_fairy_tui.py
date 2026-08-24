@@ -1351,6 +1351,19 @@ class DiffViewTests(DbCase):
             self.assertIn("(empty diff)", self.detail_text(ui))
         run.assert_called_once_with(Path("mirror"), "b1", "h5")
 
+    def test_the_diff_view_keeps_errors_and_send_blocks_visible(self) -> None:
+        self.push_pr(error="reviewer crashed",
+                     send_blocked="the item changed since the review")
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.detail_mode = "merge diff"
+        with mock.patch.object(fairy_tui.git_util, "git_diff",
+                               return_value=b""):
+            text = self.detail_text(ui)
+        self.assertIn("reviewer crashed", text)
+        self.assertIn("send blocked:", text)
+        self.assertIn("(empty diff)", text)
+
     def test_a_failed_git_call_shows_the_error_and_a_fetch_hint(self) -> None:
         self.push_pr()
         ui = make_ui(self.model)

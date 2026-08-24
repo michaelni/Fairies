@@ -1087,8 +1087,9 @@ def _styles(t: blessed.Terminal) -> dict:
         "diff_meta": t.bright_black, "diff_commit": t.bold_yellow,
     }
     # 16 colors cannot carry syntax foregrounds over add/del backgrounds:
-    # the whole line takes the diff color, word marks reverse it.
-    for bg_name, fn in {"add": t.green, "del": t.red,
+    # the whole line takes the diff color, word marks reverse it, and
+    # context lines stay plain (None renders unstyled).
+    for bg_name, fn in {"ctx": None, "add": t.green, "del": t.red,
                         "addhl": mix(t.reverse, t.green),
                         "delhl": mix(t.reverse, t.red)}.items():
         for fg_name in tui_core.DIFF_FGS:

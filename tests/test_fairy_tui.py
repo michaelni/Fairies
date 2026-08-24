@@ -1847,15 +1847,26 @@ class PaintSmokeTests(DbCase):
             self.assertIn(expected, out)
         self.assertIn("\x1b[33ma warning line", out)
 
-    def test_palette_covers_every_markdown_style(self) -> None:
+    def _palette(self, colors: int) -> set[str]:
+        """_styles' names for a terminal reporting ``colors`` colors;
+        forced through the property because blessed reports truecolor
+        whenever COLORTERM is set, whatever TERM says."""
         term = make_term()
+        with mock.patch.object(type(term), "number_of_colors",
+                               new_callable=mock.PropertyMock,
+                               return_value=colors):
+            return set(fairy_tui._styles(term))
+
+    def test_palette_covers_every_markdown_style(self) -> None:
         # "text" deliberately has no entry: it means unstyled.
-        self.assertLessEqual(tui_core.MARKDOWN_STYLES - {"text"},
-                             set(fairy_tui._styles(term)))
+        for colors in (256, 8):
+            self.assertLessEqual(tui_core.MARKDOWN_STYLES - {"text"},
+                                 self._palette(colors))
 
     def test_palette_covers_every_diff_style(self) -> None:
-        self.assertLessEqual(tui_core.DIFF_STYLES - {"text"},
-                             set(fairy_tui._styles(make_term())))
+        for colors in (256, 8):
+            self.assertLessEqual(tui_core.DIFF_STYLES - {"text"},
+                                 self._palette(colors))
 
     def test_paint_strips_hostile_escape_sequences(self) -> None:
         self.db.push("reviewed", "pr", "2",

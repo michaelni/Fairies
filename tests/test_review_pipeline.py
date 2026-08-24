@@ -115,11 +115,12 @@ class _FakeReviewer(Reviewer):
 
 
 class _FailingReviewer(Reviewer):
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, error: str | None = None) -> None:
         self.name = name
+        self.error = error or f"{name}: simulated provider failure"
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
-        raise RuntimeError(f"{self.name}: simulated provider failure")
+        raise RuntimeError(self.error)
 
 
 class _FlaggedReviewer(Reviewer):
@@ -323,6 +324,27 @@ class ReviewPrTests(unittest.TestCase):
         self.assertEqual(
             ["zai:glm-5.3: zai:glm-5.3: simulated provider failure"],
             ctx.failed_reviewers)
+
+    def test_a_long_provider_error_survives_whole(self) -> None:
+        # Regression: PR #24151 (2026-08-25) -- clipping the reason at 160
+        # characters cut z.ai's 429 body mid-sentence, exactly where the
+        # reset time the operator needs to plan the re-run sits.
+        quota = (
+            "Error code: 429 - {'type': 'error', 'error': {'type': "
+            "'rate_limit_error', 'code': '1310', 'message': "
+            "'[1310][Weekly/Monthly Limit Exhausted. Your limit will reset "
+            "at 2026-08-25 18:29:11][2026082504062732b91fe525c340c5]'}, "
+            "'request_id': '2026082504062732b91fe525c340c5'}")
+        ctx = _ctx()
+        survivor = Review("approve", "ok", model="openai:gpt-5.4")
+        with self.assertLogs("llm_review_api", level="ERROR"):
+            review_pipeline.review_pr(
+                ctx,
+                [_FakeReviewer("a", survivor),
+                 _FailingReviewer("zai:glm-5.3", quota)],
+                _FakeReviewer("combiner", Review("approve", "ok", model="c")),
+            )
+        self.assertEqual([f"zai:glm-5.3: {quota}"], ctx.failed_reviewers)
 
     def test_parallel_reviewers_run_on_threads_tagged_with_their_name(self) -> None:
         import threading

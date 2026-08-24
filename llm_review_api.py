@@ -897,7 +897,7 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     all_turn_failed = True
 
     def drop(reviewer: Reviewer, exc: Exception, what: str) -> None:
-        reason = (str(exc).splitlines() or [exc.__class__.__name__])[0][:160]
+        reason = (str(exc).splitlines() or [exc.__class__.__name__])[0]
         ctx.failed_reviewers.append(f"{reviewer.name}: {reason}")
         logger.exception(
             "reviewer %s %s: %s; continuing with the surviving drafts",

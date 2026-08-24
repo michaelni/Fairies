@@ -119,7 +119,9 @@ def _hunk_fgs(lexer: Lexer | None, side: list[str]) -> list[list[str]]:
     if lexer is None:
         return fgs
     row = col = 0
-    for token, text in lexer.get_tokens("\n".join(side)):
+    # pygments rewrites a lone \r in its input to \n, which would add a
+    # row and shift the mapping; a same-width space keeps rows aligned
+    for token, text in lexer.get_tokens("\n".join(side).replace("\r", " ")):
         if (cls := _token_fg_memo.get(token)) is None:
             _token_fg_memo[token] = cls = next(
                 (c for t, c in _DIFF_TOKEN_FG.items() if token in t), "tx")

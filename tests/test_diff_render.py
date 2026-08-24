@@ -242,6 +242,19 @@ class RenderDiffTests(unittest.TestCase):
         self.assertEqual("".join(t for s, t in marked
                                  if s.startswith("df_delhl")), "STRIPFLAGS")
 
+    def test_a_bare_carriage_return_does_not_shift_hunk_styling(self) -> None:
+        patch = ("diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n"
+                 "@@ -1,3 +1,3 @@\n"
+                 " int x;\rint y;\n"
+                 " /* a comment */\n"
+                 "-int b;\n"
+                 "+int c;\n")
+        lines = diff_render.render_diff(patch)
+        self.assertIn(("df_ctx_com", "/* a comment */"),
+                      self.find(lines, "a comment"))
+        self.assertIn(("df_del_ty", "int"), self.find(lines, "int b;"))
+        self.assertIn(("df_add_ty", "int"), self.find(lines, "int c;"))
+
     def test_multiline_constructs_keep_their_style_across_lines(self) -> None:
         patch = ("diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n"
                  "@@ -1,2 +1,4 @@\n"

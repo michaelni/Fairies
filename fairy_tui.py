@@ -1474,10 +1474,14 @@ class UILoop:
         base_sha = (snapshot or {}).get("base_sha")
         head_sha = (snapshot or {}).get("head_sha")
         cache_key = (item.repo, item.number, mode, base_sha, head_sha)
-        cached, valid_until = self._diff_cache.get(cache_key, (None, None))
-        if cached is not None and (valid_until is None
-                                   or time.monotonic() < valid_until):
-            return cached
+        entry = self._diff_cache.pop(cache_key, None)
+        if entry is not None:
+            cached, valid_until = entry
+            if valid_until is None or time.monotonic() < valid_until:
+                # re-inserting keeps the entry newest, so the eviction
+                # below takes the least recently shown one
+                self._diff_cache[cache_key] = entry
+                return cached
         repo = self.patch_repos.get(item.repo)
         retry_at = None
         caption = [("label", mode + (f" {base_sha[:12]}..{head_sha[:12]}"

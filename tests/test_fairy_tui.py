@@ -1465,6 +1465,26 @@ class DiffViewTests(DbCase):
         patches.assert_called_once()
         merge.assert_called_once()
 
+    def test_a_shown_diff_survives_flipping_through_other_tickets(
+            self) -> None:
+        self.push_pr()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("mirror")}
+        ui.detail_mode = "patches"
+        with self.model.lock:
+            item = self.model.items[self.model._cursor_key()]
+        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+                               return_value=b"") as run:
+            self.detail_text(ui)
+            for n in range(4):
+                ui._diff_body(item, {"base_sha": f"b{n}",
+                                     "head_sha": f"h{n}"}, "patches")
+                self.detail_text(ui)
+            self.detail_text(ui)
+        # one render for the shown diff, one per flipped-through ticket;
+        # the repeated shows must all hit the cache
+        self.assertEqual(run.call_count, 5)
+
     def test_the_logs_diff_without_a_pr_says_so(self) -> None:
         self.db.push("reviewed", "issue", "9", verdict(9))
         self.model.poll()

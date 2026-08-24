@@ -47,8 +47,9 @@ from dataclasses import dataclass
 from itertools import islice
 from threading import Lock
 
-__all__ = ["Rect", "GridLayout", "RingBuffer", "StyledLine", "MARKDOWN_STYLES",
-           "wrap", "render_markdown", "sanitize", "tile_blocks", "token_at"]
+__all__ = ["Chain", "Rect", "GridLayout", "RingBuffer", "StyledLine",
+           "MARKDOWN_STYLES", "wrap", "render_markdown", "sanitize",
+           "tile_blocks", "token_at"]
 
 # (style, text) segments; the painter treats an unknown style as "text".
 StyledLine = list[tuple[str, str]]
@@ -160,6 +161,34 @@ class GridLayout:
             setattr(self, "fx_top" if grabbed == "vt" else "fx_bottom", fx)
         if grabbed == "h" and h > 0:
             self.fy = _clamp(y, self.MIN_H, max(self.MIN_H, h - 1 - self.MIN_H)) / h
+
+
+class Chain:
+    """Read-only concatenation of line sequences, supporting ``len``,
+    unit-step slicing and iteration. A slice hands each part only its
+    own subrange, so a part that renders lazily on slicing (e.g.
+    diff_render.DiffView) renders no more than the slice covers."""
+
+    def __init__(self, *parts) -> None:
+        self._parts = parts
+
+    def __len__(self) -> int:
+        return sum(len(p) for p in self._parts)
+
+    def __iter__(self):
+        for part in self._parts:
+            yield from part
+
+    def __getitem__(self, key: slice) -> list:
+        lo, hi, _ = key.indices(len(self))
+        out: list = []
+        base = 0
+        for part in self._parts:
+            n = len(part)
+            if lo < base + n and base < hi:
+                out += list(part[max(0, lo - base):min(n, hi - base)])
+            base += n
+        return out
 
 
 _TILE_SEP = " │ "

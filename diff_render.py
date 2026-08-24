@@ -52,7 +52,7 @@ from pygments.util import ClassNotFound
 
 from tui_core import StyledLine
 
-__all__ = ["DIFF_FGS", "DIFF_STYLES", "render_diff"]
+__all__ = ["DIFF_FGS", "DIFF_STYLES", "DiffView", "render_diff"]
 
 DIFF_FGS = ("tx", "kw", "ty", "fn", "str", "com", "num")
 
@@ -159,100 +159,145 @@ def _emit_run(out: list[StyledLine], minus: list[tuple[str, list[str]]],
                               spans[i][1] if i < len(spans) else [], fg))
 
 
-def render_diff(patch: str) -> list[StyledLine]:
-    """Render ``git diff`` / ``git format-patch --stdout`` text to styled
-    lines: commit, file and hunk headers, colored diffstat, and code with
-    added/removed line backgrounds, brighter word-level change marks and
-    per-file syntax coloring. Tabs are expanded; lines are emitted
-    unwrapped -- the painter clips them to the pane."""
+def _render_hunk(body: list[tuple[str, str]],
+                 lexer: Lexer | None) -> list[StyledLine]:
+    """One styled line per ``(op, code)`` body entry, with the run
+    grouping and word marks of a rendered hunk."""
     out: list[StyledLine] = []
-    lexer: Lexer | None = None
-    lexer_cache: dict[str, Lexer | None] = {}
-    lines = patch.split("\n")
-    in_mail_header = False
-    in_commit_msg = False
-    i = 0
-    while i < len(lines):
-        line = lines[i].expandtabs()
-        i += 1
-        if in_mail_header:
-            in_mail_header = bool(line)
-            in_commit_msg = not in_mail_header
-            out.append([("bold" if line.startswith("Subject:")
-                         else "diff_meta", line)] if line else [])
-            continue
-        if in_commit_msg:
-            # Message text runs to the "---" scissors line; a quoted
-            # hunk or header inside it must stay verbatim text.
-            if line == "---":
-                in_commit_msg = False
-                out.append([("diff_meta", line)])
-            else:
-                out.append([("text", line)] if line else [])
-            continue
-        if (hunk := _HUNK_RE.match(line)):
-            out.append([("diff_hunk", line)])
-            rem_a, rem_b = int(hunk.group(1) or 1), int(hunk.group(2) or 1)
-            body: list[tuple[str, str]] = []
-            while (rem_a > 0 or rem_b > 0) and i < len(lines):
-                raw = lines[i].expandtabs()
-                i += 1
-                op, code = raw[:1], raw[1:]
-                body.append((op, code))
-                if op == "-":
-                    rem_a -= 1
-                elif op == "+":
-                    rem_b -= 1
-                elif op != "\\":
-                    rem_a -= 1
-                    rem_b -= 1
-            old = _hunk_fgs(lexer, [c for op, c in body
-                                    if op not in ("+", "\\")])
-            new = _hunk_fgs(lexer, [c for op, c in body
-                                    if op not in ("-", "\\")])
-            oi = ni = 0
-            minus: list[tuple[str, list[str]]] = []
-            plus: list[tuple[str, list[str]]] = []
-            for op, code in body:
-                if op == "-":
-                    minus.append((code, old[oi]))
-                    oi += 1
-                elif op == "+":
-                    plus.append((code, new[ni]))
-                    ni += 1
-                elif op == "\\":
-                    _emit_run(out, minus, plus)
-                    minus, plus = [], []
-                    out.append([("diff_meta", op + code)])
-                else:
-                    _emit_run(out, minus, plus)
-                    minus, plus = [], []
-                    out.append(_code_line(" ", code, "ctx", [], new[ni]))
-                    oi += 1
-                    ni += 1
+    old = _hunk_fgs(lexer, [c for op, c in body if op not in ("+", "\\")])
+    new = _hunk_fgs(lexer, [c for op, c in body if op not in ("-", "\\")])
+    oi = ni = 0
+    minus: list[tuple[str, list[str]]] = []
+    plus: list[tuple[str, list[str]]] = []
+    for op, code in body:
+        if op == "-":
+            minus.append((code, old[oi]))
+            oi += 1
+        elif op == "+":
+            plus.append((code, new[ni]))
+            ni += 1
+        elif op == "\\":
             _emit_run(out, minus, plus)
-            continue
-        if line.startswith("diff --git "):
-            lexer = _lexer_for(line.rsplit(" b/", 1)[-1], lexer_cache)
-            out.append([("diff_file", line)])
-            continue
-        if _MBOX_FROM_RE.match(line):
-            in_mail_header = True
-            out.append([("diff_commit", line)])
-            continue
-        if line == "---" or line.startswith(
-                ("index ", "--- ", "+++ ", "old mode", "new mode", "new file",
-                 "deleted file", "similarity index", "dissimilarity",
-                 "rename from", "rename to", "copy from", "copy to",
-                 "Binary files")):
-            out.append([("diff_meta", line)])
-            continue
-        if (stat := _DIFFSTAT_RE.fullmatch(line)):
-            out.append([(style, text) for style, text in
-                        zip(("text", "sc_good", "sc_bad"), stat.groups())
-                        if text])
-            continue
-        out.append([("text", line)] if line else [])
-    while out and not out[-1]:
-        out.pop()
+            minus, plus = [], []
+            out.append([("diff_meta", op + code)])
+        else:
+            _emit_run(out, minus, plus)
+            minus, plus = [], []
+            out.append(_code_line(" ", code, "ctx", [], new[ni]))
+            oi += 1
+            ni += 1
+    _emit_run(out, minus, plus)
     return out
+
+
+class DiffView:
+    """Lazily rendered ``git diff`` / ``git format-patch --stdout``
+    text: commit, file and hunk headers, colored diffstat, and code
+    with added/removed line backgrounds, brighter word-level change
+    marks and per-file syntax coloring. Tabs are expanded; lines come
+    out unwrapped -- the painter clips them to the pane.
+
+    Construction runs only the cheap structural pass; the pygments
+    work for a hunk happens the first time a slice covers one of its
+    lines, and stays rendered. The intended cost is per visible line,
+    but rendering is per hunk -- cross-line lexing and the word marks
+    need a whole hunk -- so a diff that is one huge hunk (a new file,
+    a whole-file rewrite) still pays its full highlight on first
+    touch. Supports ``len``, unit-step slicing and iteration;
+    iterating renders everything."""
+
+    def __init__(self, patch: str) -> None:
+        out: list[StyledLine | None] = []
+        self._hunks: list[tuple[int, list[tuple[str, str]],
+                                Lexer | None]] = []
+        lexer: Lexer | None = None
+        lexer_cache: dict[str, Lexer | None] = {}
+        lines = patch.split("\n")
+        in_mail_header = False
+        in_commit_msg = False
+        i = 0
+        while i < len(lines):
+            line = lines[i].expandtabs()
+            i += 1
+            if in_mail_header:
+                in_mail_header = bool(line)
+                in_commit_msg = not in_mail_header
+                out.append([("bold" if line.startswith("Subject:")
+                             else "diff_meta", line)] if line else [])
+                continue
+            if in_commit_msg:
+                # Message text runs to the "---" scissors line; a quoted
+                # hunk or header inside it must stay verbatim text.
+                if line == "---":
+                    in_commit_msg = False
+                    out.append([("diff_meta", line)])
+                else:
+                    out.append([("text", line)] if line else [])
+                continue
+            if (hunk := _HUNK_RE.match(line)):
+                out.append([("diff_hunk", line)])
+                rem_a, rem_b = int(hunk.group(1) or 1), int(hunk.group(2) or 1)
+                body: list[tuple[str, str]] = []
+                while (rem_a > 0 or rem_b > 0) and i < len(lines):
+                    raw = lines[i].expandtabs()
+                    i += 1
+                    op, code = raw[:1], raw[1:]
+                    body.append((op, code))
+                    if op == "-":
+                        rem_a -= 1
+                    elif op == "+":
+                        rem_b -= 1
+                    elif op != "\\":
+                        rem_a -= 1
+                        rem_b -= 1
+                self._hunks.append((len(out), body, lexer))
+                out += [None] * len(body)
+                continue
+            if line.startswith("diff --git "):
+                lexer = _lexer_for(line.rsplit(" b/", 1)[-1], lexer_cache)
+                out.append([("diff_file", line)])
+                continue
+            if _MBOX_FROM_RE.match(line):
+                in_mail_header = True
+                out.append([("diff_commit", line)])
+                continue
+            if line == "---" or line.startswith(
+                    ("index ", "--- ", "+++ ", "old mode", "new mode",
+                     "new file", "deleted file", "similarity index",
+                     "dissimilarity", "rename from", "rename to",
+                     "copy from", "copy to", "Binary files")):
+                out.append([("diff_meta", line)])
+                continue
+            if (stat := _DIFFSTAT_RE.fullmatch(line)):
+                out.append([(style, text) for style, text in
+                            zip(("text", "sc_good", "sc_bad"), stat.groups())
+                            if text])
+                continue
+            out.append([("text", line)] if line else [])
+        while out and out[-1] == []:
+            out.pop()
+        self._lines = out
+
+    def __len__(self) -> int:
+        return len(self._lines)
+
+    def __iter__(self):
+        self._materialize(0, len(self._lines))
+        return iter(self._lines)
+
+    def __getitem__(self, key: slice) -> list[StyledLine]:
+        lo, hi, _ = key.indices(len(self._lines))
+        self._materialize(lo, hi)
+        return self._lines[key]
+
+    def _materialize(self, lo: int, hi: int) -> None:
+        for start, body, lexer in self._hunks:
+            if start < hi and lo < start + len(body) \
+                    and self._lines[start] is None:
+                self._lines[start:start + len(body)] = \
+                    _render_hunk(body, lexer)
+
+
+def render_diff(patch: str) -> list[StyledLine]:
+    """``DiffView(patch)`` rendered in full, as a plain line list."""
+    return list(DiffView(patch))

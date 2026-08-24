@@ -1506,6 +1506,31 @@ class DiffViewTests(DbCase):
             ui.paint()
         self.assertEqual(locked_during_git, [False, False])
 
+    def test_paint_highlights_the_diff_outside_the_model_lock(self) -> None:
+        self.push_pr()
+        diff = (b"diff --git a/f.c b/f.c\n--- a/f.c\n+++ b/f.c\n"
+                b"@@ -1 +1 @@\n-int a;\n+int b;\n")
+        real = diff_render._render_hunk
+        # 10**9 is where an End jump parks the scroll until paint clamps
+        for scroll in (0, 10 ** 9):
+            with self.subTest(scroll=scroll):
+                ui = make_ui(self.model, io.StringIO())
+                ui.patch_repos = {R1: Path("mirror")}
+                ui.detail_mode = "merge diff"
+                ui.scroll["br"] = scroll
+                locked_during_render = []
+
+                def record(body, lexer):
+                    locked_during_render.append(self.model.lock.locked())
+                    return real(body, lexer)
+
+                with mock.patch.object(fairy_tui.git_util, "git_diff",
+                                       return_value=diff), \
+                        mock.patch.object(diff_render, "_render_hunk",
+                                          side_effect=record):
+                    ui.paint()
+                self.assertEqual(locked_during_render, [False])
+
     def test_the_logs_diff_without_a_pr_says_so(self) -> None:
         self.db.push("reviewed", "issue", "9", verdict(9))
         self.model.poll()

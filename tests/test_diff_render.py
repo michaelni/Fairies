@@ -34,6 +34,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -134,6 +135,35 @@ index 0000001..0000002 100644
 -old line
 +new line
 """
+
+
+class DiffViewTests(unittest.TestCase):
+    def test_piecewise_slices_equal_the_full_render(self) -> None:
+        full = diff_render.render_diff(C_PATCH)
+        view = diff_render.DiffView(C_PATCH)
+        self.assertEqual(len(view), len(full))
+        self.assertEqual([line for i in range(0, len(view), 3)
+                          for line in view[i:i + 3]], full)
+
+    def test_only_hunks_under_a_slice_are_rendered(self) -> None:
+        rendered = []
+        real = diff_render._render_hunk
+
+        def counting(body, lexer):
+            rendered.append(len(body))
+            return real(body, lexer)
+
+        with mock.patch.object(diff_render, "_render_hunk",
+                               side_effect=counting):
+            view = diff_render.DiffView(MULTI_FILE_DIFF)
+            self.assertGreater(len(view), 0)
+            self.assertEqual(rendered, [])
+            view[len(view) - 2:]
+            self.assertEqual(len(rendered), 1)
+            view[len(view) - 2:]
+            self.assertEqual(len(rendered), 1)
+            list(view)
+            self.assertEqual(len(rendered), 2)
 
 
 class RenderDiffTests(unittest.TestCase):

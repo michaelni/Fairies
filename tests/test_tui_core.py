@@ -257,6 +257,17 @@ class RenderMarkdownTests(unittest.TestCase):
         self.assertTrue(all("`" not in t for s, t in segments if s == "code"))
 
 
+class ChainTests(unittest.TestCase):
+    def test_len_slice_and_iteration_span_the_parts(self) -> None:
+        c = tui_core.Chain([[("a", "1")], [("a", "2")]], [],
+                           [[("b", "3")], [("b", "4")]])
+        self.assertEqual(len(c), 4)
+        self.assertEqual(c[1:3], [[("a", "2")], [("b", "3")]])
+        self.assertEqual(c[:], list(c))
+        self.assertEqual(c[3:99], [[("b", "4")]])
+        self.assertEqual(c[2:2], [])
+
+
 class TileBlocksTests(unittest.TestCase):
     A = [[("text", "aaaa")], [("text", "a2")]]
     B = [[("text", "bb")]]

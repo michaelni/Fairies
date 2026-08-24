@@ -1141,7 +1141,7 @@ class UILoop:
         self.detail_mode = DETAIL_MODES[0]
         self.logs_mode = LOGS_MODES[0]
         self._diff_cache: dict[
-            tuple, tuple[list[tui_core.StyledLine], float | None]] = {}
+            tuple, tuple[tui_core.Chain, float | None]] = {}
         repos = [repo for repo, _ in model.sides]
         short = [_repo_short(r) for r in repos]
         self._repo_disp = {r: (s if short.count(s) == 1 else r)
@@ -1324,7 +1324,8 @@ class UILoop:
         return [self._row(it, i == m.cursor and m.cursor_shown)
                 for i, it in enumerate(vis)]
 
-    def detail_lines(self, width: int) -> list[tui_core.StyledLine]:
+    def detail_lines(
+            self, width: int) -> list[tui_core.StyledLine] | tui_core.Chain:
         m = self.model
         # an off-lens cursor still has a key: keep showing its ticket,
         # so the operator sees where it went (e.g. "state posted")
@@ -1368,7 +1369,8 @@ class UILoop:
             head += tui_core.wrap([("log_warn", str(failed))], width,
                                   initial=("log_warn", "reviewer failed: "))
         if self.detail_mode in DIFF_MODES and item.kind == "pr":
-            return head + self._diff_body(item, snapshot, self.detail_mode)
+            return tui_core.Chain(
+                head, self._diff_body(item, snapshot, self.detail_mode))
         review = data.get("review") or {}
         decision = agent.ticket_decision(item.kind, item.number, data)
         if decision is not None:
@@ -1464,14 +1466,15 @@ class UILoop:
         return head + tail + [[], [("h4", "fairy")] + byline] + labels + message
 
     def _diff_body(self, item: Item, snapshot: dict | None,
-                   mode: str) -> list[tui_core.StyledLine]:
-        """The rendered "patches" / "merge diff" of ``item``, at the
-        base/head SHAs its items/ snapshot reports, cached until the
-        mode or those SHAs change (rendering re-runs git and pygments;
-        a repaint must not -- the message and logs panes each keep an
-        entry, so the cache holds a few). A git failure is cached only
-        briefly: it usually means the head is not fetched yet, and the
-        view must recover once the operator fetches the mirror."""
+                   mode: str) -> tui_core.Chain:
+        """The "patches" / "merge diff" of ``item`` at the base/head
+        SHAs its items/ snapshot reports, as a lazily rendering line
+        sequence, cached until the mode or those SHAs change (a cache
+        miss re-runs git; hunks highlight when first shown -- the
+        message and logs panes each keep an entry, so the cache holds
+        a few). A git failure is cached only briefly: it usually means
+        the head is not fetched yet, and the view must recover once
+        the operator fetches the mirror."""
         base_sha = (snapshot or {}).get("base_sha")
         head_sha = (snapshot or {}).get("head_sha")
         cache_key = (item.repo, item.number, mode, base_sha, head_sha)
@@ -1485,6 +1488,7 @@ class UILoop:
                 return cached
         repo = self.patch_repos.get(item.repo)
         retry_at = None
+        tail: list[tui_core.StyledLine] = []
         caption = [("label", mode + (f" {base_sha[:12]}..{head_sha[:12]}"
                                      if base_sha and head_sha else ""))]
         if repo is None:
@@ -1502,12 +1506,12 @@ class UILoop:
                             mode, item.repo, item.number,
                             len(patch_lines), repo, base_sha[:12],
                             head_sha[:12])
-                body = diff_render.render_diff(
+                body = diff_render.DiffView(
                     "\n".join(patch_lines[:DIFF_MAX_LINES])) \
                     or [[("label", "(empty diff)")]]
                 if len(patch_lines) > DIFF_MAX_LINES:
-                    body.append([("log_warn", f"… truncated at {DIFF_MAX_LINES}"
-                                              f" of {len(patch_lines)} lines")])
+                    tail = [[("log_warn", f"… truncated at {DIFF_MAX_LINES}"
+                                          f" of {len(patch_lines)} lines")]]
             except RuntimeError as exc:
                 logger.error("%s", exc)
                 retry_at = time.monotonic() + 5
@@ -1516,11 +1520,11 @@ class UILoop:
                                        f"git -C {repo} fetch --all")])
         if len(self._diff_cache) >= 4:
             self._diff_cache.pop(next(iter(self._diff_cache)))
-        lines = [caption, []] + body
+        lines = tui_core.Chain([caption, []], body, tail)
         self._diff_cache[cache_key] = (lines, retry_at)
         return lines
 
-    def _logs_diff_lines(self) -> list[tui_core.StyledLine]:
+    def _logs_diff_lines(self) -> list[tui_core.StyledLine] | tui_core.Chain:
         """The logs pane's content for ``d``'s non-logs modes: the
         cursor PR's diff. Caller holds ``model.lock``."""
         m = self.model
@@ -1531,20 +1535,32 @@ class UILoop:
         return self._diff_body(item, m.snapshot_for(key), self.logs_mode)
 
     def _warm_diff_cache(self) -> None:
-        """Render every diff a pane is about to show, before paint takes
-        ``model.lock`` for good: git and pygments are too slow to run
-        under it (the poll thread would stall behind them), so paint's
-        locked pass must find the diffs already cached."""
-        modes = {self.detail_mode, self.logs_mode} & set(DIFF_MODES)
-        if not modes:
+        """Fetch and window-render every diff a pane is about to show,
+        before paint takes ``model.lock`` for good: git and pygments
+        are too slow to run under it (the poll thread would stall
+        behind them), so paint's locked pass must find its slices
+        already rendered."""
+        panes = [(pane, mode) for pane, mode in
+                 (("br", self.detail_mode), ("bl", self.logs_mode))
+                 if mode in DIFF_MODES]
+        if not panes:
             return
         with self.model.lock:
             key = self.model._cursor_key() or self.model.cursor_key
             item = self.model.items.get(key) if key else None
             snapshot = self.model.snapshot_for(key)
-        if item is not None and item.kind == "pr":
-            for mode in modes:
-                self._diff_body(item, snapshot, mode)
+        if item is None or item.kind != "pr":
+            return
+        for pane, mode in panes:
+            lines = self._diff_body(item, snapshot, mode)
+            # the discarded slice is what renders: paint's own slice of
+            # these lines then hits rendered hunks; one screen of margin
+            # covers the detail head sitting above the diff. The scroll
+            # is clamped only inside paint (an End jump parks it at
+            # 10**9), so clamp here too or the slice misses the tail.
+            h = self.term.height
+            s = min(self.scroll[pane], len(lines))
+            lines[max(0, s - h):s + 2 * h]
 
     def paint(self) -> None:
         self._last_paint = time.monotonic()

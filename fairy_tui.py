@@ -78,6 +78,7 @@ import blessed
 
 import agent
 import db_config
+import diff_render
 import fairy
 import filedb
 import git_util
@@ -1042,7 +1043,7 @@ def _styles(t: blessed.Terminal) -> dict:
             "diff_file": mix(t.bold, c(117)), "diff_hunk": c(73),
             "diff_meta": c(244),              "diff_commit": mix(t.bold, c(179)),
         }
-        for fg_name, fg in zip(tui_core.DIFF_FGS, (
+        for fg_name, fg in zip(diff_render.DIFF_FGS, (
                 c(252), c(176), c(116), c(75), c(114), c(245), c(179))):
             for bg_name, bg in {"ctx": None, "add": on(22), "del": on(52),
                                 "addhl": on(28), "delhl": on(88)}.items():
@@ -1092,7 +1093,7 @@ def _styles(t: blessed.Terminal) -> dict:
     for bg_name, fn in {"ctx": None, "add": t.green, "del": t.red,
                         "addhl": mix(t.reverse, t.green),
                         "delhl": mix(t.reverse, t.red)}.items():
-        for fg_name in tui_core.DIFF_FGS:
+        for fg_name in diff_render.DIFF_FGS:
             styles[f"df_{bg_name}_{fg_name}"] = fn
     return styles
 
@@ -1501,7 +1502,7 @@ class UILoop:
                             mode, item.repo, item.number,
                             len(patch_lines), repo, base_sha[:12],
                             head_sha[:12])
-                body = tui_core.render_diff(
+                body = diff_render.render_diff(
                     "\n".join(patch_lines[:DIFF_MAX_LINES])) \
                     or [[("label", "(empty diff)")]]
                 if len(patch_lines) > DIFF_MAX_LINES:

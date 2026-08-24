@@ -50,6 +50,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import blessed  # noqa: E402
+import diff_render  # noqa: E402
 import fairy_tui  # noqa: E402
 import filedb  # noqa: E402
 import tui_core  # noqa: E402
@@ -1938,7 +1939,7 @@ class PaintSmokeTests(DbCase):
 
     def test_palette_covers_every_diff_style(self) -> None:
         for colors in (256, 8):
-            self.assertLessEqual(tui_core.DIFF_STYLES - {"text"},
+            self.assertLessEqual(diff_render.DIFF_STYLES - {"text"},
                                  self._palette(colors))
 
     def test_paint_strips_hostile_escape_sequences(self) -> None:

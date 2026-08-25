@@ -1541,6 +1541,113 @@ class DiffViewTests(DbCase):
         self.assertIn("no PR selected", text)
 
 
+class PatchNavTests(DbCase):
+    """[ ] and { } step a diff pane by patch and by hunk."""
+
+    SERIES = "".join(
+        f"From {n:040x} Mon Sep 17 00:00:00 2001\n"
+        f"From: Michael Niedermayer <michael@example.com>\n"
+        f"Subject: [PATCH] change {n}\n\n"
+        f"---\n"
+        f"diff --git a/f{n}.c b/f{n}.c\n--- a/f{n}.c\n+++ b/f{n}.c\n"
+        f"@@ -1 +1 @@\n-int a;\n+int b;\n"
+        f"@@ -9 +9 @@\n-int c;\n+int d;\n\n"
+        for n in range(3)).encode()
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "state": "open",
+            "base_sha": "b1", "head_sha": "h5", "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.ui = make_ui(self.model, io.StringIO())
+        self.ui.patch_repos = {R1: Path("mirror")}
+
+    def painted(self, mode: str, style: str = "diff_commit") -> list[int]:
+        self.ui.detail_mode = mode
+        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+                               return_value=self.SERIES):
+            self.ui.paint()
+        lines = self.ui._painted["br"]
+        return lines.sections(style) if hasattr(lines, "sections") else []
+
+    def test_the_keys_step_between_the_patches_of_the_series(self) -> None:
+        starts = self.painted("patches")
+        self.assertEqual(len(starts), 3)
+        for expected in starts:
+            self.ui.dispatch(Key("]"))
+            self.assertEqual(self.ui.scroll["br"], expected)
+        for expected in reversed(starts[:-1]):
+            self.ui.dispatch(Key("["))
+            self.assertEqual(self.ui.scroll["br"], expected)
+
+    def test_the_braces_step_by_hunk_instead(self) -> None:
+        """A hunk inside the pane's last screen is already on show and
+        cannot become its top line, so the walk ends short of the tail
+        -- but it still makes more stops than there are patches."""
+        patches = self.painted("patches")
+        hunks = self.painted("patches", "diff_hunk")
+        self.assertEqual((len(patches), len(hunks)), (3, 6))
+        stops = []
+        for _ in range(len(hunks)):
+            self.ui.dispatch(Key("}"))
+            if self.ui.scroll["br"] not in stops:
+                stops.append(self.ui.scroll["br"])
+        self.assertEqual(stops, hunks[:len(stops)])
+        self.assertGreater(len(stops), len(patches))
+
+    def test_stepping_past_an_end_stays_on_the_outermost_patch(self) -> None:
+        starts = self.painted("patches")
+        for _ in range(len(starts) + 2):
+            self.ui.dispatch(Key("]"))
+        self.assertEqual(self.ui.scroll["br"], starts[-1])
+        for _ in range(len(starts) + 2):
+            self.ui.dispatch(Key("["))
+        self.assertEqual(self.ui.scroll["br"], starts[0])
+
+    def test_a_count_skips_that_many_patches(self) -> None:
+        starts = self.painted("patches")
+        self.ui.dispatch(Key("2"))
+        self.ui.dispatch(Key("]"))
+        self.assertEqual(self.ui.scroll["br"], starts[1])
+
+    def test_the_keys_reach_a_diff_pane_the_focus_is_not_on(self) -> None:
+        starts = self.painted("patches")
+        self.assertEqual(self.ui.focus, "tr")
+        self.ui.dispatch(Key("]"))
+        self.assertEqual(self.ui.scroll["br"], starts[0])
+
+    def test_the_message_view_has_no_patches_to_step_to(self) -> None:
+        self.assertEqual(self.painted("message"), [])
+        self.ui.dispatch(Key("]"))
+        self.assertEqual(self.ui.scroll["br"], 0)
+
+    def test_a_count_of_zero_steps_nowhere(self) -> None:
+        self.painted("patches")
+        self.ui.dispatch(Key("0"))
+        self.ui.dispatch(Key("]"))
+        self.assertEqual(self.ui.scroll["br"], 0)
+
+    def test_a_pane_switched_off_its_diff_in_the_same_batch_is_left_alone(
+            self) -> None:
+        """Every queued key is dispatched before the next paint, so a
+        d pressed just ahead of a ] would have the logs pane stepped
+        against the diff it no longer shows -- writing a diff line
+        offset into a scroll that counts back from the log tail."""
+        self.ui.detail_mode = "message"
+        self.ui.logs_mode = "merge diff"
+        with mock.patch.object(fairy_tui.git_util, "git_diff",
+                               return_value=self.SERIES):
+            self.ui.paint()
+            self.assertTrue(self.ui._painted["bl"].sections("diff_file"))
+            self.ui.dispatch(Key("d"))
+            self.ui.dispatch(Key("]"))
+        self.assertEqual(self.ui.logs_mode, "logs")
+        self.assertEqual(self.ui.scroll["bl"], 0)
+
+
 class EditReviewTests(DbCase):
     def test_o_key_round_trips_the_message_through_the_editor(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, msg="original"))

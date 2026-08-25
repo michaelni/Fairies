@@ -926,8 +926,8 @@ ACTION_KEYS = {"y": "apply", "Y": "apply-force", "s": "skip", "S": "snooze",
 KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("S", "snooze"), ("r", "rerun"), ("R", "+eval"), ("f", "force"),
           ("x", "drop"), ("o", "edit msg"), ("p", "pause"), ("a", "filter"),
-          ("t", "sort"), ("m", "diff"), ("d", "logs diff"), ("/", "search"),
-          ("e/E", "export"),
+          ("t", "sort"), ("m", "diff"), ("d", "logs diff"),
+          ("[/] {/}", "patch/hunk"), ("/", "search"), ("e/E", "export"),
           ("?", "help"), ("Tab/click", "focus"),
           ("↑↓ PgUp/PgDn Home/End", "scroll"))
 DIFF_MODES = ("patches", "merge diff")
@@ -1162,6 +1162,9 @@ class UILoop:
         # pane -> (rect, gutter, unclipped plain rows) as last painted;
         # click-to-copy resolves the token under the mouse from this.
         self._shown: dict[str, tuple[tui_core.Rect, int, list[str]]] = {}
+        # pane -> the line sequence last painted into it; [] and {}
+        # ask it where its patches and hunks start
+        self._painted: dict[str, list] = {}
         self._clip_cmd = _clipboard_cmd()
         self.styles = _styles(term)
         self.needs_poll = Event()  # set by the filesystem watcher
@@ -1576,6 +1579,8 @@ class UILoop:
             self.scroll["bl"] = min(self.scroll["bl"],
                                     max(0, len(self.ring) - (rects["bl"].h - 1)))
         self._warm_diff_cache()
+        # only the _scrolled panes below refill this
+        self._painted.clear()
         with self.model.lock:
             content: dict[str, list] = {
                 "tl": self._scrolled("tl", self.stats_lines(self._text_width(rects["tl"])),
@@ -1652,6 +1657,7 @@ class UILoop:
 
     def _scrolled(self, pane: str, lines: list, inner_h: int) -> list:
         self.scroll[pane] = max(0, min(self.scroll[pane], len(lines) - inner_h))
+        self._painted[pane] = lines
         return lines[self.scroll[pane]:self.scroll[pane] + inner_h]
 
     def _list_window(self, inner_h: int) -> list:
@@ -1866,6 +1872,32 @@ class UILoop:
         elif pane in self.scroll:
             self.scroll[pane] = 0 if top else 10 ** 9
 
+    def _jump_section(self, levels: tuple[str, ...], forward: bool,
+                      count: int) -> None:
+        """[ ] and { }: park a diff pane ``count`` patches or hunks
+        before / after its top line, stopping at the outermost one.
+        ``levels`` lists the header styles of one step, most specific
+        first -- a series steps by commit, a merge diff, which has
+        none, by file. Acts on the focused pane, or on whichever pane
+        shows a diff while the focus is elsewhere: reading a patch with
+        the cursor still on the list is the normal case."""
+        # the offsets below describe the painted frame; repaint, or a
+        # mode or cursor key dispatched since the last one would have
+        # this step a pane against the diff it no longer shows
+        self.paint()
+        for pane in (self.focus, "br", "bl"):
+            lines = self._painted.get(pane)
+            starts = next((s for s in map(lines.sections, levels) if s), []) \
+                if hasattr(lines, "sections") else []
+            if not starts:
+                continue
+            top = self.scroll[pane]
+            reachable = [i for i in starts if i > top] if forward \
+                else [i for i in reversed(starts) if i < top]
+            if step := reachable[:count]:
+                self.scroll[pane] = step[-1]
+            return
+
     def _page(self) -> int:
         rects = self.layout.rects(self.term.width, max(3, self.term.height - 1))
         return max(1, rects[self.focus].h - 2)
@@ -2025,6 +2057,10 @@ class UILoop:
             self.logs_mode = _next_mode(LOGS_MODES, self.logs_mode)
             self.scroll["bl"] = 0
             logger.info("logs pane: %s", self.logs_mode)
+        elif ks in ("[", "]", "{", "}"):
+            self._jump_section(("diff_hunk",) if ks in ("{", "}")
+                               else ("diff_commit", "diff_file"),
+                               ks in ("]", "}"), self._take_count())
         elif ks in ("e", "E"):
             self.export(full=(ks == "E"))
         else:

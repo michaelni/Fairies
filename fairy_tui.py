@@ -556,7 +556,7 @@ class Model:
     def act(self, action: str, count: int = 1) -> None:
         """Execute a table action on the cursor row as a file operation:
         apply = reviewed -> outgoing (the agent's send pass posts it),
-        skip/cancel = -> skipped/cancelled, rerun/force = a request the
+        skip/cancel = -> skipped/cancelled, rerun = a request the
         agent answers with a fresh gate-bypassing ticket. try_move never
         blocks: a row a worker holds, or one that changed under the
         cursor, refuses with a log line instead. No cursor anchor here:
@@ -597,7 +597,7 @@ class Model:
                 self.seen_live.add(key)
                 logger.info("requested one more evaluation of %s (slot s%d)",
                             label, nxt)
-            elif action in ("rerun", "force"):
+            elif action == "rerun":
                 if item.state in ("queued", "llm", "outgoing"):
                     logger.info("%s is already in flight", label)
                     return
@@ -922,9 +922,9 @@ PANES = {"tl": "stats", "tr": "list", "bl": "logs", "br": "message"}
 PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
 ACTION_KEYS = {"y": "apply", "Y": "apply-force", "s": "skip", "S": "snooze",
-               "r": "rerun", "R": "sample", "f": "force", "x": "cancel"}
+               "r": "rerun", "R": "sample", "x": "cancel"}
 KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
-          ("S", "snooze"), ("r", "rerun"), ("R", "+eval"), ("f", "force"),
+          ("S", "snooze"), ("r", "rerun"), ("R", "+eval"),
           ("x", "drop"), ("o", "edit msg"), ("p", "pause"), ("a", "filter"),
           ("t", "sort"), ("m", "diff"), ("d", "logs diff"),
           ("[/] {/}", "patch/hunk"), ("/", "search"), ("e/E", "export"),
@@ -2027,8 +2027,8 @@ class UILoop:
                 mode = self.model.cycle_sort()
             self.follow_cursor = True
             logger.info("list sort: %s", mode)
-        elif str(ks) in ("r", "f"):
-            self.model.act(ACTION_KEYS[str(ks)], self._take_count())
+        elif str(ks) == "r":
+            self.model.act("rerun", self._take_count())
         elif str(ks) in ACTION_KEYS:
             self.count_buf = ""
             self.model.act(ACTION_KEYS[str(ks)])

@@ -60,7 +60,7 @@ posts it), `posted`, `skipped`, `cancelled`, `ci-blocked`,
 `merge-ready`, `awaiting-approver` (displayed `merge-ready*`),
 `error`, plus `invalid` for an unparsable file. A cancelled row whose
 PR turned out merged displays as `merged`. A `+` after `queued`/`llm`
-marks a force-requested review (`r`/`R`/`f` or `--force-review`):
+marks a force-requested review (`r`/`R` or `--force-review`):
 prepared first and claimed by the worker ahead of the scan's own
 queue. A state suffixed `?` means
 the last poll found the file in no directory — almost always a poll
@@ -68,7 +68,7 @@ racing a rename; the row dies only after 10 consecutive misses (both
 events are logged).
 
 **The llm column** doubles as a status column: the wrapper stage while
-in `llm/`, `requested` while an `r`/`R`/`f` request is pending,
+in `llm/`, `requested` while an `r`/`R` request is pending,
 `appr=<age>` on merge-ready rows (how long the merge has waited),
 `err=<age>` on error rows (how old the failure is), otherwise the
 verdict classification.
@@ -131,7 +131,6 @@ ticket is adopted.
 | `S` | snooze: like `s` but the item waits out a doubling backoff (min 24h) before it is reconsidered; new PR activity bypasses the wait. |
 | `r` | request a fresh, gate-bypassing review of the item. `2r`..`9r` request that many parallel sample evaluations (slots `s1..sN` — refilling slots clobbers earlier samples in them). Refused while the item is in flight. |
 | `R` | one more evaluation: takes the next FREE sample slot, never touching the base verdict or earlier samples. Each press adds one; capped at `s9`. |
-| `f` | currently identical to `r` (historic: force). |
 | `x` | drop: ticket → `cancelled/`; sticks until new PR activity. On an `llm/` row it cancels the running review: the wrapper stops at the next shell call and the container is torn down. |
 | `o` | edit the review message in `$EDITOR` (markdown round-trip; refused while a worker holds the ticket). |
 | `m` | cycle the message pane: message → the PR's patches (`git format-patch`) → its accumulated merge diff, read from the side's `patch-repo` mirror at the base/head SHAs of the item's snapshot (blank until a scan pass, like the status letters). Long lines are clipped, not wrapped. |
@@ -165,6 +164,6 @@ ticket is adopted.
 ## What the TUI never does
 
 Post, review, or fetch. `y`/`Y` only stage a ticket for the agent's
-send pass, which re-validates before posting; `r`/`R`/`f` only write a
+send pass, which re-validates before posting; `r`/`R` only write a
 request file the agent answers with a fresh ticket. If the TUI dies
 mid-anything, the files are exactly where they were.

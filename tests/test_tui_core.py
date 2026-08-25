@@ -267,6 +267,22 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(c[3:99], [[("b", "4")]])
         self.assertEqual(c[2:2], [])
 
+    def test_sections_of_a_part_are_offset_into_the_chain(self) -> None:
+        class Sectioned(list):
+            """A part that locates its own headers, as
+            diff_render.DiffView locates a diff's patches and hunks."""
+
+            @staticmethod
+            def sections(style: str) -> list[int]:
+                return {"h2": [0, 2]}.get(style, [])
+
+        inner = tui_core.Chain([[("a", "1")]],
+                               Sectioned([[("b", str(i))] for i in range(3)]))
+        self.assertEqual(inner.sections("h2"), [1, 3])
+        self.assertEqual(inner.sections("h3"), [])
+        self.assertEqual(tui_core.Chain([[("a", "0")]], inner).sections("h2"),
+                         [2, 4])
+
 
 class TileBlocksTests(unittest.TestCase):
     A = [[("text", "aaaa")], [("text", "a2")]]

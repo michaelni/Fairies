@@ -145,6 +145,37 @@ class DiffViewTests(unittest.TestCase):
         self.assertEqual([line for i in range(0, len(view), 3)
                           for line in view[i:i + 3]], full)
 
+    def sections_equal_the_lines_starting(self, patch: str, style: str,
+                                          prefix: str) -> None:
+        lines = patch.split("\n")
+        self.assertEqual(diff_render.DiffView(patch).sections(style),
+                         [i for i, line in enumerate(lines)
+                          if line.startswith(prefix)])
+
+    def test_sections_locate_the_commits_of_a_series(self) -> None:
+        self.sections_equal_the_lines_starting(
+            C_PATCH + QUOTED_HUNK_PATCH, "diff_commit", "From 2c18311d")
+
+    def test_sections_locate_the_files_of_a_plain_diff(self) -> None:
+        self.sections_equal_the_lines_starting(
+            MULTI_FILE_DIFF, "diff_file", "diff --git ")
+
+    def test_sections_locate_the_hunks(self) -> None:
+        self.sections_equal_the_lines_starting(
+            MULTI_FILE_DIFF, "diff_hunk", "@@ ")
+
+    def test_a_hunk_header_quoted_in_a_commit_message_is_no_section(
+            self) -> None:
+        self.assertEqual(
+            diff_render.DiffView(QUOTED_HUNK_PATCH).sections("diff_hunk"),
+            [QUOTED_HUNK_PATCH.split("\n").index("@@ -1 +1 @@")])
+
+    def test_sections_render_no_hunk(self) -> None:
+        with mock.patch.object(diff_render, "_render_hunk") as render:
+            view = diff_render.DiffView(MULTI_FILE_DIFF)
+            self.assertEqual(len(view.sections("diff_hunk")), 2)
+        render.assert_not_called()
+
     def test_only_hunks_under_a_slice_are_rendered(self) -> None:
         rendered = []
         real = diff_render._render_hunk

@@ -283,6 +283,15 @@ class DiffView:
     def __len__(self) -> int:
         return len(self._lines)
 
+    def sections(self, style: str) -> list[int]:
+        """Ascending line offsets of the headers styled ``style`` --
+        "diff_commit", "diff_file" or "diff_hunk", the levels a reader
+        steps between. Style, not text: an "@@" line quoted inside a
+        commit message is prose and must not answer. Renders nothing;
+        headers are structural, only hunk bodies are lazy."""
+        return [i for i, line in enumerate(self._lines)
+                if line and line[0][0] == style]
+
     def __iter__(self):
         self._materialize(0, len(self._lines))
         return iter(self._lines)

@@ -175,6 +175,18 @@ class Chain:
     def __len__(self) -> int:
         return sum(len(p) for p in self._parts)
 
+    def sections(self, style: str) -> list[int]:
+        """What the parts that have a ``sections`` of their own (a
+        chained diff_render.DiffView) report for ``style``, as offsets
+        into the chain rather than into the part."""
+        out: list[int] = []
+        base = 0
+        for part in self._parts:
+            if hasattr(part, "sections"):
+                out += [base + i for i in part.sections(style)]
+            base += len(part)
+        return out
+
     def __iter__(self):
         for part in self._parts:
             yield from part

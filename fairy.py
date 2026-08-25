@@ -284,7 +284,8 @@ class PreparedPR:
     external_approvers: tuple[str, ...] = ()
     # Cross-process contract with the --llm-review-cmd wrapper: when
     # True, the wrapper runs its full reviewer pass even if its triage
-    # pre-check votes ``skip`` (see --force-review-skip). Travels as the
+    # pre-check votes ``skip``. Set on every explicitly forced review
+    # (--force-review and operator rerun requests). Travels as the
     # ``ignore_triage_skip`` field in the wrapper's stdin request.
     ignore_triage_skip: bool = False
     # The review was forced (an @-mention, a Forgejo review request, or
@@ -633,22 +634,13 @@ def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
              "reviewed when forced, independent of this flag.)",
     )
     p.add_argument(
-        "--force-review-skip",
-        action="store_true",
-        help="When reviewing a PR named via --force-review, ignore a "
-             "``skip`` verdict from the --llm-review-cmd triage pre-check and "
-             "run the full reviewer pass anyway. Only applies to PRs named "
-             "with --force-review (not @mention / requested-reviewer "
-             "engagements).",
-    )
-    p.add_argument(
         "--force-engage",
         action="store_true",
         help="When reviewing a PR named via --force-review, run the full "
              "reviewer pass regardless of the triage route (overrides both "
              "``skip`` and ``reply_no_verdict``) and even when the head CI is red. "
-             "Stronger than --force-review-skip. Only applies to PRs named with "
-             "--force-review (not @mention / requested-reviewer engagements).",
+             "Only applies to PRs named with --force-review (not @mention / "
+             "requested-reviewer engagements).",
     )
 
 
@@ -2686,7 +2678,7 @@ def prepare_pr(
             cancelled_ci_contexts=cancelled_ctxs,
             blocked_ci_contexts=blocked_ctxs,
             external_approvers=external_approvers,
-            ignore_triage_skip=is_forced and args.force_review_skip,
+            ignore_triage_skip=is_forced,
             force_engage=is_forced and args.force_engage,
             forced_review=True,
         )

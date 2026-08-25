@@ -1399,7 +1399,7 @@ def main() -> int:
     ci_triage_active = bool(
         isinstance(request.get("ci_triage"), dict) and request.get("ci_triage")
     )
-    # Cross-process contract with fairy's --force-review-skip:
+    # Cross-process contract with fairy's forced reviews:
     # run the full reviewer pass even when triage votes ``skip``.
     ignore_triage_skip = bool(request.get("ignore_triage_skip"))
     # Cross-process contract with fairy's --force-engage: run the
@@ -1686,7 +1686,7 @@ def main() -> int:
                     route = "engage"
                 elif route == "skip" and ignore_triage_skip:
                     logger.info(
-                        "triage route=skip overridden by --force-review-skip; "
+                        "triage route=skip overridden by the forced review; "
                         "reason=%r; running main reviewer pass",
                         triage_result.get("reason", ""),
                     )

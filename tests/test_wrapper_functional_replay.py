@@ -229,7 +229,7 @@ def _fixture_request(**extra: object) -> dict:
 class TriageSkipOverrideTests(unittest.TestCase):
     """``ignore_triage_skip`` makes the wrapper run the main pass on skip.
 
-    The flag is fairy's --force-review-skip crossing the
+    The flag is fairy's forced-review override crossing the
     process boundary. Triage is stubbed to vote ``skip``; the only
     difference between the two runs is the request flag, so this pins
     that the wrapper honors it rather than always short-circuiting on a

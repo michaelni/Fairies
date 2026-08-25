@@ -69,14 +69,14 @@ class _PastGates(Exception):
 def _call(pr: dict, *, force_review: set[int] = frozenset(),
           force_skip: set[int] = frozenset(),
           force_review_non_open: bool = False,
-          force_review_skip: bool = False,
           workset_dir: Path | None = None,
-          now: datetime | None = None) -> object:
+          now: datetime | None = None,
+          llm_review_cmd: str | None = None) -> object:
     args = SimpleNamespace(
         force_skip_prs=force_skip,
         force_review_prs=force_review,
         force_review_non_open=force_review_non_open,
-        force_review_skip=force_review_skip,
+        force_engage=False,
         owner="o",
         repo="r",
         forge_type="gitea",
@@ -84,7 +84,7 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
         workset_dir=workset_dir,
         simulate_past=None,
         verbose=False,
-        llm_review_cmd=None,
+        llm_review_cmd=llm_review_cmd,
     )
     return fairy.prepare_pr(
         args, pr, now=now, self_login=None, wip_re=WIP_RE,
@@ -156,9 +156,34 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
         self.assertEqual(decision.action, "skip")
         self.assertEqual(decision.reason, "forced skip by --force-skip")
         self.mock_disc.assert_not_called()
+
+
+class ForcedReviewIgnoresTriageSkipTests(unittest.TestCase):
+    """A forced review carries ``ignore_triage_skip`` to the wrapper.
+
+    Without it the wrapper's triage pre-check can veto the very review
+    the operator just asked for (FFmpeg #23694, 2026-08-25: an operator
+    rerun request came back triage route=skip instead of a review).
+    """
+
+    def test_forced_prepare_sets_ignore_triage_skip(self) -> None:
+        pr = {"number": 7, "state": "open", "mergeable": True, "title": "ok"}
+        with (
+            patch.object(fairy, "get_pr_discussion",
+                         return_value=([], [], [])),
+            patch.object(fairy, "get_pr_timeline", return_value=[]),
+            patch.object(fairy, "get_auto_merge_info", return_value="no"),
+            patch.object(fairy, "get_pr_head_ref", return_value=None),
+        ):
+            prepared = _call(pr, force_review={7}, llm_review_cmd="./wrapper")
+        self.assertIsInstance(prepared, fairy.PreparedPR)
+        self.assertTrue(prepared.ignore_triage_skip)
+        self.assertFalse(prepared.force_engage)
+
+
 class ForceReviewSkipPayloadTests(unittest.TestCase):
-    """``--force-review-skip`` / ``--force-engage`` ride to the wrapper as
-    the ``ignore_triage_skip`` / ``force_engage`` request fields.
+    """The forced-review override / ``--force-engage`` ride to the wrapper
+    as the ``ignore_triage_skip`` / ``force_engage`` request fields.
 
     The override is enforced inside the --llm-review-cmd subprocess, so
     the only thing fairy owns is putting the flag into the

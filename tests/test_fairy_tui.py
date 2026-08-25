@@ -1749,6 +1749,27 @@ class CountAndSearchTests(DbCase):
         self.model.poll()
         self.ui = make_ui(self.model)
 
+    def test_an_unknown_control_sequence_reaches_no_key_handler(self) -> None:
+        """blessed's keymap comes from terminfo, which describes no
+        shift-Up: for rxvt-unicode's ESC [ a it returns the bare CSI
+        introducer and hands out the rest as ordinary keys, so the "a"
+        would arrive at dispatch() as the lens key."""
+        self.ui.term.ungetch("\x1b[a")
+        self.assertIsNone(self.ui._read_key())
+        self.assertEqual(str(self.ui.term.inkey(timeout=0)), "")
+
+    def test_a_known_escape_sequence_still_arrives(self) -> None:
+        self.ui.term.ungetch("\x1b[A")
+        self.assertEqual(self.ui._read_key().name, "KEY_UP")
+
+    def test_a_key_queued_behind_an_unknown_sequence_survives(self) -> None:
+        """Alt+[ is the bare introducer with no tail of its own, so
+        the arrow behind it is what blessed resolves next; draining it
+        as part of the sequence would eat it."""
+        self.ui.term.ungetch("\x1b[\x1b[A")
+        self.assertIsNone(self.ui._read_key())
+        self.assertEqual(self.ui._read_key().name, "KEY_UP")
+
     def test_count_prefix_spawns_n_sample_requests(self) -> None:
         self.ui.dispatch(Key("3"))
         self.ui.dispatch(Key("r"))

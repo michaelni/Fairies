@@ -1742,13 +1742,37 @@ class UILoop:
                 logger.exception("poll failed; the next tick retries")
             self.model.dirty.set()
 
+    def _read_key(self) -> blessed.keyboard.Keystroke | None:
+        """One keystroke, or None for a control sequence blessed's
+        keymap does not cover: of those it returns the bare ``ESC [`` /
+        ``ESC O`` introducer and hands out the remaining bytes as
+        ordinary keys, so rxvt-unicode's shift-Up -- ``ESC [ a``, which
+        no terminfo capability describes -- would arrive as the lens
+        key ``a``. Its tail, up to a final byte in 0x40..0x7e, is
+        buffered by then: blessed waited out its escape delay."""
+        ks = self.term.inkey(timeout=None)
+        if str(ks) not in ("\x1b[", "\x1bO"):
+            return ks
+        sequence = str(ks)
+        while tail := self.term.inkey(timeout=0):
+            if len(tail) > 1:
+                # a sequence blessed did resolve: the next key, not a
+                # tail byte of this one (Alt+[ ahead of an arrow)
+                self.term.ungetch(str(tail))
+                break
+            sequence += str(tail)
+            if "\x40" <= str(tail) <= "\x7e":
+                break
+        logger.debug("dropped %r: no keymap entry for it", sequence)
+        return None
+
     def _read_keys(self) -> None:
         """Input thread: ``inkey(timeout=None)`` sits in select() and
         returns the instant bytes arrive; each key lands in the queue
         and wakes the main loop through ``dirty``. A daemon: at quit it
         is blocked in the read and dies with the process."""
         while not self.model.quit_flag:
-            ks = self.term.inkey(timeout=None)
+            ks = self._read_key()
             if ks:
                 self._keys.put(ks)
                 self.model.dirty.set()

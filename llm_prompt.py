@@ -56,8 +56,10 @@ from llm_review_api import (
     build_triage_schema,
     check_schema,
     model_needs_diff_tripwire,
+    schema_with_branches,
     schema_with_labels,
     validate_issue_report,
+    validate_result_with_branches,
     validate_result_with_labels,
     validate_review,
     validate_triage_result,
@@ -337,6 +339,30 @@ When an on-topic comment challenges a factual claim or capability stated by the 
 
 
 """
+
+
+CRI_PROMPT_PERSIST_BRANCHES = """##Persisting branches
+
+The fairy branches of each repository at the git forge are available as the remote "fairy" in its checkout.
+You can fetch from it and you can push to it. This lets you publish or persist work beyond this session, for work product worth keeping: a fixed PR you verified, a proposed bugfix for an issue, a test you wrote, test scripts that a future session will want.
+- Only what your verdict declares persists: push a branch to the fairy remote AND list it in the ``branches`` field ({"repo", "branch", "action": "push"}). Pushed but undeclared branches are discarded.
+- A declared branch appears on the forge as ``fairy/<name>``; declaring a rewritten history overwrites the published branch. Nothing happens on the forge before this review is approved and sent.
+- Declare {"action": "delete"} for a published branch that is no longer useful; the deletion, too, reaches the forge on approval.
+- Branch names use only letters, digits, '_', '+' and '-'. Use pr1234- as name prefix for a branch related to PR 1234, issue1234- for one related to issue 1234.
+- To open a pull request from a pushed branch, declare it in the ``pull_requests`` field of your verdict instead: repository, branch, title, body, target branch; it needs no ``branches`` entry.
+- Tell the user in your message what you pushed or deleted, where, and what it is for.
+"""
+
+C_PROMPT_PERSIST_BRANCHES = """
+Branches the draft reviews pushed are on your fairy remotes; the drafts' messages describe them, but only your own declarations count.
+- Verify such a branch like any other draft claim.
+- Re-declare (``branches`` / ``pull_requests``) the draft branches worth keeping, force-push amendments before declaring, and drop the message text of what you leave undeclared.
+"""
+
+
+def prompt_persist_branches(ctx: PromptFor) -> str:
+    return CRI_PROMPT_PERSIST_BRANCHES \
+        + C_PROMPT_PERSIST_BRANCHES * ctx.combiner + "\n"
 
 
 def prompt_output_guideline(ctx: PromptFor) -> str:
@@ -724,6 +750,7 @@ def make_developer_prompt(
     project_facts: str = "",
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
+    persist_branches: bool = False,
     machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     return (
@@ -752,6 +779,7 @@ def make_developer_prompt(
         + crt_prompt_issue_policy(ctx)
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
         + prompt_output_guideline(ctx)
+        + prompt_persist_branches(ctx) * persist_branches
         + cr_prompt_review_classifications(ctx)
         + prompt_triage_labels(allowed_labels or [])
         + prompt_persistence_and_verification(ctx)
@@ -825,6 +853,7 @@ def make_combiner_developer_prompt(
     project_facts: str = "",
     ci_failures_present: bool = False,
     allowed_labels: list[str] | None = None,
+    persist_branches: bool = False,
     machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     # Assembled from the same sections as the reviewer prompt, but owned
@@ -852,6 +881,7 @@ def make_combiner_developer_prompt(
         + crt_prompt_issue_policy(ctx)
         + CR_PROMPT_AUDIENCE_AND_PURPOSE
         + prompt_output_guideline(ctx)
+        + prompt_persist_branches(ctx) * persist_branches
         + cr_prompt_review_classifications(ctx)
         + prompt_triage_labels(allowed_labels or [])
         + prompt_persistence_and_verification(ctx)
@@ -914,6 +944,7 @@ def make_issue_developer_prompt(
     ctx: PromptFor,
     project_facts: str = "",
     allowed_labels: list[str] | None = None,
+    persist_branches: bool = False,
     machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     return (
@@ -934,6 +965,7 @@ def make_issue_developer_prompt(
         )
         + project_facts
         + prompt_output_guideline(ctx)
+        + prompt_persist_branches(ctx) * persist_branches
         + CI_PROMPT_ISSUE_CLASSIFICATIONS
         + prompt_triage_labels(allowed_labels or [])
         + prompt_persistence_and_verification(ctx)
@@ -953,6 +985,7 @@ def make_issue_combiner_developer_prompt(
     ctx: PromptFor,
     project_facts: str = "",
     allowed_labels: list[str] | None = None,
+    persist_branches: bool = False,
     machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     return (
@@ -973,6 +1006,7 @@ def make_issue_combiner_developer_prompt(
         )
         + project_facts
         + prompt_output_guideline(ctx)
+        + prompt_persist_branches(ctx) * persist_branches
         + CI_PROMPT_ISSUE_CLASSIFICATIONS
         + prompt_triage_labels(allowed_labels or [])
         + prompt_persistence_and_verification(ctx)
@@ -1250,6 +1284,7 @@ def generate_llm_prompt(
     ci_triage_mode: bool = False,
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
+    persist_branches: bool = False,
     machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     """Vendor-neutral developer-prompt entry point.
@@ -1281,6 +1316,7 @@ def generate_llm_prompt(
             project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
+            persist_branches=persist_branches,
             machines=machines,
         )
     if role == "combiner":
@@ -1297,6 +1333,7 @@ def generate_llm_prompt(
             project_facts=project_facts,
             ci_failures_present=ci_triage_mode,
             allowed_labels=allowed_labels,
+            persist_branches=persist_branches,
             machines=machines,
         )
     if role == "triager":
@@ -1330,6 +1367,7 @@ def generate_llm_prompt(
             ctx=ctx,
             project_facts=project_facts,
             allowed_labels=allowed_labels,
+            persist_branches=persist_branches,
             machines=machines,
         )
     if role == "issue_triager":
@@ -1432,6 +1470,21 @@ def role_with_labels(role: RoleSpec, allowed_labels: list[str]) -> RoleSpec:
         schema=schema_with_labels(role.schema, allowed_labels),
         validate=lambda obj: validate_result_with_labels(obj, allowed_labels, base_validate),
         prompt_kwargs={**role.prompt_kwargs, "allowed_labels": allowed_labels},
+    )
+
+
+def role_with_branches(role: RoleSpec, repos: list[str]) -> RoleSpec:
+    """A verdict role that may persist branches through the fairy
+    remotes of ``repos``: its schema gains the ``branches`` and
+    ``pull_requests`` lists, its validator their boundary sanitizers,
+    and its prompt the persisting-branches section. Compose it on top of
+    ``role_with_labels`` -- the outermost wrapper owns the extra key."""
+    return replace(
+        role,
+        schema=schema_with_branches(role.schema, repos),
+        validate=lambda obj, _validate=role.validate: (
+            validate_result_with_branches(obj, repos, _validate)),
+        prompt_kwargs={**role.prompt_kwargs, "persist_branches": True},
     )
 
 

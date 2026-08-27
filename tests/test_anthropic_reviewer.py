@@ -81,6 +81,7 @@ if "anthropic" not in sys.modules:
 import podman_host  # noqa: E402
 from llm_review_api import ReviewContext  # noqa: E402
 import anthropic_reviewer  # noqa: E402
+import llm_prompt  # noqa: E402
 
 
 class _Block:
@@ -370,6 +371,59 @@ class EffortThinkingTests(unittest.TestCase):
             echoed[0],
         )
         self.assertEqual("tool_use", echoed[1]["type"])
+
+
+class PersistBranchesTests(unittest.TestCase):
+    """When collection is wired up, the reviewer hands its own shell
+    sessions and its validated branch declarations and pull_requests to
+    ctx.collect_branches, and the collected records land on the Review."""
+
+    PR_REQUEST = {"repo": "ffmpeg", "branch": "fix-x", "title": "Fix x",
+                  "body": "", "target": "master"}
+    DECLARATION = {"repo": "ffmpeg", "branch": "fix-y", "action": "push"}
+
+    def _scripted(self) -> _ScriptedClient:
+        return _ScriptedClient([
+            _Message([_Block(type="tool_use", id="t1", name="shell",
+                             input={"command": "git push fairy fix-x"})]),
+            _Message([_Block(type="tool_use", id="t2", name="submit_review",
+                             input={"classification": "minor_issues_approve",
+                                    "message": "LLM review: built fix-x.",
+                                    "head_vs_branch_diff_evidence": False,
+                                    "branches": [self.DECLARATION],
+                                    "pull_requests": [self.PR_REQUEST]})]),
+        ])
+
+    def _reviewer(self) -> anthropic_reviewer.AnthropicReviewer:
+        reviewer = anthropic_reviewer.AnthropicReviewer(
+            "claude-opus-4", name="anthropic:claude-opus-4",
+            role=llm_prompt.role_with_branches(llm_prompt.REVIEWER_ROLE,
+                                               ["ffmpeg"]))
+        reviewer._client = lambda: self._scripted()  # type: ignore[method-assign]
+        return reviewer
+
+    def test_collect_receives_sessions_and_result_lands_on_review(self) -> None:
+        shell = _FakeShell()
+        collected = dict(branch="fix-x", mode="ff", pr=self.PR_REQUEST,
+                         repo="ffmpeg", sha="a" * 40, old_sha=None,
+                         bundle="", objects_repo="/client/ffmpeg",
+                         diff_base_sha=None)
+        calls: list[tuple] = []
+
+        def collect(sessions, declared, pull_requests):
+            calls.append((list(sessions), declared, pull_requests))
+            return [collected]
+
+        ctx = _ctx(shell)
+        ctx.collect_branches = collect
+        review = self._reviewer().review(ctx)
+        self.assertEqual((collected,), review.branches)
+        self.assertEqual(calls,
+                         [([shell], [self.DECLARATION], [self.PR_REQUEST])])
+
+    def test_without_collection_no_branches_are_minted(self) -> None:
+        review = self._reviewer().review(_ctx(_FakeShell()))
+        self.assertEqual((), review.branches)
 
 
 if __name__ == "__main__":

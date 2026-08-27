@@ -278,6 +278,7 @@ class AnthropicReviewer(Reviewer):
             submit = next((b for b in tool_uses if b.name == _SUBMIT_REVIEW), None)
             if submit is not None:
                 result = self.role.validate(submit.input)
+                ctx.collect_into(result, shells.values())
                 if self.verbose:
                     verdict = result.get("classification") or result.get("route") or "-"
                     logger.debug("anthropic %s verdict=%s", self.role.name, verdict)

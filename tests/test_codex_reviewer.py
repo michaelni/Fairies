@@ -55,7 +55,8 @@ from codex_reviewer import (
     resolve_web_search,
     summarize_codex_events,
 )
-from llm_review_api import (BadModelOutput, ProviderContentFlagged,
+from llm_review_api import (BadModelOutput, BranchCollectionFailed,
+                            ProviderContentFlagged,
                             ReviewContext, RoleSpec)
 
 MACHINES = (
@@ -529,6 +530,19 @@ class CodexReviewerRunTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self._run(ctx=ctx, last_message=None)
         self.assertEqual([s1, s2], poisoned)
+
+    def test_branch_collection_failure_does_not_poison(self) -> None:
+        self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        poisoned = []
+
+        def collect(sessions, declared, pull_requests):
+            raise RuntimeError("bundle create failed")
+
+        ctx = _ctx(report_poisoned=poisoned.append, collect_branches=collect)
+        with self.assertRaises(BranchCollectionFailed):
+            self._run(ctx=ctx)
+        self.assertEqual([], poisoned)  # fairy's packing failed, not codex
 
     def test_bad_output_does_not_poison(self) -> None:
         self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]

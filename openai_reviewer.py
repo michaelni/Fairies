@@ -978,6 +978,8 @@ class OpenAIReviewer(Reviewer):
             )
             raise BadModelOutput() from exc
 
+        ctx.collect_into(result, list(res.shells.values()) if res.shells else [])
+
         if args.verbose:
             extra = f" vector_stores={','.join(res.vector_store_ids)}" if res.vector_store_ids else ""
             verdict = result.get("classification") or result.get("route") or "-"

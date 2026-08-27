@@ -67,7 +67,8 @@ from codex_container import (
 import concurrency
 from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
-from llm_review_api import (BadModelOutput, ProviderContentFlagged,
+from llm_review_api import (BadModelOutput, BranchCollectionFailed,
+                            ProviderContentFlagged,
                             ProviderTurnFailed, ReviewContext,
                             Reviewer, RoleSpec)
 from podman_host import ShellHostSpec
@@ -536,6 +537,8 @@ class CodexReviewer(Reviewer):
                     f"final message is not JSON despite --output-schema: {exc}"
                 )
             result = self.role.validate(result_obj)
+            ctx.collect_into(
+                result, relay.opened_sessions() if relay is not None else [])
             if self.verbose:
                 verdict = result.get("classification") or result.get("route") or "-"
                 logger.debug("codex %s verdict=%s", self.role.name, verdict)
@@ -544,6 +547,8 @@ class CodexReviewer(Reviewer):
             raise  # clean provider-side stop; the containers are not suspect
         except BadModelOutput:
             raise  # codex ran fine, only the final JSON was malformed
+        except BranchCollectionFailed:
+            raise  # codex ran fine; fairy's own branch packing failed
         except Exception:
             if shell_tool.cancelled():
                 raise SystemExit("operator cancelled")

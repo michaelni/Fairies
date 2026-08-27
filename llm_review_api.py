@@ -61,11 +61,13 @@ from common import JsonObject
 from podman_host import ContainerInfraError, ContainerShellSession, ShellHostSpec
 
 __all__ = [
+    "BRANCH_NAME_RE",
     "CLASSIFICATIONS",
     "EXIT_BAD_MODEL_OUTPUT",
     "ISSUE_CLASSIFICATIONS",
     "ISSUE_REPORT_CLASSIFICATIONS",
     "ISSUE_REPORT_SCHEMA",
+    "MAX_PERSIST_BRANCHES",
     "TERMINAL_ROUTES",
     "TRIAGE_REQUESTABLE_EFFORTS",
     "TRIAGE_ROUTES",
@@ -76,6 +78,7 @@ __all__ = [
     "REVIEW_SCHEMA",
     "Z_AI_ANTHROPIC_URL",
     "BadModelOutput",
+    "BranchCollectionFailed",
     "ProviderContentFlagged",
     "ProviderTurnFailed",
     "Review",
@@ -91,8 +94,12 @@ __all__ = [
     "review_with_turn_retries",
     "run_parallel",
     "sanitize_label_changes",
+    "sanitize_branch_declarations",
+    "sanitize_pull_requests",
+    "schema_with_branches",
     "schema_with_labels",
     "validate_issue_report",
+    "validate_result_with_branches",
     "validate_result_with_labels",
     "validate_review",
     "validate_review_result",
@@ -270,6 +277,12 @@ class BadModelOutput(Exception):
     Raised by the reviewers so the entrypoint exits
     ``EXIT_BAD_MODEL_OUTPUT`` and the caller retries the run.
     """
+
+
+class BranchCollectionFailed(RuntimeError):
+    """Packing the verdict's declared branches out of the review
+    containers failed -- after the model finished, so it is no evidence
+    about the model or the containers."""
 
 
 # Distinct non-zero exit code for "the model's JSON did not match the
@@ -501,6 +514,182 @@ def build_review_schema(allowed_labels: list[str]) -> dict[str, object]:
     return schema_with_labels(REVIEW_SCHEMA, allowed_labels)
 
 
+MAX_PERSIST_BRANCHES = 4
+# Safe charsets for everything a model may name that later reaches git
+# command lines: branches on the fairy remote and PR target refs.
+BRANCH_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_+-]{0,63}")
+BRANCH_TARGET_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/+-]{0,127}")
+
+
+def _pull_requests_property(repos: list[str]) -> dict[str, object]:
+    return {
+        "type": "array",
+        "maxItems": MAX_PERSIST_BRANCHES,
+        "description": (
+            "Pull requests to open from branches you pushed to a fairy "
+            "remote; empty when none."
+        ),
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "enum": list(repos),
+                    "description": "The repository whose fairy remote holds the branch.",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Name of the pushed branch.",
+                },
+                "title": {"type": "string"},
+                "body": {"type": "string",
+                         "description": "Markdown PR description."},
+                "target": {"type": "string",
+                           "description": "Branch the PR targets, e.g. master."},
+            },
+            "required": ["repo", "branch", "title", "body", "target"],
+        },
+    }
+
+
+def _branches_property(repos: list[str]) -> dict[str, object]:
+    return {
+        "type": "array",
+        "maxItems": MAX_PERSIST_BRANCHES,
+        "description": (
+            "Branches on your fairy remotes to publish (action \"push\") "
+            "or published fairy branches to remove (action \"delete\"); "
+            "pushed but undeclared branches are discarded. A branch in "
+            "pull_requests needs no entry here."
+        ),
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "repo": {
+                    "type": "string",
+                    "enum": list(repos),
+                    "description": "The repository whose fairy remote holds the branch.",
+                },
+                "branch": {"type": "string"},
+                "action": {"type": "string", "enum": ["push", "delete"]},
+            },
+            "required": ["repo", "branch", "action"],
+        },
+    }
+
+
+def schema_with_branches(
+    base: dict[str, object], repos: list[str],
+) -> dict[str, object]:
+    """``base`` (a verdict-role schema) plus the ``branches`` and
+    ``pull_requests`` lists, with ``repo`` constrained to the
+    persistence-enabled ``repos``."""
+    schema = base["schema"]
+    return {
+        "name": base["name"],
+        "strict": base["strict"],
+        "schema": {
+            **schema,
+            "properties": {**schema["properties"],
+                           "branches": _branches_property(repos),
+                           "pull_requests": _pull_requests_property(repos)},
+            "required": [*schema["required"], "branches", "pull_requests"],
+        },
+    }
+
+
+def _sanitize_branch_items(
+    raw: object,
+    repos: list[str],
+    keep: Callable[[JsonObject], JsonObject | None],
+) -> list[JsonObject]:
+    """The shared model-output boundary for branch-naming lists: only
+    entries with an enabled repo and a safe branch name survive, one per
+    (repo, branch), at most ``MAX_PERSIST_BRANCHES``; ``keep`` validates
+    an entry's remaining fields into the kept shape or drops it (None).
+    Everything is dropped with a warning, never raised -- like
+    ``label_changes``, a bad entry is not worth retrying an expensive
+    review pass."""
+    if not isinstance(raw, list):
+        return []
+    allowed = frozenset(repos)
+    out: list[JsonObject] = []
+    seen: set[tuple[str, str]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        repo, branch = item.get("repo"), item.get("branch")
+        if not isinstance(repo, str) or repo not in allowed:
+            logger.warning("dropped branch entry for unknown repo: %r", repo)
+            continue
+        if not isinstance(branch, str) or not BRANCH_NAME_RE.fullmatch(branch):
+            logger.warning("dropped branch entry with unsafe name: %r", branch)
+            continue
+        if (repo, branch) in seen:
+            continue
+        kept = keep(item)
+        if kept is None:
+            logger.warning("dropped malformed branch entry for %r: %r",
+                           branch, item)
+            continue
+        if len(out) >= MAX_PERSIST_BRANCHES:
+            logger.warning("dropped branch entry for %r beyond the %d cap",
+                           branch, MAX_PERSIST_BRANCHES)
+            continue
+        seen.add((repo, branch))
+        out.append({"repo": repo, "branch": branch, **kept})
+    return out
+
+
+def sanitize_branch_declarations(raw: object, repos: list[str]) -> list[JsonObject]:
+    """Validate a role's ``branches`` list at the model-output boundary;
+    each kept item is ``{repo, branch, action}`` with action ``push`` or
+    ``delete``."""
+    return _sanitize_branch_items(
+        raw, repos,
+        lambda item: {"action": item["action"]}
+        if item.get("action") in ("push", "delete") else None)
+
+
+def sanitize_pull_requests(raw: object, repos: list[str]) -> list[JsonObject]:
+    """Validate a role's ``pull_requests`` list at the model-output
+    boundary; each kept item is ``{repo, branch, title, body, target}``
+    with a non-empty title and a safe target ref name."""
+    def keep(item: JsonObject) -> JsonObject | None:
+        title, target = item.get("title"), item.get("target")
+        if not isinstance(title, str) or not title.strip() \
+                or not isinstance(target, str) \
+                or not BRANCH_TARGET_RE.fullmatch(target):
+            return None
+        body = item.get("body")
+        return {"title": title.strip(),
+                "body": body if isinstance(body, str) else "",
+                "target": target}
+    return _sanitize_branch_items(raw, repos, keep)
+
+
+def validate_result_with_branches(
+    obj: object,
+    repos: list[str],
+    validate: Callable[[object], dict[str, object]],
+) -> dict[str, object]:
+    """``validate`` (the role's existing validator) plus the sanitized
+    ``branches`` declarations and ``pull_requests``. Composes on top of
+    ``validate_result_with_labels`` the way that one composes on the
+    base validators."""
+    if not isinstance(obj, dict):  # boundary: raw model JSON
+        raise SchemaError(f"$: expected type 'object', got {type(obj).__name__}")
+    result: dict[str, object] = dict(validate(
+        {k: v for k, v in obj.items() if k not in ("branches", "pull_requests")}
+    ))
+    result["branches"] = sanitize_branch_declarations(obj.get("branches"), repos)
+    result["pull_requests"] = sanitize_pull_requests(
+        obj.get("pull_requests"), repos)
+    return result
+
+
 def build_triage_schema(
     allowed_models: list[str],
     allowed_labels: list[str] | None = None,
@@ -698,6 +887,10 @@ class Review:
     classification: str
     message: str = ""
     label_changes: tuple[JsonObject, ...] = ()
+    # Collected branch records (see ``branch_persist``): the branches
+    # this stage's verdict declared, each self-contained with its
+    # bundle, modes and SHAs.
+    branches: tuple[JsonObject, ...] = ()
     model: str = ""
     prompt: str = ""
 
@@ -739,6 +932,12 @@ class ReviewContext:
     session_transcript: str = ""
     open_shell: Callable[[str], tuple[ContainerShellSession, str]] | None = None
     report_poisoned: Callable[[ContainerShellSession], None] | None = None
+    # Packs the verdict's declared branches out of the caller's
+    # containers into collected branch records (see the wrapper);
+    # ``None`` when branch persistence is not enabled.
+    collect_branches: Callable[
+        [Sequence[ContainerShellSession], list[JsonObject], list[JsonObject]],
+        list[JsonObject]] | None = None
     drafts: list[Review] = field(default_factory=list)
     failed_reviewers: list[str] = field(default_factory=list)
 
@@ -746,6 +945,24 @@ class ReviewContext:
         """Prior drafts that are real review verdicts (excluding triage
         ``ENGAGE``), in the order produced -- what the combine stage merges."""
         return [d for d in self.drafts if d.classification != ENGAGE]
+
+    def collect_into(self, result: dict[str, object],
+                     sessions: Sequence[ContainerShellSession]) -> None:
+        """Replace a validated ``result``'s sanitized ``branches``
+        declarations with the records collected for them from
+        ``sessions``' containers -- dropped entirely when no collector
+        is wired up, so declarations never pose as records. Every
+        backend calls this right after validating its verdict."""
+        if self.collect_branches is None:
+            result.pop("branches", None)
+        else:
+            try:
+                result["branches"] = self.collect_branches(
+                    list(sessions), result.get("branches") or [],
+                    result.get("pull_requests") or [])
+            except Exception as exc:
+                raise BranchCollectionFailed(
+                    f"collecting the declared branches failed: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -808,6 +1025,7 @@ class Reviewer(ABC):
             classification=result["classification"],
             message=result["message"],
             label_changes=tuple(result.get("label_changes") or ()),
+            branches=tuple(result.get("branches") or ()),
             model=self.name,
             prompt=self.role.name,
         )

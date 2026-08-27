@@ -119,6 +119,7 @@ __all__ = [
     "build_repo_path",
     "gcli_api",
     "gcli_approve",
+    "gcli_create_pr",
     "gcli_prefix",
     "issues_listing_takes_type_filter",
     "list_closed_since",
@@ -558,6 +559,49 @@ def gcli_approve(args, pr_number: int, message: str = "") -> None:
         raise RuntimeError(
             f"gcli approve failed for PR #{pr_number} with exit code {cp.returncode}:\n"
             f"{cp.stderr.strip()}"
+        )
+
+
+def gcli_create_pr(
+    args,
+    owner: str,
+    repo: str,
+    head_owner: str,
+    head_branch: str,
+    target: str,
+    title: str,
+    body: str,
+) -> None:
+    """Open a pull request in ``owner``/``repo`` from
+    ``head_owner:head_branch`` into ``target``.
+
+    Every supported forge refuses a duplicate open PR from the same
+    head -- Forgejo/Gitea services/pull (ErrPullRequestAlreadyExists),
+    GitHub 422
+    (https://docs.github.com/en/rest/pulls/pulls#create-a-pull-request),
+    GitLab 409
+    (https://docs.gitlab.com/ee/api/merge_requests.html#create-mr) --
+    so a caller may retry a create and take the refusal as
+    already-open."""
+    with gcli_message_template(body) as template_args:
+        cmd = gcli_prefix(args) + [
+            "pulls", "create",
+            "-o", owner,
+            "-r", repo,
+            "-f", f"{head_owner}:{head_branch}",
+            "-t", target,
+            "-y",
+            *template_args,
+            # gcli getopt-parses a title starting with "-" as options
+            # (verified on gcli 2.12.0); "--" pins it as the positional
+            "--",
+            title,
+        ]
+        cp = run_gcli(args, cmd)
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"gcli pulls create {head_owner}:{head_branch} -> {target} "
+            f"failed with exit code {cp.returncode}:\n{cp.stderr.strip()}"
         )
 
 

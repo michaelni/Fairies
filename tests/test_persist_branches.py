@@ -30,8 +30,8 @@
 Branch persistence through the containers' fairy remotes: the
 ``branches``/``pull_requests`` declaration vocabulary and its boundary
 sanitizers, the remote setup and declared-branch collection into
-bundle-carrying records, the publication (push, force, delete), and
-the prompt/role plumbing.
+bundle-carrying records, the publication (push, force, delete, PR
+creation) at send time, and the prompt/role plumbing.
 """
 
 from __future__ import annotations
@@ -549,6 +549,25 @@ class PublishBranchRecordTests(unittest.TestCase):
             branch_persist.publish_branch_record(record, remote_url=self.URL)
         self.assertIn(("update-ref", "refs/heads/pr7-fix-overflow",
                        record["sha"]), calls)
+
+
+class GcliCreatePrArgvTests(unittest.TestCase):
+    def test_a_dash_leading_title_stays_positional(self) -> None:
+        # gcli 2.12.0 getopt-parses a title like "-Wformat fix" as
+        # options and exits 1 unless "--" pins it as the positional
+        import forge_gcli
+        cmds: list[list[str]] = []
+
+        def fake_run(args, cmd, **kwargs):
+            cmds.append(cmd)
+            return SimpleNamespace(returncode=0, stderr="")
+
+        with mock.patch.object(forge_gcli, "run_gcli", side_effect=fake_run):
+            forge_gcli.gcli_create_pr(
+                SimpleNamespace(gcli_account=None, forge_type=None),
+                "mm", "ffmpeg", "forkfairy", "fairy/x", "master",
+                "-Wformat fix", "")
+        self.assertEqual(cmds[0][-2:], ["--", "-Wformat fix"])
 
 
 class RoleWithBranchesTests(unittest.TestCase):

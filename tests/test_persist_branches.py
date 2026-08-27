@@ -326,6 +326,8 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
     def _collect(self, seeds, current, declared, pull_requests=(), *,
                  ancestor_rc=0, bundle=_cmd(stdout=b"BUNDLE")):
         def fake_cgit(handle, repo_path, *args, **kwargs):
+            if args[:2] == ("rev-parse", "--verify"):
+                return _cmd(rc=1)
             if args[:2] == ("merge-base", "--is-ancestor"):
                 return _cmd(rc=ancestor_rc)
             if args[0] == "merge-base":
@@ -434,6 +436,51 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
                 [], repo_specs=[_repo_spec()], base_shas={})
         self.assertEqual(records[0].old_sha, "2" * 40)
         self.assertEqual(bundle_negatives, [("2" * 40,)])
+
+    def test_a_pr_target_thins_the_bundle_and_anchors_the_diff(self) -> None:
+        target_tip = "9" * 40
+        bundle_args: list[tuple] = []
+
+        def fake_cgit(handle, repo_path, *args, **kwargs):
+            if args[:2] == ("rev-parse", "--verify"):
+                return _cmd(stdout=(target_tip + "\n").encode()) \
+                    if args[-1].endswith("/master") else _cmd(rc=1)
+            if args[0] == "merge-base":
+                return _cmd(stdout=(args[2] + "\n").encode())
+            if args[:2] == ("bundle", "create"):
+                bundle_args.append(args)
+                return _cmd(stdout=b"BUNDLE")
+            raise AssertionError(f"unexpected container git {args}")
+
+        request = dict(VALID_PR_REQUEST, branch="new")
+        with mock.patch.object(branch_persist, "_list_fake_refs",
+                               return_value={"new": "f" * 40}), \
+                mock.patch.object(branch_persist, "_container_git",
+                                  side_effect=fake_cgit):
+            records = branch_persist.collect_declared_branches(
+                [(HANDLE, {"ffmpeg": {}})], [], [request],
+                repo_specs=[_repo_spec()], base_shas={"ffmpeg": ["c" * 40]})
+        self.assertIn(target_tip, bundle_args[0])
+        self.assertEqual(records[0].diff_base_sha, target_tip)
+
+    def test_an_unresolved_pr_target_leaves_the_preview_baseless(self) -> None:
+        def fake_cgit(handle, repo_path, *args, **kwargs):
+            if args[:2] == ("rev-parse", "--verify"):
+                return _cmd(rc=1)
+            if args[:2] == ("bundle", "create"):
+                return _cmd(stdout=b"BUNDLE")
+            raise AssertionError(f"unexpected container git {args}")
+
+        request = dict(VALID_PR_REQUEST, branch="new")
+        with mock.patch.object(branch_persist, "_list_fake_refs",
+                               return_value={"new": "f" * 40}), \
+                mock.patch.object(branch_persist, "_container_git",
+                                  side_effect=fake_cgit):
+            records = branch_persist.collect_declared_branches(
+                [(HANDLE, {"ffmpeg": {}})], [], [request],
+                repo_specs=[_repo_spec()], base_shas={"ffmpeg": ["c" * 40]})
+        self.assertEqual(len(records), 1)
+        self.assertIsNone(records[0].diff_base_sha)
 
     def test_a_tip_the_forge_knows_bundles_empty(self) -> None:
         # observed on git 2.43: a bundle whose every object the negatives

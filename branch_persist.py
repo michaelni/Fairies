@@ -303,22 +303,50 @@ def add_to_container_remote(
                     "container %s", branch, repo, handle.container_id[:12])
 
 
+def _merge_base(handle: ContainerHandle, repo: str, sha: str,
+                other: str | None) -> str | None:
+    """The merge base of ``sha`` and ``other`` in the repo's fairy
+    remote; None when there is none (or no ``other``)."""
+    if other is None:
+        return None
+    cp = _container_git(handle, _fake_remote_path(repo), "merge-base",
+                        sha, other)
+    merge_base = cp.stdout.decode(errors="replace").strip()
+    if cp.returncode != 0 or not _SHA_RE.fullmatch(merge_base):
+        return None
+    return merge_base
+
+
 def _pick_diff_base(handle: ContainerHandle, repo: str, sha: str,
                     candidates: Sequence[str]) -> str | None:
     """The merge base of ``sha`` with the nearest of ``candidates`` --
-    the commit the operator surface diffs the branch against."""
-    fake = _fake_remote_path(repo)
+    the commit the operator surface diffs a plain branch push against
+    (a pull request's base is its target's merge base instead)."""
     best: str | None = None
     for candidate in candidates:
-        cp = _container_git(handle, fake, "merge-base", sha, candidate)
-        merge_base = cp.stdout.decode(errors="replace").strip()
-        if cp.returncode != 0 or not _SHA_RE.fullmatch(merge_base):
+        merge_base = _merge_base(handle, repo, sha, candidate)
+        if merge_base is None:
             continue
         if best is None or _container_git(
-                handle, fake, "merge-base", "--is-ancestor",
-                best, merge_base).returncode == 0:
+                handle, _fake_remote_path(repo), "merge-base",
+                "--is-ancestor", best, merge_base).returncode == 0:
             best = merge_base
     return best
+
+
+def _pr_target_tip(handle: ContainerHandle, container_path: str,
+                   target: object) -> str | None:
+    """The declared PR target branch's tip as the checkout's
+    remote-tracking refs know it; None without one."""
+    if not target:
+        return None
+    for remote in FORGE_REMOTES:
+        cp = _container_git(handle, container_path, "rev-parse", "--verify",
+                            f"refs/remotes/{remote}/{target}")
+        tip = cp.stdout.decode(errors="replace").strip()
+        if cp.returncode == 0 and _SHA_RE.fullmatch(tip):
+            return tip
+    return None
 
 
 def _bundle_from_container(handle: ContainerHandle, repo: str, branch: str,
@@ -352,9 +380,10 @@ def collect_declared_branches(
     remotes into self-contained records.
 
     ``declared`` and ``pull_requests`` are the role's sanitized lists
-    (``llm_review_api``); a pull request implies its branch. ``base_shas``
-    maps each repo to forge-known commits that thin the bundles beyond
-    the repo's own seeds. Model mistakes -- a declared branch no fairy
+    (``llm_review_api``); a pull request implies its branch, and its
+    target branch's tip joins the bundle negatives and leads the
+    diff-base candidates. ``base_shas`` maps each repo to forge-known
+    commits that thin the bundles beyond the repo's own seeds. Model mistakes -- a declared branch no fairy
     remote holds, a deletion of an unpublished branch, more than
     ``MAX_PERSIST_BRANCHES`` per repo -- are dropped with a warning;
     infrastructure failures raise.
@@ -426,13 +455,23 @@ def collect_declared_branches(
                         f"deriving the push mode of {branch!r} of {repo!r} "
                         f"failed (rc={ancestor_rc})")
                 mode = "ff" if ancestor_rc == 0 else "force"
+            target_tip = _pr_target_tip(handle, spec.container_path,
+                                        (pr or {}).get("target"))
+            # a fatter bundle is the whole cost of an unresolved target
+            # here; the preview base below must never absorb it
             negatives = sorted({*seeds.values(),
-                                *(base_shas.get(repo) or ())} - {sha})
+                                *(base_shas.get(repo) or ()),
+                                *([target_tip] if target_tip else ())} - {sha})
             bundle = _bundle_from_container(handle, repo, branch, negatives)
-            diff_base = _pick_diff_base(
-                handle, repo, sha,
-                [*(base_shas.get(repo) or ()),
-                 *([old_sha] if old_sha else [])])
+            if pr is not None:
+                # a PR's one true preview base: the merge base with its
+                # target branch -- no base at all beats a wrong one
+                diff_base = _merge_base(handle, repo, sha, target_tip)
+            else:
+                diff_base = _pick_diff_base(
+                    handle, repo, sha,
+                    [*(base_shas.get(repo) or ()),
+                     *([old_sha] if old_sha else [])])
             records.append(CollectedBranch(
                 branch=branch, mode=mode, pr=pr, repo=repo, sha=sha,
                 old_sha=old_sha, bundle=bundle,

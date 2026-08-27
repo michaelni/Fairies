@@ -47,9 +47,10 @@ last row).
 - **¶ message** — the selected ticket: the action `y` would perform,
   then the discussion with the review at its end, where posting will
   put it, marked `NOT POSTED` until it is. Below the review, each
-  branch the review persists: name, push mode, the PR it would open,
-  and its diff (a range-diff when it would overwrite a published
-  fairy branch) — `y` publishes them along with the review. The
+  branch the review persists: name, push mode, the PR it would open
+  with its description, and its diff (a range-diff when it would
+  overwrite a published fairy branch) — `y` publishes them along
+  with the review. The
   thread is kept current
   by the agent's scan; a `── sampled for the review … ──` line marks
   how far the review saw. `m` switches a PR to its patches or its

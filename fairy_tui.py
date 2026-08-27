@@ -1523,6 +1523,9 @@ class UILoop:
                 [("label", (f"  {str(record.get('sha'))[:12]}"
                             "  published when the review is sent (y)")[:width])],
             ])
+            if isinstance(pr, dict) and pr.get("body"):
+                branch_parts.append(
+                    tui_core.render_markdown(str(pr["body"]), width))
             branch_parts.append(self._branch_diff_body(item, record))
         if not branch_parts:
             return fairy_block

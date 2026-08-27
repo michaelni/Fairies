@@ -939,7 +939,8 @@ class BranchMarkerTests(DbCase):
 
     def test_detail_shows_branch_block_and_diff(self) -> None:
         self.db.push("reviewed", "pr", "6", _branch_verdict(
-            6, pr={"title": "Fix x", "body": "", "target": "master"}))
+            6, pr={"title": "Fix x", "body": "Adds the missing bounds check.",
+                   "target": "master"}))
         self.model.poll()
         ui = make_ui(self.model)
         with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
@@ -951,6 +952,7 @@ class BranchMarkerTests(DbCase):
         self.assertIn("fairy/fix-x", text)
         self.assertIn("force", text)
         self.assertIn('PR "Fix x" into master', text)
+        self.assertIn("Adds the missing bounds check.", text)
         self.assertIn("published when the review is sent (y)", text)
         self.assertIn(f"branch diff {'b' * 12}..{'a' * 12}", text)
         diff.assert_called_once()

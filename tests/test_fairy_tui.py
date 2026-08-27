@@ -916,8 +916,8 @@ class BranchMarkerTests(DbCase):
         self.model.poll()
         by_number = {row.split("#")[1].split()[0]: row[1]
                      for row in self.rows()}
-        self.assertEqual(by_number["5"], "⎇")
-        self.assertEqual(by_number["6"], "⎇")
+        self.assertEqual(by_number["5"], "»")
+        self.assertEqual(by_number["6"], "»")
         self.assertEqual(by_number["7"], " ")
 
     def test_pr_marker_uses_the_red_style(self) -> None:

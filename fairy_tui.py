@@ -149,8 +149,8 @@ def _branch_mark(data: dict) -> tuple[str, str]:
     if not branches:
         return ("text", " ")
     if any(isinstance(b.get("pr"), dict) for b in branches):
-        return ("br_pr_mark", "⎇")
-    return ("br_mark", "⎇")
+        return ("br_pr_mark", "»")
+    return ("br_mark", "»")
 
 
 STATUS_FIELDS = ("state", "auto_merge", "approvals", "change_requests",
@@ -1503,7 +1503,7 @@ class UILoop:
             pr = record.get("pr")
             style = "br_pr_mark" if isinstance(pr, dict) else "br_mark"
             if record.get("mode") == "delete":
-                desc = (f"⎇ {record.get('repo')}: delete "
+                desc = (f"» {record.get('repo')}: delete "
                         f"{branch_persist.FAIRY_BRANCH_PREFIX}{record.get('branch')}")
                 branch_parts.append([
                     [],
@@ -1512,7 +1512,7 @@ class UILoop:
                                 "  deleted when the review is sent (y)")[:width])],
                 ])
                 continue
-            desc = (f"⎇ {record.get('repo')}: "
+            desc = (f"» {record.get('repo')}: "
                     f"{branch_persist.FAIRY_BRANCH_PREFIX}{record.get('branch')}"
                     f"  {record.get('mode')}")
             if isinstance(pr, dict):

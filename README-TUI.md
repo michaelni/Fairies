@@ -35,7 +35,7 @@ last row).
   in the list, were approved by someone else). A red `PAUSED` appears
   while `p` holds the daemons stopped.
 - **☰ list** — the table. Columns: `▶` marks reviewed rows, an orange
-  `⎇` a review that persists git branches (red when one opens a PR),
+  `»` a review that persists git branches (red when one opens a PR),
   kind, repo (only when sides span several), `#number`, the status
   letters, state, llm, age, title. The title bar shows the active
   lens, the bottom bar the keys.

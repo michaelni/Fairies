@@ -62,6 +62,7 @@ from podman_host import ContainerInfraError, ContainerShellSession, ShellHostSpe
 
 __all__ = [
     "BRANCH_NAME_RE",
+    "BRANCH_TARGET_RE",
     "CLASSIFICATIONS",
     "EXIT_BAD_MODEL_OUTPUT",
     "ISSUE_CLASSIFICATIONS",

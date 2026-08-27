@@ -326,8 +326,8 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
     def _collect(self, seeds, current, declared, pull_requests=(), *,
                  ancestor_rc=0, bundle=_cmd(stdout=b"BUNDLE")):
         def fake_cgit(handle, repo_path, *args, **kwargs):
-            if args[:2] == ("rev-parse", "--verify"):
-                return _cmd(rc=1)
+            if args[0] == "for-each-ref":
+                return _cmd(stdout=f"fforge/master {'c' * 40}\n".encode())
             if args[:2] == ("merge-base", "--is-ancestor"):
                 return _cmd(rc=ancestor_rc)
             if args[0] == "merge-base":
@@ -413,6 +413,8 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
         bundle_negatives: list[tuple] = []
 
         def fake_cgit(handle, repo_path, *args, **kwargs):
+            if args[0] == "for-each-ref":
+                return _cmd(stdout=b"")
             if args[:2] == ("merge-base", "--is-ancestor"):
                 return _cmd(rc=1)
             if args[0] == "merge-base":
@@ -442,9 +444,8 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
         bundle_args: list[tuple] = []
 
         def fake_cgit(handle, repo_path, *args, **kwargs):
-            if args[:2] == ("rev-parse", "--verify"):
-                return _cmd(stdout=(target_tip + "\n").encode()) \
-                    if args[-1].endswith("/master") else _cmd(rc=1)
+            if args[0] == "for-each-ref":
+                return _cmd(stdout=f"fforge/master {target_tip}\n".encode())
             if args[0] == "merge-base":
                 return _cmd(stdout=(args[2] + "\n").encode())
             if args[:2] == ("bundle", "create"):
@@ -465,8 +466,8 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
 
     def test_an_unresolved_pr_target_leaves_the_preview_baseless(self) -> None:
         def fake_cgit(handle, repo_path, *args, **kwargs):
-            if args[:2] == ("rev-parse", "--verify"):
-                return _cmd(rc=1)
+            if args[0] == "for-each-ref":
+                return _cmd(stdout=f"fforge/release/8.1 {'8' * 40}\n".encode())
             if args[:2] == ("bundle", "create"):
                 return _cmd(stdout=b"BUNDLE")
             raise AssertionError(f"unexpected container git {args}")
@@ -480,6 +481,27 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
                 [(HANDLE, {"ffmpeg": {}})], [], [request],
                 repo_specs=[_repo_spec()], base_shas={"ffmpeg": ["c" * 40]})
         self.assertEqual(len(records), 1)
+        self.assertIsNone(records[0].diff_base_sha)
+
+    def test_a_plain_push_diffs_from_its_single_prerequisite(self) -> None:
+        fork_point = "a1" * 20
+        header = (b"# v2 git bundle\n-" + fork_point.encode()
+                  + b" base subject\n" + b"f" * 40
+                  + b" refs/heads/new\n\nPACKDATA")
+        records = self._collect({}, {"new": "f" * 40},
+                                [{"repo": "ffmpeg", "branch": "new",
+                                  "action": "push"}],
+                                bundle=_cmd(stdout=header))
+        self.assertEqual(records[0].diff_base_sha, fork_point)
+
+    def test_two_prerequisites_leave_the_preview_baseless(self) -> None:
+        header = (b"# v2 git bundle\n-" + b"a" * 40 + b" one\n-"
+                  + b"b" * 40 + b" two\n" + b"f" * 40
+                  + b" refs/heads/new\n\nPACK")
+        records = self._collect({}, {"new": "f" * 40},
+                                [{"repo": "ffmpeg", "branch": "new",
+                                  "action": "push"}],
+                                bundle=_cmd(stdout=header))
         self.assertIsNone(records[0].diff_base_sha)
 
     def test_a_tip_the_forge_knows_bundles_empty(self) -> None:
@@ -986,6 +1008,8 @@ class CrossItemBranchTests(unittest.TestCase):
 
     def test_issue_session_persists_a_branch_modifying_another_pr(self) -> None:
         def fake_cgit(handle, repo_path, *args, **kwargs):
+            if args[0] == "for-each-ref":
+                return _cmd(stdout=b"")
             if args[:2] == ("bundle", "create"):
                 return _cmd(stdout=b"BUNDLE")
             return _cmd(rc=1)

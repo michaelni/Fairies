@@ -65,7 +65,8 @@ from typing import Iterator, Sequence
 
 from common import JsonObject
 from git_util import FORGE_REMOTES, git_push_refspecs, git_rev_parse
-from llm_review_api import BRANCH_NAME_RE, MAX_PERSIST_BRANCHES
+from llm_review_api import (BRANCH_NAME_RE, BRANCH_TARGET_RE,
+                            MAX_PERSIST_BRANCHES)
 from podman_host import ContainerHandle, copy_into_container, run_on_remote_host
 from podman_repos import RepoSpec
 
@@ -317,36 +318,46 @@ def _merge_base(handle: ContainerHandle, repo: str, sha: str,
     return merge_base
 
 
-def _pick_diff_base(handle: ContainerHandle, repo: str, sha: str,
-                    candidates: Sequence[str]) -> str | None:
-    """The merge base of ``sha`` with the nearest of ``candidates`` --
-    the commit the operator surface diffs a plain branch push against
-    (a pull request's base is its target's merge base instead)."""
-    best: str | None = None
-    for candidate in candidates:
-        merge_base = _merge_base(handle, repo, sha, candidate)
-        if merge_base is None:
+def _forge_branch_tips(handle: ContainerHandle,
+                       container_path: str) -> dict[str, str]:
+    """{remote-qualified branch name -> sha} for every branch the
+    checkout's remotes track, PR head refs excluded -- the commits the
+    forge is known to have, where a PR target resolves, and the
+    negatives that keep a bundle to the model's own commits."""
+    cp = _container_git(
+        handle, container_path, "for-each-ref",
+        "--format=%(refname:short) %(objectname)",
+        *(f"refs/remotes/{remote}" for remote in FAIRY_BRANCH_REMOTES),
+        max_output_bytes=MAX_BUNDLE_BYTES)
+    if cp.returncode != 0:
+        raise BranchTransferError(
+            f"listing the forge branches of {container_path!r} failed: "
+            f"{cp.stderr.decode(errors='replace').strip()}")
+    tips: dict[str, str] = {}
+    for line in cp.stdout.decode(errors="replace").splitlines():
+        name, _, sha = line.partition(" ")
+        _, _, branch_part = name.partition("/")
+        if branch_part.startswith("pr/") or not branch_part:
             continue
-        if best is None or _container_git(
-                handle, _fake_remote_path(repo), "merge-base",
-                "--is-ancestor", best, merge_base).returncode == 0:
-            best = merge_base
-    return best
+        if BRANCH_TARGET_RE.fullmatch(name) and _SHA_RE.fullmatch(sha):
+            tips[name] = sha
+    return tips
 
 
-def _pr_target_tip(handle: ContainerHandle, container_path: str,
-                   target: object) -> str | None:
-    """The declared PR target branch's tip as the checkout's
-    remote-tracking refs know it; None without one."""
-    if not target:
-        return None
-    for remote in FORGE_REMOTES:
-        cp = _container_git(handle, container_path, "rev-parse", "--verify",
-                            f"refs/remotes/{remote}/{target}")
-        tip = cp.stdout.decode(errors="replace").strip()
-        if cp.returncode == 0 and _SHA_RE.fullmatch(tip):
-            return tip
-    return None
+def _bundle_prerequisites(bundle: bytes) -> list[str]:
+    """The prerequisite commits a bundle's header names (its ``-<sha>``
+    lines): with every forge branch tip among the create's negatives,
+    a single prerequisite is the branch's fork point off the forge --
+    the natural preview base of a push that names no PR target."""
+    prerequisites = []
+    for line in bundle.split(b"\n"):
+        if not line:
+            break
+        if line.startswith(b"-"):
+            sha = line[1:].split(b" ", 1)[0].decode("ascii", "replace")
+            if _SHA_RE.fullmatch(sha):
+                prerequisites.append(sha)
+    return prerequisites
 
 
 def _bundle_from_container(handle: ContainerHandle, repo: str, branch: str,
@@ -380,10 +391,13 @@ def collect_declared_branches(
     remotes into self-contained records.
 
     ``declared`` and ``pull_requests`` are the role's sanitized lists
-    (``llm_review_api``); a pull request implies its branch, and its
-    target branch's tip joins the bundle negatives and leads the
-    diff-base candidates. ``base_shas`` maps each repo to forge-known
-    commits that thin the bundles beyond the repo's own seeds. Model mistakes -- a declared branch no fairy
+    (``llm_review_api``); a pull request implies its branch. Every
+    branch tip the checkout's remotes track joins the bundle negatives,
+    so a bundle holds the model's own commits alone; a PR record's
+    preview base is the merge base with its target branch, a plain
+    push's the bundle's single prerequisite -- its fork point off the
+    forge. ``base_shas`` maps each repo to further forge-known commits
+    (e.g. a PR head under review). Model mistakes -- a declared branch no fairy
     remote holds, a deletion of an unpublished branch, more than
     ``MAX_PERSIST_BRANCHES`` per repo -- are dropped with a warning;
     infrastructure failures raise.
@@ -394,6 +408,7 @@ def collect_declared_branches(
     wanted += [(repo, branch, "push") for (repo, branch) in requests_left
                if not any(w[:2] == (repo, branch) for w in wanted)]
     listings: dict[tuple[int, str], dict[str, str]] = {}
+    tip_cache: dict[tuple[int, str], dict[str, str]] = {}
     counts: dict[str, int] = {}
     records: list[CollectedBranch] = []
     for repo, branch, action in wanted:
@@ -455,23 +470,26 @@ def collect_declared_branches(
                         f"deriving the push mode of {branch!r} of {repo!r} "
                         f"failed (rc={ancestor_rc})")
                 mode = "ff" if ancestor_rc == 0 else "force"
-            target_tip = _pr_target_tip(handle, spec.container_path,
-                                        (pr or {}).get("target"))
-            # a fatter bundle is the whole cost of an unresolved target
-            # here; the preview base below must never absorb it
+            tips = tip_cache.setdefault(
+                (id(handle), repo),
+                _forge_branch_tips(handle, spec.container_path))
+            target = (pr or {}).get("target")
+            target_tip = next(
+                (tips[f"{remote}/{target}"] for remote in FORGE_REMOTES
+                 if f"{remote}/{target}" in tips), None) if target else None
             negatives = sorted({*seeds.values(),
                                 *(base_shas.get(repo) or ()),
-                                *([target_tip] if target_tip else ())} - {sha})
+                                *tips.values()} - {sha})
             bundle = _bundle_from_container(handle, repo, branch, negatives)
             if pr is not None:
                 # a PR's one true preview base: the merge base with its
                 # target branch -- no base at all beats a wrong one
                 diff_base = _merge_base(handle, repo, sha, target_tip)
             else:
-                diff_base = _pick_diff_base(
-                    handle, repo, sha,
-                    [*(base_shas.get(repo) or ()),
-                     *([old_sha] if old_sha else [])])
+                prerequisites = _bundle_prerequisites(
+                    base64.b64decode(bundle))
+                diff_base = prerequisites[0] \
+                    if len(prerequisites) == 1 else None
             records.append(CollectedBranch(
                 branch=branch, mode=mode, pr=pr, repo=repo, sha=sha,
                 old_sha=old_sha, bundle=bundle,

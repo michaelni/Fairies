@@ -57,6 +57,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import gcli_cache  # noqa: E402
 import fairy  # noqa: E402
+import issue_fairy  # noqa: E402
 import workset  # noqa: E402
 
 WIP_RE = re.compile(r"\b(WIP|DRAFT)\b", re.IGNORECASE)
@@ -238,6 +239,38 @@ class ForceReviewSkipPayloadTests(unittest.TestCase):
 
     def test_force_engage_unset_omits_field(self) -> None:
         self.assertNotIn("force_engage", self._payload_for())
+
+
+class IssueForceBypassesTriageSkipTests(unittest.TestCase):
+    """An r-requested / --force-review'd issue analysis must reach the
+    full investigator even when the triage pre-check votes skip -- the
+    bypass rides the wrapper request exactly like the PR side's."""
+
+    def _wrapper_kwarg(self, forced: bool) -> object:
+        prepared = issue_fairy.PreparedIssue(
+            issue={"number": 21153, "title": "t", "state": "open",
+                   "labels": []},
+            number=21153, title="t", author="a", last_activity=None,
+            base_reason="forced review by --force-review", discussion=[],
+            reviewer_username="fairy", forced_review=forced,
+            ignore_triage_skip=forced)
+        args = SimpleNamespace(triage_labels=[])
+        seen: dict = {}
+
+        def fake_invoke(a, payload, **kwargs):
+            seen.update(payload)
+            return fairy.LLMReview("skip", "")
+
+        with patch.object(issue_fairy, "invoke_llm_wrapper",
+                          side_effect=fake_invoke):
+            issue_fairy.run_llm_issue(args, prepared, None)
+        return seen.get("ignore_triage_skip")
+
+    def test_a_forced_issue_requests_the_bypass(self) -> None:
+        self.assertTrue(self._wrapper_kwarg(forced=True))
+
+    def test_a_cron_issue_does_not(self) -> None:
+        self.assertFalse(self._wrapper_kwarg(forced=False))
 
 
 if __name__ == "__main__":

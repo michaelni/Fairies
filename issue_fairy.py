@@ -108,6 +108,10 @@ class PreparedIssue:
     # Same contract as PreparedPR.forced_review: a mention or
     # --force-review must not be dropped at --limit.
     forced_review: bool = False
+    # Same contract as PreparedPR.ignore_triage_skip: an explicitly
+    # forced analysis runs the full investigator even when the triage
+    # pre-check votes skip.
+    ignore_triage_skip: bool = False
 
 
 def prepared_issue_from_dict(data: dict) -> PreparedIssue:
@@ -364,6 +368,7 @@ def prepare_issue(
         discussion=build_llm_discussion([], comments, [], timeline),
         reviewer_username=self_login,
         forced_review=forced_reason is not None,
+        ignore_triage_skip=is_forced,
     )
 
 
@@ -390,6 +395,8 @@ def run_llm_issue(
     }
     if args.triage_labels:
         payload["triage_label_allowlist"] = args.triage_labels
+    if prepared.ignore_triage_skip:
+        payload["ignore_triage_skip"] = True
     return invoke_llm_wrapper(
         args,
         payload,

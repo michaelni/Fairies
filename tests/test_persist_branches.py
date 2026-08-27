@@ -857,6 +857,24 @@ class GcliCreatePrArgvTests(unittest.TestCase):
         self.assertEqual(message, "the body")
 
 
+class EditorStubBangLineTests(unittest.TestCase):
+    def test_a_leading_bang_line_survives_gcli(self) -> None:
+        import forge_gcli
+        seen: dict = {}
+
+        def fake_run_cmd(cmd, *, env, **kwargs):
+            body = Path(env["EDITOR"]).parent / "body.txt"
+            seen["body"] = body.read_text(encoding="utf-8")
+            return SimpleNamespace(returncode=0, stderr="")
+
+        with mock.patch.object(forge_gcli, "run_cmd",
+                               side_effect=fake_run_cmd):
+            forge_gcli.run_gcli_editor_submission(
+                ["gcli"], message="See:\n![img](u)\n!literal\nend",
+                verbose=0)
+        self.assertEqual(seen["body"], "See:\n ![img](u)\n !literal\nend")
+
+
 class RoleWithBranchesTests(unittest.TestCase):
     def test_composes_over_role_with_labels(self) -> None:
         role = llm_prompt.role_with_branches(

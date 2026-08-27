@@ -406,7 +406,14 @@ def run_gcli_editor_submission(
         tmp = Path(tmpdir)
         body_path = tmp / "body.txt"
         editor_path = tmp / "editor.sh"
-        body_path.write_text(message, encoding="utf-8")
+        # gcli discards every line whose first byte is '!' (gcli 2.12
+        # src/cmd/editor.c:117) -- a markdown image line, say. One
+        # leading space keeps the line and, below markdown's 4-space
+        # code-block threshold, renders the same.
+        body_path.write_text(
+            "\n".join(" " + line if line.startswith("!") else line
+                      for line in message.split("\n")),
+            encoding="utf-8")
         editor_path.write_text(
             "#!/bin/sh\n"
             "set -eu\n"

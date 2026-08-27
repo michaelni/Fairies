@@ -96,6 +96,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from threading import Thread
@@ -117,6 +118,7 @@ __all__ = [
     "apply_issue_label_changes",
     "build_repo_path",
     "gcli_api",
+    "gcli_approve",
     "gcli_prefix",
     "issues_listing_takes_type_filter",
     "list_closed_since",
@@ -515,6 +517,48 @@ def list_issue_comments(
         forge_type, path, len(comments),
     )
     return comments
+
+
+@contextmanager
+def gcli_message_template(message: str):
+    """The ``-T <file>`` arguments carrying ``message`` for a gcli
+    subcommand, through a temp file that lives for the ``with`` body;
+    empty message, empty argument list."""
+    if not message:
+        yield []
+        return
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tf:
+        tf.write(message)
+    try:
+        yield ["-T", tf.name]
+    finally:
+        try:
+            os.unlink(tf.name)
+        except OSError:
+            pass
+
+
+def gcli_approve(args, pr_number: int, message: str = "") -> None:
+    """Submit an approving review on the PR, with ``message`` as its body."""
+    with gcli_message_template(message) as template_args:
+        cmd = gcli_prefix(args) + [
+            "pulls",
+            "-o",
+            args.owner,
+            "-r",
+            args.repo,
+            "-i",
+            str(pr_number),
+            "approve",
+            "-y",
+            *template_args,
+        ]
+        cp = run_gcli(args, cmd)
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"gcli approve failed for PR #{pr_number} with exit code {cp.returncode}:\n"
+            f"{cp.stderr.strip()}"
+        )
 
 
 def post_issue_comment(

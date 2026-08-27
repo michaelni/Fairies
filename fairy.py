@@ -76,7 +76,6 @@ import os
 import re
 import shlex
 import subprocess
-import tempfile
 import time
 from dataclasses import asdict as dataclasses_asdict, dataclass, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
@@ -108,7 +107,6 @@ from forge_gcli import (
     apply_issue_label_changes,
     build_repo_path,
     gcli_api,
-    gcli_prefix,
     list_issue_timeline,
     load_json,
     post_issue_comment,
@@ -747,39 +745,11 @@ def combine_review_messages(*parts: str) -> str:
 
 
 def gcli_approve(args: argparse.Namespace, pr_number: int, review_message: str = "") -> None:
-    cmd = gcli_prefix(args) + [
-        "pulls",
-        "-o",
-        args.owner,
-        "-r",
-        args.repo,
-        "-i",
-        str(pr_number),
-        "approve",
-        "-y",
-    ]
-
-    tmp_path: str | None = None
-    try:
-        message = combine_review_messages(args.approve_message, review_message)
-        if message:
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as tf:
-                tf.write(message)
-                tmp_path = tf.name
-            cmd += ["-T", tmp_path]
-
-        cp = forge_gcli.run_gcli(args, cmd)
-        if cp.returncode != 0:
-            raise RuntimeError(
-                f"gcli approve failed for PR #{pr_number} with exit code {cp.returncode}:\n"
-                f"{cp.stderr.strip()}"
-            )
-    finally:
-        if tmp_path is not None:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+    """Approve the PR with the deployment's --approve-message prepended
+    to the review's own message."""
+    forge_gcli.gcli_approve(
+        args, pr_number,
+        combine_review_messages(args.approve_message, review_message))
 
 
 def get_submission_guard(prepared: PreparedItem, decision: Decision) -> tuple[str | None, str | None]:

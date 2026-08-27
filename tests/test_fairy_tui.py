@@ -963,7 +963,7 @@ class BranchMarkerTests(DbCase):
         with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
                                _fake_store), \
                 mock.patch.object(fairy_tui.git_util, "git_resolve_first",
-                                  return_value="e" * 40), \
+                                  return_value="e" * 40) as resolve, \
                 mock.patch.object(fairy_tui.git_util, "git_range_diff",
                                   return_value=b"1:  abc ! 1:  def rework"), \
                 mock.patch.object(fairy_tui.git_util, "git_diff") as diff, \
@@ -972,6 +972,8 @@ class BranchMarkerTests(DbCase):
         self.assertIn(f"range-diff {'e' * 12}...{'a' * 12}", text)
         self.assertIn("rework", text)
         diff.assert_not_called()
+        # the published tip may live on a dedicated fork remote
+        self.assertIn("fairy/fairy/fix-x", resolve.call_args.args[1])
 
     def test_bundles_are_not_kept_resident_in_the_model(self) -> None:
         self.db.push("reviewed", "pr", "6", _branch_verdict(6))

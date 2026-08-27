@@ -1554,7 +1554,7 @@ class UILoop:
         old_tip = git_util.git_resolve_first(
             patch_repo,
             [f"{remote}/{branch_persist.FAIRY_BRANCH_PREFIX}{branch}"
-             for remote in git_util.FORGE_REMOTES]
+             for remote in branch_persist.FAIRY_BRANCH_REMOTES]
         ) if record.get("mode") == "force" and patch_repo is not None else None
         retry_at = None
         caption = body = tail = None

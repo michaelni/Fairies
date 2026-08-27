@@ -43,6 +43,10 @@ import subprocess
 from pathlib import Path
 from typing import Sequence
 
+# Remote names a deployment's checkouts use for the forge, in probe
+# order: fairy's own mirror setups name it fforge, plain clones origin.
+FORGE_REMOTES = ("fforge", "origin")
+
 
 def git_show_file_bytes(repo_root: Path, revision: str, relpath: str) -> bytes | None:
     spec = f"{revision}:{relpath}"
@@ -80,6 +84,17 @@ def git_rev_parse(repo_root: Path, ref: str) -> str:
             f"{cp.stderr.strip() or 'empty output'}"
         )
     return cp.stdout.strip()
+
+
+def git_resolve_first(repo_root: Path, refs: Sequence[str]) -> str | None:
+    """The SHA of the first ref in ``refs`` that resolves in
+    ``repo_root``; None when none does."""
+    for ref in refs:
+        try:
+            return git_rev_parse(repo_root, ref)
+        except RuntimeError:
+            continue
+    return None
 
 
 def git_merge_base(repo_root: Path, sha_a: str, sha_b: str) -> str:
@@ -149,6 +164,22 @@ def git_diff(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
     return cp.stdout
 
 
+def git_range_diff(repo_root: Path, old_sha: str, new_sha: str) -> bytes:
+    """``git range-diff old...new`` -- how the commit series was rewritten
+    between the two tips."""
+    cp = subprocess.run(
+        ["git", "-C", str(repo_root), "range-diff", "--no-color",
+         f"{old_sha}...{new_sha}"],
+        capture_output=True, check=False,
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"git range-diff {old_sha}...{new_sha} in {repo_root} failed: "
+            f"{cp.stderr.decode('utf-8', errors='replace').strip()}"
+        )
+    return cp.stdout
+
+
 def git_fetch_all(repo_root: Path) -> None:
     """``git fetch --all`` -- the same refresh fairy_fetch_git.sh runs
     on its schedule; a failed fetch raises rather than reading as
@@ -170,19 +201,28 @@ def git_push_refspecs(
     *,
     ssh_command: str | None = None,
     timeout_s: float = 60.0,
+    force: bool = True,
+    force_with_lease: str | None = None,
 ) -> None:
-    """Force-push ``refspecs`` from ``repo_root`` to ``remote_url``.
+    """Push ``refspecs`` from ``repo_root`` to ``remote_url``.
 
     git negotiates a thin pack, so only objects the remote lacks are
     sent: the first push to a fresh mirror transfers full history, every
     later push transfers just the new commits. ``ssh_command`` overrides
     the transport (e.g. ``ssh -i <key> -o BatchMode=yes``) via
-    ``GIT_SSH_COMMAND``.
+    ``GIT_SSH_COMMAND``. ``force`` (the default) passes ``--force``, as
+    the mirror syncs need; pass False for a push that must refuse
+    non-fast-forward updates. ``force_with_lease`` (a ``ref:sha``) makes
+    the push succeed only while the remote ref still is that sha.
     """
     env = None
     if ssh_command is not None:
         env = {**os.environ, "GIT_SSH_COMMAND": ssh_command}
-    cmd = ["git", "-C", str(repo_root), "push", "--force", remote_url, *refspecs]
+    cmd = ["git", "-C", str(repo_root), "push",
+           *(["--force"] if force else []),
+           *([f"--force-with-lease={force_with_lease}"]
+             if force_with_lease else []),
+           remote_url, *refspecs]
     cp = subprocess.run(cmd, env=env, capture_output=True, check=False, text=True, timeout=timeout_s)
     if cp.returncode != 0:
         raise RuntimeError(

@@ -66,6 +66,7 @@ from fairy import (
     ApiObject,
     Decision,
     LLMReview,
+    branch_publication_block,
     build_llm_discussion,
     call_llm_with_retries,
     compile_user_mention_regex,
@@ -434,6 +435,9 @@ def issue_review_decision(
         "comment" if review.classification == "reply" else "skip",
         reason, last_activity, review.classification, review.message,
         label_changes=review.label_changes,
+        # like fairy's skip: a skip only ever applies labels, so its
+        # branches would claim a publication that cannot happen
+        branches=review.branches if review.classification == "reply" else (),
     )
 
 
@@ -476,7 +480,9 @@ def submit_issue_decision(
     """Post the comment (if any), then apply label changes; None when
     done, the staleness guard's block reason when it blocked the submit.
     ``skip_guard`` posts without the staleness check: the operator's
-    force_post waives it.
+    force_post waives it. Branches are published before the comment,
+    through the same seam as fairy's PR submit path, so the posted text
+    never names a branch that failed to appear.
 
     The staleness guard runs once, before the comment, on pristine
     ``updated_at``; the comment itself bumps updated_at so labels are
@@ -490,6 +496,9 @@ def submit_issue_decision(
             decision.pr_number, changed_reason,
         )
         return changed_reason
+    blocked = branch_publication_block(args, decision)
+    if blocked is not None:
+        return blocked
     if decision.action == "comment":
         post_issue_comment(
             args, args.owner, args.repo, decision.pr_number,

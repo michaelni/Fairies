@@ -79,8 +79,12 @@ except ModuleNotFoundError:  # a transitive dependency (e.g. httpx) is absent
 import branch_persist  # noqa: E402
 import llm_prompt  # noqa: E402
 import llm_review_api  # noqa: E402
+import agent  # noqa: E402
+import fairy  # noqa: E402
+import issue_fairy  # noqa: E402
 import podman_host  # noqa: E402
 import podman_repos  # noqa: E402
+import worker  # noqa: E402
 from llm_review_api import (  # noqa: E402
     MAX_PERSIST_BRANCHES,
     sanitize_branch_declarations,
@@ -551,6 +555,196 @@ class PublishBranchRecordTests(unittest.TestCase):
                        record["sha"]), calls)
 
 
+class ParseBranchRecordsTests(unittest.TestCase):
+    def test_keeps_string_complete_records_and_deletions(self) -> None:
+        self.assertEqual(
+            fairy.parse_branch_records([GOOD_RECORD, DELETE_RECORD]),
+            (GOOD_RECORD, DELETE_RECORD))
+        for bad in (dict(GOOD_RECORD, sha=""), dict(GOOD_RECORD, bundle=7),
+                    {"branch": "x"}, "x"):
+            with self.subTest(bad=bad):
+                self.assertEqual(fairy.parse_branch_records([bad]), ())
+
+
+def _push_spec(repo: str = "ffmpeg") -> fairy.BranchPushSpec:
+    return fairy.BranchPushSpec(
+        repo=repo, owner="mm", forge_repo=repo,
+        url=f"https://forge.example.com/mm/{repo}.git")
+
+
+def _send_args(**overrides: object) -> SimpleNamespace:
+    return SimpleNamespace(**{"owner": "o", "repo": "r",
+                              "branch_push": [_push_spec()],
+                              "branch_push_head_owner": [], **overrides})
+
+
+def _branch_decision(*records: dict) -> fairy.Decision:
+    return fairy.Decision(1, "t", "a", "-", "comment", "llm", None,
+                          llm_message="LLM review",
+                          branches=records or (GOOD_RECORD,))
+
+
+class BranchPushSpecTests(unittest.TestCase):
+    def test_parse_roundtrip(self) -> None:
+        spec = fairy.parse_branch_push_spec(
+            "ffmpeg=mm/ffmpeg=https://x/y.git?a=b")
+        self.assertEqual(spec, fairy.BranchPushSpec(
+            "ffmpeg", "mm", "ffmpeg", "https://x/y.git?a=b"))
+
+    def test_malformed_specs_are_rejected(self) -> None:
+        import argparse
+        for bad in ("ffmpeg", "ffmpeg=mm=https://x", "=mm/r=u", "a=mm/=u"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    fairy.parse_branch_push_spec(bad)
+
+
+class SendPathBranchTests(unittest.TestCase):
+    def test_missing_push_config_blocks_before_posting(self) -> None:
+        decision = _branch_decision()
+        with mock.patch.object(fairy, "post_issue_comment") as post:
+            reason = fairy.submit_decision_action(
+                _send_args(branch_push=[]), decision, decision,
+                skip_guard=True)
+        self.assertIn("--branch-push", reason)
+        post.assert_not_called()
+
+    def test_unconfigured_repo_blocks_the_send(self) -> None:
+        decision = _branch_decision(dict(GOOD_RECORD, repo="ffmpeg-web"))
+        with mock.patch.object(fairy, "post_issue_comment") as post:
+            reason = fairy.submit_decision_action(
+                _send_args(), decision, decision, skip_guard=True)
+        self.assertIn("branch publication failed", reason)
+        self.assertIn("ffmpeg-web", reason)
+        post.assert_not_called()
+
+    def test_an_unconfigured_repo_blocks_before_any_push(self) -> None:
+        decision = _branch_decision(
+            GOOD_RECORD, dict(GOOD_RECORD, repo="ffmpeg-web"))
+        with mock.patch.object(branch_persist, "publish_branch_record") as pub:
+            with self.assertRaisesRegex(branch_persist.BranchTransferError,
+                                        "ffmpeg-web"):
+                fairy.publish_decision_branches(_send_args(), decision)
+        pub.assert_not_called()
+
+    def test_publication_failure_blocks_before_posting(self) -> None:
+        decision = _branch_decision()
+        with mock.patch.object(fairy, "post_issue_comment") as post, \
+                mock.patch.object(
+                    fairy, "publish_decision_branches",
+                    side_effect=branch_persist.BranchTransferError("ref moved")):
+            reason = fairy.submit_decision_action(
+                _send_args(), decision, decision, skip_guard=True)
+        self.assertEqual(reason, "branch publication failed: ref moved")
+        post.assert_not_called()
+
+    def test_a_publication_timeout_blocks_the_send(self) -> None:
+        import subprocess
+        decision = _branch_decision()
+        with mock.patch.object(fairy, "post_issue_comment") as post, \
+                mock.patch.object(
+                    fairy, "publish_decision_branches",
+                    side_effect=subprocess.TimeoutExpired("git push", 300)):
+            reason = fairy.submit_decision_action(
+                _send_args(), decision, decision, skip_guard=True)
+        self.assertIn("branch publication failed", reason)
+        post.assert_not_called()
+
+    def test_branches_publish_then_review_posts(self) -> None:
+        decision = _branch_decision()
+        with mock.patch.object(fairy, "post_issue_comment") as post, \
+                mock.patch.object(fairy, "publish_decision_branches") as publish:
+            reason = fairy.submit_decision_action(
+                _send_args(), decision, decision, skip_guard=True)
+        self.assertIsNone(reason)
+        publish.assert_called_once()
+        post.assert_called_once()
+
+    def test_publish_routes_each_repo_to_its_spec(self) -> None:
+        web_record = dict(GOOD_RECORD, repo="ffmpeg-web", branch="site-fix")
+        decision = _branch_decision(GOOD_RECORD, web_record)
+        urls: list[str] = []
+        with mock.patch.object(
+                branch_persist, "publish_branch_record",
+                side_effect=lambda record, **kw: (
+                    urls.append(kw["remote_url"]),
+                    f"fairy/{record['branch']}")[1]):
+            fairy.publish_decision_branches(
+                _send_args(branch_push=[_push_spec(), _push_spec("ffmpeg-web")]),
+                decision)
+        self.assertEqual(urls, ["https://forge.example.com/mm/ffmpeg.git",
+                                "https://forge.example.com/mm/ffmpeg-web.git"])
+
+    def test_publish_pushes_all_branches_before_opening_prs(self) -> None:
+        pr_record = dict(GOOD_RECORD, branch="add-test",
+                         pr={"title": "Add test", "body": "b", "target": "master"})
+        decision = _branch_decision(pr_record, GOOD_RECORD)
+        order: list[str] = []
+        with mock.patch.object(
+                branch_persist, "publish_branch_record",
+                side_effect=lambda record, **kw: (
+                    order.append(f"publish {record['branch']}"),
+                    f"fairy/{record['branch']}")[1]), \
+                mock.patch.object(
+                    fairy, "gcli_create_pr",
+                    side_effect=lambda *a, **kw: order.append(f"pr {a[4]}")):
+            fairy.publish_decision_branches(_send_args(), decision)
+        self.assertEqual(order, ["publish add-test", "publish pr7-fix-overflow",
+                                 "pr fairy/add-test"])
+
+    def test_a_refused_create_of_an_open_pr_passes(self) -> None:
+        pr_record = dict(GOOD_RECORD, branch="add-test",
+                         pr={"title": "Add test", "body": "b", "target": "master"})
+        decision = _branch_decision(pr_record)
+        with mock.patch.object(branch_persist, "publish_branch_record",
+                               return_value="fairy/add-test"), \
+                mock.patch.object(
+                    fairy, "list_open_prs",
+                    return_value=[{"head": {"ref": "fairy/add-test"}}]), \
+                mock.patch.object(fairy, "gcli_create_pr",
+                                  side_effect=RuntimeError("already exists")):
+            fairy.publish_decision_branches(_send_args(), decision)
+
+    def test_a_refused_create_without_an_open_pr_raises(self) -> None:
+        pr_record = dict(GOOD_RECORD, branch="add-test",
+                         pr={"title": "Add test", "body": "b", "target": "master"})
+        decision = _branch_decision(pr_record)
+        with mock.patch.object(branch_persist, "publish_branch_record",
+                               return_value="fairy/add-test"), \
+                mock.patch.object(fairy, "list_open_prs", return_value=[]), \
+                mock.patch.object(fairy, "gcli_create_pr",
+                                  side_effect=RuntimeError("bad target")):
+            with self.assertRaisesRegex(RuntimeError, "bad target"):
+                fairy.publish_decision_branches(_send_args(), decision)
+
+    def test_pr_creation_names_the_specs_repo_and_head_owner(self) -> None:
+        pr_record = dict(GOOD_RECORD,
+                         pr={"title": "T", "body": "", "target": "master"})
+        decision = _branch_decision(pr_record)
+        with mock.patch.object(branch_persist, "publish_branch_record",
+                               return_value="fairy/pr7-fix-overflow"), \
+                mock.patch.object(fairy, "list_open_prs", return_value=[]), \
+                mock.patch.object(fairy, "gcli_create_pr") as create:
+            fairy.publish_decision_branches(
+                _send_args(branch_push_head_owner=["ffmpeg=forkfairy"]),
+                decision)
+        self.assertEqual(create.call_args.args[1:5],
+                         ("mm", "ffmpeg", "forkfairy", "fairy/pr7-fix-overflow"))
+
+    def test_skip_verdicts_drop_their_branches(self) -> None:
+        decision = fairy.decision_from_review(
+            fairy.LLMReview("skip", "nothing to add",
+                            branches=(GOOD_RECORD,)),
+            number=1, title="t", author="a", auto_merge="-",
+            last_activity=None, base_reason="llm")
+        self.assertEqual(decision.branches, ())
+        actionable = fairy.decision_from_review(
+            fairy.LLMReview("moderate_issues", "m", branches=(GOOD_RECORD,)),
+            number=1, title="t", author="a", auto_merge="-",
+            last_activity=None, base_reason="llm")
+        self.assertEqual(actionable.branches, (GOOD_RECORD,))
+
+
 class GcliCreatePrArgvTests(unittest.TestCase):
     def test_a_dash_leading_title_stays_positional(self) -> None:
         # gcli 2.12.0 getopt-parses a title like "-Wformat fix" as
@@ -707,3 +901,81 @@ class OpenAIPersistBranchesTests(unittest.TestCase):
                                   [VALID_PR_REQUEST])])
 
 
+class CrossItemBranchTests(unittest.TestCase):
+    """Working one item does not scope what fairy may touch: during
+    issue 1234 she can read PR 4321 -- every pull request's head is a
+    revision in the checkout -- and persist a modified version of it as
+    a fairy branch that rides the issue's own verdict to the forge."""
+
+    def test_issue_prompt_offers_pr_heads_and_the_fairy_remote(self) -> None:
+        prompt = llm_prompt.generate_llm_prompt(
+            role="issue_investigator", vendor="anthropic", model="m",
+            features={"podman_shell"}, repo_roots=[Path("/client/ffmpeg")],
+            container_repo_mounts=["/work/ffmpeg"], reviewer_username="fairy",
+            persist_branches=True,
+            machines=[podman_host.ShellHostSpec(
+                "x86_64", podman_host.RemoteHost("fairy@h"))])
+        self.assertIn("fforge/pr/", prompt)
+        self.assertIn('remote "fairy"', prompt)
+
+    def test_issue_session_persists_a_branch_modifying_another_pr(self) -> None:
+        def fake_cgit(handle, repo_path, *args, **kwargs):
+            if args[:2] == ("bundle", "create"):
+                return _cmd(stdout=b"BUNDLE")
+            return _cmd(rc=1)
+
+        with mock.patch.object(branch_persist, "_list_fake_refs",
+                               return_value={"pr4321-fix": "e" * 40}), \
+                mock.patch.object(branch_persist, "_container_git",
+                                  side_effect=fake_cgit):
+            records = branch_persist.collect_declared_branches(
+                [(HANDLE, {"ffmpeg": {}})],
+                [{"repo": "ffmpeg", "branch": "pr4321-fix", "action": "push"}],
+                [], repo_specs=[_repo_spec()], base_shas={"ffmpeg": []})
+        self.assertEqual([(r.branch, r.mode) for r in records],
+                         [("pr4321-fix", "ff")])
+
+        decision = issue_fairy.issue_review_decision(
+            fairy.LLMReview("reply", "fixed PR 4321 while investigating",
+                            branches=(records[0].record(),)),
+            number=1234, title="t", author="a", reason="llm",
+            last_activity=None)
+        self.assertEqual(decision.branches[0]["branch"], "pr4321-fix")
+
+        published: list[str] = []
+        cache = SimpleNamespace(entries={})
+        args = _send_args(cache="/nonexistent")
+        with mock.patch.object(
+                fairy, "publish_decision_branches",
+                side_effect=lambda a, d: published.extend(
+                    r["branch"] for r in d.branches)), \
+                mock.patch.object(issue_fairy, "post_issue_comment") as post, \
+                mock.patch.object(issue_fairy.gcli_cache, "entry_key",
+                                  return_value="k"), \
+                mock.patch.object(issue_fairy.gcli_cache, "save_cache"):
+            reason = issue_fairy.submit_issue_decision(
+                args, decision, cache=cache,
+                submitted_counts={"comment": 0}, skip_guard=True)
+        self.assertIsNone(reason)
+        self.assertEqual(published, ["pr4321-fix"])
+        post.assert_called_once()
+
+
+class TicketRoundTripTests(unittest.TestCase):
+    def test_branches_survive_verdict_fields_and_ticket_decision(self) -> None:
+        decision = fairy.Decision(
+            5, "t", "a", "-", "comment", "llm", None,
+            llm_classification="moderate_issues", llm_message="msg",
+            branches=(GOOD_RECORD, DELETE_RECORD))
+        prepared = SimpleNamespace(
+            pr={"updated_at": "2026-08-25T00:00:00Z", "head": {"ref": "b"}},
+            discussion=[])
+        fields = worker.verdict_fields(decision, prepared)
+        self.assertEqual(fields["review"]["branches"],
+                         [GOOD_RECORD, DELETE_RECORD])
+        rebuilt = agent.ticket_decision("pr", "5", {"review": fields["review"]})
+        self.assertEqual(rebuilt.branches, (GOOD_RECORD, DELETE_RECORD))
+
+
+if __name__ == "__main__":
+    unittest.main()

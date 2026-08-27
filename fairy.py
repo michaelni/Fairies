@@ -83,6 +83,7 @@ from pathlib import Path
 from typing import Callable, Iterable, NamedTuple, TypeAlias
 from urllib.parse import urlencode, urljoin
 
+import branch_persist
 import ci_log
 import git_util
 import gcli_cache
@@ -107,6 +108,7 @@ from forge_gcli import (
     apply_issue_label_changes,
     build_repo_path,
     gcli_api,
+    gcli_create_pr,
     list_issue_timeline,
     load_json,
     post_issue_comment,
@@ -214,6 +216,9 @@ class LLMReview:
     classification: str
     message: str
     label_changes: tuple[LabelChange, ...] = ()
+    # Collected branch records (see branch_persist): quarantined branches
+    # this review wants published as fairy/<name> on approval.
+    branches: tuple[JsonObject, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -251,6 +256,7 @@ class Decision:
     # to keep the two summary lists disjoint.
     external_approvers: tuple[str, ...] = ()
     label_changes: tuple[LabelChange, ...] = ()
+    branches: tuple[JsonObject, ...] = ()
     # For merge_ready: when fairy's approval review was submitted, so
     # the operator surface can show how long the merge has waited.
     approved_at: datetime | None = None
@@ -384,6 +390,28 @@ def add_side_identity_args(p: argparse.ArgumentParser) -> None:
             "1 = write commands and the initial item listing, "
             "2 = all commands."
         ),
+    )
+    p.add_argument(
+        "--branch-push",
+        action="append",
+        default=[],
+        type=parse_branch_push_spec,
+        metavar="NAME=OWNER/REPO=URL",
+        help="Enable branch persistence for the container repo NAME "
+             "(podman-backed reviewers get it as their fairy remote): a "
+             "verdict's fairy/<name> pushes and deletions go to the git "
+             "URL, its pull requests are opened in OWNER/REPO -- both "
+             "only when the review is sent (operator y, or --auto-mode). "
+             "Repeat per repo.",
+    )
+    p.add_argument(
+        "--branch-push-head-owner",
+        action="append",
+        default=[],
+        metavar="NAME=OWNER",
+        help="When NAME's --branch-push URL is a fork: the fork's owner, "
+             "so pull requests name OWNER:fairy/<branch> as their head "
+             "(default: the OWNER of --branch-push).",
     )
     add_color_arg(p)
     p.add_argument(
@@ -752,6 +780,122 @@ def gcli_approve(args: argparse.Namespace, pr_number: int, review_message: str =
         combine_review_messages(args.approve_message, review_message))
 
 
+@dataclass(frozen=True)
+class BranchPushSpec:
+    """Where one container repo's approved fairy branches go: the git
+    push URL, and the forge repo (``owner``/``forge_repo``) its pull
+    requests are opened in."""
+    repo: str
+    owner: str
+    forge_repo: str
+    url: str
+
+
+def parse_branch_push_spec(value: str) -> BranchPushSpec:
+    """Parse a --branch-push ``NAME=OWNER/REPO=URL`` (the URL may itself
+    contain ``=``)."""
+    name, sep1, rest = value.partition("=")
+    target, sep2, url = rest.partition("=")
+    owner, slash, forge_repo = target.partition("/")
+    if not (sep1 and sep2 and slash and name and owner and forge_repo and url):
+        raise argparse.ArgumentTypeError(
+            f"--branch-push {value!r}: expected NAME=OWNER/REPO=URL")
+    return BranchPushSpec(repo=name, owner=owner, forge_repo=forge_repo, url=url)
+
+
+def branch_push_head_owner(args: argparse.Namespace, spec: BranchPushSpec) -> str:
+    for entry in args.branch_push_head_owner:
+        name, sep, owner = entry.partition("=")
+        if sep and name == spec.repo and owner:
+            return owner
+    return spec.owner
+
+
+def publish_decision_branches(
+    args: argparse.Namespace,
+    decision: Decision,
+) -> None:
+    """Apply the decision's branch records to their --branch-push
+    destinations -- push as ``fairy/<name>``, or delete the published
+    branch -- and open the pull requests they request. Every push
+    precedes the first PR creation, and the first failure raises so the
+    caller blocks the whole send with its reason."""
+    specs = {s.repo: s for s in args.branch_push}
+    unconfigured = {r for record in decision.branches
+                    if (r := record.get("repo")) not in specs}
+    if unconfigured:
+        # checked before the first push: a mid-loop refusal would leave
+        # the earlier records published for a send that cannot complete
+        raise branch_persist.BranchTransferError(
+            f"no --branch-push configured for repo(s) "
+            f"{', '.join(sorted(map(repr, unconfigured)))}")
+    published: list[tuple[JsonObject, BranchPushSpec, str]] = []
+    for record in decision.branches:
+        spec = specs[record["repo"]]
+        forge_branch = branch_persist.publish_branch_record(
+            record, remote_url=spec.url)
+        logger.info("#%s: published %s of %s (%s, %s)", decision.pr_number,
+                    record["mode"], forge_branch, spec.repo,
+                    record["sha"][:12])
+        published.append((record, spec, forge_branch))
+    for record, spec, forge_branch in published:
+        pr = record.get("pr")
+        if not isinstance(pr, dict):
+            continue
+        # Re-pushing the same SHA is a no-op, but re-creating a PR is
+        # not: the forge refuses a duplicate open PR from the same head
+        # (gcli_create_pr cites the per-forge sources), so a send
+        # retried after a partial failure takes that refusal as the PR
+        # already being open -- verified against the open listing
+        # before the refusal is swallowed.
+        try:
+            gcli_create_pr(
+                args,
+                spec.owner,
+                spec.forge_repo,
+                branch_push_head_owner(args, spec),
+                forge_branch,
+                str(pr.get("target") or ""),
+                str(pr.get("title") or ""),
+                str(pr.get("body") or ""),
+            )
+        except RuntimeError as exc:
+            if not any(
+                head.get("ref") == forge_branch
+                for open_pr in list_open_prs(args, owner=spec.owner,
+                                             repo=spec.forge_repo)
+                if isinstance(head := open_pr.get("head"), dict)
+            ):
+                raise
+            logger.info("#%s: a pull request from %s is already open; "
+                        "create refused with: %s", decision.pr_number,
+                        forge_branch, exc)
+            continue
+        logger.info("#%s: opened pull request from %s into %s of %s/%s",
+                    decision.pr_number, forge_branch, pr.get("target"),
+                    spec.owner, spec.forge_repo)
+
+
+def branch_publication_block(
+    args: argparse.Namespace, decision: Decision,
+) -> str | None:
+    """Publish the decision's branch records, shared by the PR and
+    issue submit paths; the reason the send must block when they cannot
+    all be published, None when there is nothing to publish or
+    everything went out."""
+    if not decision.branches:
+        return None
+    if not getattr(args, "branch_push", None):
+        return "verdict carries branches but --branch-push is not configured"
+    try:
+        publish_decision_branches(args, decision)
+    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        logger.error("#%s: branch publication failed: %s",
+                     decision.pr_number, exc)
+        return f"branch publication failed: {exc}"
+    return None
+
+
 def get_submission_guard(prepared: PreparedItem, decision: Decision) -> tuple[str | None, str | None]:
     if isinstance(prepared, PreparedPR):
         return prepared.pr.get("updated_at"), get_pr_head_ref(prepared.pr)
@@ -793,11 +937,16 @@ def submit_decision_action(
 ) -> str | None:
     """Post ``decision``; None on success, the staleness guard's block
     reason otherwise. ``skip_guard`` posts without the staleness check:
-    the operator's force_post waives it."""
+    the operator's force_post waives it. Branches are published before
+    the review message, so the posted text never names a branch that
+    failed to appear."""
     changed_reason = None if skip_guard else check_pr_still_unchanged(args, prepared, decision)
     if changed_reason is not None:
         logger.info("PR #%s: SKIP            submit skipped because %s", decision.pr_number, changed_reason)
         return changed_reason
+    blocked = branch_publication_block(args, decision)
+    if blocked is not None:
+        return blocked
     if decision.action == "approve":
         gcli_approve(args, decision.pr_number, decision.llm_message)
     elif decision.action == "comment" or decision.action == "request_changes":
@@ -851,9 +1000,11 @@ def max_dt(values: Iterable[datetime | None]) -> datetime | None:
     return max((v for v in values if v is not None), default=None)
 
 
-def list_open_prs(args: argparse.Namespace) -> list[ApiObject]:
+def list_open_prs(args: argparse.Namespace, owner: str | None = None,
+                  repo: str | None = None) -> list[ApiObject]:
     query = urlencode({"state": "open", "sort": "leastupdate", "limit": 100})
-    path = build_repo_path(args.owner, args.repo, f"/pulls?{query}")
+    path = build_repo_path(owner or args.owner, repo or args.repo,
+                           f"/pulls?{query}")
     data = gcli_api(args, path, all_pages=True, verbose_threshold=1)
     if not isinstance(data, list):
         raise RuntimeError(f"expected list of PRs, got {type(data).__name__}")
@@ -1618,6 +1769,26 @@ def parse_label_changes(raw: object, allowlist: list[str]) -> tuple[LabelChange,
     return tuple(out)
 
 
+def parse_branch_records(raw: object) -> tuple[JsonObject, ...]:
+    """Parse ``branches`` records from wrapper stdout or a ticket.
+
+    Kept lenient on purpose: only entries whose branch, mode, repo and
+    sha are non-empty strings survive (the bundle is empty for a
+    deletion), and ``branch_persist`` re-checks every field again at
+    publication time -- the authoritative boundary, since tickets are
+    hand-editable.
+    """
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        item for item in raw
+        if isinstance(item, dict) and all(
+            isinstance(item.get(key), str) and item[key]
+            for key in ("branch", "mode", "repo", "sha"))
+        and isinstance(item.get("bundle"), str)
+    )
+
+
 def label_names(changes: tuple[LabelChange, ...], op: str) -> tuple[str, ...]:
     return tuple(c.label for c in changes if c.op == op)
 
@@ -1645,6 +1816,16 @@ def manual_action_description(decision: Decision) -> str:
         if reasons:
             labels_part += f" ({reasons})"
         parts.append(labels_part)
+    if decision.branches:
+        deletions = sum(1 for b in decision.branches
+                        if b.get("mode") == "delete")
+        pr_count = sum(1 for b in decision.branches
+                       if isinstance(b.get("pr"), dict))
+        branch_parts = ([f"push {len(decision.branches) - deletions} branch(es)"]
+                        if len(decision.branches) > deletions else []) \
+            + ([f"delete {deletions} branch(es)"] if deletions else []) \
+            + ([f"open {pr_count} PR(s)"] if pr_count else [])
+        parts.append(", ".join(branch_parts))
     return " + ".join(parts) if parts else decision.action
 
 
@@ -1999,6 +2180,9 @@ def invoke_llm_wrapper(
         ws_path = getattr(args, "workset_file_override", None)
         if ws_path is not None:
             cmd += [f"--workset-file={ws_path}"]
+    if getattr(args, "branch_push", None):
+        cmd += ["--persist-branches"]
+        cmd += [f"--persist-repo={spec.repo}" for spec in args.branch_push]
     if extra_cmd_args:
         cmd += list(extra_cmd_args)
     stderr_prefix = f"[wrapper {stderr_tag}=#{number}] " if number is not None else "[wrapper] "
@@ -2045,6 +2229,7 @@ def invoke_llm_wrapper(
         classification=classification,
         message=message.strip(),
         label_changes=label_changes,
+        branches=parse_branch_records(data.get("branches")),
     )
 
 
@@ -2241,11 +2426,12 @@ def decision_from_review(
     base_reason: str,
 ) -> Decision:
     reason = base_reason
-    label_kwargs = {"label_changes": review.label_changes}
+    verdict_kwargs = {"label_changes": review.label_changes,
+                      "branches": review.branches}
     if review.classification == "approve":
         return Decision(
             number, title, author, auto_merge, "approve", reason, last_activity,
-            review.classification, review.message, **label_kwargs,
+            review.classification, review.message, **verdict_kwargs,
         )
     if review.classification == "minor_issues_approve":
         return Decision(
@@ -2258,7 +2444,7 @@ def decision_from_review(
             last_activity,
             review.classification,
             review.message,
-            **label_kwargs,
+            **verdict_kwargs,
         )
     if review.classification == "moderate_issues":
         return Decision(
@@ -2271,7 +2457,7 @@ def decision_from_review(
             last_activity,
             review.classification,
             review.message,
-            **label_kwargs,
+            **verdict_kwargs,
         )
     if review.classification == "reply_no_verdict":
         return Decision(
@@ -2284,7 +2470,7 @@ def decision_from_review(
             last_activity,
             review.classification,
             review.message,
-            **label_kwargs,
+            **verdict_kwargs,
         )
     if review.classification == "major_issues":
         return Decision(
@@ -2297,9 +2483,11 @@ def decision_from_review(
             last_activity,
             review.classification,
             review.message,
-            **label_kwargs,
+            **verdict_kwargs,
         )
     if review.classification == "skip":
+        # a skip only ever applies labels, so its branches would sit in
+        # the archive claiming a publication that cannot happen
         return Decision(
             number,
             title,
@@ -2310,7 +2498,7 @@ def decision_from_review(
             last_activity,
             review.classification,
             review.message,
-            **label_kwargs,
+            label_changes=review.label_changes,
         )
     return Decision(number, title, author, auto_merge, "skip", "unexpected LLM result", last_activity, "error", "")
 

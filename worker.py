@@ -96,6 +96,7 @@ def verdict_fields(decision: fairy.Decision, prepared) -> dict:
                 {"label": c.label, "op": c.op, "reason": c.reason, "post": c.post}
                 for c in decision.label_changes
             ],
+            "branches": list(decision.branches),
         },
         "discussion": prepared.discussion,
         "action": decision.action,

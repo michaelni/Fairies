@@ -40,7 +40,9 @@ they double as the regression test for the live transport.
 
 from __future__ import annotations
 
+import io
 import math
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -125,6 +127,56 @@ class RemoteHostTests(unittest.TestCase):
         self.assertEqual(0, res.returncode)
         self.assertEqual(b"ok", res.stdout)
         self.assertEqual(_ssh("podman cp /m/.git cid:/work/.git"), run.call_args.args[0])
+
+    def test_capped_run_captures_both_streams(self) -> None:
+        with mock.patch.object(lc.subprocess, "Popen",
+                               return_value=_StreamPopen(b"payload", rc=3,
+                                                         stderr=b"warn")):
+            res = lc.run_on_remote_host(HOST, "git", "bundle", "create", "-",
+                                        max_output_bytes=1 << 20)
+        self.assertEqual((3, b"payload", b"warn"),
+                         (res.returncode, res.stdout, res.stderr))
+
+    def test_capped_run_fails_closed_on_overrun(self) -> None:
+        for flooded in ({"stdout": b"x" * 4096}, {"stderr": b"x" * 4096}):
+            with self.subTest(flooded=flooded), \
+                    mock.patch.object(lc.subprocess, "Popen",
+                                      return_value=_StreamPopen(
+                                          flooded.get("stdout", b""),
+                                          stderr=flooded.get("stderr", b""))):
+                with self.assertRaisesRegex(lc.ContainerInfraError, "cap"):
+                    lc.run_on_remote_host(HOST, "git", "bundle", "create", "-",
+                                          max_output_bytes=1024)
+
+    def test_a_stalled_drain_fails_instead_of_truncating(self) -> None:
+        class _StallingStream:
+            def read(self, n):
+                lc.time.sleep(5)
+                return b""
+
+            def close(self):
+                pass
+
+        popen = _StreamPopen(b"")
+        popen.stdout = _StallingStream()
+        with mock.patch.object(lc, "HOST_RESPONSE_MARGIN_S", 0.05), \
+                mock.patch.object(lc.subprocess, "Popen", return_value=popen):
+            with self.assertRaisesRegex(lc.ContainerInfraError, "stalled"):
+                lc.run_on_remote_host(HOST, "git", "bundle", "create", "-",
+                                      max_output_bytes=1024)
+
+    def test_capped_run_propagates_the_timeout(self) -> None:
+        class _HangingPopen(_StreamPopen):
+            def wait(self, timeout=None):
+                if self.returncode is None and timeout is not None:
+                    raise subprocess.TimeoutExpired("ssh", timeout)
+                return super().wait(timeout)
+
+        with mock.patch.object(lc.subprocess, "Popen",
+                               return_value=_HangingPopen(b"")):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                lc.run_on_remote_host(HOST, "git", "bundle", "create", "-",
+                                      timeout_s=1.0, max_output_bytes=1024)
 
 
 class ImageTagExistsTests(unittest.TestCase):
@@ -564,6 +616,26 @@ class HostileFrameTests(_SessionHarness, unittest.TestCase):
         r = s.exec("echo hi")
         self.assertEqual("hi", r.stdout)
         self.assertTrue(math.isfinite(r.duration_s))
+
+
+class _StreamPopen:
+    """subprocess.Popen stand-in whose stdout serves fixed bytes."""
+
+    def __init__(self, stdout: bytes, rc: int = 0, stderr: bytes = b"") -> None:
+        self.stdout = io.BytesIO(stdout)
+        self.stderr = io.BytesIO(stderr)
+        self._rc = rc
+        self.returncode: int | None = None
+
+    def wait(self, timeout=None):  # noqa: ARG002
+        self.returncode = self._rc
+        return self._rc
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self) -> None:
+        self.returncode = self._rc
 
 
 if __name__ == "__main__":

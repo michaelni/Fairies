@@ -391,16 +391,97 @@ def _run_capture(cmd: list[str], *, timeout_s: float, label: str) -> _CmdResult:
     return _CmdResult(returncode=cp.returncode, stdout=cp.stdout, stderr=cp.stderr)
 
 
+def _run_capture_capped(cmd: list[str], *, timeout_s: float, label: str,
+                        max_output_bytes: int) -> _CmdResult:
+    """``_run_capture`` with a hard per-stream output cap: the command
+    reads data out of an untrusted container, so its output must stay
+    bounded, and ``subprocess.run`` would buffer without limit. Raises
+    ``ContainerInfraError`` once either stream exceeds the cap."""
+    logger.debug("%s start cmd=%s timeout=%.1fs cap=%d",
+                 label, shlex.join(cmd), timeout_s, max_output_bytes)
+    t0 = time.monotonic()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    sinks: dict[str, list[bytes]] = {"out": [], "err": []}
+    overrun = threading.Event()
+
+    # Both pipes drain concurrently: reading them in sequence deadlocks
+    # once the child fills the unread pipe's buffer, and only a
+    # ``wait(timeout=...)`` on the process -- not a deadline between
+    # blocking reads -- can actually enforce the timeout. A drainer
+    # kills the child the moment its cap is crossed.
+    def drain(stream, sink: list[bytes]) -> None:
+        received = 0
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                return
+            received += len(chunk)
+            if received > max_output_bytes:
+                overrun.set()
+                proc.kill()
+                return
+            sink.append(chunk)
+
+    drainers = [
+        threading.Thread(target=drain, args=(proc.stdout, sinks["out"]),
+                         daemon=True, name=tagged_thread_name("cap-out")),
+        threading.Thread(target=drain, args=(proc.stderr, sinks["err"]),
+                         daemon=True, name=tagged_thread_name("cap-err")),
+    ]
+    for thread in drainers:
+        thread.start()
+    try:
+        try:
+            rc = proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            logger.error("%s timeout cmd=%s timeout=%.1fs",
+                         label, shlex.join(cmd), timeout_s)
+            proc.kill()
+            proc.wait()
+            raise
+        for thread in drainers:
+            thread.join(timeout=HOST_RESPONSE_MARGIN_S)
+        if any(thread.is_alive() for thread in drainers):
+            # a sink a live drainer still appends to must not be
+            # returned as a complete result
+            raise ContainerInfraError(
+                f"{label} command's output drain stalled: {shlex.join(cmd)}")
+        if overrun.is_set():
+            raise ContainerInfraError(
+                f"{label} command exceeded the {max_output_bytes}-byte "
+                f"output cap: {shlex.join(cmd)}")
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        for stream in (proc.stdout, proc.stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
+    stdout, stderr = b"".join(sinks["out"]), b"".join(sinks["err"])
+    logger.debug("%s done cmd=%s rc=%d dt=%.3fs out=%d err=%d", label,
+                 shlex.join(cmd), rc, time.monotonic() - t0,
+                 len(stdout), len(stderr))
+    return _CmdResult(returncode=rc, stdout=stdout, stderr=stderr)
+
+
 def run_on_remote_host(
     host: RemoteHost,
     *remote_argv: str,
     timeout_s: float = 120.0,
+    max_output_bytes: int | None = None,
 ) -> _CmdResult:
     """Run a fixed-shape control command on the podman host over ssh.
 
     See ``RemoteHost`` for why this exists and the strict limits on
-    what may be passed through it.
+    what may be passed through it. ``max_output_bytes`` bounds each
+    output stream and fails closed on overrun (``ContainerInfraError``)
+    -- for commands whose output an untrusted container controls.
     """
+    if max_output_bytes is not None:
+        return _run_capture_capped(host.argv(remote_argv), timeout_s=timeout_s,
+                                   label="ssh", max_output_bytes=max_output_bytes)
     return _run_capture(host.argv(remote_argv), timeout_s=timeout_s, label="ssh")
 
 

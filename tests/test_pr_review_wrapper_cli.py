@@ -318,5 +318,27 @@ class ConcurrencyOptionTests(unittest.TestCase):
             parse("--concurrency", "codex")
 
 
+class PersistBranchesOptionTests(unittest.TestCase):
+    """--persist-branches is validated against --podman at parse time."""
+
+    def test_requires_podman(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            parse("--persist-branches")
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_accepted_for_the_issue_task_too(self) -> None:
+        ns = parse("--persist-branches", "--task", "issue",
+                   "--podman", "--shell-host", "fairy@203.0.113.7")
+        self.assertTrue(ns.persist_branches)
+
+    def test_accepted_with_podman_and_repos(self) -> None:
+        ns = parse("--persist-branches", "--podman",
+                   "--shell-host", "fairy@203.0.113.7",
+                   "--persist-repo", "ffmpeg",
+                   "--persist-repo", "ffmpeg-web")
+        self.assertTrue(ns.persist_branches)
+        self.assertEqual(ns.persist_repo, ["ffmpeg", "ffmpeg-web"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -88,7 +88,7 @@ from patch_util import (
     extract_changed_paths_from_patch,
     extract_commit_shas_from_patch,
 )
-from git_util import git_merge_tree, git_rev_parse, git_show_file
+from git_util import FORGE_REMOTES, git_merge_tree, git_resolve_first, git_rev_parse, git_show_file
 import concurrency
 import llm_review_api
 from llm_review_api import (
@@ -100,6 +100,7 @@ from llm_review_api import (
     Reviewer,
 )
 from codex_container import DEFAULT_CODEX_IMAGE
+import branch_persist
 import review_pipeline
 from review_pipeline import make_reviewer, review_pr, run_triage
 import workset
@@ -115,6 +116,7 @@ from llm_prompt import (
     load_project_facts,
     make_triager_role,
     review_role,
+    role_with_branches,
     role_with_labels,
 )
 import openai_common
@@ -579,6 +581,25 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--persist-branches",
+        action="store_true",
+        help=(
+            "Let podman-backed reviewers keep git branches: each branch "
+            "the verdict declares is packed out of its review container "
+            "into the verdict's branch records and pushed only when the "
+            "review is approved and sent."
+        ),
+    )
+    p.add_argument(
+        "--persist-repo",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Container repo name whose checkout gets a fairy remote "
+             "under --persist-branches; repeat per repo (default: the "
+             "primary repo).",
+    )
+    p.add_argument(
         "--podman-mirror-root",
         default=podman_repos.DEFAULT_MIRROR_ROOT,
         help=(
@@ -698,6 +719,9 @@ def parse_args() -> argparse.Namespace:
         p.error(f"duplicate machine labels in --shell-host: {', '.join(labels)}")
     if args.podman and not args.machines:
         p.error("--podman requires at least one --shell-host")
+    if args.persist_branches and not args.podman:
+        p.error("--persist-branches requires --podman (branches live in "
+                "podman review containers)")
     if args.extra_model and not args.combine_model:
         # rejected at parse time: discovered after run_parallel it would
         # have billed every reviewer before failing
@@ -779,7 +803,8 @@ def workset_note_drafts(args: argparse.Namespace, drafts, *,
     def record(data: dict) -> None:
         data["drafts"] = [
             {"classification": d.classification, "message": d.message,
-             "label_changes": list(d.label_changes), "model": d.model,
+             "label_changes": list(d.label_changes),
+             "branches": list(d.branches), "model": d.model,
              "prompt": d.prompt}
             for d in drafts
         ]
@@ -1063,6 +1088,15 @@ def append_source_bundle_files(
     return used_paths, truncated_paths, total_bytes
 
 
+def resolve_target_tip(repo_root: Path, base_ref: str) -> str | None:
+    """The local SHA of ``base_ref``'s tip, tried through the remotes the
+    deployment fetches from; None when none of them has it."""
+    return git_resolve_first(
+        repo_root,
+        (*(f"{remote}/{base_ref}" for remote in FORGE_REMOTES),
+         base_ref))
+
+
 def build_source_bundle(
     request: JsonObject,
     repo_root: Path | None,
@@ -1084,12 +1118,7 @@ def build_source_bundle(
     merged_tree = base_sha = None
     base_ref = _pr.get("base_ref") if isinstance(_pr.get("base_ref"), str) else ""
     if base_ref:
-        for ref in (f"fforge/{base_ref}", f"origin/{base_ref}", base_ref):
-            try:
-                base_sha = git_rev_parse(repo_root, ref)
-                break
-            except RuntimeError:
-                continue
+        base_sha = resolve_target_tip(repo_root, base_ref)
         if base_sha:
             merged_tree = git_merge_tree(repo_root, head_sha, base_sha)
         logger.info(
@@ -1217,10 +1246,13 @@ def emit_review_stdout(
     message: str,
     *,
     label_changes: list[dict[str, object]] | None = None,
+    branches: list[dict[str, object]] | None = None,
 ) -> None:
     out: dict[str, object] = {"classification": classification, "message": message}
     if label_changes:
         out["label_changes"] = label_changes
+    if branches:
+        out["branches"] = branches
     json.dump(out, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
 
@@ -1318,6 +1350,7 @@ def main() -> int:
         logging.getLogger("codex_catalog"),
         logging.getLogger("codex_container"),
         logging.getLogger("codex_reviewer"),
+        branch_persist.logger,
         color=args.color,
     )
     concurrency.configure(args.concurrency)
@@ -1458,6 +1491,11 @@ def main() -> int:
     # Keyed by id() since sessions are unhashable; their containers are
     # paused, not removed, at cleanup.
     poisoned_session_ids: set[int] = set()
+    session_handles: dict[int, podman_host.ContainerHandle] = {}
+    session_seeds: dict[int, branch_persist.RemoteSeeds] = {}
+    persist_repos: list[podman_repos.RepoSpec] = []
+    persist_base_shas: dict[str, list[str]] = {}
+    combiner_inject: list[JsonObject] = []
 
     def open_machine_shell(
         label: str,
@@ -1466,7 +1504,30 @@ def main() -> int:
             spec_by_label[label], podman_repo_specs, args, session_commands,
         )
         ensemble_shells.append((handle, session))
+        session_handles[id(session)] = handle
+        if args.persist_branches:
+            session_seeds[id(session)] = branch_persist.setup_container_remotes(
+                handle, podman_repo_specs, [s.name for s in persist_repos])
+        if combiner_inject:
+            branch_persist.add_to_container_remote(
+                handle, combiner_inject,
+                {s.name: s.container_path for s in persist_repos})
         return session, transcript
+
+    def collect_review_branches(
+        sessions: Sequence[podman_host.ContainerShellSession],
+        declared: list[JsonObject],
+        pull_requests: list[JsonObject],
+    ) -> list[JsonObject]:
+        collected = branch_persist.collect_declared_branches(
+            [(session_handles[i], session_seeds.get(i) or {})
+             for i in map(id, sessions) if i in session_handles],
+            declared,
+            pull_requests,
+            repo_specs=persist_repos,
+            base_shas=persist_base_shas,
+        )
+        return [cb.record() for cb in collected]
 
     def report_poisoned(session: podman_host.ContainerShellSession) -> None:
         poisoned_session_ids.add(id(session))
@@ -1506,6 +1567,38 @@ def main() -> int:
             podman_repo_specs = podman_repos.build_repo_specs(
                 repo_roots, mirror_root=args.podman_mirror_root,
             )
+            if args.persist_branches:
+                # resolved before the first container opens: every open
+                # (the primary one included) seeds its fairy remotes
+                known = {s.name for s in podman_repo_specs}
+                for name in args.persist_repo:
+                    if name not in known:
+                        logger.warning("--persist-repo %r names no container "
+                                       "repo (have: %s); ignored", name,
+                                       ", ".join(sorted(known)))
+                enabled = set(args.persist_repo) & known \
+                    or {podman_repo_specs[0].name}
+                persist_repos = [s for s in podman_repo_specs
+                                 if s.name in enabled]
+                pr_obj = request.get("pull_request")
+                if not isinstance(pr_obj, dict):
+                    pr_obj = {}
+                base_ref = pr_obj.get("base_ref")
+                # The SHAs thin the extraction bundles and ride into
+                # fixed-shape ssh commands, so only hex survives.
+                primary_extra = [s for s in (
+                    pr_obj.get("head_sha"),
+                    resolve_target_tip(repo_root, base_ref)
+                    if repo_root and isinstance(base_ref, str) and base_ref
+                    else None,
+                ) if isinstance(s, str) and re.fullmatch(r"[0-9a-fA-F]{7,64}", s)]
+                persist_base_shas = {
+                    spec.name: [spec.head_sha] + (
+                        primary_extra if spec is podman_repo_specs[0] else [])
+                    for spec in persist_repos
+                }
+                logger.info("branch persistence active: repos=%s",
+                            ", ".join(sorted(enabled)))
             session_commands = [
                 substitute_session_command(c, request) for c in args.session_command
             ]
@@ -1604,6 +1697,8 @@ def main() -> int:
             session_transcript=session_transcript,
             open_shell=open_machine_shell if args.podman else None,
             report_poisoned=report_poisoned if args.podman else None,
+            collect_branches=(
+                collect_review_branches if args.persist_branches else None),
         )
         openai_resources = OpenAIResources(
             client=client,
@@ -1775,18 +1870,29 @@ def main() -> int:
         )
         combiner_role = role_with_labels(base_combiner_role, triage_label_allowlist)
 
+        def stage_role(role):
+            """The stage's role, branch-enabled when this run persists
+            branches. Anthropic/zai/codex stages have their own podman
+            sessions; OpenAI stages share one container per machine, and
+            that shared container's fairy remotes are then also where
+            their pushes land, so collection reads them through the
+            shared sessions."""
+            if not args.persist_branches:
+                return role
+            return role_with_branches(role, [s.name for s in persist_repos])
+
         main_verbosity = (
             args.verbosity if len(main_specs) > 1 or args.combine_model
             else final_verbosity)
         model_reviewers = [
             make_reviewer(spec, args=args, resources=openai_resources,
-                          role=role_with_labels(review_role(base_reviewer_role, prompt), reviewer_labels),
+                          role=stage_role(role_with_labels(review_role(base_reviewer_role, prompt), reviewer_labels)),
                           verbose=args.verbose, default_effort=requested_effort,
                           verbosity=main_verbosity)
             for spec, prompt in zip(main_specs, main_prompts, strict=True)
         ]
         combiner = (
-            make_reviewer(args.combine_model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose, default_effort=requested_effort, verbosity=final_verbosity)
+            make_reviewer(args.combine_model, args=args, resources=openai_resources, role=stage_role(combiner_role), verbose=args.verbose, default_effort=requested_effort, verbosity=final_verbosity)
             if args.combine_model
             else None
         )
@@ -1798,7 +1904,7 @@ def main() -> int:
                 "user requested %d models with no --combine-model configured; "
                 "combining with %s", len(model_reviewers), args.model,
             )
-            combiner = make_reviewer(args.model, args=args, resources=openai_resources, role=combiner_role, verbose=args.verbose, verbosity=final_verbosity)
+            combiner = make_reviewer(args.model, args=args, resources=openai_resources, role=stage_role(combiner_role), verbose=args.verbose, verbosity=final_verbosity)
         for reviewer in model_reviewers:
             attach_turn_fallbacks(
                 reviewer, args=args, resources=openai_resources,
@@ -1809,12 +1915,29 @@ def main() -> int:
                 combiner, args=args, resources=openai_resources,
                 verbosity=final_verbosity, failure_fails_run=True)
         workset_note_stage(args, "review")
+
+        def note_drafts(drafts) -> None:
+            # the drafts' collected records preload the combiner's fairy
+            # remotes AFTER those remotes' baseline seeds were taken, so
+            # the combiner verifies the drafts' branches like its own
+            # work and re-declares what should survive; open_machine_shell
+            # applies the same list to combiner containers that open later
+            workset_note_drafts(args, drafts, combining=combiner is not None,
+                                failed=review_ctx.failed_reviewers)
+            combiner_inject[:] = [
+                record for draft in drafts for record in draft.branches]
+            if combiner is not None and combiner_inject:
+                for session in primary_shells.values():
+                    handle = session_handles.get(id(session))
+                    if handle is not None:
+                        branch_persist.add_to_container_remote(
+                            handle, combiner_inject,
+                            {s.name: s.container_path for s in persist_repos})
+
         try:
             review = review_pr(
                 review_ctx, model_reviewers, combiner,
-                on_drafts=lambda drafts: workset_note_drafts(
-                    args, drafts, combining=combiner is not None,
-                    failed=review_ctx.failed_reviewers),
+                on_drafts=note_drafts,
             )
         except OpenAIContainerUnhealthy:
             # The outer ``finally`` still releases the lease; mark it
@@ -1845,6 +1968,7 @@ def main() -> int:
         emit_review_stdout(
             review.classification, review.message,
             label_changes=list(review.label_changes),
+            branches=list(review.branches),
         )
         return 0
     finally:

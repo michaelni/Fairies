@@ -834,22 +834,27 @@ class SendPathBranchTests(unittest.TestCase):
 
 
 class GcliCreatePrArgvTests(unittest.TestCase):
-    def test_a_dash_leading_title_stays_positional(self) -> None:
-        # gcli 2.12.0 getopt-parses a title like "-Wformat fix" as
-        # options and exits 1 unless "--" pins it as the positional
+    def test_the_create_rides_the_editor_stub(self) -> None:
+        # gcli 2.12 pulls create composes its message in $EDITOR
+        # unconditionally and getopt-parses a title like "-Wformat fix"
+        # as options unless "--" pins it as the positional
         import forge_gcli
-        cmds: list[list[str]] = []
+        calls: list[tuple] = []
 
-        def fake_run(args, cmd, **kwargs):
-            cmds.append(cmd)
+        def fake_stub(cmd, *, message, **kwargs):
+            calls.append((cmd, message))
             return SimpleNamespace(returncode=0, stderr="")
 
-        with mock.patch.object(forge_gcli, "run_gcli", side_effect=fake_run):
+        with mock.patch.object(forge_gcli, "run_gcli_editor_submission",
+                               side_effect=fake_stub):
             forge_gcli.gcli_create_pr(
                 SimpleNamespace(gcli_account=None, forge_type=None),
                 "mm", "ffmpeg", "forkfairy", "fairy/x", "master",
-                "-Wformat fix", "")
-        self.assertEqual(cmds[0][-2:], ["--", "-Wformat fix"])
+                "-Wformat fix", "the body")
+        cmd, message = calls[0]
+        self.assertEqual(cmd[-2:], ["--", "-Wformat fix"])
+        self.assertNotIn("-T", cmd)
+        self.assertEqual(message, "the body")
 
 
 class RoleWithBranchesTests(unittest.TestCase):

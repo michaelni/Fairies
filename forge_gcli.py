@@ -582,22 +582,28 @@ def gcli_create_pr(
     GitLab 409
     (https://docs.gitlab.com/ee/api/merge_requests.html#create-mr) --
     so a caller may retry a create and take the refusal as
-    already-open."""
-    with gcli_message_template(body) as template_args:
-        cmd = gcli_prefix(args) + [
-            "pulls", "create",
-            "-o", owner,
-            "-r", repo,
-            "-f", f"{head_owner}:{head_branch}",
-            "-t", target,
-            "-y",
-            *template_args,
-            # gcli getopt-parses a title starting with "-" as options
-            # (verified on gcli 2.12.0); "--" pins it as the positional
-            "--",
-            title,
-        ]
-        cp = run_gcli(args, cmd)
+    already-open. ``pulls create`` composes its message in $EDITOR
+    unconditionally (gcli 2.12 src/cmd/pulls.c create_pull; -T only
+    prefills the buffer), so ``body`` rides the editor stub the way
+    comments and approvals do."""
+    cmd = gcli_prefix(args) + [
+        "pulls", "create",
+        "-o", owner,
+        "-r", repo,
+        "-f", f"{head_owner}:{head_branch}",
+        "-t", target,
+        "-y",
+        # gcli getopt-parses a title starting with "-" as options
+        # (verified on gcli 2.12.0); "--" pins it as the positional
+        "--",
+        title,
+    ]
+    logger.info("+ %s   # body bytes=%d", shlex.join(cmd), len(body))
+    cp = run_gcli_editor_submission(
+        cmd, message=body, verbose=getattr(args, "verbose", 0),
+        timeout=300,
+        base_env=github_app.gcli_env(args),
+    )
     if cp.returncode != 0:
         raise RuntimeError(
             f"gcli pulls create {head_owner}:{head_branch} -> {target} "

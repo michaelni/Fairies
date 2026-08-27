@@ -31,7 +31,7 @@ Persistence of reviewer-created git branches through fairy remotes.
 
 Inside every review container each persistence-enabled repository's
 checkout gets a remote named ``fairy``: a container-local bare repo
-seeded with the forge's published ``fairy/*`` branches, so the model
+seeded with the published ``fairy/*`` branches, so the model
 fetches and pushes there with plain git and no credentials. A branch
 the verdict declares is packed into a thin git bundle -- its negatives
 are commits the forge already has, so the bundle holds just the new
@@ -71,6 +71,7 @@ from podman_repos import RepoSpec
 
 __all__ = [
     "FAIRY_BRANCH_PREFIX",
+    "FAIRY_BRANCH_REMOTES",
     "MAX_BUNDLE_BYTES",
     "BranchTransferError",
     "CollectedBranch",
@@ -100,6 +101,12 @@ _CONTAINER_QUARANTINE_DIR = "/quarantine"
 # outside it are impossible by construction, so a force-push can never
 # touch a PR author's or protected branch.
 FAIRY_BRANCH_PREFIX = "fairy/"
+
+# Remotes whose fairy/* remote-tracking refs are the published fairy
+# branches, in priority order: a deployment publishing into a dedicated
+# fork keeps the fork as the checkout's "fairy" remote; one publishing
+# into the reviewed repo itself sees them under its forge remotes.
+FAIRY_BRANCH_REMOTES = ("fairy", *FORGE_REMOTES)
 
 # Upper bound for one branch's bundle. Thin bundles hold only the
 # objects the model added -- a few KB normally; a hostile container
@@ -212,8 +219,8 @@ def setup_container_remotes(
 ) -> RemoteSeeds:
     """Create each enabled repo's fairy remote in the container: a bare
     repo whose alternates read the checkout's objects, seeded with the
-    forge's published ``fairy/*`` branches (as the checkout's
-    remote-tracking refs know them), wired up as the remote
+    published ``fairy/*`` branches (as the checkout's remote-tracking
+    refs of ``FAIRY_BRANCH_REMOTES`` know them), wired up as the remote
     ``CONTAINER_REMOTE``. Returns the seeded {repo: {branch: sha}}
     snapshot collection derives modes and bundle negatives from."""
     seeds: RemoteSeeds = {}
@@ -236,11 +243,12 @@ def setup_container_remotes(
                 f"creating the fairy remote for {spec.name!r} in container "
                 f"{handle.container_id[:12]} failed: "
                 f"{cp.stderr.decode(errors='replace').strip()}")
-        # a pattern refspec that matches nothing pushes nothing
-        for forge_remote in FORGE_REMOTES:
+        # a pattern refspec that matches nothing pushes nothing; the
+        # priority remote pushes last, so it wins name collisions
+        for remote in reversed(FAIRY_BRANCH_REMOTES):
             _container_git(
                 handle, spec.container_path, "push", "--quiet", fake,
-                f"+refs/remotes/{forge_remote}/fairy/*:refs/heads/*")
+                f"+refs/remotes/{remote}/{FAIRY_BRANCH_PREFIX}*:refs/heads/*")
         if _container_git(handle, spec.container_path, "remote", "add",
                           CONTAINER_REMOTE, fake).returncode != 0:
             _container_git(handle, spec.container_path, "remote", "set-url",

@@ -289,6 +289,25 @@ class SetupContainerRemotesTests(unittest.TestCase):
                 HANDLE, [_repo_spec()], ["ffmpeg"])
         self.assertEqual(caps, [branch_persist.MAX_BUNDLE_BYTES])
 
+    def test_seeds_come_from_the_fork_and_forge_remotes(self) -> None:
+        refspecs: list[str] = []
+
+        def fake_run(host, *argv, **kwargs):
+            if "push" in argv:
+                refspecs.append(argv[-1])
+            return _cmd()
+
+        with mock.patch.object(branch_persist, "run_on_remote_host",
+                               side_effect=fake_run):
+            branch_persist.setup_container_remotes(
+                HANDLE, [_repo_spec()], ["ffmpeg"])
+        # the priority remote pushes last, so it wins name collisions
+        self.assertEqual(
+            refspecs,
+            [f"+refs/remotes/{remote}/fairy/*:refs/heads/*"
+             for remote in reversed(branch_persist.FAIRY_BRANCH_REMOTES)])
+        self.assertEqual(branch_persist.FAIRY_BRANCH_REMOTES[0], "fairy")
+
     def test_a_failing_setup_raises(self) -> None:
         with mock.patch.object(branch_persist, "run_on_remote_host",
                                return_value=_cmd(rc=1, stderr=b"no space")):

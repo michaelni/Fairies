@@ -34,10 +34,11 @@ last row).
   which `N` were approved by fairy (the rest, shown as `merge-ready*`
   in the list, were approved by someone else). A red `PAUSED` appears
   while `p` holds the daemons stopped.
-- **☰ list** — the table. Columns: `▶` marks reviewed rows, kind,
-  repo (only when sides span several), `#number`, the status letters,
-  state, llm, age, title. The title bar shows the active lens, the
-  bottom bar the keys.
+- **☰ list** — the table. Columns: `▶` marks reviewed rows, an orange
+  `⎇` a review that persists git branches (red when one opens a PR),
+  kind, repo (only when sides span several), `#number`, the status
+  letters, state, llm, age, title. The title bar shows the active
+  lens, the bottom bar the keys.
 - **≣ logs** — merged tail of every side's agent/worker log plus the
   TUI's own, one padded source tag per line, level-colored. `d`
   switches this pane to the cursor PR's patches or merge diff — the
@@ -45,7 +46,11 @@ last row).
   side.
 - **¶ message** — the selected ticket: the action `y` would perform,
   then the discussion with the review at its end, where posting will
-  put it, marked `NOT POSTED` until it is. The thread is kept current
+  put it, marked `NOT POSTED` until it is. Below the review, each
+  branch the review persists: name, push mode, the PR it would open,
+  and its diff (a range-diff when it would overwrite a published
+  fairy branch) — `y` publishes them along with the review. The
+  thread is kept current
   by the agent's scan; a `── sampled for the review … ──` line marks
   how far the review saw. `m` switches a PR to its patches or its
   merge diff, syntax- and diff-colored from the side's local

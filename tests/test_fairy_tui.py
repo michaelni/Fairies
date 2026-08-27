@@ -31,6 +31,7 @@ fairy_tui: headless model round-trips over a filedb and a paint smoke."""
 
 from __future__ import annotations
 
+import contextlib
 import io
 import logging
 import os
@@ -824,7 +825,7 @@ class StatusColumnTests(DbCase):
         with self.model.lock:
             self.model.filter_mode = "all"
         self.model.poll()
-        clusters = [r[19:23] for r in self.rows()]
+        clusters = [r[20:24] for r in self.rows()]
         self.assertEqual(clusters, ["M   ", "m   ", "R   "])
 
     def test_issue_letters_come_from_labels_and_state(self) -> None:
@@ -837,7 +838,7 @@ class StatusColumnTests(DbCase):
             "state": "closed", "labels": ["enhancement", "repro/no(env)",
                                           "resolution/wontfix"]})
         self.model.poll()
-        clusters = [r[19:23] for r in self.rows()]
+        clusters = [r[20:24] for r in self.rows()]
         self.assertEqual(clusters, ["BYfO", "EnwC"])
 
     def test_forced_reviews_carry_a_plus_through_queued_and_llm(self) -> None:
@@ -866,6 +867,168 @@ class StatusColumnTests(DbCase):
                                           "change_requests": 0})
         self.model.poll()
         self.assertIn("#5        30", self.rows()[0])
+
+
+def _branch_verdict(n: int, pr: dict | None = None) -> dict:
+    v = verdict(n)
+    v["review"]["branches"] = [{
+        "branch": "fix-x", "mode": "force", "pr": pr, "repo": "r",
+        "sha": "a" * 40, "old_sha": "e" * 40, "bundle": "QUJD",
+        "objects_repo": "/client/r", "diff_base_sha": "b" * 40}]
+    return v
+
+
+@contextlib.contextmanager
+def _fake_store(record, *, extra_objects=None):
+    yield Path("/store/record.git")
+
+
+class BranchMarkerTests(DbCase):
+    """A review that persists branches is marked in the list and its
+    detail shows each branch with the diff it would publish."""
+
+    def rows(self) -> list[str]:
+        ui = make_ui(self.model)
+        return ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in ui.list_rows()]
+
+    def test_a_deletion_renders_without_a_diff(self) -> None:
+        v = verdict(6)
+        v["review"]["branches"] = [{
+            "branch": "stale", "mode": "delete", "pr": None, "repo": "r",
+            "sha": "c" * 40, "old_sha": "c" * 40, "bundle": "",
+            "objects_repo": "/client/r", "diff_base_sha": None}]
+        self.db.push("reviewed", "pr", "6", v)
+        self.model.poll()
+        ui = make_ui(self.model)
+        with mock.patch.object(fairy_tui.git_util, "git_diff",
+                               side_effect=AssertionError("diffed")), \
+                self.model.lock:
+            text = fairy_tui._plain(ui.detail_lines(100))
+        self.assertIn("delete fairy/stale", text)
+        self.assertIn("deleted when the review is sent (y)", text)
+
+    def test_list_rows_mark_reviews_with_branches(self) -> None:
+        self.db.push("reviewed", "pr", "5", _branch_verdict(5))
+        self.db.push("reviewed", "pr", "6", _branch_verdict(
+            6, pr={"title": "Fix x", "body": "", "target": "master"}))
+        self.db.push("reviewed", "pr", "7", verdict(7))
+        self.model.poll()
+        by_number = {row.split("#")[1].split()[0]: row[1]
+                     for row in self.rows()}
+        self.assertEqual(by_number["5"], "⎇")
+        self.assertEqual(by_number["6"], "⎇")
+        self.assertEqual(by_number["7"], " ")
+
+    def test_pr_marker_uses_the_red_style(self) -> None:
+        # ticket 4 exists to absorb the cursor, whose row renders as one
+        # plain string without per-cell styles
+        self.db.push("reviewed", "pr", "4", verdict(4))
+        self.db.push("reviewed", "pr", "5", _branch_verdict(5))
+        self.db.push("reviewed", "pr", "6", _branch_verdict(
+            6, pr={"title": "Fix x", "body": "", "target": "master"}))
+        self.model.poll()
+        ui = make_ui(self.model)
+        by_number = {}
+        for row in ui.list_rows():
+            if isinstance(row, list):
+                number = next(t for _, t in row if t.startswith("#"))
+                by_number[number.lstrip("#").split()[0]] = row[1][0]
+        self.assertEqual(by_number["5"], "br_mark")
+        self.assertEqual(by_number["6"], "br_pr_mark")
+
+    def test_detail_shows_branch_block_and_diff(self) -> None:
+        self.db.push("reviewed", "pr", "6", _branch_verdict(
+            6, pr={"title": "Fix x", "body": "", "target": "master"}))
+        self.model.poll()
+        ui = make_ui(self.model)
+        with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
+                               _fake_store), \
+                mock.patch.object(fairy_tui.git_util, "git_diff",
+                                  return_value=b"+one line") as diff, \
+                self.model.lock:
+            text = fairy_tui._plain(ui.detail_lines(100))
+        self.assertIn("fairy/fix-x", text)
+        self.assertIn("force", text)
+        self.assertIn('PR "Fix x" into master', text)
+        self.assertIn("published when the review is sent (y)", text)
+        self.assertIn(f"branch diff {'b' * 12}..{'a' * 12}", text)
+        diff.assert_called_once()
+
+    def test_force_push_shows_the_range_diff_when_available(self) -> None:
+        self.db.push("reviewed", "pr", "6", _branch_verdict(6))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("/patch/repo")}
+        with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
+                               _fake_store), \
+                mock.patch.object(fairy_tui.git_util, "git_resolve_first",
+                                  return_value="e" * 40), \
+                mock.patch.object(fairy_tui.git_util, "git_range_diff",
+                                  return_value=b"1:  abc ! 1:  def rework"), \
+                mock.patch.object(fairy_tui.git_util, "git_diff") as diff, \
+                self.model.lock:
+            text = fairy_tui._plain(ui.detail_lines(100))
+        self.assertIn(f"range-diff {'e' * 12}...{'a' * 12}", text)
+        self.assertIn("rework", text)
+        diff.assert_not_called()
+
+    def test_bundles_are_not_kept_resident_in_the_model(self) -> None:
+        self.db.push("reviewed", "pr", "6", _branch_verdict(6))
+        self.model.poll()
+        item = next(iter(self.model.items.values()))
+        self.assertNotIn("bundle", fairy_tui._ticket_branches(item.data)[0])
+
+    def test_diff_body_rereads_the_bundle_from_the_ticket(self) -> None:
+        self.db.push("reviewed", "pr", "6", _branch_verdict(6))
+        self.model.poll()
+        ui = make_ui(self.model)
+        item = next(iter(self.model.items.values()))
+        seen: list[object] = []
+
+        @contextlib.contextmanager
+        def store(record, *, extra_objects=None):
+            seen.append(record.get("bundle"))
+            yield Path("/store/record.git")
+
+        with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
+                               store), \
+                mock.patch.object(fairy_tui.git_util, "git_diff",
+                                  return_value=b"+x"):
+            ui._branch_diff_body(
+                item, fairy_tui._ticket_branches(item.data)[0])
+        self.assertEqual(seen, ["QUJD"])
+
+    def test_issue_branch_diffs_are_warmed_before_paint(self) -> None:
+        v = _branch_verdict(9)
+        self.db.push("reviewed", "issue", "9", v)
+        self.model.poll()
+        ui = make_ui(self.model)
+        with mock.patch.object(ui, "_branch_diff_body",
+                               return_value=tui_core.Chain()) as body:
+            ui._warm_diff_cache()
+        body.assert_called_once()
+
+    def test_range_diff_failure_falls_back_to_the_plain_diff(self) -> None:
+        """The published tip may resolve in the patch repo while its
+        objects are absent from the materialized record; the preview
+        must degrade to the recorded diff base, not to a git error."""
+        self.db.push("reviewed", "pr", "6", _branch_verdict(6))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("/patch/repo")}
+        with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
+                               _fake_store), \
+                mock.patch.object(fairy_tui.git_util, "git_resolve_first",
+                                  return_value="e" * 40), \
+                mock.patch.object(fairy_tui.git_util, "git_range_diff",
+                                  side_effect=RuntimeError("missing objects")), \
+                mock.patch.object(fairy_tui.git_util, "git_diff",
+                                  return_value=b"+one line") as diff, \
+                self.model.lock:
+            text = fairy_tui._plain(ui.detail_lines(100))
+        self.assertIn(f"branch diff {'b' * 12}..{'a' * 12}", text)
+        diff.assert_called_once()
 
 
 class HelpTests(DbCase):

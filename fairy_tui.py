@@ -77,6 +77,7 @@ from threading import Event, Lock, Thread
 import blessed
 
 import agent
+import branch_persist
 import db_config
 import diff_render
 import fairy
@@ -133,6 +134,23 @@ class Item:
 def _repo_short(repo: str) -> str:
     """Display name for an "owner/repo" side label."""
     return repo.rsplit("/", 1)[-1]
+
+
+def _ticket_branches(data: dict) -> list[dict]:
+    """The verdict's collected branch records, [] when there are none."""
+    return [b for b in (data.get("review") or {}).get("branches") or []
+            if isinstance(b, dict)]
+
+
+def _branch_mark(data: dict) -> tuple[str, str]:
+    """The row's branch marker cell: orange when the review persists
+    branches, red when one of them asks to open a PR."""
+    branches = _ticket_branches(data)
+    if not branches:
+        return ("text", " ")
+    if any(isinstance(b.get("pr"), dict) for b in branches):
+        return ("br_pr_mark", "⎇")
+    return ("br_mark", "⎇")
 
 
 STATUS_FIELDS = ("state", "auto_merge", "approvals", "change_requests",
@@ -361,6 +379,11 @@ class Model:
                 prepared = data.pop("prepared", None)
                 if isinstance(prepared, dict) and prepared.get("discussion"):
                     data.setdefault("discussion", prepared["discussion"])
+                for record in (data.get("review") or {}).get("branches") or []:
+                    if isinstance(record, dict):
+                        # up to MAX_BUNDLE_BYTES each; _branch_diff_body
+                        # re-reads the ticket when it needs one
+                        record.pop("bundle", None)
                 updates.append((key, state, data, ""))
             except (FileNotFoundError, IsADirectoryError):
                 return  # racing a rename; the next poll sees the new dir
@@ -931,6 +954,10 @@ KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("?", "help"), ("Tab/click", "focus"),
           ("↑↓ PgUp/PgDn Home/End", "scroll"))
 DIFF_MODES = ("patches", "merge diff")
+# Rendered-diff cache entries: the two diff panes plus one review's
+# persisted-branch diffs (up to MAX_PERSIST_BRANCHES) fit without
+# re-running git every repaint.
+_DIFF_CACHE_ENTRIES = 8
 DETAIL_MODES = ("message", *DIFF_MODES)
 LOGS_MODES = ("logs", *DIFF_MODES)
 DIFF_MAX_LINES = 20_000
@@ -1021,6 +1048,7 @@ def _styles(t: blessed.Terminal) -> dict:
             "bar_focus": mix(t.bold, c(231), on(25)), "bar_blur": mix(c(245), on(236)),
             "key": mix(t.bold, c(81)),        "label": c(245),
             "num": t.bold,                    "mark": mix(t.bold, c(203)),
+            "br_mark": mix(t.bold, c(208)),   "br_pr_mark": mix(t.bold, c(196)),
             "kind_pr": c(75),                 "kind_issue": c(176),
             "llm": c(141),                    "title": c(252),
             "st_requests": c(244),
@@ -1066,6 +1094,7 @@ def _styles(t: blessed.Terminal) -> dict:
         "bar_focus": t.reverse, "bar_blur": t.underline,
         "key": t.bold_cyan,     "label": t.bright_black,
         "num": t.bold,          "mark": t.bold_red,
+        "br_mark": t.bold_yellow, "br_pr_mark": t.bold_red,
         "kind_pr": t.cyan,      "kind_issue": t.magenta,
         "llm": t.magenta,       "title": t.white,
         "st_requests": t.bright_black,
@@ -1299,13 +1328,15 @@ class UILoop:
             state_disp += "?"
         status = _status_cols(it, m.status.get(
             (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {})
+        branch_mark = _branch_mark(it.data)
         if is_cursor:
             return ("cursor",
-                    f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<7} "
+                    f"{mark}{branch_mark[1]}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<7} "
                     f"{''.join(c for _, c in status)} "
                     f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  {title}")
         return [
             ("mark", mark),
+            branch_mark,
             ("kind_pr" if it.kind == "pr" else "kind_issue",
              f"{_KIND_DISP[it.kind]:<5} "),
             ("label", repo_col),
@@ -1455,7 +1486,7 @@ class UILoop:
             if isinstance(c, dict)), width)
         message = tui_core.render_markdown(review.get("message") or "",
                                            width)
-        if not labels and not message:
+        if not labels and not message and not _ticket_branches(data):
             return head + tail
         w = width - len("fairy")
         if item.state == "posted":
@@ -1466,7 +1497,125 @@ class UILoop:
                                        + _when(data.get("llm_at")))[:w])]
         if labels:
             labels.append([])
-        return head + tail + [[], [("h4", "fairy")] + byline] + labels + message
+        fairy_block = head + tail + [[], [("h4", "fairy")] + byline] + labels + message
+        branch_parts: list = []
+        for record in _ticket_branches(data):
+            pr = record.get("pr")
+            style = "br_pr_mark" if isinstance(pr, dict) else "br_mark"
+            if record.get("mode") == "delete":
+                desc = (f"⎇ {record.get('repo')}: delete "
+                        f"{branch_persist.FAIRY_BRANCH_PREFIX}{record.get('branch')}")
+                branch_parts.append([
+                    [],
+                    [(style, desc[:width])],
+                    [("label", (f"  was {str(record.get('sha'))[:12]}"
+                                "  deleted when the review is sent (y)")[:width])],
+                ])
+                continue
+            desc = (f"⎇ {record.get('repo')}: "
+                    f"{branch_persist.FAIRY_BRANCH_PREFIX}{record.get('branch')}"
+                    f"  {record.get('mode')}")
+            if isinstance(pr, dict):
+                desc += f'  → PR "{pr.get("title")}" into {pr.get("target")}'
+            branch_parts.append([
+                [],
+                [(style, desc[:width])],
+                [("label", (f"  {str(record.get('sha'))[:12]}"
+                            "  published when the review is sent (y)")[:width])],
+            ])
+            branch_parts.append(self._branch_diff_body(item, record))
+        if not branch_parts:
+            return fairy_block
+        return tui_core.Chain(fairy_block, *branch_parts)
+
+    def _branch_diff_body(self, item: Item, record: dict) -> tui_core.Chain:
+        """The diff a persisted branch would publish -- from its recorded
+        diff base to its tip, materialized from the record's bundle --
+        or, for a force push whose published fairy/<name> tip is
+        resolvable in the patch repo, the range-diff against that tip.
+        Cached like ``_diff_body``; failures retry after a few
+        seconds."""
+        branch = str(record.get("branch") or "")
+        sha = str(record.get("sha") or "")
+        base = record.get("diff_base_sha")
+        cache_key = ("branch", item.repo, sha, base)
+        cached = self._diff_cache_get(cache_key)
+        if cached is not None:
+            return cached
+        if "bundle" not in record:
+            # the model strips bundles from resident tickets
+            ticket = self.model.db_for(item.repo).get(
+                item.state, item.kind, item.number) or {}
+            record = next(
+                (b for b in _ticket_branches(ticket)
+                 if b.get("branch") == branch and b.get("sha") == sha),
+                record)
+        patch_repo = self.patch_repos.get(item.repo)
+        old_tip = git_util.git_resolve_first(
+            patch_repo,
+            [f"{remote}/{branch_persist.FAIRY_BRANCH_PREFIX}{branch}"
+             for remote in git_util.FORGE_REMOTES]
+        ) if record.get("mode") == "force" and patch_repo is not None else None
+        retry_at = None
+        caption = body = tail = None
+        try:
+            with branch_persist.materialized_record(
+                    record, extra_objects=patch_repo) as store:
+                if old_tip:
+                    try:
+                        raw = git_util.git_range_diff(store, old_tip, sha)
+                        caption = [("label",
+                                    f"range-diff {old_tip[:12]}...{sha[:12]}")]
+                        text_lines = raw.decode("utf-8", errors="replace").splitlines()
+                        body = [[("text", line)]
+                                for line in text_lines[:DIFF_MAX_LINES]]
+                        if len(text_lines) > DIFF_MAX_LINES:
+                            tail = [[("log_warn",
+                                      f"… truncated at {DIFF_MAX_LINES}"
+                                      f" of {len(text_lines)} lines")]]
+                    except RuntimeError as exc:
+                        # e.g. the published tip's objects live in neither
+                        # the record's checkout nor the patch repo
+                        logger.info("range-diff unavailable (%s); showing "
+                                    "the plain branch diff", exc)
+                if body is None and isinstance(base, str) and base:
+                    caption = [("label", f"branch diff {base[:12]}..{sha[:12]}")]
+                    text_lines = git_util.git_diff(store, base, sha) \
+                        .decode("utf-8", errors="replace").split("\n")
+                    body = diff_render.DiffView(
+                        "\n".join(text_lines[:DIFF_MAX_LINES])) \
+                        or [[("label", "(empty diff)")]]
+                    if len(text_lines) > DIFF_MAX_LINES:
+                        tail = [[("log_warn", f"… truncated at {DIFF_MAX_LINES}"
+                                              f" of {len(text_lines)} lines")]]
+                elif body is None:
+                    caption = [("label", "branch diff")]
+                    body = [[("log_warn", "no diff base recorded for this branch")]]
+        except RuntimeError as exc:
+            caption = [("label", "branch diff")]
+            logger.error("%s", exc)
+            retry_at = time.monotonic() + 5
+            body = [[("log_err", line)] for line in str(exc).splitlines()]
+        return self._diff_cache_put(
+            cache_key, tui_core.Chain([caption], body, tail or []), retry_at)
+
+    def _diff_cache_get(self, cache_key: tuple) -> tui_core.Chain | None:
+        """A still-valid cached rendering; re-inserting keeps the entry
+        newest, so eviction takes the least recently shown one."""
+        entry = self._diff_cache.pop(cache_key, None)
+        if entry is not None:
+            cached, valid_until = entry
+            if valid_until is None or time.monotonic() < valid_until:
+                self._diff_cache[cache_key] = entry
+                return cached
+        return None
+
+    def _diff_cache_put(self, cache_key: tuple, lines: tui_core.Chain,
+                        retry_at: float | None) -> tui_core.Chain:
+        if len(self._diff_cache) >= _DIFF_CACHE_ENTRIES:
+            self._diff_cache.pop(next(iter(self._diff_cache)))
+        self._diff_cache[cache_key] = (lines, retry_at)
+        return lines
 
     def _diff_body(self, item: Item, snapshot: dict | None,
                    mode: str) -> tui_core.Chain:
@@ -1481,14 +1630,9 @@ class UILoop:
         base_sha = (snapshot or {}).get("base_sha")
         head_sha = (snapshot or {}).get("head_sha")
         cache_key = (item.repo, item.number, mode, base_sha, head_sha)
-        entry = self._diff_cache.pop(cache_key, None)
-        if entry is not None:
-            cached, valid_until = entry
-            if valid_until is None or time.monotonic() < valid_until:
-                # re-inserting keeps the entry newest, so the eviction
-                # below takes the least recently shown one
-                self._diff_cache[cache_key] = entry
-                return cached
+        cached = self._diff_cache_get(cache_key)
+        if cached is not None:
+            return cached
         repo = self.patch_repos.get(item.repo)
         retry_at = None
         tail: list[tui_core.StyledLine] = []
@@ -1521,11 +1665,8 @@ class UILoop:
                 body = [[("log_err", line)] for line in str(exc).splitlines()]
                 body.append([("label", "if the head is not fetched yet: "
                                        f"git -C {repo} fetch --all")])
-        if len(self._diff_cache) >= 4:
-            self._diff_cache.pop(next(iter(self._diff_cache)))
-        lines = tui_core.Chain([caption, []], body, tail)
-        self._diff_cache[cache_key] = (lines, retry_at)
-        return lines
+        return self._diff_cache_put(
+            cache_key, tui_core.Chain([caption, []], body, tail), retry_at)
 
     def _logs_diff_lines(self) -> list[tui_core.StyledLine] | tui_core.Chain:
         """The logs pane's content for ``d``'s non-logs modes: the
@@ -1546,13 +1687,27 @@ class UILoop:
         panes = [(pane, mode) for pane, mode in
                  (("br", self.detail_mode), ("bl", self.logs_mode))
                  if mode in DIFF_MODES]
-        if not panes:
+        warm_branches = self.detail_mode == "message"
+        if not panes and not warm_branches:
             return
         with self.model.lock:
             key = self.model._cursor_key() or self.model.cursor_key
             item = self.model.items.get(key) if key else None
             snapshot = self.model.snapshot_for(key)
-        if item is None or item.kind != "pr":
+        if item is None:
+            return
+        if warm_branches:
+            # issue verdicts carry branches too, so no kind guard here
+            h = self.term.height
+            for record in _ticket_branches(item.data):
+                if record.get("mode") == "delete":
+                    continue
+                lines = self._branch_diff_body(item, record)
+                # like the panes loop below: the discarded slice is what
+                # renders the hunks before paint takes model.lock
+                s = min(self.scroll["br"], len(lines))
+                lines[max(0, s - h):s + 2 * h]
+        if item.kind != "pr":
             return
         for pane, mode in panes:
             lines = self._diff_body(item, snapshot, mode)

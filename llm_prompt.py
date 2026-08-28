@@ -350,6 +350,7 @@ You can fetch from it and you can push to it. This lets you publish or persist w
 - Declare {"action": "delete"} for a published branch that is no longer useful; the deletion, too, reaches the forge on approval.
 - Branch names use only letters, digits, '_', '+' and '-'. Use pr1234- as name prefix for a branch related to PR 1234, issue1234- for one related to issue 1234.
 - To open a pull request from a pushed branch, declare it in the ``pull_requests`` field of your verdict instead: repository, branch, title, body, target branch; it needs no ``branches`` entry.
+- Commits you create carry the trailer ``Assisted-by: Fairy`` as the last line of the commit message.
 - Tell the user in your message what you pushed or deleted, where, and what it is for.
 """
 

@@ -907,6 +907,7 @@ class RoleWithBranchesTests(unittest.TestCase):
                 self.assertIn("##Persisting branches", enabled)
                 self.assertIn('remote "fairy"', enabled)
                 self.assertIn("fairy/<name>", enabled)
+                self.assertIn("Assisted-by: Fairy", enabled)
 
     def test_combiner_prompt_says_only_declared_branches_survive(self) -> None:
         prompt = llm_prompt.prompt_persist_branches(

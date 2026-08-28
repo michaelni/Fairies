@@ -2300,10 +2300,14 @@ class UILoop:
             cmd = [*shlex.split(editor), str(tmp)]
             logger.info("editing %s#%s via: %s", item.repo, item.number,
                         shlex.join(cmd))
-            with self._tty_lent():
-                rc = subprocess.call(
-                    cmd, stdin=sys.__stdin__, stdout=sys.__stdout__,
-                    stderr=sys.__stderr__)
+            try:
+                with self._tty_lent():
+                    rc = subprocess.call(
+                        cmd, stdin=sys.__stdin__, stdout=sys.__stdout__,
+                        stderr=sys.__stderr__)
+            except OSError as e:
+                logger.warning("editor failed to start: %s", e)
+                return
             if rc != 0:
                 logger.warning("editor exited rc=%d; review unchanged", rc)
                 return

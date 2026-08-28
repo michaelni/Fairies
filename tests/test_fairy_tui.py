@@ -1881,6 +1881,17 @@ class EditReviewTests(DbCase):
         self.assertEqual(self.db.get("reviewed", "pr", "5")["review"]["message"],
                          "original")
 
+    def test_an_editor_that_cannot_start_leaves_the_tui_running(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, msg="original"))
+        self.model.poll()
+        ui = make_ui(self.model)
+        with mock.patch.dict(os.environ, {"EDITOR": "no-such-editor"}), \
+                self.assertLogs(fairy_tui.logger, "WARNING") as logs:
+            ui.edit_review()
+        self.assertIn("failed to start", logs.output[0])
+        self.assertEqual(self.db.get("reviewed", "pr", "5")["review"]["message"],
+                         "original")
+
     def test_the_editor_gets_stdin_while_the_input_thread_waits(self) -> None:
         """The input thread sits in inkey() on the same tty the editor
         reads: launched while it is in there, the editor and the thread

@@ -1509,12 +1509,12 @@ class DiffViewTests(DbCase):
                      if fairy_tui._plain([line]) == "-int a;")
         self.assertTrue(all(s.startswith("df_del") for s, _ in minus))
 
-    def test_patches_mode_runs_format_patch(self) -> None:
+    def test_patches_mode_runs_git_log(self) -> None:
         self.push_pr()
         ui = make_ui(self.model)
         ui.patch_repos = {R1: Path("mirror")}
         ui.detail_mode = "patches"
-        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
                                return_value=b"") as run:
             self.assertIn("(empty diff)", self.detail_text(ui))
         run.assert_called_once_with(Path("mirror"), "b1", "h5")
@@ -1538,10 +1538,10 @@ class DiffViewTests(DbCase):
         ui.patch_repos = {R1: Path("mirror")}
         ui.detail_mode = "patches"
         with mock.patch.object(
-                fairy_tui.git_util, "git_format_patch_series",
-                side_effect=RuntimeError("git format-patch b1..h5 failed")):
+                fairy_tui.git_util, "git_log_patches",
+                side_effect=RuntimeError("git log b1..h5 failed")):
             text = self.detail_text(ui)
-        self.assertIn("git format-patch b1..h5 failed", text)
+        self.assertIn("git log b1..h5 failed", text)
         self.assertIn("fetch", text)
 
     def test_a_git_failure_is_retried_once_the_operator_can_have_fetched(
@@ -1550,7 +1550,7 @@ class DiffViewTests(DbCase):
         ui = make_ui(self.model)
         ui.patch_repos = {R1: Path("mirror")}
         ui.detail_mode = "patches"
-        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
                                side_effect=RuntimeError("bad object h5")) as fail:
             self.assertIn("bad object h5", self.detail_text(ui))
             self.assertIn("bad object h5", self.detail_text(ui))
@@ -1559,7 +1559,7 @@ class DiffViewTests(DbCase):
         with mock.patch.object(fairy_tui.time, "monotonic",
                                return_value=later), \
                 mock.patch.object(fairy_tui.git_util,
-                                  "git_format_patch_series",
+                                  "git_log_patches",
                                   return_value=b"") as run:
             self.assertIn("(empty diff)", self.detail_text(ui))
         run.assert_called_once()
@@ -1622,7 +1622,7 @@ class DiffViewTests(DbCase):
         ui.patch_repos = {R1: Path("mirror")}
         ui.detail_mode = "patches"
         ui.logs_mode = "merge diff"
-        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
                                return_value=b"") as patches, \
                 mock.patch.object(fairy_tui.git_util, "git_diff",
                                   return_value=b"") as merge:
@@ -1641,7 +1641,7 @@ class DiffViewTests(DbCase):
         ui.detail_mode = "patches"
         with self.model.lock:
             item = self.model.items[self.model._cursor_key()]
-        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
                                return_value=b"") as run:
             self.detail_text(ui)
             for n in range(4):
@@ -1668,7 +1668,7 @@ class DiffViewTests(DbCase):
         with mock.patch.object(fairy_tui.git_util, "git_diff",
                                side_effect=record), \
                 mock.patch.object(fairy_tui.git_util,
-                                  "git_format_patch_series",
+                                  "git_log_patches",
                                   side_effect=record):
             ui.paint()
         self.assertEqual(locked_during_git, [False, False])
@@ -1712,10 +1712,9 @@ class PatchNavTests(DbCase):
     """[ ] and { } step a diff pane by patch and by hunk."""
 
     SERIES = "".join(
-        f"From {n:040x} Mon Sep 17 00:00:00 2001\n"
-        f"From: Michael Niedermayer <michael@example.com>\n"
-        f"Subject: [PATCH] change {n}\n\n"
-        f"---\n"
+        f"commit {n:040x}\n"
+        f"Author: Michael Niedermayer <michael@example.com>\n\n"
+        f"    change {n}\n\n"
         f"diff --git a/f{n}.c b/f{n}.c\n--- a/f{n}.c\n+++ b/f{n}.c\n"
         f"@@ -1 +1 @@\n-int a;\n+int b;\n"
         f"@@ -9 +9 @@\n-int c;\n+int d;\n\n"
@@ -1734,7 +1733,7 @@ class PatchNavTests(DbCase):
 
     def painted(self, mode: str, style: str = "diff_commit") -> list[int]:
         self.ui.detail_mode = mode
-        with mock.patch.object(fairy_tui.git_util, "git_format_patch_series",
+        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
                                return_value=self.SERIES):
             self.ui.paint()
         lines = self.ui._painted["br"]

@@ -1648,7 +1648,7 @@ class UILoop:
                                   "yet; the next agent scan writes it")]]
         else:
             try:
-                raw = (git_util.git_format_patch_series(repo, base_sha, head_sha)
+                raw = (git_util.git_log_patches(repo, base_sha, head_sha)
                        if mode == "patches"
                        else git_util.git_diff(repo, base_sha, head_sha))
                 patch_lines = raw.decode("utf-8", errors="replace").split("\n")

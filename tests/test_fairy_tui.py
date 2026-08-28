@@ -901,7 +901,7 @@ class BranchMarkerTests(DbCase):
         self.db.push("reviewed", "pr", "6", v)
         self.model.poll()
         ui = make_ui(self.model)
-        with mock.patch.object(fairy_tui.git_util, "git_diff",
+        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
                                side_effect=AssertionError("diffed")), \
                 self.model.lock:
             text = fairy_tui._plain(ui.detail_lines(100))
@@ -945,8 +945,10 @@ class BranchMarkerTests(DbCase):
         ui = make_ui(self.model)
         with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
                                _fake_store), \
-                mock.patch.object(fairy_tui.git_util, "git_diff",
-                                  return_value=b"+one line") as diff, \
+                mock.patch.object(fairy_tui.git_util, "git_log_patches",
+                                  return_value=b"commit " + b"a" * 40
+                                  + b"\nAuthor: Jane Doe <jane@example.org>\n"
+                                    b"\n    fix\n") as patches, \
                 self.model.lock:
             text = fairy_tui._plain(ui.detail_lines(100))
         self.assertIn("fairy/fix-x", text)
@@ -954,28 +956,54 @@ class BranchMarkerTests(DbCase):
         self.assertIn('PR "Fix x" into master', text)
         self.assertIn("Adds the missing bounds check.", text)
         self.assertIn("published when the review is sent (y)", text)
-        self.assertIn(f"branch diff {'b' * 12}..{'a' * 12}", text)
-        diff.assert_called_once()
+        self.assertIn(f"branch commits {'b' * 12}..{'a' * 12}", text)
+        self.assertIn("Jane Doe", text)
+        patches.assert_called_once()
 
-    def test_force_push_shows_the_range_diff_when_available(self) -> None:
+    def test_range_diff_mode_shows_a_force_pushs_rewrite(self) -> None:
         self.db.push("reviewed", "pr", "6", _branch_verdict(6))
         self.model.poll()
         ui = make_ui(self.model)
         ui.patch_repos = {R1: Path("/patch/repo")}
+        ui.branch_diff_mode = "range-diff"
         with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
                                _fake_store), \
                 mock.patch.object(fairy_tui.git_util, "git_resolve_first",
                                   return_value="e" * 40) as resolve, \
                 mock.patch.object(fairy_tui.git_util, "git_range_diff",
                                   return_value=b"1:  abc ! 1:  def rework"), \
-                mock.patch.object(fairy_tui.git_util, "git_diff") as diff, \
+                mock.patch.object(fairy_tui.git_util, "git_log_patches") as patches, \
                 self.model.lock:
             text = fairy_tui._plain(ui.detail_lines(100))
         self.assertIn(f"range-diff {'e' * 12}...{'a' * 12}", text)
         self.assertIn("rework", text)
-        diff.assert_not_called()
+        patches.assert_not_called()
         # the published tip may live on a dedicated fork remote
         self.assertIn("fairy/fairy/fix-x", resolve.call_args.args[1])
+
+    def test_b_toggles_a_force_push_between_commits_and_range_diff(
+            self) -> None:
+        self.db.push("reviewed", "pr", "6", _branch_verdict(6))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.patch_repos = {R1: Path("/patch/repo")}
+        with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
+                               _fake_store), \
+                mock.patch.object(fairy_tui.git_util, "git_log_patches",
+                                  return_value=b"+x"), \
+                mock.patch.object(fairy_tui.git_util, "git_resolve_first",
+                                  return_value="e" * 40), \
+                mock.patch.object(fairy_tui.git_util, "git_range_diff",
+                                  return_value=b"1:  abc ! 1:  def rework"), \
+                self.model.lock:
+            self.assertIn("branch commits",
+                          fairy_tui._plain(ui.detail_lines(100)))
+            ui.dispatch(Key("b"))
+            self.assertIn("range-diff",
+                          fairy_tui._plain(ui.detail_lines(100)))
+            ui.dispatch(Key("b"))
+            self.assertIn("branch commits",
+                          fairy_tui._plain(ui.detail_lines(100)))
 
     def test_bundles_are_not_kept_resident_in_the_model(self) -> None:
         self.db.push("reviewed", "pr", "6", _branch_verdict(6))
@@ -997,7 +1025,7 @@ class BranchMarkerTests(DbCase):
 
         with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
                                store), \
-                mock.patch.object(fairy_tui.git_util, "git_diff",
+                mock.patch.object(fairy_tui.git_util, "git_log_patches",
                                   return_value=b"+x"):
             ui._branch_diff_body(
                 item, fairy_tui._ticket_branches(item.data)[0])
@@ -1013,7 +1041,7 @@ class BranchMarkerTests(DbCase):
             ui._warm_diff_cache()
         body.assert_called_once()
 
-    def test_range_diff_failure_falls_back_to_the_plain_diff(self) -> None:
+    def test_range_diff_failure_falls_back_to_the_commits(self) -> None:
         """The published tip may resolve in the patch repo while its
         objects are absent from the materialized record; the preview
         must degrade to the recorded diff base, not to a git error."""
@@ -1021,18 +1049,19 @@ class BranchMarkerTests(DbCase):
         self.model.poll()
         ui = make_ui(self.model)
         ui.patch_repos = {R1: Path("/patch/repo")}
+        ui.branch_diff_mode = "range-diff"
         with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
                                _fake_store), \
                 mock.patch.object(fairy_tui.git_util, "git_resolve_first",
                                   return_value="e" * 40), \
                 mock.patch.object(fairy_tui.git_util, "git_range_diff",
                                   side_effect=RuntimeError("missing objects")), \
-                mock.patch.object(fairy_tui.git_util, "git_diff",
-                                  return_value=b"+one line") as diff, \
+                mock.patch.object(fairy_tui.git_util, "git_log_patches",
+                                  return_value=b"+one line") as patches, \
                 self.model.lock:
             text = fairy_tui._plain(ui.detail_lines(100))
-        self.assertIn(f"branch diff {'b' * 12}..{'a' * 12}", text)
-        diff.assert_called_once()
+        self.assertIn(f"branch commits {'b' * 12}..{'a' * 12}", text)
+        patches.assert_called_once()
 
 
 class HelpTests(DbCase):

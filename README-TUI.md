@@ -48,8 +48,9 @@ last row).
   then the discussion with the review at its end, where posting will
   put it, marked `NOT POSTED` until it is. Below the review, each
   branch the review persists: name, push mode, the PR it would open
-  with its description, and its diff (a range-diff when it would
-  overwrite a published fairy branch) — `y` publishes them along
+  with its description, and its commits, each under its own hash and
+  author (`b` switches a force push to the range-diff against the
+  published branch it would overwrite) — `y` publishes them along
   with the review. The
   thread is kept current
   by the agent's scan; a `── sampled for the review … ──` line marks
@@ -141,6 +142,7 @@ ticket is adopted.
 | `o` | edit the review message in `$EDITOR` (markdown round-trip; refused while a worker holds the ticket). |
 | `m` | cycle the message pane: message → the PR's patches (`git log -p`: every commit, merges included, under its hash and author) → its accumulated merge diff, read from the side's `patch-repo` mirror at the base/head SHAs of the item's snapshot (blank until a scan pass, like the status letters). Long lines are clipped, not wrapped. |
 | `d` | cycle the logs pane the same way: logs → patches → merge diff of the cursor PR. |
+| `b` | toggle the message pane's branch previews between the commits a persisted branch would publish and, for a force push, the range-diff against the published tip. |
 | `p` | pause: SIGSTOP every agent/worker the launcher started, with their whole subprocess trees; `p` again resumes. Remote containers keep computing — only local processing freezes. Quitting while paused thaws first. |
 | `[` / `]` | previous / next patch of the diff on screen — its files, for a merge diff, which has no commits. Acts on the focused pane, or on a diff pane while the focus is elsewhere; `3]` skips three. |
 | `{` / `}` | the same, by hunk. |

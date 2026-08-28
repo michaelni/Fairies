@@ -950,10 +950,12 @@ KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("S", "snooze"), ("r", "rerun"), ("R", "+eval"),
           ("x", "drop"), ("o", "edit msg"), ("p", "pause"), ("a", "filter"),
           ("t", "sort"), ("m", "diff"), ("d", "logs diff"),
+          ("b", "branch diff"),
           ("[/] {/}", "patch/hunk"), ("/", "search"), ("e/E", "export"),
           ("?", "help"), ("Tab/click", "focus"),
           ("↑↓ PgUp/PgDn Home/End", "scroll"))
 DIFF_MODES = ("patches", "merge diff")
+BRANCH_DIFF_MODES = ("commits", "range-diff")
 # Rendered-diff cache entries: the two diff panes plus one review's
 # persisted-branch diffs (up to MAX_PERSIST_BRANCHES) fit without
 # re-running git every repaint.
@@ -1169,6 +1171,7 @@ class UILoop:
         self.patch_repos = patch_repos or {}
         self.detail_mode = DETAIL_MODES[0]
         self.logs_mode = LOGS_MODES[0]
+        self.branch_diff_mode = BRANCH_DIFF_MODES[0]
         self._diff_cache: dict[
             tuple, tuple[tui_core.Chain, float | None]] = {}
         repos = [repo for repo, _ in model.sides]
@@ -1532,16 +1535,19 @@ class UILoop:
         return tui_core.Chain(fairy_block, *branch_parts)
 
     def _branch_diff_body(self, item: Item, record: dict) -> tui_core.Chain:
-        """The diff a persisted branch would publish -- from its recorded
-        diff base to its tip, materialized from the record's bundle --
-        or, for a force push whose published fairy/<name> tip is
+        """The commits a persisted branch would publish -- git log with
+        patches from its recorded diff base to its tip, materialized
+        from the record's bundle -- or, when ``b`` selected range-diff
+        mode, for a force push whose published fairy/<name> tip is
         resolvable in the patch repo, the range-diff against that tip.
         Cached like ``_diff_body``; failures retry after a few
         seconds."""
         branch = str(record.get("branch") or "")
         sha = str(record.get("sha") or "")
         base = record.get("diff_base_sha")
-        cache_key = ("branch", item.repo, sha, base)
+        want_range_diff = (self.branch_diff_mode == "range-diff"
+                           and record.get("mode") == "force")
+        cache_key = ("branch", item.repo, sha, base, want_range_diff)
         cached = self._diff_cache_get(cache_key)
         if cached is not None:
             return cached
@@ -1558,7 +1564,7 @@ class UILoop:
             patch_repo,
             [f"{remote}/{branch_persist.FAIRY_BRANCH_PREFIX}{branch}"
              for remote in branch_persist.FAIRY_BRANCH_REMOTES]
-        ) if record.get("mode") == "force" and patch_repo is not None else None
+        ) if want_range_diff and patch_repo is not None else None
         retry_at = None
         caption = body = tail = None
         try:
@@ -1580,22 +1586,22 @@ class UILoop:
                         # e.g. the published tip's objects live in neither
                         # the record's checkout nor the patch repo
                         logger.info("range-diff unavailable (%s); showing "
-                                    "the plain branch diff", exc)
+                                    "the commits", exc)
                 if body is None and isinstance(base, str) and base:
-                    caption = [("label", f"branch diff {base[:12]}..{sha[:12]}")]
-                    text_lines = git_util.git_diff(store, base, sha) \
+                    caption = [("label", f"branch commits {base[:12]}..{sha[:12]}")]
+                    text_lines = git_util.git_log_patches(store, base, sha) \
                         .decode("utf-8", errors="replace").split("\n")
                     body = diff_render.DiffView(
                         "\n".join(text_lines[:DIFF_MAX_LINES])) \
-                        or [[("label", "(empty diff)")]]
+                        or [[("label", "(no commits)")]]
                     if len(text_lines) > DIFF_MAX_LINES:
                         tail = [[("log_warn", f"… truncated at {DIFF_MAX_LINES}"
                                               f" of {len(text_lines)} lines")]]
                 elif body is None:
-                    caption = [("label", "branch diff")]
+                    caption = [("label", "branch commits")]
                     body = [[("log_warn", "no diff base recorded for this branch")]]
         except RuntimeError as exc:
-            caption = [("label", "branch diff")]
+            caption = [("label", "branch commits")]
             logger.error("%s", exc)
             retry_at = time.monotonic() + 5
             body = [[("log_err", line)] for line in str(exc).splitlines()]
@@ -2215,6 +2221,10 @@ class UILoop:
             self.logs_mode = _next_mode(LOGS_MODES, self.logs_mode)
             self.scroll["bl"] = 0
             logger.info("logs pane: %s", self.logs_mode)
+        elif ks == "b":
+            self.branch_diff_mode = _next_mode(BRANCH_DIFF_MODES,
+                                               self.branch_diff_mode)
+            logger.info("branch previews: %s", self.branch_diff_mode)
         elif ks in ("[", "]", "{", "}"):
             self._jump_section(("diff_hunk",) if ks in ("{", "}")
                                else ("diff_commit", "diff_file"),

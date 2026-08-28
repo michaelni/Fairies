@@ -75,6 +75,7 @@ from queue import Empty, SimpleQueue
 from threading import Event, Lock, Thread
 
 import blessed
+from blessed.dec_modes import DecPrivateMode
 
 import agent
 import branch_persist
@@ -107,6 +108,9 @@ HIDDEN_SETTLED = ("posted", "skipped", "cancelled")
 # misses, marked '?' in the list meanwhile.
 GONE_POLLS = 10
 _KIND_DISP = {"pr": "PR", "issue": "issue"}
+_TTY_TIMEOUT = 0.2
+_MOUSE_MODES = (DecPrivateMode.MOUSE_EXTENDED_SGR,
+                DecPrivateMode.MOUSE_REPORT_DRAG)
 # status sort: operator-actionable rows first, then the live pipeline
 # states, then attention, then the settled ones
 _SORT_STATES = {s: i for i, s in enumerate((
@@ -1207,6 +1211,9 @@ class UILoop:
         self.search_buf = ""
         self.last_search = ""
         self.paused: list[int] = []
+        self._stdin_free = Event()
+        self._stdin_free.set()
+        self._stdin_reader = Lock()
         self._stats_cache: tuple[tuple[int, int],
                                  list[tui_core.StyledLine]] | None = None
         self._build_status()
@@ -1920,7 +1927,7 @@ class UILoop:
         no terminfo capability describes -- would arrive as the lens
         key ``a``. Its tail, up to a final byte in 0x40..0x7e, is
         buffered by then: blessed waited out its escape delay."""
-        ks = self.term.inkey(timeout=None)
+        ks = self.term.inkey(timeout=_TTY_TIMEOUT)
         if str(ks) not in ("\x1b[", "\x1bO"):
             return ks
         sequence = str(ks)
@@ -1937,15 +1944,46 @@ class UILoop:
         return None
 
     def _read_keys(self) -> None:
-        """Input thread: ``inkey(timeout=None)`` sits in select() and
-        returns the instant bytes arrive; each key lands in the queue
-        and wakes the main loop through ``dirty``. A daemon: at quit it
-        is blocked in the read and dies with the process."""
+        """Input thread: ``inkey()`` sits in select() and returns the
+        instant bytes arrive; each key lands in the queue and wakes the
+        main loop through ``dirty``. A daemon, so quit need not wait
+        out its read."""
         while not self.model.quit_flag:
-            ks = self._read_key()
+            self._stdin_free.wait()
+            with self._stdin_reader:
+                ks = self._read_key()
             if ks:
                 self._keys.put(ks)
                 self.model.dirty.set()
+
+    @contextmanager
+    def _tty_lent(self):
+        """Hand the terminal to a child process: once the input
+        thread's pending ``inkey()`` returns it is held out of stdin,
+        keys read meanwhile are dropped rather than run as commands
+        later, mouse reporting is off and the normal screen is shown.
+        All of it is undone afterwards."""
+        t = self.term
+        self._stdin_free.clear()
+        try:
+            with self._stdin_reader, \
+                    t.dec_modes_disabled(*_MOUSE_MODES, timeout=_TTY_TIMEOUT):
+                while not self._keys.empty():
+                    self._keys.get_nowait()
+                while t.inkey(timeout=0):
+                    pass
+                print(t.exit_fullscreen + t.normal_cursor, end="",
+                      flush=True, file=t.stream)
+                logger.debug("terminal handed over")
+                try:
+                    yield
+                finally:
+                    print(t.enter_fullscreen + t.hide_cursor, end="",
+                          flush=True, file=t.stream)
+                    logger.debug("terminal taken back")
+        finally:
+            self._stdin_free.set()
+            self.model.dirty.set()
 
     def run(self) -> None:
         Thread(target=self._read_keys, name="input", daemon=True).start()
@@ -2262,17 +2300,10 @@ class UILoop:
             cmd = [*shlex.split(editor), str(tmp)]
             logger.info("editing %s#%s via: %s", item.repo, item.number,
                         shlex.join(cmd))
-            t = self.term
-            print(t.exit_fullscreen + t.normal_cursor, end="", flush=True,
-                  file=t.stream)
-            try:
+            with self._tty_lent():
                 rc = subprocess.call(
                     cmd, stdin=sys.__stdin__, stdout=sys.__stdout__,
                     stderr=sys.__stderr__)
-            finally:
-                print(t.enter_fullscreen + t.hide_cursor, end="", flush=True,
-                      file=t.stream)
-                self.model.dirty.set()
             if rc != 0:
                 logger.warning("editor exited rc=%d; review unchanged", rc)
                 return
@@ -2468,7 +2499,7 @@ def main() -> int:
         [db.root for _, db in sides] + sorted({t.parent for t in tails}),
         ui.needs_poll.set, recursive=True)
     with term.fullscreen(), term.cbreak(), term.hidden_cursor(), \
-            term.mouse_enabled(report_drag=True, timeout=0.2), \
+            term.dec_modes_enabled(*_MOUSE_MODES, timeout=_TTY_TIMEOUT), \
             captured_output(sink):
         model.poll()
         ui.run()

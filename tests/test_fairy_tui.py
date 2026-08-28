@@ -43,7 +43,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1881,6 +1881,43 @@ class EditReviewTests(DbCase):
         self.assertEqual(self.db.get("reviewed", "pr", "5")["review"]["message"],
                          "original")
 
+    def test_the_editor_gets_stdin_while_the_input_thread_waits(self) -> None:
+        """The input thread sits in inkey() on the same tty the editor
+        reads: launched while it is in there, the editor and the thread
+        split the keystrokes. Its current read has to return first and
+        the thread stays out until the editor exits."""
+        self.db.push("reviewed", "pr", "5", verdict(5, msg="original"))
+        self.model.poll()
+        ui = make_ui(self.model)
+        in_inkey = Event()
+
+        def fake_inkey(timeout=None):
+            in_inkey.set()
+            time.sleep(timeout)
+            in_inkey.clear()
+            return blessed.keyboard.Keystroke("")
+
+        editor_ran_while_reading = []
+        with mock.patch.dict(os.environ, {"EDITOR": "e"}), \
+                mock.patch.object(ui.term, "inkey", side_effect=fake_inkey), \
+                mock.patch.object(
+                    fairy_tui.subprocess, "call",
+                    side_effect=lambda cmd, **kw: editor_ran_while_reading.append(
+                        in_inkey.is_set()) or 0):
+            thread = Thread(target=ui._read_keys, daemon=True)
+            thread.start()
+            self.assertTrue(in_inkey.wait(1.0))
+            editing = Thread(target=ui.edit_review, daemon=True)
+            editing.start()
+            editing.join(2.0)
+            self.assertFalse(editing.is_alive())
+            resumed = in_inkey.wait(1.0)
+            self.model.quit_flag = True
+            thread.join(2.0)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(editor_ran_while_reading, [False])
+        self.assertTrue(resumed)
+
 
 class FilterToggleTests(DbCase):
     def test_a_cycles_the_lenses_and_each_shows_its_states(self) -> None:
@@ -2006,7 +2043,6 @@ class FsWatchTests(DbCase):
         self.assertFalse(fired.wait(1.0))
 
     def test_needs_poll_wakes_the_poll_thread(self) -> None:
-        from threading import Thread
         ui = make_ui(self.model)
         polled = Event()
         with mock.patch.object(self.model, "poll", side_effect=polled.set):
@@ -2020,7 +2056,6 @@ class FsWatchTests(DbCase):
         self.assertFalse(thread.is_alive())
 
     def test_the_poll_thread_survives_a_poll_exception(self) -> None:
-        from threading import Thread
         ui = make_ui(self.model)
         calls: list[int] = []
 

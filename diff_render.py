@@ -27,10 +27,10 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Git diff / format-patch rendering to styled terminal lines.
+Git diff / format-patch / log --patch rendering to styled terminal lines.
 
 What belongs here: turning ``git diff`` / ``git format-patch
---stdout`` text into tui_core.StyledLine rows -- commit, file and
+--stdout`` / ``git log --patch`` text into tui_core.StyledLine rows -- commit, file and
 hunk header styling, the colored diffstat, add/del line backgrounds,
 word-level change marks and per-file syntax coloring via pygments.
 
@@ -75,6 +75,7 @@ _token_fg_memo: dict = {}
 
 _HUNK_RE = re.compile(r"@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
 _MBOX_FROM_RE = re.compile(r"From [0-9a-f]{40} ")
+_LOG_COMMIT_RE = re.compile(r"commit [0-9a-f]{40}")
 _DIFFSTAT_RE = re.compile(r"( \S.*\| +\d+ ?)(\+*)(-*)")
 _DIFF_WORD_RE = re.compile(r"\w+|\s+|[^\w\s]+")
 
@@ -193,8 +194,8 @@ def _render_hunk(body: list[tuple[str, str]],
 
 
 class DiffView:
-    """Lazily rendered ``git diff`` / ``git format-patch --stdout``
-    text: commit, file and hunk headers, colored diffstat, and code
+    """Lazily rendered ``git diff`` / ``git format-patch --stdout`` /
+    ``git log --patch`` text: commit, file and hunk headers, colored diffstat, and code
     with added/removed line backgrounds, brighter word-level change
     marks and per-file syntax coloring. Tabs are expanded; lines come
     out unwrapped -- the painter clips them to the pane.
@@ -263,11 +264,15 @@ class DiffView:
                 in_mail_header = True
                 out.append([("diff_commit", line)])
                 continue
+            if _LOG_COMMIT_RE.fullmatch(line):
+                out.append([("diff_commit", line)])
+                continue
             if line == "---" or line.startswith(
                     ("index ", "--- ", "+++ ", "old mode", "new mode",
                      "new file", "deleted file", "similarity index",
                      "dissimilarity", "rename from", "rename to",
-                     "copy from", "copy to", "Binary files")):
+                     "copy from", "copy to", "Binary files",
+                     "Author: ", "Date: ", "Merge: ")):
                 out.append([("diff_meta", line)])
                 continue
             if (stat := _DIFFSTAT_RE.fullmatch(line)):

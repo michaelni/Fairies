@@ -149,6 +149,16 @@ def git_format_patch_series(
                        "--minimal", "--stdout", f"{base_sha}..{head_sha}")
 
 
+def git_log_patches(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
+    """``git log --patch --reverse base..head`` -- every commit of the
+    range oldest first, under its real hash and author. Unlike
+    format-patch output it includes merge commits (header and message;
+    git prints no diff for a merge)."""
+    return _git_stdout(repo_root, "log", "--patch", "--reverse",
+                       "--no-decorate", "--diff-algorithm=histogram",
+                       "--minimal", f"{base_sha}..{head_sha}")
+
+
 def git_diff(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
     """``git diff base head`` -- the accumulated change merging
     ``head_sha`` would introduce onto ``base_sha``, with the same

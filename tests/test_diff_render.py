@@ -136,6 +136,37 @@ index 0000001..0000002 100644
 +new line
 """
 
+# The C_PATCH commit as ``git log --patch --reverse`` prints it,
+# followed by a merge commit (synthetic sha), whose header and message
+# git log prints without a diff.
+LOG_PATCH = """\
+commit 2c18311d59ac8b1a4ca2255750836b892179d27a
+Author: Michael Niedermayer <michael@niedermayer.cc>
+Date:   Wed Jul 22 22:46:55 2026 +0200
+
+    avcodec/dovi_rpuenc: normalize vdr_dm_metadata_present to 0/1
+
+diff --git a/libavcodec/dovi_rpuenc.c b/libavcodec/dovi_rpuenc.c
+index 8b7a74f313..d0abcc0d9e 100644
+--- a/libavcodec/dovi_rpuenc.c
++++ b/libavcodec/dovi_rpuenc.c
+@@ -726,7 +726,7 @@ int ff_dovi_rpu_generate(DOVIContext *s, const AVDOVIMetadata *metadata,
+             return AVERROR(ENOMEM);
+     }
+\x20
+-    vdr_dm_metadata_present = memcmp(color, &ff_dovi_color_default, sizeof(*color));
++    vdr_dm_metadata_present = !!memcmp(color, &ff_dovi_color_default, sizeof(*color));
+     if (metadata->num_ext_blocks)
+         vdr_dm_metadata_present = 1;
+\x20
+commit 3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a
+Merge: 26ea142658a8 2c18311d59ac
+Author: Michael Niedermayer <michael@niedermayer.cc>
+Date:   Thu Jul 23 01:02:03 2026 +0200
+
+    Merge branch 'release/8.0'
+"""
+
 
 class DiffViewTests(unittest.TestCase):
     def test_piecewise_slices_equal_the_full_render(self) -> None:
@@ -155,6 +186,10 @@ class DiffViewTests(unittest.TestCase):
     def test_sections_locate_the_commits_of_a_series(self) -> None:
         self.sections_equal_the_lines_starting(
             C_PATCH + QUOTED_HUNK_PATCH, "diff_commit", "From 2c18311d")
+
+    def test_sections_locate_the_commits_of_a_log(self) -> None:
+        self.sections_equal_the_lines_starting(
+            LOG_PATCH, "diff_commit", "commit ")
 
     def test_sections_locate_the_files_of_a_plain_diff(self) -> None:
         self.sections_equal_the_lines_starting(
@@ -211,7 +246,7 @@ class RenderDiffTests(unittest.TestCase):
                          C_PATCH.split("\n")[:len(lines)])
 
     def test_emitted_styles_stay_in_the_documented_set(self) -> None:
-        for patch in (C_PATCH, MULTI_FILE_DIFF):
+        for patch in (C_PATCH, MULTI_FILE_DIFF, LOG_PATCH):
             self.assertLessEqual(styles(diff_render.render_diff(patch)),
                                  diff_render.DIFF_STYLES)
 
@@ -254,6 +289,20 @@ class RenderDiffTests(unittest.TestCase):
                          [("text", "@@ -1,2 +1,2 @@ some_function")])
         self.assertEqual(styles([self.find(lines, "@@ -1 +1 @@")]),
                          {"diff_hunk"})
+
+    def test_git_log_headers_get_their_styles(self) -> None:
+        lines = diff_render.render_diff(LOG_PATCH)
+        self.assertEqual(styles([self.find(lines, "commit 2c18311d")]),
+                         {"diff_commit"})
+        self.assertEqual(styles([self.find(lines, "Author: ")]),
+                         {"diff_meta"})
+        self.assertEqual(styles([self.find(lines, "Merge: ")]),
+                         {"diff_meta"})
+        self.assertEqual([line_text(l) for l in lines],
+                         LOG_PATCH.split("\n")[:len(lines)])
+        self.assertEqual(
+            styles([self.find(lines, "normalize vdr_dm_metadata_present")]),
+            {"text"})
 
     def test_context_lines_get_syntax_foregrounds(self) -> None:
         lines = diff_render.render_diff(C_PATCH)

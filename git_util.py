@@ -123,6 +123,18 @@ def git_merge_tree(repo_root: Path, sha_a: str, sha_b: str) -> str | None:
     return cp.stdout.splitlines()[0].strip()
 
 
+def _git_stdout(repo_root: Path, *args: str) -> bytes:
+    """stdout of ``git <args>`` in ``repo_root``; RuntimeError on failure."""
+    cp = subprocess.run(["git", "-C", str(repo_root), *args],
+                        capture_output=True, check=False)
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"git {' '.join(args)} in {repo_root} failed: "
+            f"{cp.stderr.decode('utf-8', errors='replace').strip()}"
+        )
+    return cp.stdout
+
+
 def git_format_patch_series(
     repo_root: Path, base_sha: str, head_sha: str,
 ) -> bytes:
@@ -133,51 +145,23 @@ def git_format_patch_series(
     ``From <sha>`` per commit, which matches what Forgejo's ``.patch``
     URL emits (modulo the trailing git-version stamp).
     """
-    cmd = [
-        "git", "-C", str(repo_root),
-        "format-patch", "--diff-algorithm=histogram", "--minimal",
-        "--stdout", f"{base_sha}..{head_sha}",
-    ]
-    cp = subprocess.run(cmd, capture_output=True, check=False)
-    if cp.returncode != 0:
-        raise RuntimeError(
-            f"git format-patch {base_sha}..{head_sha} in {repo_root} "
-            f"failed: {cp.stderr.decode('utf-8', errors='replace').strip()}"
-        )
-    return cp.stdout
+    return _git_stdout(repo_root, "format-patch", "--diff-algorithm=histogram",
+                       "--minimal", "--stdout", f"{base_sha}..{head_sha}")
 
 
 def git_diff(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
     """``git diff base head`` -- the accumulated change merging
     ``head_sha`` would introduce onto ``base_sha``, with the same
     histogram/minimal settings as git_format_patch_series."""
-    cp = subprocess.run(
-        ["git", "-C", str(repo_root), "diff",
-         "--diff-algorithm=histogram", "--minimal", base_sha, head_sha],
-        capture_output=True, check=False,
-    )
-    if cp.returncode != 0:
-        raise RuntimeError(
-            f"git diff {base_sha} {head_sha} in {repo_root} failed: "
-            f"{cp.stderr.decode('utf-8', errors='replace').strip()}"
-        )
-    return cp.stdout
+    return _git_stdout(repo_root, "diff", "--diff-algorithm=histogram",
+                       "--minimal", base_sha, head_sha)
 
 
 def git_range_diff(repo_root: Path, old_sha: str, new_sha: str) -> bytes:
     """``git range-diff old...new`` -- how the commit series was rewritten
     between the two tips."""
-    cp = subprocess.run(
-        ["git", "-C", str(repo_root), "range-diff", "--no-color",
-         f"{old_sha}...{new_sha}"],
-        capture_output=True, check=False,
-    )
-    if cp.returncode != 0:
-        raise RuntimeError(
-            f"git range-diff {old_sha}...{new_sha} in {repo_root} failed: "
-            f"{cp.stderr.decode('utf-8', errors='replace').strip()}"
-        )
-    return cp.stdout
+    return _git_stdout(repo_root, "range-diff", "--no-color",
+                       f"{old_sha}...{new_sha}")
 
 
 def git_fetch_all(repo_root: Path) -> None:

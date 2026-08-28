@@ -340,5 +340,55 @@ class PersistBranchesOptionTests(unittest.TestCase):
         self.assertEqual(ns.persist_repo, ["ffmpeg", "ffmpeg-web"])
 
 
+class CommitAuthorOptionTests(unittest.TestCase):
+    """--commit-author parses into (name, email) at the boundary;
+    open_review_container_shell sets it as each review container's
+    global git identity."""
+
+    AUTHOR = ("--commit-author", "Jane Doe <jane@example.org>",
+              "--podman", "--shell-host", "fairy@203.0.113.7")
+
+    def test_parses_into_name_and_email(self) -> None:
+        ns = parse(*self.AUTHOR)
+        self.assertEqual(ns.commit_author,
+                         ("Jane Doe", "jane@example.org"))
+
+    def test_unset_by_default(self) -> None:
+        self.assertIsNone(parse().commit_author)
+
+    def test_a_value_without_an_email_is_rejected(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            parse("--commit-author", "Jane Doe",
+                  "--podman", "--shell-host", "fairy@203.0.113.7")
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_requires_podman(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            parse("--commit-author", "Jane Doe <jane@example.org>")
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_the_identity_is_git_configured_in_the_container(self) -> None:
+        args = parse(*self.AUTHOR)
+        handle = wrapper.podman_host.ContainerHandle(
+            container_id="c" * 64, image="img", network=None,
+            host=args.machines[0].host)
+        with mock.patch.object(wrapper.podman_host, "start_ephemeral_container",
+                               return_value=handle), \
+             mock.patch.object(wrapper.podman_repos,
+                               "provision_repos_into_container"), \
+             mock.patch.object(wrapper.podman_repos, "start_recoll_index"), \
+             mock.patch.object(wrapper.podman_host, "copy_into_container"), \
+             mock.patch.object(wrapper.podman_host, "open_container_shell"), \
+             mock.patch.object(wrapper.podman_host, "run_on_remote_host",
+                               return_value=mock.Mock(returncode=0)) as run:
+            wrapper.open_review_container_shell(args.machines[0], [], args)
+        configured = [call.args[1:] for call in run.call_args_list]
+        self.assertIn(("podman", "exec", handle.container_id, "git", "config",
+                       "--global", "user.name", "Jane Doe"), configured)
+        self.assertIn(("podman", "exec", handle.container_id, "git", "config",
+                       "--global", "user.email", "jane@example.org"),
+                      configured)
+
+
 if __name__ == "__main__":
     unittest.main()

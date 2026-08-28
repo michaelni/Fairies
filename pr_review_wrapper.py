@@ -190,6 +190,15 @@ def triage_label_allowlist_from_request(request: JsonObject) -> list[str]:
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.MULTILINE)
 
 
+def parse_commit_author(value: str) -> tuple[str, str]:
+    """argparse type for --commit-author: 'NAME <EMAIL>' -> (name, email)."""
+    m = re.fullmatch(r"(.+?)\s*<(\S+@\S+)>", value.strip())
+    if not m:
+        raise argparse.ArgumentTypeError(
+            f"expected 'NAME <EMAIL>', got {value!r}")
+    return m.group(1), m.group(2)
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Review a PR with one or more LLM reviewers.")
     p.add_argument(
@@ -600,6 +609,17 @@ def parse_args() -> argparse.Namespace:
              "primary repo).",
     )
     p.add_argument(
+        "--commit-author",
+        type=parse_commit_author,
+        default=None,
+        metavar='"NAME <EMAIL>"',
+        help=(
+            "Default git identity (user.name/user.email) for commits "
+            "created in review containers. Work taken from someone else "
+            "keeps that person's authorship."
+        ),
+    )
+    p.add_argument(
         "--podman-mirror-root",
         default=podman_repos.DEFAULT_MIRROR_ROOT,
         help=(
@@ -722,6 +742,9 @@ def parse_args() -> argparse.Namespace:
     if args.persist_branches and not args.podman:
         p.error("--persist-branches requires --podman (branches live in "
                 "podman review containers)")
+    if args.commit_author and not args.podman:
+        p.error("--commit-author requires --podman (the identity is set "
+                "in podman review containers)")
     if args.extra_model and not args.combine_model:
         # rejected at parse time: discovered after run_parallel it would
         # have billed every reviewer before failing
@@ -1303,6 +1326,16 @@ def open_review_container_shell(
                 if args.simulate_past_cutoff else None
             ),
         )
+        for key, value in zip(("user.name", "user.email"),
+                              args.commit_author or ()):
+            cp = podman_host.run_on_remote_host(
+                spec.host, "podman", "exec", handle.container_id,
+                "git", "config", "--global", key, value)
+            if cp.returncode != 0:
+                raise podman_host.ContainerInfraError(
+                    f"git config {key} in container "
+                    f"{handle.container_id[:12]} failed: "
+                    f"{cp.stderr.decode(errors='replace').strip()}")
         podman_repos.start_recoll_index(handle)
         podman_host.copy_into_container(handle, AGENT_LOCAL_PATH, AGENT_CONTAINER_DIR)
         session = podman_host.open_container_shell(handle, AGENT_CONTAINER_PATH)

@@ -164,6 +164,10 @@ ticket is adopted.
   middle-click), falling back to the OSC 52 clipboard over a plain
   ssh session — in tmux turn `set-clipboard` on. `#123` copies the
   bare number.
+- **⧉ on a commit header** (patches views and branch previews): a
+  click anywhere on the header row outside a token copies that whole
+  patch — ready for `git am` for a non-merge commit, the `git log`
+  text for a merge.
 - **⧉ in the message pane's title:** a click there copies the whole
   raw markdown review message (what `o` edits) — ready to paste into
   a mail or forge comment.

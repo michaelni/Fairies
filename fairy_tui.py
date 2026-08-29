@@ -1877,6 +1877,10 @@ class UILoop:
         for i in range(rect.h - 1):
             buf.append(t.move_xy(rect.x, rect.y + 1 + i) + lpad)
             line = lines[i] if i < len(lines) else ""
+            if line and not isinstance(line, str) \
+                    and not isinstance(line[0], str) \
+                    and line[0][0] == "diff_commit":
+                line = [("bold", "⧉ ")] + line
             shown.append(tui_core.sanitize(_plain([line])))
             # sanitize(): forge/LLM text must not inject escape sequences.
             if isinstance(line, str):
@@ -2335,7 +2339,9 @@ class UILoop:
         """Copy the URL / git hash / #number under a left click to the
         system clipboard via OSC 52 (needs terminal support; tmux wants
         set-clipboard on). The rows are stored unclipped, so a visually
-        truncated URL still copies whole."""
+        truncated URL still copies whole. Off a token, a click on a
+        commit header row (its ⧉ advertises it) copies the whole
+        patch."""
         rect, gutter, rows = self._shown.get(pane, (None, 0, []))
         if rect is None:
             return
@@ -2346,9 +2352,27 @@ class UILoop:
         if not (0 <= row < len(rows)) or col < 0:
             return
         token = tui_core.token_at(rows[row], col)
-        if token is None:
+        if token is not None:
+            self._to_clipboard(token, repr(token))
             return
-        self._to_clipboard(token, repr(token))
+        self._copy_patch_at(pane, row)
+
+    def _copy_patch_at(self, pane: str, row: int) -> None:
+        """The patch whose commit header sits on the pane's visible
+        ``row``, taken whole from the pane's unclipped content: what
+        the patches views show per commit is a git-am-able format-patch
+        (the git log text for a merge), so the copy is too."""
+        content = self._painted.get(pane)
+        if not hasattr(content, "sections"):
+            return
+        clicked = self.scroll[pane] + row
+        starts = content.sections("diff_commit")
+        if clicked not in starts:
+            return
+        end = next((s for s in starts if s > clicked), len(content))
+        text = _plain(content[clicked:end]).rstrip("\n") + "\n"
+        sha = text.split()[1]
+        self._to_clipboard(text, f"patch {sha[:12]} ({len(text)} chars)")
 
     def _copy_message(self) -> None:
         """A click on the message pane's title bar (the ⧉ glyph

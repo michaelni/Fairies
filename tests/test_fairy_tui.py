@@ -1768,6 +1768,32 @@ class PatchNavTests(DbCase):
         lines = self.ui._painted["br"]
         return lines.sections(style) if hasattr(lines, "sections") else []
 
+    def test_a_click_on_a_commit_header_copies_that_patch(self) -> None:
+        starts = self.painted("patches")
+        rect, gutter, rows = self.ui._shown["br"]
+        self.assertTrue(rows[starts[0]].startswith("⧉ "))
+        copied: list[str] = []
+        with mock.patch.object(
+                self.ui, "_to_clipboard",
+                side_effect=lambda text, desc: copied.append(text)):
+            self.ui._copy_click("br", rect.x + gutter,
+                                rect.y + 1 + starts[1])
+        self.assertEqual(len(copied), 1)
+        self.assertTrue(copied[0].startswith(f"commit {1:040x}"))
+        self.assertIn("+int b;", copied[0])
+        self.assertNotIn(f"commit {2:040x}", copied[0])
+
+    def test_a_click_on_the_hash_still_copies_only_the_hash(self) -> None:
+        starts = self.painted("patches")
+        rect, gutter, _ = self.ui._shown["br"]
+        copied: list[str] = []
+        with mock.patch.object(
+                self.ui, "_to_clipboard",
+                side_effect=lambda text, desc: copied.append(text)):
+            self.ui._copy_click("br", rect.x + gutter + 10,
+                                rect.y + 1 + starts[0])
+        self.assertEqual(copied, [f"{0:040x}"])
+
     def test_the_keys_step_between_the_patches_of_the_series(self) -> None:
         starts = self.painted("patches")
         self.assertEqual(len(starts), 3)

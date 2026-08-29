@@ -825,7 +825,7 @@ class StatusColumnTests(DbCase):
         with self.model.lock:
             self.model.filter_mode = "all"
         self.model.poll()
-        clusters = [r[20:24] for r in self.rows()]
+        clusters = [r[19:23] for r in self.rows()]
         self.assertEqual(clusters, ["M   ", "m   ", "R   "])
 
     def test_issue_letters_come_from_labels_and_state(self) -> None:
@@ -838,7 +838,7 @@ class StatusColumnTests(DbCase):
             "state": "closed", "labels": ["enhancement", "repro/no(env)",
                                           "resolution/wontfix"]})
         self.model.poll()
-        clusters = [r[20:24] for r in self.rows()]
+        clusters = [r[19:23] for r in self.rows()]
         self.assertEqual(clusters, ["BYfO", "EnwC"])
 
     def test_forced_reviews_carry_a_plus_through_queued_and_llm(self) -> None:
@@ -855,7 +855,7 @@ class StatusColumnTests(DbCase):
     def test_without_a_snapshot_the_cluster_is_blank(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()
-        self.assertIn("#5            reviewed", self.rows()[0])
+        self.assertIn("#5             reviewed", self.rows()[0])
 
     def test_a_snapshot_rewrite_updates_the_status(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
@@ -914,7 +914,7 @@ class BranchMarkerTests(DbCase):
             6, pr={"title": "Fix x", "body": "", "target": "master"}))
         self.db.push("reviewed", "pr", "7", verdict(7))
         self.model.poll()
-        by_number = {row.split("#")[1].split()[0]: row[1]
+        by_number = {row.split("#", 1)[1].split()[0]: row.split("#", 1)[1][12]
                      for row in self.rows()}
         self.assertEqual(by_number["5"], "»")
         self.assertEqual(by_number["6"], "»")
@@ -933,7 +933,7 @@ class BranchMarkerTests(DbCase):
         for row in ui.list_rows():
             if isinstance(row, list):
                 number = next(t for _, t in row if t.startswith("#"))
-                by_number[number.lstrip("#").split()[0]] = row[1][0]
+                by_number[number.lstrip("#").split()[0]] = row[8][0]
         self.assertEqual(by_number["5"], "br_mark")
         self.assertEqual(by_number["6"], "br_pr_mark")
 

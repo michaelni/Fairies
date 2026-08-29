@@ -34,11 +34,11 @@ last row).
   which `N` were approved by fairy (the rest, shown as `merge-ready*`
   in the list, were approved by someone else). A red `PAUSED` appears
   while `p` holds the daemons stopped.
-- **☰ list** — the table. Columns: `▶` marks reviewed rows, an orange
-  `»` a review that persists git branches (red when one opens a PR),
-  kind, repo (only when sides span several), `#number`, the status
-  letters, state, llm, age, title. The title bar shows the active
-  lens, the bottom bar the keys.
+- **☰ list** — the table. Columns: `▶` marks reviewed rows, kind,
+  repo (only when sides span several), `#number`, the status letters
+  followed by an orange `»` for a review that persists git branches
+  (red when one opens a PR), state, llm, age, title. The title bar
+  shows the active lens, the bottom bar the keys.
 - **≣ logs** — merged tail of every side's agent/worker log plus the
   TUI's own, one padded source tag per line, level-colored. `d`
   switches this pane to the cursor PR's patches or merge diff — the

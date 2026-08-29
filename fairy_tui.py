@@ -1596,7 +1596,7 @@ class UILoop:
                                     "the commits", exc)
                 if body is None and isinstance(base, str) and base:
                     caption = [("label", f"branch commits {base[:12]}..{sha[:12]}")]
-                    text_lines = git_util.git_log_patches(store, base, sha) \
+                    text_lines = git_util.git_patch_stream(store, base, sha) \
                         .decode("utf-8", errors="replace").split("\n")
                     body = diff_render.DiffView(
                         "\n".join(text_lines[:DIFF_MAX_LINES])) \
@@ -1661,7 +1661,7 @@ class UILoop:
                                   "yet; the next agent scan writes it")]]
         else:
             try:
-                raw = (git_util.git_log_patches(repo, base_sha, head_sha)
+                raw = (git_util.git_patch_stream(repo, base_sha, head_sha)
                        if mode == "patches"
                        else git_util.git_diff(repo, base_sha, head_sha))
                 patch_lines = raw.decode("utf-8", errors="replace").split("\n")

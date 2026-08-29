@@ -901,7 +901,7 @@ class BranchMarkerTests(DbCase):
         self.db.push("reviewed", "pr", "6", v)
         self.model.poll()
         ui = make_ui(self.model)
-        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
+        with mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                side_effect=AssertionError("diffed")), \
                 self.model.lock:
             text = fairy_tui._plain(ui.detail_lines(100))
@@ -945,7 +945,7 @@ class BranchMarkerTests(DbCase):
         ui = make_ui(self.model)
         with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
                                _fake_store), \
-                mock.patch.object(fairy_tui.git_util, "git_log_patches",
+                mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                   return_value=b"commit " + b"a" * 40
                                   + b"\nAuthor: Jane Doe <jane@example.org>\n"
                                     b"\n    fix\n") as patches, \
@@ -972,7 +972,7 @@ class BranchMarkerTests(DbCase):
                                   return_value="e" * 40) as resolve, \
                 mock.patch.object(fairy_tui.git_util, "git_range_diff",
                                   return_value=b"1:  abc ! 1:  def rework"), \
-                mock.patch.object(fairy_tui.git_util, "git_log_patches") as patches, \
+                mock.patch.object(fairy_tui.git_util, "git_patch_stream") as patches, \
                 self.model.lock:
             text = fairy_tui._plain(ui.detail_lines(100))
         self.assertIn(f"range-diff {'e' * 12}...{'a' * 12}", text)
@@ -989,7 +989,7 @@ class BranchMarkerTests(DbCase):
         ui.patch_repos = {R1: Path("/patch/repo")}
         with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
                                _fake_store), \
-                mock.patch.object(fairy_tui.git_util, "git_log_patches",
+                mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                   return_value=b"+x"), \
                 mock.patch.object(fairy_tui.git_util, "git_resolve_first",
                                   return_value="e" * 40), \
@@ -1025,7 +1025,7 @@ class BranchMarkerTests(DbCase):
 
         with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
                                store), \
-                mock.patch.object(fairy_tui.git_util, "git_log_patches",
+                mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                   return_value=b"+x"):
             ui._branch_diff_body(
                 item, fairy_tui._ticket_branches(item.data)[0])
@@ -1056,7 +1056,7 @@ class BranchMarkerTests(DbCase):
                                   return_value="e" * 40), \
                 mock.patch.object(fairy_tui.git_util, "git_range_diff",
                                   side_effect=RuntimeError("missing objects")), \
-                mock.patch.object(fairy_tui.git_util, "git_log_patches",
+                mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                   return_value=b"+one line") as patches, \
                 self.model.lock:
             text = fairy_tui._plain(ui.detail_lines(100))
@@ -1543,7 +1543,7 @@ class DiffViewTests(DbCase):
         ui = make_ui(self.model)
         ui.patch_repos = {R1: Path("mirror")}
         ui.detail_mode = "patches"
-        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
+        with mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                return_value=b"") as run:
             self.assertIn("(empty diff)", self.detail_text(ui))
         run.assert_called_once_with(Path("mirror"), "b1", "h5")
@@ -1567,7 +1567,7 @@ class DiffViewTests(DbCase):
         ui.patch_repos = {R1: Path("mirror")}
         ui.detail_mode = "patches"
         with mock.patch.object(
-                fairy_tui.git_util, "git_log_patches",
+                fairy_tui.git_util, "git_patch_stream",
                 side_effect=RuntimeError("git log b1..h5 failed")):
             text = self.detail_text(ui)
         self.assertIn("git log b1..h5 failed", text)
@@ -1579,7 +1579,7 @@ class DiffViewTests(DbCase):
         ui = make_ui(self.model)
         ui.patch_repos = {R1: Path("mirror")}
         ui.detail_mode = "patches"
-        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
+        with mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                side_effect=RuntimeError("bad object h5")) as fail:
             self.assertIn("bad object h5", self.detail_text(ui))
             self.assertIn("bad object h5", self.detail_text(ui))
@@ -1588,7 +1588,7 @@ class DiffViewTests(DbCase):
         with mock.patch.object(fairy_tui.time, "monotonic",
                                return_value=later), \
                 mock.patch.object(fairy_tui.git_util,
-                                  "git_log_patches",
+                                  "git_patch_stream",
                                   return_value=b"") as run:
             self.assertIn("(empty diff)", self.detail_text(ui))
         run.assert_called_once()
@@ -1651,7 +1651,7 @@ class DiffViewTests(DbCase):
         ui.patch_repos = {R1: Path("mirror")}
         ui.detail_mode = "patches"
         ui.logs_mode = "merge diff"
-        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
+        with mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                return_value=b"") as patches, \
                 mock.patch.object(fairy_tui.git_util, "git_diff",
                                   return_value=b"") as merge:
@@ -1670,7 +1670,7 @@ class DiffViewTests(DbCase):
         ui.detail_mode = "patches"
         with self.model.lock:
             item = self.model.items[self.model._cursor_key()]
-        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
+        with mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                return_value=b"") as run:
             self.detail_text(ui)
             for n in range(4):
@@ -1697,7 +1697,7 @@ class DiffViewTests(DbCase):
         with mock.patch.object(fairy_tui.git_util, "git_diff",
                                side_effect=record), \
                 mock.patch.object(fairy_tui.git_util,
-                                  "git_log_patches",
+                                  "git_patch_stream",
                                   side_effect=record):
             ui.paint()
         self.assertEqual(locked_during_git, [False, False])
@@ -1762,7 +1762,7 @@ class PatchNavTests(DbCase):
 
     def painted(self, mode: str, style: str = "diff_commit") -> list[int]:
         self.ui.detail_mode = mode
-        with mock.patch.object(fairy_tui.git_util, "git_log_patches",
+        with mock.patch.object(fairy_tui.git_util, "git_patch_stream",
                                return_value=self.SERIES):
             self.ui.paint()
         lines = self.ui._painted["br"]

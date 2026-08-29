@@ -149,14 +149,24 @@ def git_format_patch_series(
                        "--minimal", "--stdout", f"{base_sha}..{head_sha}")
 
 
-def git_log_patches(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
-    """``git log --patch --reverse base..head`` -- every commit of the
-    range oldest first, under its real hash and author. Unlike
-    format-patch output it includes merge commits (header and message;
-    git prints no diff for a merge)."""
-    return _git_stdout(repo_root, "log", "--patch", "--reverse",
-                       "--no-decorate", "--diff-algorithm=histogram",
-                       "--minimal", f"{base_sha}..{head_sha}")
+def git_patch_stream(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
+    """Every commit of base..head oldest first: a git-am-able
+    ``format-patch`` per non-merge commit, and ``git log -1`` for each
+    merge commit at its place in the range -- format-patch would drop
+    it silently, and git am could not apply it anyway."""
+    listing = _git_stdout(repo_root, "rev-list", "--reverse", "--parents",
+                          f"{base_sha}..{head_sha}")
+    chunks = []
+    for entry in listing.decode(errors="replace").splitlines():
+        sha, *parents = entry.split()
+        if len(parents) > 1:
+            chunks.append(_git_stdout(repo_root, "log", "-1", "--patch",
+                                      "--no-decorate", sha))
+        else:
+            chunks.append(_git_stdout(
+                repo_root, "format-patch", "-1", "--stdout",
+                "--diff-algorithm=histogram", "--minimal", sha))
+    return b"".join(chunks)
 
 
 def git_diff(repo_root: Path, base_sha: str, head_sha: str) -> bytes:

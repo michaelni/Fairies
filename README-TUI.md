@@ -140,7 +140,7 @@ ticket is adopted.
 | `R` | one more evaluation: takes the next FREE sample slot, never touching the base verdict or earlier samples. Each press adds one; capped at `s9`. |
 | `x` | drop: ticket → `cancelled/`; sticks until new PR activity. On an `llm/` row it cancels the running review: the wrapper stops at the next shell call and the container is torn down. |
 | `o` | edit the review message in `$EDITOR` (markdown round-trip; refused while a worker holds the ticket). |
-| `m` | cycle the message pane: message → the PR's patches (`git log -p`: every commit, merges included, under its hash and author) → its accumulated merge diff, read from the side's `patch-repo` mirror at the base/head SHAs of the item's snapshot (blank until a scan pass, like the status letters). Long lines are clipped, not wrapped. |
+| `m` | cycle the message pane: message → the PR's patches (a `git format-patch` per commit; a merge commit, which format-patch drops, appears as `git log` prints it) → its accumulated merge diff, read from the side's `patch-repo` mirror at the base/head SHAs of the item's snapshot (blank until a scan pass, like the status letters). Long lines are clipped, not wrapped. |
 | `d` | cycle the logs pane the same way: logs → patches → merge diff of the cursor PR. |
 | `b` | toggle the message pane's branch previews between the commits a persisted branch would publish and, for a force push, the range-diff against the published tip. |
 | `p` | pause: SIGSTOP every agent/worker the launcher started, with their whole subprocess trees; `p` again resumes. Remote containers keep computing — only local processing freezes. Quitting while paused thaws first. |

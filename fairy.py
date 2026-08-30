@@ -2537,18 +2537,6 @@ def prepare_pr(
     number = int(pr["number"])
     title = str(pr.get("title") or "")
     author = get_pr_author(pr)
-    pr_last_activity = first_dt(pr, "updated_at", "created_at")
-
-    if number in args.force_skip_prs:
-        return Decision(
-            number,
-            title,
-            author,
-            "-",
-            "skip",
-            "forced skip by --force-skip",
-            pr_last_activity,
-        )
 
     # ``--force-review`` means "review this PR no matter what".
     # The WIP/mergeable gates below are heuristics for the cron mode
@@ -2556,12 +2544,9 @@ def prepare_pr(
     # the LLM look at it. The closed/merged gate is the exception:
     # reviewing a non-open PR is opt-in via --force-review-non-open,
     # since the usual intent of forcing is a still-open PR.
-    # ``--force-skip`` still wins (handled above) per its
+    # ``--force-skip`` still wins (the first gate below) per its
     # documented precedence.
     is_forced = number in args.force_review_prs
-
-    if pr.get("state") != "open" and not (is_forced and args.force_review_non_open):
-        return Decision(number, title, author, "-", "skip", "not open", pr_last_activity)
 
     # Timeline fetches go through ``gcli_cache.get``: it serves a
     # cached copy when ``pr.updated_at`` matches and transparently
@@ -2598,7 +2583,7 @@ def prepare_pr(
     def skip(
         reason: str,
         *,
-        last_activity_value: datetime | None = pr_last_activity,
+        last_activity_value: datetime | None,
         cancelled_ci_contexts: tuple[str, ...] = (),
         blocked_ci_contexts: tuple[str, ...] = (),
         merge_ready: bool = False,
@@ -2624,12 +2609,6 @@ def prepare_pr(
             external_approvers=external_approvers,
             approved_at=approved_at,
         )
-
-    if is_marked_wip(pr, wip_re) and not is_forced:
-        return skip("marked WIP/draft")
-
-    if not pr.get("mergeable") and not is_forced:
-        return skip("has conflicts with the target branch")
 
     reviews, comments, review_comments = get_pr_discussion(
         args,
@@ -2689,6 +2668,19 @@ def prepare_pr(
             last_activity.isoformat() if last_activity else "-",
         )
         last_activity = latest_push
+
+    if number in args.force_skip_prs:
+        return skip("forced skip by --force-skip", last_activity_value=last_activity)
+
+    if pr.get("state") != "open" and not (is_forced and args.force_review_non_open):
+        return skip("not open", last_activity_value=last_activity)
+
+    if is_marked_wip(pr, wip_re) and not is_forced:
+        return skip("marked WIP/draft", last_activity_value=last_activity)
+
+    if not pr.get("mergeable") and not is_forced:
+        return skip("has conflicts with the target branch",
+                    last_activity_value=last_activity)
 
     # Compute review state once, here, so the value is available to the
     # end-of-run "external approvers" reminder list even on PRs that

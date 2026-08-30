@@ -35,9 +35,8 @@ or conflicting PR returns a Decision skip and the LLM never looks
 at the PR. Bit the simulate-past harness on its first end-to-end
 run (3 of 4 candidate PRs got 0 LLM responses).
 
-We patch ``get_pr_discussion`` to a sentinel exception: a forced
-run reaches the patched call and raises; an unforced run returns a
-Decision before ever touching it.
+The thread is stubbed empty: an unforced run returns the gate's
+Decision skip, a forced run gets past every gate to a PreparedPR.
 """
 
 from __future__ import annotations
@@ -61,10 +60,6 @@ import issue_fairy  # noqa: E402
 import workset  # noqa: E402
 
 WIP_RE = re.compile(r"\b(WIP|DRAFT)\b", re.IGNORECASE)
-
-
-class _PastGates(Exception):
-    """Sentinel: ``prepare_pr`` reached past the early-skip gates."""
 
 
 def _call(pr: dict, *, force_review: set[int] = frozenset(),
@@ -96,11 +91,13 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
 
 class ForceReviewBypassesGatesTests(unittest.TestCase):
     def setUp(self) -> None:
-        patcher = patch.object(
-            fairy, "get_pr_discussion", side_effect=_PastGates(),
-        )
-        self.mock_disc = patcher.start()
-        self.addCleanup(patcher.stop)
+        for name, value in (("get_pr_discussion", ([], [], [])),
+                            ("get_pr_timeline", []),
+                            ("get_auto_merge_info", "no"),
+                            ("get_pr_head_ref", None)):
+            patcher = patch.object(fairy, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def test_wip_and_mergeable_gates_always_bypassed_by_force(self) -> None:
         # WIP/draft and conflicting PRs are reviewed whenever forced,
@@ -118,17 +115,12 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
         for label, fields, expected_reason in cases:
             with self.subTest(label):
                 pr = {"number": 1, **fields}
-                self.mock_disc.reset_mock()
-                # Unforced: returns Decision skip with the gate's reason.
                 decision = _call(pr)
                 self.assertEqual(decision.action, "skip")
                 self.assertEqual(decision.reason, expected_reason)
-                self.mock_disc.assert_not_called()
-                # Forced: proceeds past the gate (sentinel fires).
-                self.mock_disc.reset_mock()
-                with self.assertRaises(_PastGates):
-                    _call(pr, force_review={1})
-                self.mock_disc.assert_called_once()
+                self.assertIsInstance(
+                    _call(pr, force_review={1}, llm_review_cmd="./wrapper"),
+                    fairy.PreparedPR)
 
     def test_non_open_gate_is_opt_in_via_force_review_non_open(self) -> None:
         # A non-open PR is skipped on a bare forced run; only
@@ -138,16 +130,15 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
         decision = _call(pr)
         self.assertEqual(decision.action, "skip")
         self.assertEqual(decision.reason, "not open")
-        self.mock_disc.assert_not_called()
 
         decision = _call(pr, force_review={1})
         self.assertEqual(decision.action, "skip")
         self.assertEqual(decision.reason, "not open")
-        self.mock_disc.assert_not_called()
 
-        with self.assertRaises(_PastGates):
-            _call(pr, force_review={1}, force_review_non_open=True)
-        self.mock_disc.assert_called_once()
+        self.assertIsInstance(
+            _call(pr, force_review={1}, force_review_non_open=True,
+                  llm_review_cmd="./wrapper"),
+            fairy.PreparedPR)
 
     def test_force_skip_takes_precedence_over_force_review(self) -> None:
         # Pinned so a refactor cannot quietly invert the documented
@@ -156,7 +147,18 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
         decision = _call(pr, force_review={5}, force_skip={5})
         self.assertEqual(decision.action, "skip")
         self.assertEqual(decision.reason, "forced skip by --force-skip")
-        self.mock_disc.assert_not_called()
+
+    def test_the_gate_skip_carries_the_threads_activity(self) -> None:
+        # the age the TUI shows for a skipped PR is its discussion's,
+        # not the label-edit-prone pr.updated_at
+        pr = {"number": 1, "state": "open", "mergeable": False, "title": "x",
+              "updated_at": "2026-08-30T00:00:00Z"}
+        with patch.object(fairy, "get_pr_discussion", return_value=(
+                [], [{"created_at": "2026-08-01T00:00:00Z", "body": "hi"}], [])):
+            decision = _call(pr)
+        self.assertEqual(decision.reason, "has conflicts with the target branch")
+        self.assertEqual(decision.last_activity,
+                         datetime(2026, 8, 1, tzinfo=timezone.utc))
 
 
 class ForcedReviewIgnoresTriageSkipTests(unittest.TestCase):

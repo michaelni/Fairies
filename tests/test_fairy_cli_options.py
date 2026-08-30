@@ -39,6 +39,7 @@ gcli command line, the prune horizon -- not on the attribute value.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shlex
 import sys
 import tempfile
@@ -218,32 +219,28 @@ class ScanCase(unittest.TestCase):
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=gcli_cache.Cache()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"), \
+                mock.patch.object(fairy, "get_pr_discussion",
+                                  return_value=([], [], [])), \
+                mock.patch.object(fairy, "get_pr_timeline", return_value=[]), \
                 (mock.patch.object(fairy, "safe_prepare_pr", prepare)
-                 if prepare is not None else mock.patch.object(
-                     fairy, "get_pr_discussion",
-                     side_effect=_PastGates(PAST_GATES))):
+                 if prepare is not None else contextlib.nullcontext()):
             agent.scan_pass(self.db, ns, None, now=NOW)
-
-
-PAST_GATES = "the scan reached the discussion fetch"
-
-
-class _PastGates(Exception):
-    """Sentinel: the scan reached past the title gates into the forge."""
 
 
 class WipPrefixTests(ScanCase):
     """--wip-prefix extends the title gate the agent compiles for the
-    scan; a matching PR never costs a discussion fetch."""
+    scan. The thread is stubbed empty, so a PR that gets past the
+    title gate is skipped for its missing activity instead."""
 
-    def test_a_custom_prefix_skips_the_pr_before_any_fetch(self) -> None:
+    def test_a_custom_prefix_skips_the_pr(self) -> None:
         self.scan(pr_ns("--wip-prefix SPIKE:"), [open_pr(1, "SPIKE: try this")])
         self.assertEqual(self.db.get("skipped", "pr", "1")["reason"],
                          "marked WIP/draft")
 
     def test_an_unknown_prefix_is_not_a_gate(self) -> None:
         self.scan(pr_ns(), [open_pr(1, "SPIKE: try this")])
-        self.assertIn(PAST_GATES, self.db.get("error", "pr", "1")["error"])
+        self.assertEqual(self.db.get("skipped", "pr", "1")["reason"],
+                         "cannot determine activity timestamp")
 
     def test_the_builtin_prefixes_survive_a_custom_one(self) -> None:
         self.scan(pr_ns("--wip-prefix SPIKE:"), [open_pr(1, "WIP: try this")])

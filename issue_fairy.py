@@ -251,21 +251,14 @@ def prepare_issue(
     number = int(issue["number"])
     title = str(issue.get("title") or "")
     author = get_pr_author(issue)
-    issue_last_activity = first_dt(issue, "updated_at", "created_at")
 
-    def skip(reason: str, last_activity: datetime | None = issue_last_activity) -> Decision:
+    def skip(reason: str, last_activity: datetime | None) -> Decision:
         return Decision(number, title, author, "-", "skip", reason, last_activity)
-
-    if number in args.force_skip_issues:
-        return skip("forced skip by --force-skip")
 
     # A forced issue is analyzed no matter what, including closed ones
     # (e.g. re-checking a fixed regression); everything below the force
     # check is a cron-mode heuristic.
     is_forced = number in args.force_review_issues
-
-    if issue.get("state") != "open" and not is_forced:
-        return skip("not open")
 
     comments, timeline = get_issue_discussion(
         args, issue, cache=cache, cache_max_age=discussion_cache_max_age,
@@ -279,6 +272,13 @@ def prepare_issue(
     last_activity = get_last_activity(
         issue, [], comments, [], include_pr_updated=False,
     )
+
+    if number in args.force_skip_issues:
+        return skip("forced skip by --force-skip", last_activity)
+
+    if issue.get("state") != "open" and not is_forced:
+        return skip("not open", last_activity)
+
     self_last = get_last_activity(
         issue, [], comments, [],
         predicate=lambda item: get_item_author_login(item) == self_login,

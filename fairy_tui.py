@@ -1440,19 +1440,26 @@ class UILoop:
         head.append([])
         tail: list[tui_core.StyledLine] = []
         disc = shown.get("discussion") or []
-        separator_at = None
-        if snapshot is not None:
-            sampled = iso_to_dt(str(data.get("expected_updated_at") or ""))
-            if sampled is not None:
-                separator_at = sum(
-                    1 for entry in disc if not isinstance(entry, dict)
-                    or (_entry_time(entry) or sampled) <= sampled)
         body = shown.get("body") or data.get("body")
         if body:
             disc = [{"kind": "description", "author": author,
                      "body": body}] + disc
-            if separator_at is not None:
-                separator_at += 1
+
+        def entries_before(when: datetime) -> int:
+            return sum(1 for entry in disc if not isinstance(entry, dict)
+                       or (_entry_time(entry) or when) <= when)
+
+        separator_at = None
+        if snapshot is not None:
+            sampled = iso_to_dt(str(data.get("expected_updated_at") or ""))
+            if sampled is not None:
+                separator_at = entries_before(sampled)
+        review_lines = self._review_lines(item, width)
+        review_at = len(disc)
+        if item.state == "posted" and review_lines:
+            posted = iso_to_dt(str(data.get("posted_at") or ""))
+            if posted is not None:
+                review_at = entries_before(posted)
         if disc:
             tail += [[], [("h3", f"discussion ({len(disc)})"[:width])]]
             separator = [("sampled", (
@@ -1461,6 +1468,8 @@ class UILoop:
             for i, c in enumerate(disc):
                 if i == separator_at:
                     tail += [[], separator]
+                if i == review_at:
+                    tail += review_lines
                 if not isinstance(c, dict):
                     continue
                 when = _when(str(c.get("submitted_at") or c.get("updated_at")
@@ -1486,28 +1495,13 @@ class UILoop:
                     tail.append([("link", str(att)[:width])])
             if separator_at == len(disc):
                 tail += [[], separator]
+        if review_at == len(disc):
+            tail += review_lines
         if not review:
             return head + [[("text", f"({item.state}: no review)")]] + tail
-        labels = tui_core.render_markdown("\n".join(
-            f"- {c.get('op')} **{c.get('label')}**"
-            + (f" — {c.get('reason')}" if c.get("reason") else "")
-            + (" *[posted]*" if c.get("post") else "")
-            for c in review.get("label_changes") or []
-            if isinstance(c, dict)), width)
-        message = tui_core.render_markdown(review.get("message") or "",
-                                           width)
-        if not labels and not message and not _ticket_branches(data):
+        if not review_lines:
             return head + tail
-        w = width - len("fairy")
-        if item.state == "posted":
-            when = _when(data.get("posted_at") or data.get("llm_at"))
-            byline = [("label", f"  review  {when}"[:w])]
-        else:
-            byline = [("st_reviewed", ("  review — NOT POSTED  "
-                                       + _when(data.get("llm_at")))[:w])]
-        if labels:
-            labels.append([])
-        fairy_block = head + tail + [[], [("h4", "fairy")] + byline] + labels + message
+        fairy_block = head + tail
         branch_parts: list = []
         for record in _ticket_branches(data):
             pr = record.get("pr")
@@ -1540,6 +1534,35 @@ class UILoop:
         if not branch_parts:
             return fairy_block
         return tui_core.Chain(fairy_block, *branch_parts)
+
+    def _review_lines(self, item: Item, width: int) -> list[tui_core.StyledLine]:
+        """The ticket's review as a thread entry: a ``fairy`` header
+        with the posted / NOT POSTED byline, the label changes and the
+        message; empty when there is nothing to show."""
+        data = item.data
+        review = data.get("review") or {}
+        if not review:
+            return []
+        labels = tui_core.render_markdown("\n".join(
+            f"- {c.get('op')} **{c.get('label')}**"
+            + (f" — {c.get('reason')}" if c.get("reason") else "")
+            + (" *[posted]*" if c.get("post") else "")
+            for c in review.get("label_changes") or []
+            if isinstance(c, dict)), width)
+        message = tui_core.render_markdown(review.get("message") or "",
+                                           width)
+        if not labels and not message and not _ticket_branches(data):
+            return []
+        w = width - len("fairy")
+        if item.state == "posted":
+            when = _when(data.get("posted_at") or data.get("llm_at"))
+            byline = [("label", f"  review  {when}"[:w])]
+        else:
+            byline = [("st_reviewed", ("  review — NOT POSTED  "
+                                       + _when(data.get("llm_at")))[:w])]
+        if labels:
+            labels.append([])
+        return [[], [("h4", "fairy")] + byline] + labels + message
 
     def _branch_diff_body(self, item: Item, record: dict) -> tui_core.Chain:
         """The commits a persisted branch would publish -- git log with

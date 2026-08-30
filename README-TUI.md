@@ -46,7 +46,8 @@ last row).
   side.
 - **¶ message** — the selected ticket: the action `y` would perform,
   then the discussion with the review at its end, where posting will
-  put it, marked `NOT POSTED` until it is. Below the review, each
+  put it, marked `NOT POSTED` until it is; once posted it sits in the
+  thread at the time it was sent. Below the review, each
   branch the review persists: name, push mode, the PR it would open
   with its description, and its commits, each under its own hash and
   author (`b` switches a force push to the range-diff against the

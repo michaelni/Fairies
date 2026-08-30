@@ -1207,6 +1207,23 @@ class DetailTests(DbCase):
         self.assertIn("review  2026-07-21", text)
         self.assertNotIn("NOT POSTED", text)
 
+    def test_a_posted_review_renders_where_it_was_sent(self) -> None:
+        self.model.filter_mode = "all"
+        self.db.push("posted", "pr", "5", verdict(
+            5, msg="persisted body", posted_at="2026-07-21T00:00:00+00:00",
+            discussion=[
+                {"kind": "comment", "author": "carol",
+                 "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"},
+                {"kind": "push", "author": "a", "commit_count": 1,
+                 "created_at": "2026-08-07T12:00:00Z", "head_sha": "abcdef1234"},
+                {"kind": "comment", "author": "carol",
+                 "created_at": "2026-08-10T09:00:00Z", "body": "rebased"}]))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertLess(text.index("please rebase"), text.index("persisted body"))
+        self.assertLess(text.index("persisted body"), text.index("pushed 1 commit"))
+        self.assertLess(text.index("pushed 1 commit"), text.index("rebased"))
+
     def test_the_unposted_review_renders_below_the_thread(self) -> None:
         disc = [
             {"kind": "comment", "author": "carol",

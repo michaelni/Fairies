@@ -107,6 +107,10 @@ def verdict_fields(decision: fairy.Decision, prepared) -> dict:
                               if getattr(prepared, "pr", None) is not None else None),
         "last_activity_iso": (decision.last_activity.isoformat()
                               if decision.last_activity else None),
+        # what the LLM run saw; the scan's backoff bypass compares
+        # against it while last_activity_iso follows the item
+        "reviewed_activity_iso": (decision.last_activity.isoformat()
+                                  if decision.last_activity else None),
         "llm_at": now,
     }
 

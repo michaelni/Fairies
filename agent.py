@@ -436,9 +436,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # cancelled/error records outrank "nothing to do today".
             if state == "skipped" and prior in ("posted", "cancelled", "error",
                                                 "skipped"):
-                if prior != "skipped":
-                    _refresh_activity(db, prior, kind, token, prepared)
                 if prior != "skipped" or (prior_data or {}).get("llm_at"):
+                    _refresh_activity(db, prior, kind, token, prepared)
                     continue
             ticket = gate_ticket(prepared, item)
             if state == "error":
@@ -466,7 +465,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # pair, deliberately not on updated_at.
             last_iso = (prepared.last_activity.isoformat()
                         if prepared.last_activity else None)
-            if last_iso == prior_data.get("last_activity_iso") \
+            if last_iso == prior_data.get("reviewed_activity_iso") \
                     and (kind != "pr" or prior_data.get("expected_head_ref")
                          == fairy.get_pr_head_ref(item)):
                 db.try_move("skipped", "skipped", kind, token,

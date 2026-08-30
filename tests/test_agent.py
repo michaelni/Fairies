@@ -236,7 +236,7 @@ def llm_skip(backoff: float, updated: str = "2026-07-19T10:00:00Z",
              head: str = "h1", last_iso: str | None = None) -> dict:
     return {"llm_at": NOW.isoformat(), "skip_backoff_h": backoff,
             "expected_updated_at": updated, "expected_head_ref": head,
-            "last_activity_iso": last_iso}
+            "last_activity_iso": last_iso, "reviewed_activity_iso": last_iso}
 
 
 class BackoffTests(AgentCase):
@@ -272,6 +272,25 @@ class BackoffTests(AgentCase):
             prepared_for(pr), last_activity=datetime(2026, 7, 19, tzinfo=timezone.utc))
         self.scan([make_pr(1)])
         self.assertEqual(self.db.get("queued", "pr", "1")["skip_backoff_h"], 24)
+
+    def test_a_gate_skip_in_the_window_refreshes_the_stamp_not_the_baseline(
+            self) -> None:
+        # the age column must show the new comment; the bypass must
+        # still see it as new once the gates let the PR through
+        self.db.push("skipped", "pr", "1",
+                     llm_skip(24, updated="old", last_iso="2026-07-01T00:00:00+00:00"))
+        self.age("skipped", "pr", "1", hours=1)
+        fresh = datetime(2026, 7, 19, tzinfo=timezone.utc)
+        self.prepare.side_effect = lambda ns, pr, **kw: dataclasses.replace(
+            gate_skip(pr), last_activity=fresh)
+        self.scan([make_pr(1)])
+        data = self.db.get("skipped", "pr", "1")
+        self.assertEqual(data["last_activity_iso"], fresh.isoformat())
+        self.assertEqual(data["reviewed_activity_iso"], "2026-07-01T00:00:00+00:00")
+        self.prepare.side_effect = lambda ns, pr, **kw: dataclasses.replace(
+            prepared_for(pr), last_activity=fresh)
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", "1"), "queued")
 
     def test_new_head_bypasses_the_window_too(self) -> None:
         self.db.push("skipped", "pr", "1", llm_skip(24, updated="old",

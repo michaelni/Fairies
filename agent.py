@@ -210,6 +210,20 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
         return False
 
 
+def _refresh_activity(db: filedb.Db, state: str, kind: str,
+                      token: filedb.TicketId,
+                      prepared: fairy.Decision | fairy.PreparedPR
+                      | issue_fairy.PreparedIssue) -> None:
+    """Bring a standing ticket's activity stamp -- the age the TUI
+    shows -- up to date with the item, leaving everything else the
+    ticket says as it is."""
+    if prepared.last_activity is None:
+        return
+    stamp = prepared.last_activity.isoformat()
+    db.try_move(state, state, kind, token,
+                mutate=lambda d: d.update(last_activity_iso=stamp))
+
+
 def _route(db: filedb.Db, kind: str, number: filedb.TicketId, state: str,
            data: dict, prior: str | None) -> None:
     """Scan-time routing: dst-first, and refused when the item moved at
@@ -422,12 +436,16 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # cancelled/error records outrank "nothing to do today".
             if state == "skipped" and prior in ("posted", "cancelled", "error",
                                                 "skipped"):
+                if prior != "skipped":
+                    _refresh_activity(db, prior, kind, token, prepared)
                 if prior != "skipped" or (prior_data or {}).get("llm_at"):
                     continue
             ticket = gate_ticket(prepared, item)
             if state == "error":
                 if prior in ("posted", "cancelled", "reviewed"):
-                    continue  # never clobber archive or a standing verdict
+                    # never clobber archive or a standing verdict
+                    _refresh_activity(db, prior, kind, token, prepared)
+                    continue
                 ticket["error"] = prepared.reason
                 ticket["error_backoff_h"] = error_backoff_h
             _route(db, kind, token, state, ticket, prior)

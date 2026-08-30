@@ -203,6 +203,34 @@ class TicketRoutingTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "posted")
 
+    def test_gate_skip_refreshes_the_archived_activity_stamp(self) -> None:
+        self.db.push("posted", "pr", "1",
+                     {"last_activity_iso": "2026-07-17T21:32:47+00:00"})
+        self.prepare.side_effect = lambda ns, pr, **kw: dataclasses.replace(
+            gate_skip(pr), last_activity=datetime(2026, 8, 20, 13, 44, 49,
+                                                  tzinfo=timezone.utc))
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.get("posted", "pr", "1")["last_activity_iso"],
+                         "2026-08-20T13:44:49+00:00")
+
+    def test_gate_skip_refreshes_an_error_tickets_activity_stamp(self) -> None:
+        self.db.push("error", "pr", "1", {"error": "boom", "last_activity_iso": "old"})
+        self.age("error", "pr", "1", hours=48)
+        self.prepare.side_effect = lambda ns, pr, **kw: dataclasses.replace(
+            gate_skip(pr), last_activity=NOW)
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.get("error", "pr", "1")["last_activity_iso"],
+                         NOW.isoformat())
+
+    def test_gate_error_refreshes_the_archived_activity_stamp(self) -> None:
+        self.db.push("posted", "pr", "1", {"last_activity_iso": "old"})
+        self.prepare.side_effect = lambda ns, pr, **kw: fairy.Decision(
+            pr["number"], pr["title"], "a", "-", "error", "boom", NOW)
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", "1"), "posted")
+        self.assertEqual(self.db.get("posted", "pr", "1")["last_activity_iso"],
+                         NOW.isoformat())
+
 
 def llm_skip(backoff: float, updated: str = "2026-07-19T10:00:00Z",
              head: str = "h1", last_iso: str | None = None) -> dict:

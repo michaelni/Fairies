@@ -71,11 +71,14 @@ def NamedKey(name: str) -> Key:
 
 
 def make_term(stream: io.StringIO | None = None, cols: int = 100) -> blessed.Terminal:
-    """Headless terminal fixture. blessed re-reads COLUMNS/LINES on
-    every width query, so they are set for good rather than patched."""
-    os.environ.update({"COLUMNS": str(cols), "LINES": "40"})
-    return blessed.Terminal(kind="xterm-256color", stream=stream or io.StringIO(),
+    """Headless terminal fixture of a fixed size: blessed reads the size
+    from the tty behind sys.__stdout__ when the tests run in a real
+    terminal, so it is pinned on the instance rather than through
+    COLUMNS/LINES."""
+    term = blessed.Terminal(kind="xterm-256color", stream=stream or io.StringIO(),
                             force_styling=True)
+    term._height_and_width = lambda: blessed.terminal.WINSZ(40, cols, None, None)
+    return term
 
 
 def verdict(n: int, classification: str = "moderate_issues", msg: str = "m",

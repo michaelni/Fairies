@@ -184,7 +184,6 @@ TEXT_WRAPPED_VECTOR_STORE_EXTENSIONS = {
     "metal",
     "png",
     "rc",
-    "s",
     "supp",
     "template",
     "texi",

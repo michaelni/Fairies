@@ -351,14 +351,6 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                     and (kind != "pr" or prior_data.get("expected_head_ref")
                          == fairy.get_pr_head_ref(item))):
                 continue  # standing verdict; reuse
-            if not ns.auto_mode:
-                # A reviewed/ verdict in manual mode is the operator's
-                # case, changed item or not: requeueing here replaced
-                # their verdict with whatever the fresh round produced
-                # (production: #23863 after a blocked y, #21117 before
-                # any y -- genuine data loss). A stale y is caught by
-                # the send guard; only auto mode re-reviews on change.
-                continue
         if prior == "cancelled" and number not in forced_ns and prior_data \
                 and str(prior_data.get("reason", "")).startswith("operator") \
                 and prior_data.get("expected_updated_at") == item.get("updated_at"):
@@ -430,6 +422,15 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                         "expected_updated_at": item.get("updated_at"),
                     }, prior)
                 continue
+        if prior == "reviewed" and not ns.auto_mode and number not in forced_ns:
+            # A reviewed/ verdict in manual mode is the operator's
+            # case, changed item or not: requeueing here replaced
+            # their verdict with whatever the fresh round produced
+            # (production: #23863 after a blocked y, #21117 before
+            # any y -- genuine data loss). A stale y is caught by
+            # the send guard; only auto mode re-reviews on change.
+            _refresh_activity(db, prior, kind, token, prepared)
+            continue
         if isinstance(prepared, fairy.Decision):
             state = gate_state(prepared)
             # A plain gate skip must not clobber the archive: posted/

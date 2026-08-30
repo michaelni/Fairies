@@ -459,8 +459,8 @@ class ReuseTests(AgentCase):
             "review": {"classification": "approve", "message": "KEEP"},
             "expected_updated_at": "old", "expected_head_ref": "old",
             "send_blocked": "PR updated_at changed"})
+        self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(pr)
         self.scan([make_pr(1)])
-        self.prepare.assert_not_called()
         self.assertEqual(self.db.find("pr", "1"), "reviewed")
         self.assertEqual(self.db.get("reviewed", "pr", "1")
                          ["review"]["message"], "KEEP")
@@ -478,15 +478,19 @@ class ReuseTests(AgentCase):
         """Production #21117: the author force-pushed after the review
         and the next scan replaced the verdict awaiting y/s with a
         fresh LLM run -- no operator decision. A stale y is caught by
-        the send guard; the scan must not move reviewed/."""
+        the send guard; the scan must not move reviewed/. Only the age
+        column's activity stamp follows the item."""
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues", "message": "KEEP"},
             "expected_updated_at": "2026-07-01T00:00:00Z",  # PR changed since
-            "expected_head_ref": "old"})
+            "expected_head_ref": "old", "last_activity_iso": "old"})
+        self.prepare.side_effect = lambda ns, pr, **kw: dataclasses.replace(
+            prepared_for(pr), last_activity=NOW)
         self.scan([make_pr(1)])
-        self.prepare.assert_not_called()
-        self.assertEqual(self.db.get("reviewed", "pr", "1")
-                         ["review"]["message"], "KEEP")
+        data = self.db.get("reviewed", "pr", "1")
+        self.assertEqual(data["review"]["message"], "KEEP")
+        self.assertEqual(data["expected_head_ref"], "old")
+        self.assertEqual(data["last_activity_iso"], NOW.isoformat())
 
     def test_auto_mode_requeues_a_stale_reviewed_verdict(self) -> None:
         self.ns.auto_mode = True

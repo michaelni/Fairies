@@ -71,5 +71,25 @@ class SvgNotUploadedTests(unittest.TestCase):
                 )
 
 
+class UndocumentedExtensionsWrappedTests(unittest.TestCase):
+    """Regression: on 2026-08-30 ``vector_stores.file_batches.create``
+    rejected a batch with 400 ``unsupported_file`` ("Files with extensions
+    [.h] are not supported for retrieval") after months of raw ``.h``
+    uploads being accepted. Only extensions on
+    https://developers.openai.com/api/docs/guides/tools-file-search may be
+    uploaded raw; other text sources must be wrapped as ``.txt``.
+    """
+
+    def test_undocumented_source_extensions_wrap_to_txt(self) -> None:
+        for relpath in ("a/b.h", "x.pl", "y.pm"):
+            with self.subTest(relpath=relpath):
+                self.assertEqual(
+                    openai_vector_store.get_vector_store_upload_suffix(
+                        relpath, openai_vector_store.SUPPORTED_VECTOR_STORE_EXTENSIONS
+                    ),
+                    "txt",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

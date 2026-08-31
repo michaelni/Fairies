@@ -160,15 +160,19 @@ class CollectedBranch:
 
 
 def _git(repo: Path, *args: str, check: bool = True,
-         timeout_s: float = _GIT_TIMEOUT_S) -> subprocess.CompletedProcess:
+         timeout_s: float = _GIT_TIMEOUT_S,
+         input_bytes: bytes | None = None,
+         binary: bool = False) -> subprocess.CompletedProcess:
     cmd = ["git", "-C", str(repo), *args]
     logger.debug("branch record git: %s", " ".join(cmd))
-    cp = subprocess.run(cmd, capture_output=True, text=True, check=False,
-                        timeout=timeout_s)
+    cp = subprocess.run(cmd, capture_output=True, text=not binary,
+                        input=input_bytes, check=False, timeout=timeout_s)
     if check and cp.returncode != 0:
+        stderr = cp.stderr.decode(errors="replace") if binary else cp.stderr
+        stdout = cp.stdout.decode(errors="replace") if binary else cp.stdout
         raise BranchTransferError(
             f"git {' '.join(args)} in {repo} failed (rc={cp.returncode}): "
-            f"{cp.stderr.strip() or cp.stdout.strip()}")
+            f"{stderr.strip() or stdout.strip()}")
     return cp
 
 

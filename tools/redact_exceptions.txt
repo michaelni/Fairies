@@ -66,6 +66,7 @@ ffmpeg-devel
 Forgejo_Fairy
 forgejo-fairy[bot]
 fairy
+fairy@forgejo.invalid
 michaelni
 michaelni/FFmpeg
 michael@niedermayer.cc
@@ -89,6 +90,10 @@ e11d21
 eb6420
 fad8c7
 fbca04
+
+# ---- git commit object field names raw-object fixtures carry --------
+author
+committer
 
 # ---- mail: header names and the values a parser keys on -------------
 Date

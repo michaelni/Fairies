@@ -1560,7 +1560,17 @@ def main() -> int:
             repo_specs=persist_repos,
             base_shas=persist_base_shas,
         )
-        return [cb.record() for cb in collected]
+        records = [cb.record() for cb in collected]
+        if args.commit_author:
+            for i, record in enumerate(records):
+                try:
+                    records[i] = branch_persist.replace_invented_fairy_identities(
+                        record, args.commit_author)
+                except branch_persist.BranchTransferError as exc:
+                    logger.error("identity rewrite of %r failed, keeping the "
+                                 "branch as pushed: %s",
+                                 record.get("branch"), exc)
+        return records
 
     def report_poisoned(session: podman_host.ContainerShellSession) -> None:
         poisoned_session_ids.add(id(session))

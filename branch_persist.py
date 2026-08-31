@@ -81,6 +81,7 @@ __all__ = [
     "collect_declared_branches",
     "materialized_record",
     "publish_branch_record",
+    "replace_invented_fairy_identities",
     "setup_container_remotes",
 ]
 
@@ -117,6 +118,16 @@ MAX_BUNDLE_BYTES = 64 * 1024 * 1024
 
 _SHA_RE = re.compile(r"[0-9a-f]{40,64}")
 _GIT_TIMEOUT_S = 600.0
+
+# Reviewer models invent a git identity for fairy itself instead of
+# leaving the configured one in effect (observed 2026-08-27..30 on six
+# commits from several models: emails fairy@ or forgejo_fairy@ under
+# made-up domains, overridden per command with git -c). Any other
+# local part is somebody's real authorship and is never rewritten.
+_INVENTED_FAIRY_EMAIL_LOCALS = (b"fairy", b"forgejo_fairy")
+
+_COMMIT_IDENT_RE = re.compile(
+    rb"^(author|committer) .* <([^<>]*)> (\d+ [-+]\d{4})$")
 
 # repo name -> {branch name -> sha}: a container's fairy remotes as
 # seeded at provisioning, the baseline collection derives modes and
@@ -573,6 +584,70 @@ def materialized_record(record: JsonObject,
                 f"the bundle of {branch!r} holds {current[:12]}, the record "
                 f"says {sha[:12]}")
         yield scratch
+
+
+def replace_invented_fairy_identities(
+        record: JsonObject, commit_author: tuple[str, str]) -> JsonObject:
+    """The push record with every bundled commit whose author or
+    committer email has a local part from
+    ``_INVENTED_FAIRY_EMAIL_LOCALS`` rewritten to ``commit_author``
+    ((name, email)), rebundled under the original prerequisites; the
+    record itself when its commits are clean, a delete, or an empty
+    bundle. Raises ``BranchTransferError`` when the record cannot be
+    materialized or rewritten."""
+    if record.get("mode") == "delete" or not record.get("bundle"):
+        return record
+    author_name, author_email = commit_author
+    configured = f"{author_name} <{author_email}>".encode()
+    prerequisites = _bundle_prerequisites(
+        base64.b64decode(str(record["bundle"])))
+    branch, tip_sha = str(record["branch"]), str(record["sha"])
+    with materialized_record(record) as scratch:
+        # --topo-order: the parent remap needs every parent rewritten
+        # before its children; the default date order breaks that on a
+        # merge whose inner parent carries a newer commit date
+        # (observed with git 2.43)
+        bundled_commits = _git(
+            scratch, "rev-list", "--reverse", "--topo-order", tip_sha,
+            *(("--not", *prerequisites) if prerequisites else ()),
+        ).stdout.split()
+        rewritten: dict[bytes, bytes] = {}
+        for commit in bundled_commits:
+            raw = _git(scratch, "cat-file", "commit", commit,
+                       binary=True).stdout
+            header, separator, message = raw.partition(b"\n\n")
+            lines = header.split(b"\n")
+            changed = False
+            for i, line in enumerate(lines):
+                ident = _COMMIT_IDENT_RE.match(line)
+                if ident and ident.group(2).split(b"@", 1)[0].lower() \
+                        in _INVENTED_FAIRY_EMAIL_LOCALS:
+                    lines[i] = b" ".join(
+                        (ident.group(1), configured, ident.group(3)))
+                    changed = True
+                elif line.startswith(b"parent ") and line[7:] in rewritten:
+                    lines[i] = b"parent " + rewritten[line[7:]]
+                    changed = True
+            if changed:
+                rewritten[commit.encode("ascii")] = _git(
+                    scratch, "hash-object", "-t", "commit", "-w", "--stdin",
+                    binary=True,
+                    input_bytes=b"\n".join(lines) + separator + message,
+                ).stdout.strip()
+        new_tip = rewritten.get(tip_sha.encode("ascii"))
+        if new_tip is None:
+            return record
+        new_sha = new_tip.decode("ascii")
+        _git(scratch, "update-ref", f"refs/heads/{branch}", new_sha)
+        bundle_path = scratch.parent / "rewritten.bundle"
+        _git(scratch, "bundle", "create", str(bundle_path),
+             f"refs/heads/{branch}",
+             *(("--not", *prerequisites) if prerequisites else ()))
+        bundle = base64.b64encode(bundle_path.read_bytes()).decode("ascii")
+    logger.info("invented fairy identities: rewrote %d of %d commit(s) "
+                "of %r: %s -> %s", len(rewritten), len(bundled_commits),
+                branch, tip_sha[:12], new_sha[:12])
+    return {**record, "sha": new_sha, "bundle": bundle}
 
 
 def publish_branch_record(

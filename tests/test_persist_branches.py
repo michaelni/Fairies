@@ -39,8 +39,10 @@ from __future__ import annotations
 import base64
 import json
 import sys
+import tempfile
 import types
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -540,6 +542,153 @@ def _fake_host_git(calls: list[tuple] | None = None,
                                    stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
     return fake_git
+
+
+# The tip of the pr24061-replace branch record of 2026-08-30, whose
+# reviewer model overrode the container's configured git identity with
+# ``git -c user.name="Forgejo Fairy" -c user.email="fairy@forgejo.invalid"``.
+BAD_IDENTITY_TIP = "b924d9a9ec8d82d3cc6e46918aa13cc0876a0b69"
+BAD_IDENTITY_PREREQ = "760162c41cc66e488873d8201b4a0f20955cba79"
+BAD_IDENTITY_COMMIT = (
+    b"tree d2e70a218101e401701aed6258bfeb818538f0bd\n"
+    b"parent 760162c41cc66e488873d8201b4a0f20955cba79\n"
+    b"author Forgejo Fairy <fairy@forgejo.invalid> 1788105565 +0000\n"
+    b"committer Michael Niedermayer <michael@niedermayer.cc> 1788107255 +0000\n"
+    b"\n"
+    b"avfilter/granulate: handle input frame geometry changes\n"
+    b"\n"
+    b"Assisted-by: Fairy\n")
+CONFIGURED_AUTHOR = ("Carol", "carol@example.org")
+
+
+def _bad_identity_record(tip: str) -> dict:
+    header = (b"# v2 git bundle\n-" + BAD_IDENTITY_PREREQ.encode()
+              + b" avfilter: add granulate filter\n" + tip.encode()
+              + b" refs/heads/pr24061-replace\n\nPACK")
+    return {"branch": "pr24061-replace", "mode": "ff", "pr": None,
+            "repo": "ffmpeg", "sha": tip, "old_sha": None,
+            "bundle": base64.b64encode(header).decode(),
+            "objects_repo": "/client/ffmpeg", "diff_base_sha": None}
+
+
+class ReplaceInventedFairyIdentitiesTests(unittest.TestCase):
+    def _rewrite(self, record: dict, objects: dict[str, bytes],
+                 rev_list: list[str]) -> tuple[dict, list[tuple], list[bytes]]:
+        """Run the rewrite over a fake scratch repo: ``objects`` maps
+        each sha in ``rev_list`` to its commit object, hash-object
+        yields e0..0, e0..1, ... and records its stdin, bundle create
+        writes NEWBUNDLE."""
+        calls: list[tuple] = []
+        hashed: list[bytes] = []
+
+        def fake_git(repo, *args, check=True, **kwargs):
+            calls.append(args)
+            if args[0] == "rev-list":
+                # default date order emits a merge's inner parent after
+                # its child when the parent's commit date is newer
+                # (verified with git 2.43); only --topo-order upholds
+                # the parents-first order the remap depends on
+                self.assertIn("--topo-order", args)
+                return _cmd(stdout="\n".join(rev_list))
+            if args[:2] == ("cat-file", "commit"):
+                return _cmd(stdout=objects[args[2]])
+            if args[:2] == ("hash-object", "-t"):
+                hashed.append(kwargs["input_bytes"])
+                return _cmd(stdout=f"e{len(hashed) - 1:039x}\n".encode())
+            if args[:2] == ("bundle", "create"):
+                Path(args[2]).write_bytes(b"NEWBUNDLE")
+            return _cmd()
+
+        @contextmanager
+        def fake_materialized(_record, **_kwargs):
+            with tempfile.TemporaryDirectory() as tmp:
+                scratch = Path(tmp) / "record.git"
+                scratch.mkdir()
+                yield scratch
+
+        with mock.patch.object(branch_persist, "_git",
+                               side_effect=fake_git), \
+                mock.patch.object(branch_persist, "materialized_record",
+                                  fake_materialized):
+            result = branch_persist.replace_invented_fairy_identities(
+                record, CONFIGURED_AUTHOR)
+        return result, calls, hashed
+
+    def test_the_invented_identity_becomes_the_configured_author(self) -> None:
+        result, calls, hashed = self._rewrite(
+            _bad_identity_record(BAD_IDENTITY_TIP),
+            {BAD_IDENTITY_TIP: BAD_IDENTITY_COMMIT}, [BAD_IDENTITY_TIP])
+        self.assertEqual(hashed, [BAD_IDENTITY_COMMIT.replace(
+            b"author Forgejo Fairy <fairy@forgejo.invalid>",
+            b"author Carol <carol@example.org>")])
+        self.assertEqual(result["sha"], "e" + "0" * 39)
+        self.assertEqual(result["bundle"],
+                         base64.b64encode(b"NEWBUNDLE").decode())
+        self.assertIn(("update-ref", "refs/heads/pr24061-replace",
+                       "e" + "0" * 39), calls)
+        bundle_call = next(c for c in calls if c[:2] == ("bundle", "create"))
+        self.assertEqual(bundle_call[3:],
+                         ("refs/heads/pr24061-replace", "--not",
+                          BAD_IDENTITY_PREREQ))
+        self.assertEqual({k: v for k, v in result.items()
+                          if k not in ("sha", "bundle")},
+                         {k: v for k, v in
+                          _bad_identity_record(BAD_IDENTITY_TIP).items()
+                          if k not in ("sha", "bundle")})
+
+    def test_a_foreign_authored_child_keeps_its_identity(self) -> None:
+        child_tip = "5" * 40
+        child = (b"tree " + b"6" * 40 + b"\n"
+                 b"parent " + BAD_IDENTITY_TIP.encode() + b"\n"
+                 b"author Jane Doe <jane@example.org> 1788105565 +0000\n"
+                 b"committer Jane Doe <jane@example.org> 1788105565 +0000\n"
+                 b"\nchild\n")
+        result, _calls, hashed = self._rewrite(
+            _bad_identity_record(child_tip),
+            {BAD_IDENTITY_TIP: BAD_IDENTITY_COMMIT, child_tip: child},
+            [BAD_IDENTITY_TIP, child_tip])
+        self.assertEqual(hashed[1], child.replace(
+            b"parent " + BAD_IDENTITY_TIP.encode(),
+            b"parent e" + b"0" * 39))
+        self.assertEqual(result["sha"], "e" + "0" * 38 + "1")
+
+    def test_a_merge_remaps_only_its_rewritten_parent(self) -> None:
+        merge_tip = "7" * 40
+        merge = (b"tree " + b"8" * 40 + b"\n"
+                 b"parent " + BAD_IDENTITY_TIP.encode() + b"\n"
+                 b"parent " + BAD_IDENTITY_PREREQ.encode() + b"\n"
+                 b"author Jane Doe <jane@example.org> 1788105565 +0000\n"
+                 b"committer Jane Doe <jane@example.org> 1788105565 +0000\n"
+                 b"\nmerge\n")
+        result, _calls, hashed = self._rewrite(
+            _bad_identity_record(merge_tip),
+            {BAD_IDENTITY_TIP: BAD_IDENTITY_COMMIT, merge_tip: merge},
+            [BAD_IDENTITY_TIP, merge_tip])
+        self.assertEqual(hashed[1], merge.replace(
+            b"parent " + BAD_IDENTITY_TIP.encode(),
+            b"parent e" + b"0" * 39))
+        self.assertEqual(result["sha"], "e" + "0" * 38 + "1")
+
+    def test_clean_commits_leave_the_record_untouched(self) -> None:
+        clean = BAD_IDENTITY_COMMIT.replace(
+            b"Forgejo Fairy <fairy@forgejo.invalid>",
+            b"Jane Doe <jane@example.org>")
+        record = _bad_identity_record(BAD_IDENTITY_TIP)
+        result, calls, hashed = self._rewrite(
+            record, {BAD_IDENTITY_TIP: clean}, [BAD_IDENTITY_TIP])
+        self.assertIs(result, record)
+        self.assertEqual(hashed, [])
+        self.assertFalse([c for c in calls
+                          if c[0] in ("update-ref", "bundle")])
+
+    def test_deletes_and_empty_bundles_pass_through(self) -> None:
+        for record in (DELETE_RECORD, dict(GOOD_RECORD, bundle="")):
+            with self.subTest(record=record), \
+                    mock.patch.object(
+                        branch_persist, "materialized_record",
+                        side_effect=AssertionError("materialized")):
+                self.assertIs(branch_persist.replace_invented_fairy_identities(
+                    record, CONFIGURED_AUTHOR), record)
 
 
 class PublishBranchRecordTests(unittest.TestCase):

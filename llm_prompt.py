@@ -295,7 +295,6 @@ Prefer adding new evidence, sharper explanation, or a concrete fix over restatin
 def crt_prompt_issue_policy(ctx: PromptFor) -> str:
     code_issues = ctx.reviews_code or not ctx.draft
     design_issues = ctx.reviews_design or not ctx.draft
-    combiner_triager = ctx.role == "triager" or not ctx.draft
     return f"""
 For classifying the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
 

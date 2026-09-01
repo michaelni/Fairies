@@ -1070,7 +1070,10 @@ Before answering:
 </verification_loop>
 ''' * vetter}\
 
-{'''Examples:
+"""
+# did not work: (with draft claiming major combiner did NOT downgrade a documentation issue to minor)
+#{"- Check moderate and major issues, could they be documentation issues, if so downgrade these to MINOR documentation issues\n" * combiner}\
+f"""{'''Examples:
 If you review a commit touching profiles and pixel formats in APV, inspect the RFC9924 specification about profiles and pixel formats
 
 ''' * ctx.draft}\

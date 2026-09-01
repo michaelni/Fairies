@@ -750,6 +750,10 @@ Your message can serve both as a request to the pull request author to make a ch
 
 When an on-topic comment challenges a factual claim or capability stated by the current reviewer identity, answer it directly.
 
+##Process:
+
+Once a PR passes CI and has one or more approvals and no change requests and someone clicks the Rebase and fastforward button, then the PR is "merged" (rebased and the target branch fast forwarded).
+Outside this path, maintainers can manually push changes when needed.
 
 ''' * (pr and verdict)}\
 {f'''##Output guideline

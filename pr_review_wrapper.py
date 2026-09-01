@@ -113,6 +113,7 @@ from llm_prompt import (
     ISSUE_INVESTIGATOR_ROLE,
     REVIEW_PROMPTS,
     REVIEWER_ROLE,
+    UNGRADED_REVIEWER_ROLE,
     load_project_facts,
     make_triager_role,
     review_role,
@@ -1905,11 +1906,11 @@ def main() -> int:
         final_verbosity = requested_verbosity or args.final_verbosity or args.verbosity
         # A user request names models only, so each runs the task's own prompt.
         main_prompts = [None] * len(requested_models) if requested_models else args.main_prompts
-        reviewer_labels = (
-            [] if len(main_specs) > 1 or args.combine_model else triage_label_allowlist)
+        combining = len(main_specs) > 1 or bool(args.combine_model)
+        reviewer_labels = [] if combining else triage_label_allowlist
         base_reviewer_role, base_combiner_role = (
             (ISSUE_INVESTIGATOR_ROLE, ISSUE_COMBINER_ROLE) if args.task == "issue"
-            else (REVIEWER_ROLE, COMBINER_ROLE)
+            else (UNGRADED_REVIEWER_ROLE if combining else REVIEWER_ROLE, COMBINER_ROLE)
         )
         combiner_role = role_with_labels(base_combiner_role, triage_label_allowlist)
 
@@ -1924,9 +1925,7 @@ def main() -> int:
                 return role
             return role_with_branches(role, [s.name for s in persist_repos])
 
-        main_verbosity = (
-            args.verbosity if len(main_specs) > 1 or args.combine_model
-            else final_verbosity)
+        main_verbosity = args.verbosity if combining else final_verbosity
         model_reviewers = [
             make_reviewer(spec, args=args, resources=openai_resources,
                           role=stage_role(role_with_labels(review_role(base_reviewer_role, prompt), reviewer_labels)),

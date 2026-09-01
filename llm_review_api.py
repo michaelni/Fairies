@@ -76,7 +76,9 @@ __all__ = [
     "TURN_FAILED_REVIEWER_ATTEMPTS",
     "VERBOSITY_LEVELS",
     "ENGAGE",
+    "UNGRADED",
     "REVIEW_SCHEMA",
+    "UNGRADED_REVIEW_SCHEMA",
     "Z_AI_ANTHROPIC_URL",
     "BadModelOutput",
     "BranchCollectionFailed",
@@ -104,6 +106,7 @@ __all__ = [
     "validate_result_with_labels",
     "validate_review",
     "validate_review_result",
+    "validate_ungraded_review",
     "validate_triage_result",
 ]
 
@@ -143,6 +146,11 @@ TERMINAL_ROUTES = ("skip", "reply_no_verdict")
 # ``engage``. Never a valid posted classification and never reaches
 # stdout; the pipeline treats it purely as "continue to the next stage".
 ENGAGE = "engage"
+
+# Non-emittable marker recorded as the classification of a draft that
+# feeds a combiner: the combiner alone grades the pull request, so such
+# a draft emits no classification (see ``UNGRADED_REVIEW_SCHEMA``).
+UNGRADED = "ungraded"
 
 TRIAGE_ROUTES = (*TERMINAL_ROUTES, ENGAGE)
 
@@ -192,6 +200,26 @@ REVIEW_SCHEMA = {
             },
         },
         "required": ["classification", "message", "head_vs_branch_diff_evidence"],
+    },
+}
+
+UNGRADED_REVIEW_SCHEMA = {
+    **REVIEW_SCHEMA,
+    "schema": {
+        **REVIEW_SCHEMA["schema"],
+        "properties": {
+            "message": {
+                "type": "string",
+                "description": (
+                    "detailed Markdown comment body to post to Forgejo. "
+                    "May be empty when there is nothing to report. "
+                    "Do not include HTML or markdown fences."
+                ),
+            },
+            "head_vs_branch_diff_evidence":
+                REVIEW_SCHEMA["schema"]["properties"]["head_vs_branch_diff_evidence"],
+        },
+        "required": ["message", "head_vs_branch_diff_evidence"],
     },
 }
 
@@ -370,6 +398,18 @@ def validate_review(obj: object) -> dict[str, object]:
     assert isinstance(obj, dict)  # narrowed by check_schema
     return {
         "classification": obj["classification"],
+        "message": obj["message"],
+        "head_vs_branch_diff_evidence": obj["head_vs_branch_diff_evidence"],
+    }
+
+
+def validate_ungraded_review(obj: object) -> dict[str, object]:
+    """Check an ungraded draft verdict against ``UNGRADED_REVIEW_SCHEMA``
+    and return its fields; ``classification`` is filled with ``UNGRADED``."""
+    check_schema(obj, UNGRADED_REVIEW_SCHEMA["schema"])
+    assert isinstance(obj, dict)  # narrowed by check_schema
+    return {
+        "classification": UNGRADED,
         "message": obj["message"],
         "head_vs_branch_diff_evidence": obj["head_vs_branch_diff_evidence"],
     }
@@ -878,8 +918,9 @@ def validate_triage_result(
 class Review:
     """One reviewer's verdict.
 
-    ``classification`` is a ``CLASSIFICATIONS`` member, or ``ENGAGE`` for a
-    triager that wants the pipeline to continue. ``model`` and ``prompt``
+    ``classification`` is a ``CLASSIFICATIONS`` member, ``ENGAGE`` for a
+    triager that wants the pipeline to continue, or ``UNGRADED`` for a
+    draft whose grading is left to the combiner. ``model`` and ``prompt``
     record which reviewer produced it and under which prompt, for the
     combine stage and debug logs; the two together identify a draft, since
     one model can review the same PR under several prompts.

@@ -49,6 +49,7 @@ from llm_review_api import (
     ISSUE_REPORT_SCHEMA,
     REVIEW_SCHEMA,
     TRIAGE_REQUESTABLE_EFFORTS,
+    UNGRADED_REVIEW_SCHEMA,
     VERBOSITY_LEVELS,
     Review,
     ReviewContext,
@@ -63,6 +64,7 @@ from llm_review_api import (
     validate_result_with_labels,
     validate_review,
     validate_triage_result,
+    validate_ungraded_review,
 )
 from patch_util import extract_submodule_changes_from_patch
 from podman_host import ShellHostSpec
@@ -90,6 +92,7 @@ class PromptFor:
     """Whom a prompt addresses; every prompt-section function takes it."""
     role: str    # a REVIEW_PROMPTS member | "combiner" | "triager" | issue_*
     model: str
+    classifies: bool = True  # False for a draft whose grading is left to the combiner
 
     subject      = property(lambda s: "issue" if s.role.startswith("issue_") else "PR")
     subject_long = property(lambda s: "pull request" if s.subject == "PR" else "issue")
@@ -295,42 +298,47 @@ Prefer adding new evidence, sharper explanation, or a concrete fix over restatin
 def crt_prompt_issue_policy(ctx: PromptFor) -> str:
     code_issues = ctx.reviews_code or not ctx.draft
     design_issues = ctx.reviews_design or not ctx.draft
-    return f"""
-For classifying the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
-
-Non issues:
-* partly fixing a bug that cannot be fully fixed. Example an OOM fix using the filesize is not invalid with an argument "the filesize is not always known" if theres no better way to do it.
-* an assertion that replaces a out of array access, double free or other security issue
-
-Additional Minor issues:
-* Unrelated changes should be in separate patches.
+    minor = f"""* Unrelated changes should be in separate patches.
 * Commit messages should explain what is changed and why it is changed.
 * Duplicated code should be avoided, existing helper functions should be used when appropriate.
 * Minor inconsistencies between commit message, documentation and implementation.
 {"* Signed integer overflows in timestamps or sample values as long as they don't lead to out of array accesses and don't affect normal real use cases.\n" * code_issues}\
-{"* minor design issues\n" * design_issues}\
+{"* minor design issues\n" * (design_issues and ctx.classifies)}\
 * working around an external bug, without reporting that bug upstream
 * differences between two implementations (GPU vs CPU, optimized vs reference) when there is no claim that they are exactly identical.
-
-Additional Moderate issues:
-* There should be no patches introducing an issue that is fixed in a subsequent patch of the same pull request. Patches should be updated to not introduce issues. The only exception are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, that's the author's choice.
+"""
+    moderate = f"""* There should be no patches introducing an issue that is fixed in a subsequent patch of the same pull request. Patches should be updated to not introduce issues. The only exception are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, that's the author's choice.
 * Security fixes should credit the researcher finding them. it is understood that the author of a commit is the finder of the issue in absence of a explicit credit.
 * Public API should be documented.
 * Major inconsistencies between commit message, documentation and implementation.
 * Commits should not span ABI boundaries, that is feature added to a library and its use outside the library should be seperate commits
-{"* moderate design issues, significant speed regressions in speed relevant code\n" * design_issues}\
+{f"* {'moderate ' * ctx.classifies}design issues, significant speed regressions in speed relevant code\n" * design_issues}\
 * Introduces an avoidable regression.
-
-Additional Major issues:
-{'''* Out of array access.
+"""
+    major = f"""{'''* Out of array access.
 * NULL pointer dereference.
 * Use after free.
 * Double free.
 * Infinite loop.
 ''' * code_issues}\
 * a new bug which would have a significant impact on users, not merely a change in the consequences of an existing bug, nor an unavoidable consequence of an intentional fix
+"""
+    issue_lists = (
+        f"Additional Minor issues:\n{minor}\n"
+        f"Additional Moderate issues:\n{moderate}\n"
+        f"Additional Major issues:\n{major}"
+        if ctx.classifies else
+        f"Issues:\n{minor}{moderate}{major}"
+    )
+    return f"""
+For {"classifying" if ctx.classifies else "reviewing"} the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
 
-These lists supplement the class definitions with specific calls; they are not exhaustive.
+Non issues:
+* partly fixing a bug that cannot be fully fixed. Example an OOM fix using the filesize is not invalid with an argument "the filesize is not always known" if theres no better way to do it.
+* an assertion that replaces a out of array access, double free or other security issue
+
+{issue_lists}
+These lists {"supplement the class definitions with" if ctx.classifies else "give"} specific calls; they are not exhaustive.
 
 Changes to previously undocumented API which has no known specific user is NOT a regression.
 Changes to the details of how a pre-existing bug manifests is NOT a regression unless the manifestation becomes significantly worse, like a non security issue becoming a security issue.
@@ -390,6 +398,13 @@ def prompt_output_guideline(ctx: PromptFor) -> str:
 
 
 def cr_prompt_review_classifications(ctx: PromptFor) -> str:
+    if not ctx.classifies:
+        return """Report your findings after you have finished reviewing all commit(s) and read all comments:
+- put every verified issue and material conditional concern into the message; a separate verifying pass grades them and decides on the approval or blockage of the pull request from what you report.
+- do not classify or rank the issues by severity and do not state whether the pull request should be approved, blocked or merged.
+- leave the message empty if you have nothing to report.
+
+"""
     return f"""Classify the pull request into exactly one of these JSON classes after you have finished {"verifying the drafts against" if ctx.combiner else "reviewing"} all commit(s) and read all comments:
 - approve: no substantive issues; the PR can be merged in its current form. The message may be empty or carry a brief non-issue comment.
 - minor_issues_approve: only minor or pre-existing issues, non-blocking issues or suggestions or helpful comments; the PR can be merged in its current form but there is some additional comment you would like to make
@@ -434,8 +449,9 @@ If you review a commit touching profiles and pixel formats in APV, inspect the R
 
 """
 
-CR_PROMPT_MESSAGE_RULES = """Message Rules:
-- message may be empty only for approve and skip.
+def cr_prompt_message_rules(ctx: PromptFor) -> str:
+    return f"""Message Rules:
+- message may be empty only {"when you have nothing to report" if not ctx.classifies else "for approve and skip"}.
 - the message is in Markdown and will be posted to Forgejo
 
 """
@@ -774,7 +790,7 @@ def make_developer_prompt(
         # Without a code reviewer section the shared bullets have no carrier.
         + (R_PROMPT_DESIGN_REVIEWER_ROLE
            + R_PROMPT_REVIEW_DISCIPLINE * (not ctx.reviews_code) + "\n") * ctx.reviews_design
-        + CR_PROMPT_CLASSIFICATION_AUDIENCE
+        + CR_PROMPT_CLASSIFICATION_AUDIENCE * ctx.classifies
         + R_PROMPT_PROJECT_ASSISTANT_ROLE
         + _prompt_attached_context_and_tools(
             ctx,
@@ -797,7 +813,7 @@ def make_developer_prompt(
         + prompt_triage_labels(allowed_labels or [])
         + prompt_persistence_and_verification(ctx)
         + R_PROMPT_REVIEW_EXAMPLES
-        + CR_PROMPT_MESSAGE_RULES
+        + cr_prompt_message_rules(ctx)
     )
 
 
@@ -898,7 +914,7 @@ def make_combiner_developer_prompt(
         + cr_prompt_review_classifications(ctx)
         + prompt_triage_labels(allowed_labels or [])
         + prompt_persistence_and_verification(ctx)
-        + CR_PROMPT_MESSAGE_RULES
+        + cr_prompt_message_rules(ctx)
     )
 
 
@@ -1298,6 +1314,7 @@ def generate_llm_prompt(
     allowed_models: list[str] | None = None,
     allowed_labels: list[str] | None = None,
     persist_branches: bool = False,
+    classifies: bool = True,
     machines: Sequence[ShellHostSpec] = (),
 ) -> str:
     """Vendor-neutral developer-prompt entry point.
@@ -1313,7 +1330,7 @@ def generate_llm_prompt(
     project-neutral.
     """
     del vendor  # reserved; see docstring
-    ctx = PromptFor(role, model)
+    ctx = PromptFor(role, model, classifies)
 
     if role in REVIEW_PROMPTS:
         return make_developer_prompt(
@@ -1423,6 +1440,13 @@ REVIEWER_ROLE = RoleSpec(
         *make_session_transcript_texts(ctx),
     ],
     validate=validate_review,
+)
+
+UNGRADED_REVIEWER_ROLE = replace(
+    REVIEWER_ROLE,
+    schema=UNGRADED_REVIEW_SCHEMA,
+    validate=validate_ungraded_review,
+    prompt_kwargs={"classifies": False},
 )
 
 COMBINER_ROLE = RoleSpec(

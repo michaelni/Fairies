@@ -1473,15 +1473,11 @@ def role_with_labels(role: RoleSpec, allowed_labels: list[str]) -> RoleSpec:
     allowlist the role is returned unchanged."""
     if not allowed_labels:
         return role
-    # The issue roles bind the issue verdict schema; everything else
-    # (reviewer/combiner) binds the PR one.
-    base_validate = (
-        validate_issue_report if role.schema is ISSUE_REPORT_SCHEMA else validate_review
-    )
     return replace(
         role,
         schema=schema_with_labels(role.schema, allowed_labels),
-        validate=lambda obj: validate_result_with_labels(obj, allowed_labels, base_validate),
+        validate=lambda obj, _validate=role.validate: (
+            validate_result_with_labels(obj, allowed_labels, _validate)),
         prompt_kwargs={**role.prompt_kwargs, "allowed_labels": allowed_labels},
     )
 

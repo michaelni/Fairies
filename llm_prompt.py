@@ -579,7 +579,7 @@ each produced by a different model; produce one combined review.
   answers, questions to the {subject_long} author, and process clarifications.
 - Provide a 1 paragraph justification of your classification of this {subject_long};
   anchor it not only in the issues but in the rules on which you base the
-  classification. Cite these rules and link to them if possible.
+  classification. Cite these rules.
 {"- Drop any claim whose supporting evidence is a direct comparison between the pull request head and the head of the branch it targets, whether via git diff or by comparing file contents.\n" * model_needs_diff_tripwire(model)}\
 {CR_PROMPT_WORKAROUND_LANGUAGE}
 ''' * combiner}\

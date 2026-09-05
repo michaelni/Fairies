@@ -524,7 +524,7 @@ def generate_llm_prompt(
 * Commits should not span ABI boundaries, that is feature added to a library and its use outside the library should be seperate commits
 {f"* moderate design issues\n" * design_issues}\
 {f"* speed regressions in speed relevant code\n" * design_issues}\
-* Introduces an avoidable regression.
+* Introduces an avoidable regression, likely affecting people.
 """
     major = f"""{'''* Out of array access.
 * NULL pointer dereference.

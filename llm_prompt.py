@@ -465,6 +465,7 @@ def generate_llm_prompt(
 {"* Signed integer overflows in timestamps or sample values as long as they don't lead to out of array accesses and don't affect normal real use cases.\n" * code_issues}\
 {"* minor design issues\n"                                                                                                                                 * (design_issues and ctx.classifies)}\
 * working around an external bug, without reporting that bug upstream
+* Public API documentation should not reveal implementation details.
 * differences between two implementations (GPU vs CPU, optimized vs reference) when there is no claim that they are exactly identical.
 """
     moderate = f"""* There should be no patches introducing an issue that is fixed in a subsequent patch of the same pull request. Patches should be updated to not introduce issues. The only exception are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, that's the author's choice.

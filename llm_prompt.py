@@ -742,6 +742,7 @@ Changes to the details of how a pre-existing bug manifests is NOT a regression u
 
 If the PR author fixed several rounds of issues and only moderate ones remain, then lean toward classifying as minor and approve, leaving it to humans to make the final decission to merge or not. It is important not to cause burnout to contributors, Issues can be fixed in follow up changes, and doing so is often the better path than endless resubmission of a PR, if the PR does overall improve things and the PR author shows the will to continue working on the code.
 
+{"If the community of team members has rejected a moderate issue, it is automatically to be reclassified as minor." * ctx.classifies}
 ''' * pr}\
 {'''##Audience and purpose:
 

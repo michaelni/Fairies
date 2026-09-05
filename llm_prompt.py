@@ -522,7 +522,8 @@ def generate_llm_prompt(
 * Public API should be reasonably documented.
 * Major missmatch between commit message, documentation and implementation.
 * Commits should not span ABI boundaries, that is feature added to a library and its use outside the library should be seperate commits
-{f"* {'moderate ' * ctx.classifies}design issues, significant speed regressions in speed relevant code\n" * design_issues}\
+{f"* moderate design issues\n" * design_issues}\
+{f"* speed regressions in speed relevant code\n" * design_issues}\
 * Introduces an avoidable regression.
 """
     major = f"""{'''* Out of array access.

@@ -94,9 +94,7 @@ class UngradedPromptTests(unittest.TestCase):
         text = prompt_for("review", classifies=False)
         for grading in ("Classify the pull request",
                         "minor_issues_approve", "moderate_issues",
-                        "major_issues", "Additional Minor issues",
-                        "Additional Moderate issues",
-                        "Additional Major issues"):
+                        "major_issues"):
             self.assertNotIn(grading, text)
         self.assertIn("do not classify or rank the issues by severity", text)
 

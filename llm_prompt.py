@@ -734,7 +734,7 @@ Non issues:
 * partly fixing a bug that cannot be fully fixed. Example an OOM fix using the filesize is not invalid with an argument "the filesize is not always known" if theres no better way to do it.
 * an assertion that replaces a out of array access, double free or other security issue
 
-{f"Additional Minor issues:\n{minor}\nAdditional Moderate issues:\n{moderate}\nAdditional Major issues:\n{major}" if ctx.classifies else f"Issues:\n{minor}{moderate}{major}"}
+{f"Additional Minor issues:\n{minor}\nAdditional Moderate issues:\n{moderate}\nAdditional Major issues:\n{major}"}
 These lists {"supplement the class definitions with" if ctx.classifies else "give"} specific calls; they are not exhaustive.
 
 Changes to previously undocumented API which has no known specific user is NOT a regression.

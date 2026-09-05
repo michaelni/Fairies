@@ -40,11 +40,13 @@ orchestration / CLI (the wrapper entrypoint).
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import logging
 import re
 from pathlib import Path
 from typing import Callable
 
+from llm_output_hacks import hide_scope_block
 from llm_review_api import (
     TURN_FAILED_COMBINER_ATTEMPTS,
     TURN_FAILED_REVIEWER_ATTEMPTS,
@@ -296,7 +298,9 @@ def review_pr(
         if len(drafts) != 1:
             raise SystemExit(
                 "several model reviewers require --combine-model to merge their drafts")
-        return drafts[0]
-
-    logger.info("combine stage: %s merging %d draft(s)", combiner.name, len(drafts))
-    return review_with_turn_retries(combiner, ctx, TURN_FAILED_COMBINER_ATTEMPTS)
+        final = drafts[0]
+    else:
+        logger.info("combine stage: %s merging %d draft(s)", combiner.name, len(drafts))
+        final = review_with_turn_retries(combiner, ctx, TURN_FAILED_COMBINER_ATTEMPTS)
+    fixed = hide_scope_block(final.message)
+    return final if fixed == final.message else replace(final, message=fixed)

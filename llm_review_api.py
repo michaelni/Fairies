@@ -385,8 +385,8 @@ def model_needs_diff_tripwire(model: str) -> bool:
     in ``llm_prompt``, the extra merge-semantics text; newer versions are
     exempt until observed misbehaving. ``model`` is a name/spec like
     ``openai:gpt-5.4[@high]``."""
-    m = re.match(r"(gpt|glm)-(\d+)\.(\d+)", model.rpartition(":")[2].lower())
-    return bool(m) and (int(m[2]), int(m[3])) <= {"gpt": (5, 4), "glm": (5, 2)}[m[1]]
+    m = re.match(r"(gpt|glm)-(\d+)(?:\.(\d+))?", model.rpartition(":")[2].lower())
+    return bool(m) and (int(m[2]), int(m[3] or 0)) <= {"gpt": (5, 4), "glm": (5, 2)}[m[1]]
 
 
 def validate_review(obj: object) -> dict[str, object]:

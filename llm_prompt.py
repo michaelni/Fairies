@@ -728,7 +728,7 @@ useful and include the target_url when present.
 ''' * (ci_triage_mode and pr and verdict)}\
 {project_facts}\
 {f'''
-For {"classifying" if ctx.classifies else "reviewing"} the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
+For reviewing the PR please also see Coding Rules, Development Policy, New codecs or formats checklist, Patch submission checklist from doc/developer.texi
 
 Non issues:
 * partly fixing a bug that cannot be fully fixed. Example an OOM fix using the filesize is not invalid with an argument "the filesize is not always known" if theres no better way to do it.

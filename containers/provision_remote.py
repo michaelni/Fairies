@@ -37,7 +37,7 @@ Given a passwordless ssh destination (``user@host``) it:
 2. builds the review image on the remote, rebuilding only when the
    Containerfile changed (tracked via an image label);
 3. with ``--codex-bin``, also builds the thin codex image (for a host
-   used as ``--codex-host``), staging the pinned binary in;
+   used as ``--codex-host``), staging the pinned binaries in;
 4. seeds a bare mirror per repo so per-review provisioning only has to
    push the PR delta (see podman_repos).
 
@@ -151,20 +151,22 @@ def _sha256_file(path: Path) -> str:
 def ensure_codex_image(
     *,
     host: RemoteHost,
-    codex_bin: Path,
+    binaries: dict[str, Path],
     tag: str,
     rebuild: bool,
 ) -> None:
-    """Build the thin codex image on the remote, staging the pinned binary.
+    """Build the thin codex image on the remote, staging the pinned binaries.
 
-    Containerfile.codex ``COPY``s ``codex`` from the build context, so the
-    binary and the Containerfile are staged into a temp context together
-    (podman requires the Containerfile inside the context). Rebuilds only
-    when the Containerfile or the binary changed (label tracks both)."""
-    if not codex_bin.is_file():
-        raise RuntimeError(f"--codex-bin {codex_bin} is not a file")
+    ``binaries`` maps each name Containerfile.codex ``COPY``s to the file
+    staged under it; the Containerfile is staged alongside (podman
+    requires it inside the context). Rebuilds only when the Containerfile
+    or a binary changed (label tracks all)."""
+    for name, path in binaries.items():
+        if not path.is_file():
+            raise RuntimeError(f"{name}: {path} is not a file")
     want = hashlib.sha256(
-        CODEX_DOCKERFILE.read_bytes() + _sha256_file(codex_bin).encode()
+        CODEX_DOCKERFILE.read_bytes()
+        + "".join(_sha256_file(path) for path in binaries.values()).encode()
     ).hexdigest()
     have = image_label(tag, CONTAINERFILE_LABEL, host=host)
     stale = have != want
@@ -173,11 +175,11 @@ def ensure_codex_image(
     with tempfile.TemporaryDirectory(prefix="fairy-codex-ctx-") as ctx_str:
         ctx = Path(ctx_str)
         shutil.copy2(CODEX_DOCKERFILE, ctx / "Containerfile.codex")
-        staged = ctx / "codex"
-        try:  # avoid a full copy when the temp dir shares the filesystem
-            os.link(codex_bin, staged)
-        except OSError:
-            shutil.copy2(codex_bin, staged)
+        for name, path in binaries.items():
+            try:  # avoid a full copy when the temp dir shares the filesystem
+                os.link(path, ctx / name)
+            except OSError:
+                shutil.copy2(path, ctx / name)
         build_image_if_needed(
             image_tag=tag,
             dockerfile=ctx / "Containerfile.codex",
@@ -216,6 +218,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
              "image on this host (for a host used as --codex-host).",
     )
     p.add_argument(
+        "--codex-code-mode-host-bin", type=Path, default=None, metavar="PATH",
+        help="pinned codex-code-mode-host binary of the same codex release, "
+             "baked next to --codex-bin",
+    )
+    p.add_argument(
         "--codex-tag", default=CODEX_DEFAULT_TAG,
         help="codex image tag (default: %(default)s)",
     )
@@ -236,7 +243,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--verbose", action="store_true", help="enable debug logging")
     add_color_arg(p)
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if (args.codex_bin is None) != (args.codex_code_mode_host_bin is None):
+        p.error("--codex-bin and --codex-code-mode-host-bin go together")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -261,8 +271,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.codex_bin is not None:
         ensure_codex_image(
-            host=host, codex_bin=args.codex_bin.resolve(),
-            tag=args.codex_tag, rebuild=args.rebuild,
+            host=host, tag=args.codex_tag, rebuild=args.rebuild,
+            binaries={"codex": args.codex_bin.resolve(),
+                      "codex-code-mode-host": args.codex_code_mode_host_bin.resolve()},
         )
     if args.repo_roots:
         seed_mirrors(args.repo_roots, host, args.mirror_root)

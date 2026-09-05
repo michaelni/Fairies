@@ -10,9 +10,11 @@
 # over the `podman exec -i` stdin. Host-side codex tools are stripped
 # separately (see codex_reviewer.harden_codex_catalog).
 #
-# The pinned, statically-linked codex CLI is ~298 MB and is NOT in git.
-# Stage it into the build context before building:
-#     cp /path/to/codex-X.Y.Z containers/codex        # gitignored
+# The pinned, statically-linked codex CLI (~260 MB) and the code-mode
+# host it spawns from its own directory (~70 MB) are NOT in git. Stage
+# both into the build context before building:
+#     cp /path/to/codex-X.Y.Z containers/codex                        # gitignored
+#     cp /path/to/codex-code-mode-host-X.Y.Z containers/codex-code-mode-host
 #     python3 containers/build_image.py --ssh DEST \
 #         --tag localhost/fairy-codex:latest \
 #         --file containers/Containerfile.codex
@@ -31,9 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# The pinned codex binary, staged into the build context (see header).
-COPY codex /usr/local/bin/codex
-RUN chmod +x /usr/local/bin/codex
+# The pinned binaries, staged into the build context (see header).
+COPY codex codex-code-mode-host /usr/local/bin/
+RUN chmod +x /usr/local/bin/codex /usr/local/bin/codex-code-mode-host
 
 WORKDIR /work
 CMD ["sleep", "infinity"]

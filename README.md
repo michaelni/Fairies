@@ -256,8 +256,9 @@ configurator's `--prs` section; they are forwarded to the wrapper
 alongside `--podman-host`/`--shell-host`.
 
 Build the thin codex image once from `containers/Containerfile.codex` (bakes a
-pinned codex binary; `--codex-bin` is its in-container path, `--codex-image`
-its tag) and `codex login` once as fairy's own account. `--codex-home DIR`
+pinned codex binary and its codex-code-mode-host; `--codex-bin` is the codex
+in-container path, `--codex-image` its tag) and `codex login` once as fairy's
+own account. `--codex-home DIR`
 is the wrapper-side login: its `auth.json` is `podman cp`'d into the
 container per run. Catalogs can be version-specific;
 `tools/refresh_codex_catalog.sh` refreshes it through the pinned container binary

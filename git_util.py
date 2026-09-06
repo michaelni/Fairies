@@ -198,6 +198,23 @@ def git_fetch_all(repo_root: Path) -> None:
         )
 
 
+def git_remote_default_branch(repo_root: Path, remote_url: str,
+                              timeout_s: float = 60.0) -> str:
+    """The branch ``remote_url``'s HEAD points at, per ``git ls-remote
+    --symref``; RuntimeError when it advertises none."""
+    cp = subprocess.run(
+        ["git", "-C", str(repo_root), "ls-remote", "--symref", remote_url, "HEAD"],
+        check=False, text=True, capture_output=True, timeout=timeout_s,
+    )
+    if cp.returncode != 0:
+        raise RuntimeError(
+            f"git ls-remote {remote_url} failed: {cp.stderr.strip()}")
+    for line in cp.stdout.splitlines():
+        if line.startswith("ref: refs/heads/") and line.endswith("\tHEAD"):
+            return line[len("ref: refs/heads/"):-len("\tHEAD")]
+    raise RuntimeError(f"{remote_url} advertises no HEAD branch")
+
+
 def git_push_refspecs(
     repo_root: Path,
     remote_url: str,

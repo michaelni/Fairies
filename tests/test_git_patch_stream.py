@@ -27,7 +27,8 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-git_patch_stream: format-patch per non-merge commit, git log per merge."""
+git_patch_stream: format-patch per non-merge commit, git log per merge;
+git_remote_default_branch: the branch a remote's HEAD symref names."""
 import sys
 import unittest
 from pathlib import Path
@@ -66,6 +67,27 @@ class PatchStreamTests(unittest.TestCase):
             self.assertEqual(
                 git_util.git_patch_stream(Path("repo"), "base", "head"), b"")
         git.assert_called_once()
+
+
+class RemoteDefaultBranchTests(unittest.TestCase):
+    LISTING = ("ref: refs/heads/master\tHEAD\n"
+               "5fb7f9c5deee9fb4b580b20efe150be300bed6f8\tHEAD\n")
+
+    def test_the_head_symref_names_the_branch(self) -> None:
+        with mock.patch.object(git_util.subprocess, "run", return_value=mock.Mock(
+                returncode=0, stdout=self.LISTING, stderr="")) as run:
+            branch = git_util.git_remote_default_branch(
+                Path("repo"), "https://forge.example.com/f/r.git")
+        self.assertEqual(branch, "master")
+        self.assertEqual(run.call_args.args[0][3:],
+                         ["ls-remote", "--symref",
+                          "https://forge.example.com/f/r.git", "HEAD"])
+
+    def test_a_listing_without_the_symref_raises(self) -> None:
+        with mock.patch.object(git_util.subprocess, "run", return_value=mock.Mock(
+                returncode=0, stdout=self.LISTING.splitlines()[1], stderr="")):
+            with self.assertRaisesRegex(RuntimeError, "no HEAD branch"):
+                git_util.git_remote_default_branch(Path("repo"), "u")
 
 
 if __name__ == "__main__":

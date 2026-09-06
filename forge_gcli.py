@@ -101,7 +101,7 @@ from datetime import datetime
 from pathlib import Path
 from threading import Thread
 from itertools import count
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urljoin
 
 import github_app
 from common import JsonValue, iso_to_dt
@@ -674,6 +674,22 @@ def post_issue_comment(
 def _forge_type(args: argparse.Namespace) -> str:
     """The backend gcli will talk to; empty means gcli's own default."""
     return (getattr(args, "forge_type", None) or "gitea").lower()
+
+
+def branch_page_url(args: argparse.Namespace, forge_url: str,
+                    owner: str, repo: str, branch: str) -> str:
+    """The page of ``branch`` in ``owner/repo`` on the forge serving
+    ``forge_url``."""
+    tree = {"github": "tree", "gitlab": "-/tree"}.get(_forge_type(args), "src/branch")
+    return urljoin(forge_url, f"/{owner}/{repo}/{tree}/{branch}")
+
+
+def commit_page_url(args: argparse.Namespace, forge_url: str,
+                    owner: str, repo: str, sha: str) -> str:
+    """The page of commit ``sha`` in ``owner/repo`` on the forge serving
+    ``forge_url``."""
+    commit = "-/commit" if _forge_type(args) == "gitlab" else "commit"
+    return urljoin(forge_url, f"/{owner}/{repo}/{commit}/{sha}")
 
 
 def issues_listing_takes_type_filter(args: argparse.Namespace) -> bool:

@@ -115,6 +115,7 @@ from forge_gcli import (
     run_cmd,
 )
 from forgejo_export import labels
+from llm_output_hacks import link_published_branch
 import workset
 
 __all__ = [
@@ -809,6 +810,31 @@ def branch_push_head_owner(args: argparse.Namespace, spec: BranchPushSpec) -> st
         if sep and name == spec.repo and owner:
             return owner
     return spec.owner
+
+
+def link_published_branches(
+    args: argparse.Namespace,
+    message: str,
+    branches: tuple[JsonObject, ...],
+    ticket_url: str,
+) -> str:
+    """Link the message's mentions of the branches it pushes, and of
+    their tip commits, to their pages in the --branch-push fork on the
+    forge serving ``ticket_url``."""
+    if not ticket_url:
+        return message
+    specs = {s.repo: s for s in getattr(args, "branch_push", None) or ()}
+    for record in branches:
+        spec = specs.get(record["repo"])
+        if spec is None or record["mode"] == "delete":
+            continue
+        owner = branch_push_head_owner(args, spec)
+        forge_branch = f"{branch_persist.FAIRY_BRANCH_PREFIX}{record['branch']}"
+        message = link_published_branch(
+            message, forge_branch, record["sha"],
+            forge_gcli.branch_page_url(args, ticket_url, owner, spec.forge_repo, forge_branch),
+            forge_gcli.commit_page_url(args, ticket_url, owner, spec.forge_repo, record["sha"]))
+    return message
 
 
 def publish_decision_branches(
@@ -2164,6 +2190,7 @@ def invoke_llm_wrapper(
     label_allowlist: list[str],
     extra_cmd_args: list[str] | None = None,
     stderr_tag: str = "pr",
+    ticket_url: str = "",
 ) -> LLMReview:
     """Run --llm-review-cmd on ``payload`` and parse its verdict.
 
@@ -2225,11 +2252,12 @@ def invoke_llm_wrapper(
     if classification not in allowed_classifications:
         raise RuntimeError(f"unsupported LLM classification: {classification!r}")
     label_changes = parse_label_changes(data.get("label_changes"), label_allowlist)
+    branches = parse_branch_records(data.get("branches"))
     return LLMReview(
         classification=classification,
-        message=message.strip(),
+        message=link_published_branches(args, message.strip(), branches, ticket_url),
         label_changes=label_changes,
-        branches=parse_branch_records(data.get("branches")),
+        branches=branches,
     )
 
 
@@ -2354,6 +2382,7 @@ def run_llm_review(
         }),
         label_allowlist=label_allowlist,
         extra_cmd_args=extra_cmd_args,
+        ticket_url=str(pr.get("html_url") or ""),
     )
 
 

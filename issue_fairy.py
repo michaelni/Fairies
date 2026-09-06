@@ -405,6 +405,7 @@ def run_llm_issue(
         label_allowlist=args.triage_labels,
         extra_cmd_args=["--task", "issue"] + list(extra_cmd_args or []),
         stderr_tag="issue",
+        ticket_url=str(issue.get("html_url") or ""),
     )
 
 

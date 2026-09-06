@@ -836,6 +836,38 @@ class BranchPushSpecTests(unittest.TestCase):
                     fairy.parse_branch_push_spec(bad)
 
 
+class LinkPublishedBranchesTests(unittest.TestCase):
+    TICKET = "https://forge.example.com/o/r/pulls/7"
+
+    def test_mentions_link_into_the_fork_of_the_ticket_forge(self) -> None:
+        record = {**GOOD_RECORD, "branch": "pr7-fix", "sha": "a" * 40}
+        self.assertEqual(
+            fairy.link_published_branches(
+                _send_args(branch_push_head_owner=["ffmpeg=forkfairy"]),
+                "pushed fairy/pr7-fix as aaaaaaaaaaaa", (record,), self.TICKET),
+            "pushed [fairy/pr7-fix]"
+            "(https://forge.example.com/forkfairy/ffmpeg/src/branch/fairy/pr7-fix)"
+            f" as [aaaaaaaaaaaa](https://forge.example.com/forkfairy/ffmpeg/commit/{'a' * 40})")
+
+    def test_github_branch_pages_live_under_tree(self) -> None:
+        record = {**GOOD_RECORD, "branch": "pr7-fix"}
+        self.assertEqual(
+            fairy.link_published_branches(
+                _send_args(forge_type="github"), "fairy/pr7-fix", (record,),
+                "https://github.com/o/r/pull/7"),
+            "[fairy/pr7-fix](https://github.com/mm/ffmpeg/tree/fairy/pr7-fix)")
+
+    def test_deletions_and_unconfigured_repos_stay_plain(self) -> None:
+        for record in ({**GOOD_RECORD, "mode": "delete"},
+                       {**GOOD_RECORD, "repo": "other"}):
+            with self.subTest(record=record):
+                self.assertEqual(
+                    fairy.link_published_branches(
+                        _send_args(), f"fairy/{record['branch']}", (record,),
+                        self.TICKET),
+                    f"fairy/{record['branch']}")
+
+
 class SendPathBranchTests(unittest.TestCase):
     def test_missing_push_config_blocks_before_posting(self) -> None:
         decision = _branch_decision()

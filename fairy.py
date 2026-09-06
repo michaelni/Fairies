@@ -531,6 +531,14 @@ def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
     """The side options the worker's review execution reads, shared by
     the PR and issue sides."""
     p.add_argument(
+        "--patch-repo",
+        type=Path,
+        metavar="PATH",
+        help="Local clone of the reviewed repo; the PR side synthesizes "
+             "the PR patch from it via git format-patch (required there "
+             "with --llm-review-cmd).",
+    )
+    p.add_argument(
         "--llm-review-cmd",
         help=(
             "External command used to review candidate PRs / analyze "
@@ -679,12 +687,6 @@ def _add_pr_worker_args(p: argparse.ArgumentParser) -> None:
         type=int,
         default=200000,
         help="Maximum number of patch bytes sent to the LLM (default: 200000)",
-    )
-    p.add_argument(
-        "--patch-repo",
-        type=Path,
-        metavar="PATH",
-        help="Local clone used to synthesize the PR patch via git format-patch (required with --llm-review-cmd).",
     )
     p.add_argument(
         "--patch-pr-ref-template",

@@ -440,7 +440,7 @@ class OverrideTests(unittest.TestCase):
 
     def test_a_wrong_section_option_is_an_error(self) -> None:
         with self.assertRaises(SystemExit) as ctx:
-            self.drain_sides(["--issues", "--patch-repo", "p"],
+            self.drain_sides(["--issues", "--patch-pr-ref-template", "t"],
                              pr={"owner": "o", "repo": "r"},
                              issue={"owner": "o", "repo": "r"})
         self.assertEqual(ctx.exception.code, 2)

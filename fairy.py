@@ -401,9 +401,10 @@ def add_side_identity_args(p: argparse.ArgumentParser) -> None:
         help="Enable branch persistence for the container repo NAME "
              "(podman-backed reviewers get it as their fairy remote): a "
              "verdict's fairy/<name> pushes and deletions go to the git "
-             "URL, its pull requests are opened in OWNER/REPO -- both "
-             "only when the review is sent (operator y, or --auto-mode). "
-             "Repeat per repo.",
+             "URL, whose default branch is first fast-forwarded to the "
+             "forge tip --patch-repo tracks; its pull requests are opened "
+             "in OWNER/REPO -- all only when the review is sent (operator "
+             "y, or --auto-mode). Repeat per repo.",
     )
     p.add_argument(
         "--branch-push-head-owner",
@@ -839,13 +840,42 @@ def link_published_branches(
     return message
 
 
+def fast_forward_fork_default_branch(
+    args: argparse.Namespace,
+    spec: BranchPushSpec,
+) -> None:
+    """Fast-forward the --branch-push fork's default branch to the tip
+    the --patch-repo checkout tracks for it on the forge, so the fork
+    follows the reviewed repo. A refused or failed push is logged and
+    does not block the send."""
+    checkout = args.patch_repo
+    if checkout is None:
+        return
+    try:
+        branch = git_util.git_remote_default_branch(checkout, spec.url)
+        sha = git_util.git_resolve_first(
+            checkout, [f"refs/remotes/{remote}/{branch}"
+                       for remote in git_util.FORGE_REMOTES])
+        if sha is None:
+            raise RuntimeError(f"{checkout} tracks no {branch} of the forge")
+        git_util.git_push_refspecs(checkout, spec.url,
+                                   [f"{sha}:refs/heads/{branch}"],
+                                   force=False, timeout_s=300.0)
+    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        logger.warning("default branch of %s not fast-forwarded: %s",
+                       spec.url, exc)
+        return
+    logger.info("fast-forwarded %s of %s to %s", branch, spec.url, sha[:12])
+
+
 def publish_decision_branches(
     args: argparse.Namespace,
     decision: Decision,
 ) -> None:
     """Apply the decision's branch records to their --branch-push
     destinations -- push as ``fairy/<name>``, or delete the published
-    branch -- and open the pull requests they request. Every push
+    branch -- and open the pull requests they request, after
+    fast-forwarding each touched fork's default branch. Every push
     precedes the first PR creation, and the first failure raises so the
     caller blocks the whole send with its reason."""
     specs = {s.repo: s for s in args.branch_push}
@@ -857,6 +887,8 @@ def publish_decision_branches(
         raise branch_persist.BranchTransferError(
             f"no --branch-push configured for repo(s) "
             f"{', '.join(sorted(map(repr, unconfigured)))}")
+    for spec in {specs[record["repo"]] for record in decision.branches}:
+        fast_forward_fork_default_branch(args, spec)
     published: list[tuple[JsonObject, BranchPushSpec, str]] = []
     for record in decision.branches:
         spec = specs[record["repo"]]

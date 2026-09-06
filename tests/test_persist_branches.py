@@ -79,6 +79,7 @@ except ModuleNotFoundError:  # a transitive dependency (e.g. httpx) is absent
     openai_reviewer = None
 
 import branch_persist  # noqa: E402
+import git_util  # noqa: E402
 import llm_prompt  # noqa: E402
 import llm_review_api  # noqa: E402
 import agent  # noqa: E402
@@ -812,7 +813,8 @@ def _push_spec(repo: str = "ffmpeg") -> fairy.BranchPushSpec:
 def _send_args(**overrides: object) -> SimpleNamespace:
     return SimpleNamespace(**{"owner": "o", "repo": "r",
                               "branch_push": [_push_spec()],
-                              "branch_push_head_owner": [], **overrides})
+                              "branch_push_head_owner": [],
+                              "patch_repo": None, **overrides})
 
 
 def _branch_decision(*records: dict) -> fairy.Decision:
@@ -960,6 +962,48 @@ class SendPathBranchTests(unittest.TestCase):
             fairy.publish_decision_branches(_send_args(), decision)
         self.assertEqual(order, ["publish add-test", "publish pr7-fix-overflow",
                                  "pr fairy/add-test"])
+
+    SHA_MAIN = "d" * 40
+
+    def _publish_with_checkout(self, push_error: Exception | None = None) -> list:
+        """Publish GOOD_RECORD from args carrying a --patch-repo whose
+        forge remote tracks the fork's ``main`` at SHA_MAIN; returns
+        the order of fast-forward and record pushes."""
+        order: list = []
+
+        def fake_push(repo, url, refspecs, **kw):
+            order.append((url, refspecs, kw["force"]))
+            if push_error:
+                raise push_error
+
+        with mock.patch.object(git_util, "git_remote_default_branch",
+                               return_value="main"), \
+                mock.patch.object(git_util, "git_resolve_first",
+                                  return_value=self.SHA_MAIN) as resolve, \
+                mock.patch.object(git_util, "git_push_refspecs", fake_push), \
+                mock.patch.object(
+                    branch_persist, "publish_branch_record",
+                    side_effect=lambda record, **kw: (
+                        order.append(f"publish {record['branch']}"),
+                        f"fairy/{record['branch']}")[1]):
+            fairy.publish_decision_branches(
+                _send_args(patch_repo=Path("checkout")), _branch_decision())
+        self.assertEqual(resolve.call_args.args, (
+            Path("checkout"),
+            [f"refs/remotes/{r}/main" for r in git_util.FORGE_REMOTES]))
+        return order
+
+    def test_publish_fast_forwards_the_forks_default_branch_first(self) -> None:
+        self.assertEqual(self._publish_with_checkout(), [
+            ("https://forge.example.com/mm/ffmpeg.git",
+             [f"{self.SHA_MAIN}:refs/heads/main"], False),
+            "publish pr7-fix-overflow"])
+
+    def test_a_refused_fast_forward_does_not_block_publication(self) -> None:
+        with self.assertLogs(fairy.logger, "WARNING") as logs:
+            order = self._publish_with_checkout(RuntimeError("non-fast-forward"))
+        self.assertEqual(order[-1], "publish pr7-fix-overflow")
+        self.assertIn("non-fast-forward", logs.output[0])
 
     def test_a_refused_create_of_an_open_pr_passes(self) -> None:
         pr_record = dict(GOOD_RECORD, branch="add-test",

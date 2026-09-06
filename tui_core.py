@@ -291,9 +291,9 @@ def _inline(text: str, base: str = "text") -> list[tuple[str, str]]:
         if not part:
             continue
         if part.startswith("***") and part.endswith("***") and len(part) > 6:
-            segs.append(("bold_italic", part[3:-3]))
+            segs.extend(_inline(part[3:-3], "bold_italic"))
         elif part.startswith("**") and part.endswith("**") and len(part) > 4:
-            segs.append(("bold", part[2:-2]))
+            segs.extend(_inline(part[2:-2], "bold"))
         elif part.startswith("~~") and part.endswith("~~") and len(part) > 4:
             segs.append(("strike", part[2:-2]))
         elif part.startswith("`") and part.endswith("`") and len(part) > 2:
@@ -306,7 +306,7 @@ def _inline(text: str, base: str = "text") -> list[tuple[str, str]]:
         elif part.startswith("http"):
             segs.append(("link", part))
         elif part.startswith("*") and part.endswith("*") and len(part) > 2:
-            segs.append(("italic", part[1:-1]))
+            segs.extend(_inline(part[1:-1], "italic"))
         else:
             segs.append((base, part))
     return segs

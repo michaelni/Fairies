@@ -170,6 +170,13 @@ class RenderMarkdownTests(unittest.TestCase):
         self.assertIn("verbatim   line", fence[0][1])
         self.assertLessEqual(len(fence[0][1]), 30)
 
+    def test_spans_nest_inside_bold(self) -> None:
+        lines = render_markdown("on **[fairy/x](http://u) and `c`** end\n", width=60)
+        self.assertEqual(line_text(lines[0]), "on fairy/x (http://u) and c end")
+        self.assertEqual([seg for seg in lines[0] if seg[1].strip()], [
+            ("text", "on"), ("link", "fairy/x"), ("url", "(http://u)"),
+            ("bold", "and"), ("code", "c"), ("text", "end")])
+
     def test_gfm_extras(self) -> None:
         lines = render_markdown(
             "| Name | Qty |\n"

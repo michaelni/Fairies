@@ -867,6 +867,23 @@ class SendTests(SendCase):
             self.send(pr_ns=self.ns)
         self.assertEqual(submit.call_args.args[2].llm_message, "edited by hand")
 
+    def test_pushed_branches_are_linked_at_send_time(self) -> None:
+        record = {"branch": "pr1-fix", "mode": "ff", "repo": "ffmpeg",
+                  "sha": "a" * 40, "bundle": ""}
+        self.db.push("outgoing", "pr", "1", verdict_ticket(
+            1, msg="pushed fairy/pr1-fix", html_url="https://forge/o/r/pulls/1"))
+        self.db.try_move("outgoing", "outgoing", "pr", "1",
+                         mutate=lambda d: d["review"].update(branches=[record]))
+        ns = fairy.parse_args(["--owner", "o", "--repo", "r", "--branch-push",
+                               "ffmpeg=o/r=https://forge/f/r.git",
+                               "--branch-push-head-owner", "ffmpeg=f"])
+        with mock.patch.object(fairy, "submit_decision_action",
+                               return_value=None) as submit:
+            self.send(pr_ns=ns)
+        linked = "pushed [fairy/pr1-fix](https://forge/f/r/src/branch/fairy/pr1-fix)"
+        self.assertEqual(submit.call_args.args[2].llm_message, linked)
+        self.assertEqual(self.db.get("posted", "pr", "1")["review"]["message"], linked)
+
     def test_label_only_verdict_posts_labels_then_lands_in_posted(self) -> None:
         labels = [{"label": "needs docs", "op": "add", "reason": "", "post": False}]
         self.db.push("outgoing", "pr", "1", verdict_ticket(1, "skip", labels=labels))

@@ -726,6 +726,19 @@ def post_decision(ns: argparse.Namespace, kind: str, decision: fairy.Decision,
     return fairy.apply_triage_labels(ns, decision, decision, skip_guard=skip_guard)
 
 
+def link_ticket_branches(ns: argparse.Namespace, ticket: dict) -> None:
+    """Link the pushed branches in the ticket's review message to their
+    forge pages; a message edited by hand or reviewed before the
+    linking pass gets them at send time."""
+    review = ticket.get("review")
+    if not review:
+        return
+    review["message"] = fairy.link_published_branches(
+        ns, review.get("message", ""),
+        fairy.parse_branch_records(review.get("branches")),
+        str(ticket.get("html_url") or ""))
+
+
 def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
              number: filedb.TicketId, *,
              cache, counts: dict[str, int], dry_run: bool) -> str | None:
@@ -736,6 +749,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
         return None
     try:
         ticket = claim.read()  # last-moment read: operator edits count
+        link_ticket_branches(ns, ticket)
         decision = ticket_decision(kind, number, ticket)
         if not postable(decision):
             claim.finish("reviewed", dict(ticket, send_blocked="nothing to post"))

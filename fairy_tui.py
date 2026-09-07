@@ -825,15 +825,6 @@ def _age(iso: str | None, now: datetime | None = None) -> str:
         else f"{int(seconds // 3600)}h"
 
 
-def _entry_time(entry: dict) -> datetime | None:
-    """A discussion entry's arrival time: forges bump the item's
-    updated_at watermark on arrivals, never on edits (see gcli_cache),
-    so an entry compares by creation, not by when it was last edited.
-    Must match build_llm_discussion's sort key -- the sampled-separator
-    index is a count over this key, valid only in that list order."""
-    return fairy.first_dt(entry, "submitted_at", "created_at", "updated_at")
-
-
 def _when(iso: str | None) -> str:
     """``2026-07-29 06:15 (3h ago)`` in local time; '' without a stamp."""
     if not iso:
@@ -1447,7 +1438,7 @@ class UILoop:
 
         def entries_before(when: datetime) -> int:
             return sum(1 for entry in disc if not isinstance(entry, dict)
-                       or (_entry_time(entry) or when) <= when)
+                       or fairy.discussion_time(entry) <= when)
 
         separator_at = None
         if snapshot is not None:

@@ -136,6 +136,7 @@ __all__ = [
     "compile_wip_regex",
     "decision_from_review",
     "decision_has_label_changes",
+    "discussion_time",
     "effective_review_states",
     "first_dt",
     "flatten_label_args",
@@ -2084,12 +2085,17 @@ def build_llm_discussion(
             }
         )
 
-    items.sort(
-        key=lambda item: first_dt(item, "submitted_at", "created_at",
-                                  "updated_at")
-        or datetime.min.replace(tzinfo=timezone.utc)
-    )
+    items.sort(key=discussion_time)
     return items
+
+
+def discussion_time(item: DiscussionItem) -> datetime:
+    """A discussion entry's arrival time: forges bump the item's
+    updated_at watermark on arrivals, never on edits (see gcli_cache),
+    so an entry compares by creation, not by when it was last edited.
+    The epoch for an entry without a stamp."""
+    return first_dt(item, "submitted_at", "created_at", "updated_at") \
+        or datetime.min.replace(tzinfo=timezone.utc)
 
 
 def get_last_self_nonapproval_activity(

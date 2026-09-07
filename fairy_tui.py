@@ -2302,6 +2302,11 @@ class UILoop:
             return
         self.model.dirty.set()
 
+    def _cursor_item(self) -> Item | None:
+        with self.model.lock:
+            key = self.model._cursor_key()
+            return self.model.items.get(key) if key else None
+
     def edit_review(self) -> None:
         """o: open $EDITOR on the cursor item's persisted review message.
 
@@ -2309,9 +2314,7 @@ class UILoop:
         stays editable by hand outside the TUI); the result is written
         back in place under the item's lock -- refused (with a log line)
         when a worker holds the item or it moved on meanwhile."""
-        with self.model.lock:
-            key = self.model._cursor_key()
-            item = self.model.items.get(key) if key else None
+        item = self._cursor_item()
         if item is None:
             return
         message = (item.data.get("review") or {}).get("message")
@@ -2341,9 +2344,7 @@ class UILoop:
         """i: append a note written in $EDITOR to the cursor item's
         notes/ ticket -- a discussion entry only the LLM sees, in every
         later evaluation of the item."""
-        with self.model.lock:
-            key = self.model._cursor_key()
-            item = self.model.items.get(key) if key else None
+        item = self._cursor_item()
         if item is None:
             return
         body = self._edit_text("", f"fairy-note-{item.kind}-{item.number}-")
@@ -2431,9 +2432,7 @@ class UILoop:
         the markdown source, not the rendered pane -- ready to paste
         into a mail or forge comment; without a review the plain pane
         text (error and reason lines) is copied instead."""
-        with self.model.lock:
-            key = self.model._cursor_key()
-            item = self.model.items.get(key) if key else None
+        item = self._cursor_item()
         if item is None:
             return
         text = ((item.data.get("review") or {}).get("message")

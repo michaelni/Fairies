@@ -54,7 +54,8 @@ last row).
   published branch it would overwrite) — `y` publishes them along
   with the review. The
   thread is kept current
-  by the agent's scan; a `── sampled for the review … ──` line marks
+  by the agent's scan, with your `i` notes in it at their time; a
+  `── sampled for the review … ──` line marks
   how far the review saw. `m` switches a PR to its patches or its
   merge diff, syntax- and diff-colored from the side's local
   `patch-repo` mirror.
@@ -141,6 +142,7 @@ ticket is adopted.
 | `R` | one more evaluation: takes the next FREE sample slot, never touching the base verdict or earlier samples. Each press adds one; capped at `s9`. |
 | `x` | drop: ticket → `cancelled/`; sticks until new PR activity. On an `llm/` row it cancels the running review: the wrapper stops at the next shell call and the container is torn down. |
 | `o` | edit the review message in `$EDITOR` (markdown round-trip; refused while a worker holds the ticket). |
+| `i` | add an internal note: `$EDITOR` opens empty; what you write joins the item's discussion for the LLM only, in every later evaluation of the item, never posted. It shows in the thread at its time; `r` asks for the evaluation that sees it. Notes live in the filedb's `notes/`, one file per item; edit that file to remove one. |
 | `m` | cycle the message pane: message → the PR's patches (a `git format-patch` per commit; a merge commit, which format-patch drops, appears as `git log` prints it) → its accumulated merge diff, read from the side's `patch-repo` mirror at the base/head SHAs of the item's snapshot (blank until a scan pass, like the status letters). Long lines are clipped, not wrapped. |
 | `d` | cycle the logs pane the same way: logs → patches → merge diff of the cursor PR. |
 | `b` | toggle the message pane's branch previews between the commits a persisted branch would publish and, for a force push, the range-diff against the published tip. |
@@ -178,5 +180,6 @@ ticket is adopted.
 
 Post, review, or fetch. `y`/`Y` only stage a ticket for the agent's
 send pass, which re-validates before posting; `r`/`R` only write a
-request file the agent answers with a fresh ticket. If the TUI dies
+request file the agent answers with a fresh ticket; `i` only appends
+to a notes file the worker reads. If the TUI dies
 mid-anything, the files are exactly where they were.

@@ -477,9 +477,10 @@ class Model:
         self.dirty.set()
 
     def poll_snapshot(self) -> None:
-        """Refresh the items/ snapshot behind the cursor row when the
-        row or its file changed; quiet otherwise, so calling this every
-        UI tick costs a stat and never a repaint loop."""
+        """Refresh the items/ snapshot behind the cursor row, with the
+        operator's notes merged into its thread, when the row or either
+        file changed; quiet otherwise, so calling this every UI tick
+        costs two stats and never a repaint loop."""
         with self.lock:
             cursor = self._cursor_key() or self.cursor_key
             slot = None
@@ -487,16 +488,23 @@ class Model:
                 repo, kind, number = cursor
                 base = str(filedb.forge_number(number))
                 db = self.db_for(repo)
+                notes = db.path(filedb.NOTE_STATE, kind, base)
                 try:
-                    mtime = db.path(filedb.ITEM_STATE, kind,
-                                    base).stat().st_mtime
-                    slot = (repo, kind, filedb.forge_number(number), mtime)
+                    slot = (repo, kind, filedb.forge_number(number),
+                            db.path(filedb.ITEM_STATE, kind,
+                                    base).stat().st_mtime,
+                            notes.stat().st_mtime if notes.exists() else 0.0)
                 except OSError:
                     pass
             if slot == self._snapshot_slot:
                 return
             self.snapshot = db.get(filedb.ITEM_STATE, kind, base) \
                 if slot else None
+            if self.snapshot is not None:
+                self.snapshot["discussion"] = fairy.with_operator_notes(
+                    [entry for entry in self.snapshot.get("discussion") or []
+                     if isinstance(entry, dict)],
+                    db.get(filedb.NOTE_STATE, kind, base))
             self._snapshot_slot = slot
         self.dirty.set()
 
@@ -943,7 +951,8 @@ ACTION_KEYS = {"y": "apply", "Y": "apply-force", "s": "skip", "S": "snooze",
                "r": "rerun", "R": "sample", "x": "cancel"}
 KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("S", "snooze"), ("r", "rerun"), ("R", "+eval"),
-          ("x", "drop"), ("o", "edit msg"), ("p", "pause"), ("a", "filter"),
+          ("x", "drop"), ("o", "edit msg"), ("i", "note"), ("p", "pause"),
+          ("a", "filter"),
           ("t", "sort"), ("m", "diff"), ("d", "logs diff"),
           ("b", "branch diff"),
           ("[/] {/}", "patch/hunk"), ("/", "search"), ("e/E", "export"),
@@ -2269,6 +2278,8 @@ class UILoop:
             self._search_jump()
         elif ks == "o":
             self.edit_review()
+        elif ks == "i":
+            self.add_note()
         elif ks == "m":
             self.detail_mode = _next_mode(DETAIL_MODES, self.detail_mode)
             self.scroll["br"] = 0
@@ -2325,6 +2336,29 @@ class UILoop:
         else:
             logger.warning("%s#%s is busy or gone; review unchanged",
                            item.repo, item.number)
+
+    def add_note(self) -> None:
+        """i: append a note written in $EDITOR to the cursor item's
+        notes/ ticket -- a discussion entry only the LLM sees, in every
+        later evaluation of the item."""
+        with self.model.lock:
+            key = self.model._cursor_key()
+            item = self.model.items.get(key) if key else None
+        if item is None:
+            return
+        body = self._edit_text("", f"fairy-note-{item.kind}-{item.number}-")
+        if body is None or not body.strip():
+            logger.info("%s#%s: empty note dropped", item.repo, item.number)
+            return
+        note = {"kind": "operator_note", "author": "operator",
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "body": body.strip()}
+        notes = self.model.db(item).update(
+            filedb.NOTE_STATE, item.kind, str(filedb.forge_number(item.number)),
+            lambda d: d.setdefault("discussion", []).append(note))
+        logger.info("%s#%s note %d added (%d chars); r asks for the "
+                    "evaluation that sees it", item.repo, item.number,
+                    len(notes["discussion"]), len(note["body"]))
 
     def _edit_text(self, text: str, prefix: str) -> str | None:
         """``text`` as $EDITOR left it in a temp ``.md`` file; None when

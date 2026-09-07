@@ -1927,6 +1927,43 @@ class EditReviewTests(DbCase):
         self.assertEqual(self.db.get("reviewed", "pr", "5")["review"]["message"],
                          "original")
 
+    def test_i_key_appends_a_note_the_thread_shows_at_its_time(self) -> None:
+        self.db.push("reviewed", "pr", "5s1", verdict(5))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "discussion": [
+                {"kind": "comment", "author": "dave",
+                 "created_at": "2026-07-20T09:00:00Z", "body": "fresh word"}]})
+        self.model.poll()
+
+        def fake_call(cmd, **kw):
+            Path(cmd[-1]).write_text("check #1234 first\n", encoding="utf-8")
+            return 0
+
+        ui = make_ui(self.model)
+        with mock.patch.dict(os.environ, {"EDITOR": "e"}), \
+                mock.patch.object(fairy_tui.subprocess, "call",
+                                  side_effect=fake_call):
+            ui.dispatch(Key("i"))
+            ui.dispatch(Key("i"))
+        notes = self.db.get(filedb.NOTE_STATE, "pr", "5")["discussion"]
+        self.assertEqual([n["body"] for n in notes], ["check #1234 first"] * 2)
+        self.assertEqual(notes[0]["kind"], "operator_note")
+        self.model.poll_snapshot()
+        with self.model.lock:
+            text = fairy_tui._plain(ui.detail_lines(100))
+        self.assertIn("discussion (3)", text)
+        self.assertLess(text.index("fresh word"), text.index("check #1234"))
+
+    def test_an_empty_note_is_dropped(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.model.poll()
+        ui = make_ui(self.model)
+        with mock.patch.dict(os.environ, {"EDITOR": "e"}), \
+                mock.patch.object(fairy_tui.subprocess, "call",
+                                  side_effect=lambda cmd, **kw: 0):
+            ui.add_note()
+        self.assertIsNone(self.db.get(filedb.NOTE_STATE, "pr", "5"))
+
     def test_an_editor_that_cannot_start_leaves_the_tui_running(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, msg="original"))
         self.model.poll()

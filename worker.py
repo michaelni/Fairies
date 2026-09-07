@@ -53,6 +53,7 @@ import argparse
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from threading import Event
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,6 +122,13 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
         prepared = fairy.prepared_pr_from_dict(ticket["prepared"])
     else:
         prepared = issue_fairy.prepared_issue_from_dict(ticket["prepared"])
+    notes = claim.db.get(filedb.NOTE_STATE, claim.kind,
+                         str(filedb.forge_number(claim.number)))
+    if notes:
+        logger.info("%s #%s: the operator's notes join the discussion",
+                    claim.kind, claim.number)
+    prepared = replace(prepared,
+                       discussion=fairy.with_operator_notes(prepared.discussion, notes))
     ns.workset_file_override = str(claim.path)
     try:
         if claim.kind == "pr":

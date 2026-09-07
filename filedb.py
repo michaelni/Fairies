@@ -177,7 +177,7 @@ class Claim:
 
     def __init__(self, db: "Db", fd: int, kind: str, number: TicketId,
                  src_state: str, path: Path) -> None:
-        self._db = db
+        self.db = db
         self._fd = fd
         self.kind = kind
         self.number = number
@@ -191,11 +191,11 @@ class Claim:
 
     def write(self, data: dict) -> None:
         """Update the claimed file in place (atomic replace, same dir)."""
-        self._db._write(self.path, data)
+        self.db._write(self.path, data)
 
     def finish(self, dst_state: str, data: dict) -> Path:
         """Write ``data`` into ``dst_state`` and drop the claimed file."""
-        dst = self._db._write_state(dst_state, self.kind, self.number, data)
+        dst = self.db._write_state(dst_state, self.kind, self.number, data)
         if dst != self.path:  # a same-state finish is an in-place update
             self.path.unlink(missing_ok=True)
         self._release()
@@ -204,7 +204,7 @@ class Claim:
     def abort(self) -> None:
         """Return the ticket to its source state (clean shutdown); an
         in-place claim just releases -- no rename, no watcher event."""
-        target = self._db.path(self.src_state, self.kind, self.number)
+        target = self.db.path(self.src_state, self.kind, self.number)
         if target != self.path:
             os.replace(self.path, target)
         self._release()

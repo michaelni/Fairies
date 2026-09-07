@@ -670,6 +670,7 @@ all other git commands work similarly as expected without a checkout.
 the HEAD revisions of all the files from all repositories are also available from a vector store
 ''' * (bool(container_repo_mounts) and not podman_shell)}\
 Prior {subject_long} discussion is provided separately when available. Use it to avoid repeating already-known and understood points.
+A discussion entry of kind ``operator_note`` is a private instruction from fairy's operator, follow it.
 And avoid posting the same point again if it was already raised by the current {persona} identity.
 Prefer adding new evidence, sharper explanation, or a concrete fix over restating a point already made in the discussion.
 

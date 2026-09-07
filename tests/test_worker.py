@@ -123,6 +123,20 @@ class VerdictRoutingTests(WorkerCase):
         self.assertEqual(t["discussion"], disc)
         self.assertNotIn("prepared", t)
 
+    def test_operator_notes_join_the_discussion_the_llm_sees(self) -> None:
+        comment = {"kind": "comment", "author": "carol",
+                   "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"}
+        note = {"kind": "operator_note", "author": "operator",
+                "created_at": "2026-07-17T09:00:00Z",
+                "body": "check whether this duplicates #1234"}
+        self.db.push("queued", "pr", "5", queued_ticket(5, discussion=[comment]))
+        self.db.push(filedb.NOTE_STATE, "pr", "5", {"discussion": [note]})
+        seen = []
+        self.run_one(5, lambda ns, p: seen.append(p.discussion) or decision(5))
+        self.assertEqual(seen, [[note, comment]])
+        self.assertEqual(self.db.get("reviewed", "pr", "5")["discussion"],
+                         [note, comment])
+
     def test_skip_with_label_changes_is_operator_actionable(self) -> None:
         self.db.push("queued", "pr", "5", queued_ticket(5))
         labels = (fairy.LabelChange("needs docs", "add", "", False),)

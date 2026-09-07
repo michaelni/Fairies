@@ -172,6 +172,7 @@ __all__ = [
     "submit_decision_action",
     "validate_sides",
     "validate_worker_sides",
+    "with_operator_notes",
 ]
 
 
@@ -2096,6 +2097,14 @@ def discussion_time(item: DiscussionItem) -> datetime:
     The epoch for an entry without a stamp."""
     return first_dt(item, "submitted_at", "created_at", "updated_at") \
         or datetime.min.replace(tzinfo=timezone.utc)
+
+
+def with_operator_notes(discussion: list[DiscussionItem],
+                        notes: dict | None) -> list[DiscussionItem]:
+    """``discussion`` with the entries of the item's notes/ ticket
+    merged in at their place in time."""
+    return sorted(discussion + ((notes or {}).get("discussion") or []),
+                  key=discussion_time)
 
 
 def get_last_self_nonapproval_activity(

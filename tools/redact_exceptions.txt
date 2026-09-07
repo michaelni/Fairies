@@ -66,6 +66,7 @@ ffmpeg-devel
 Forgejo_Fairy
 forgejo-fairy[bot]
 fairy
+operator
 fairy@forgejo.invalid
 michaelni
 michaelni/FFmpeg

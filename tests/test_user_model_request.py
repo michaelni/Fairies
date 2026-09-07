@@ -184,16 +184,23 @@ class ValidateTriageResultPassthroughTests(unittest.TestCase):
 class TriagePromptShapeTests(unittest.TestCase):
     """Pin the prompt-section behavior across allowlist states."""
 
+    def _prompt(self, allowed_models: list[str]) -> str:
+        return llm_prompt.generate_llm_prompt(
+            role="triager", vendor="openai", model="gpt-5.4-mini", features=set(),
+            repo_roots=[], container_repo_mounts=[], reviewer_username="fairy",
+            allowed_models=allowed_models,
+        )
+
     def test_no_allowlist_offers_verbosity_only(self) -> None:
         # Model/effort feature off -> no prompt text for those fields;
         # the always-on verbosity request stays.
-        text = llm_prompt.t_prompt_user_request([])
+        text = self._prompt([])
         self.assertNotIn("requested_models", text)
         self.assertNotIn("requested_effort", text)
         self.assertIn("requested_verbosity", text)
 
     def test_allowlist_lists_supported_models_and_efforts(self) -> None:
-        text = llm_prompt.t_prompt_user_request(["gpt-5.4", "zai:glm-5.3"])
+        text = self._prompt(["gpt-5.4", "zai:glm-5.3"])
         self.assertIn("gpt-5.4", text)
         self.assertIn("zai:glm-5.3", text)
         self.assertIn("up to two", text)
@@ -202,33 +209,13 @@ class TriagePromptShapeTests(unittest.TestCase):
         self.assertIn("requested_verbosity", text)
 
     def test_make_triage_developer_prompt_includes_user_request_section(self) -> None:
-        prompt = llm_prompt.make_triage_developer_prompt(
-            reviewer_username="fairy",
-            repo_roots=[],
-            vector_store_search_enabled=False,
-            web_search_enabled=False,
-            code_interpreter_enabled=False,
-            podman_shell_enabled=False,
-            container_repo_mounts=[],
-            ctx=llm_prompt.PromptFor("triager", "gpt-5.4-mini"),
-            allowed_models=["gpt-5.5"],
-        )
-        self.assertIn("gpt-5.5", prompt)
+        self.assertIn("gpt-5.5", self._prompt(["gpt-5.5"]))
 
     def test_make_triage_developer_prompt_off_has_no_override_text(self) -> None:
         # When the model/effort feature is off the developer prompt must
         # contain no mention of those override fields so the LLM does
         # not see any conflicting instruction.
-        prompt = llm_prompt.make_triage_developer_prompt(
-            reviewer_username="fairy",
-            repo_roots=[],
-            vector_store_search_enabled=False,
-            web_search_enabled=False,
-            code_interpreter_enabled=False,
-            podman_shell_enabled=False,
-            container_repo_mounts=[],
-            ctx=llm_prompt.PromptFor("triager", "gpt-5.4-mini"),
-        )
+        prompt = self._prompt([])
         self.assertNotIn("requested_model", prompt)
         self.assertNotIn("requested_effort", prompt)
 
@@ -239,12 +226,10 @@ class PodmanContainerLocationsPromptTests(unittest.TestCase):
     container's bare-repo /mnt/data git-dir paths)."""
 
     def test_podman_prompt_points_at_work_tree_locations(self) -> None:
-        prompt = llm_prompt.make_developer_prompt(
-            source_bundle_attached=False, reviewer_username="fairy", repo_roots=[],
-            vector_store_search_enabled=False, web_search_enabled=False,
-            code_interpreter_enabled=False, podman_shell_enabled=True,
+        prompt = llm_prompt.generate_llm_prompt(
+            role="review", vendor="openai", model="gpt-5.4",
+            features={"podman_shell"}, repo_roots=[], reviewer_username="fairy",
             container_repo_mounts=["/work/ffmpeg", "/work/all_ffmpeg"],
-            ctx=llm_prompt.PromptFor("review", "gpt-5.4"),
             machines=[podman_host.ShellHostSpec(
                 "x86_64", podman_host.RemoteHost("fairy@h"))],
         )

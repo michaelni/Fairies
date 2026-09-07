@@ -49,7 +49,6 @@ import forge_gcli  # noqa: E402
 import llm_review_api  # noqa: E402
 import pr_review_wrapper as wrapper  # noqa: E402
 import llm_prompt  # noqa: E402
-from llm_prompt import prompt_triage_labels  # noqa: E402
 import fairy as paa  # noqa: E402
 
 
@@ -250,11 +249,18 @@ class EmitReviewStdoutTests(unittest.TestCase):
 
 
 class TriageLabelPromptTests(unittest.TestCase):
+    def _prompt(self, allowed_labels: list[str]) -> str:
+        return llm_prompt.generate_llm_prompt(
+            role="triager", vendor="openai", model="gpt-5.4-mini", features=set(),
+            repo_roots=[], container_repo_mounts=[], reviewer_username="fairy",
+            allowed_labels=allowed_labels,
+        )
+
     def test_no_allowlist_emits_empty_section(self) -> None:
-        self.assertEqual(prompt_triage_labels([]), "")
+        self.assertNotIn("## Labels", self._prompt([]))
 
     def test_allowlist_lists_labels(self) -> None:
-        text = prompt_triage_labels(["needs-review", "stale"])
+        text = self._prompt(["needs-review", "stale"])
         self.assertIn("needs-review", text)
         self.assertIn("stale", text)
         self.assertIn("label_changes", text)
@@ -263,7 +269,7 @@ class TriageLabelPromptTests(unittest.TestCase):
     def test_definitions_filtered_to_allowlist(self) -> None:
         # Regression (#23293): the model was shown the "needs testing"
         # definition even though only "needs docs" was allowed.
-        text = prompt_triage_labels(["fix/bug", "needs docs"])
+        text = self._prompt(["fix/bug", "needs docs"])
         self.assertIn("Label: needs docs,", text)
         self.assertNotIn("Label: needs testing,", text)
         self.assertNotIn("Label: needs sample,", text)

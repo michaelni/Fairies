@@ -1135,8 +1135,10 @@ class RoleWithBranchesTests(unittest.TestCase):
                 self.assertIn("Assisted-by: Fairy", enabled)
 
     def test_combiner_prompt_says_only_declared_branches_survive(self) -> None:
-        prompt = llm_prompt.prompt_persist_branches(
-            llm_prompt.PromptFor("combiner", "m"))
+        prompt = llm_prompt.generate_llm_prompt(
+            role="combiner", vendor="anthropic", model="m", features=set(),
+            repo_roots=[], container_repo_mounts=["/work/ffmpeg"],
+            reviewer_username="fairy", persist_branches=True)
         self.assertIn("on your fairy remotes", prompt)
         self.assertIn("only your own declarations count", prompt)
         self.assertIn("Re-declare", prompt)

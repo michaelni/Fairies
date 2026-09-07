@@ -2308,16 +2308,35 @@ class UILoop:
             logger.info("%s %s#%s has no review message to edit",
                         _KIND_DISP[item.kind], item.repo, item.number)
             return
+        edited = self._edit_text(message, f"fairy-{item.kind}-{item.number}-")
+        if edited is None or edited == message:
+            logger.info("%s#%s review unchanged", item.repo, item.number)
+            return
+
+        def record(d: dict) -> None:
+            d.setdefault("review", {})["message"] = edited
+
+        db = self.model.db(item)
+        state = db.find(item.kind, item.number)  # it may have moved on
+        if state and db.try_move(state, state, item.kind, item.number,
+                                 mutate=record):
+            logger.info("%s#%s review message updated (%d -> %d chars)",
+                        item.repo, item.number, len(message), len(edited))
+        else:
+            logger.warning("%s#%s is busy or gone; review unchanged",
+                           item.repo, item.number)
+
+    def _edit_text(self, text: str, prefix: str) -> str | None:
+        """``text`` as $EDITOR left it in a temp ``.md`` file; None when
+        the editor could not start or exited non-zero."""
         editor = os.environ.get("EDITOR") or os.environ.get("VISUAL") or "vi"
-        fd, tmp_name = tempfile.mkstemp(
-            suffix=".md", prefix=f"fairy-{item.kind}-{item.number}-")
+        fd, tmp_name = tempfile.mkstemp(suffix=".md", prefix=prefix)
         tmp = Path(tmp_name)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(message)
+                f.write(text)
             cmd = [*shlex.split(editor), str(tmp)]
-            logger.info("editing %s#%s via: %s", item.repo, item.number,
-                        shlex.join(cmd))
+            logger.info("editing via: %s", shlex.join(cmd))
             try:
                 with self._tty_lent():
                     rc = subprocess.call(
@@ -2325,27 +2344,11 @@ class UILoop:
                         stderr=sys.__stderr__)
             except OSError as e:
                 logger.warning("editor failed to start: %s", e)
-                return
+                return None
             if rc != 0:
-                logger.warning("editor exited rc=%d; review unchanged", rc)
-                return
-            edited = tmp.read_text(encoding="utf-8")
-            if edited == message:
-                logger.info("%s#%s review unchanged", item.repo, item.number)
-                return
-
-            def record(d: dict) -> None:
-                d.setdefault("review", {})["message"] = edited
-
-            db = self.model.db(item)
-            state = db.find(item.kind, item.number)  # it may have moved on
-            if state and db.try_move(state, state, item.kind, item.number,
-                                     mutate=record):
-                logger.info("%s#%s review message updated (%d -> %d chars)",
-                            item.repo, item.number, len(message), len(edited))
-            else:
-                logger.warning("%s#%s is busy or gone; review unchanged",
-                               item.repo, item.number)
+                logger.warning("editor exited rc=%d; its text is dropped", rc)
+                return None
+            return tmp.read_text(encoding="utf-8")
         finally:
             tmp.unlink(missing_ok=True)
 

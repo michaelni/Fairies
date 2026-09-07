@@ -402,7 +402,7 @@ def cr_prompt_review_classifications(ctx: PromptFor) -> str:
         return """Report your findings after you have finished reviewing all commit(s) and read all comments:
 - put every verified issue and material conditional concern into the message; a separate verifying pass grades them and decides on the approval or blockage of the pull request from what you report.
 - do not classify or rank the issues by severity and do not state whether the pull request should be approved, blocked or merged.
-- leave the message empty if you have nothing to report.
+- do not leave the message empty.
 
 """
     return f"""Classify the pull request into exactly one of these JSON classes after you have finished {"verifying the drafts against" if ctx.combiner else "reviewing"} all commit(s) and read all comments:
@@ -451,7 +451,7 @@ If you review a commit touching profiles and pixel formats in APV, inspect the R
 
 def cr_prompt_message_rules(ctx: PromptFor) -> str:
     return f"""Message Rules:
-- message may be empty only {"when you have nothing to report" if not ctx.classifies else "for approve and skip"}.
+- message {"must not be empty" if not ctx.classifies else "may be empty only for approve and skip"}.
 - the message is in Markdown and will be posted to Forgejo
 
 """

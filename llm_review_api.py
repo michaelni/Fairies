@@ -212,7 +212,7 @@ UNGRADED_REVIEW_SCHEMA = {
                 "type": "string",
                 "description": (
                     "detailed Markdown comment body to post to Forgejo. "
-                    "May be empty when there is nothing to report. "
+                    "May not be empty. "
                     "Do not include HTML or markdown fences."
                 ),
             },

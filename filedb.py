@@ -73,6 +73,10 @@ an ordinary state to the API, but outside the pipeline: no
 find()/reap() precedence and no pruning. A snapshot stops updating
 when its item leaves the open listing; nothing deletes one.
 
+notes/ holds the operator's notes on a forge item: discussion entries
+the forge never sees, handed to the LLM with every evaluation of the
+item. Outside the pipeline like items/, written by the operator alone.
+
 Which operation:
 
     claim/finish  work that spans a whole review
@@ -83,8 +87,11 @@ Which operation:
                   can still be sent one
     push          a plain write, the only one that blocks -- for the
                   length of the write, never a review
+    update        a read-modify-write outside the pipeline (items/,
+                  notes/), blocking like push: a review holding the
+                  item is no reason to refuse a note
 
-What belongs here: the per-repo directory layout, atomic push/get/
+What belongs here: the per-repo directory layout, atomic push/get/update/
 replace/try_move/try_pop, the worker claim protocol (lock -> rename ->
 work -> finish), reaping dead workers' claims, and retention pruning.
 
@@ -106,8 +113,10 @@ import tempfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
-__all__ = ["Db", "Claim", "STATES", "KINDS", "ITEM_STATE", "TicketId",
+__all__ = ["Db", "Claim", "STATES", "KINDS", "ITEM_STATE", "NOTE_STATE",
+           "TicketId",
            "forge_number", "is_base", "logger"]
 
 logger = logging.getLogger(__name__)
@@ -119,6 +128,7 @@ STATES = ("requests", "queued", "llm", "reviewed", "outgoing",
           "posted", "skipped", "cancelled", "error")
 KINDS = ("pr", "issue")
 ITEM_STATE = "items"
+NOTE_STATE = "notes"
 _TMP = "tmp"
 _LOCKS = "locks"
 # Ticket identity: the forge number, optionally refined by a sample
@@ -210,14 +220,14 @@ class Db:
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
-        for d in (*STATES, ITEM_STATE, _TMP, _LOCKS):
+        for d in (*STATES, ITEM_STATE, NOTE_STATE, _TMP, _LOCKS):
             (self.root / d).mkdir(parents=True, exist_ok=True)
 
     def path(self, state: str, kind: str, number: TicketId) -> Path:
         """Where the item's ticket lives while in ``state``; the file
         need not exist. ValueError for an unknown state, kind or
         token."""
-        if state not in STATES and state != ITEM_STATE:
+        if state not in (*STATES, ITEM_STATE, NOTE_STATE):
             raise ValueError(f"unknown state {state!r}")
         return self.root / state / _name(kind, number)
 
@@ -305,6 +315,17 @@ class Db:
         so the ticket keeps its state_changed_at and its mtime."""
         with self.lock(kind, number):
             return self._write_state(state, kind, number, data)
+
+    def update(self, state: str, kind: str, number: TicketId,
+               mutate: Callable[[dict], None]) -> dict:
+        """Read-modify-write the item's ticket in ``state`` under the
+        transition lock and return it; ``mutate`` gets {} when there is
+        none yet. Waits like push: for another write, never a review."""
+        with self.lock(kind, number):
+            data = self._load(self.path(state, kind, number)) or {}
+            mutate(data)
+            self._write_state(state, kind, number, data)
+            return data
 
     def get(self, state: str, kind: str, number: TicketId) -> dict | None:
         """The item's ticket in ``state``; None when it is not there or

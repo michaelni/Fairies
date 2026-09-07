@@ -415,3 +415,19 @@ class PruneTests(DbCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoteTests(DbCase):
+    def test_update_appends_while_a_worker_holds_the_item(self) -> None:
+        self.db.push("queued", "pr", "5", {"title": "t"})
+        claim = self.db.claim("queued", "llm", "pr", "5")
+        try:
+            for body in ("check #1234", "then open a PR"):
+                self.db.update(filedb.NOTE_STATE, "pr", "5",
+                               lambda d: d.setdefault("discussion", [])
+                               .append({"body": body}))
+        finally:
+            claim.abort()
+        self.assertEqual(self.db.get(filedb.NOTE_STATE, "pr", "5")["discussion"],
+                         [{"body": "check #1234"}, {"body": "then open a PR"}])
+        self.assertEqual(self.db.find("pr", "5"), "queued")

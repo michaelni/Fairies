@@ -55,6 +55,11 @@ class UngradedSchemaTests(unittest.TestCase):
             {"message": "m", "head_vs_branch_diff_evidence": False})
         self.assertEqual(llm_review_api.UNGRADED, result["classification"])
 
+    def test_an_empty_message_is_rejected(self) -> None:
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_review_api.validate_ungraded_review(
+                {"message": " ", "head_vs_branch_diff_evidence": False})
+
     def test_an_emitted_classification_is_rejected(self) -> None:
         with self.assertRaises(llm_review_api.SchemaError):
             llm_review_api.validate_ungraded_review(

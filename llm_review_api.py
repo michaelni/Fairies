@@ -408,6 +408,8 @@ def validate_ungraded_review(obj: object) -> dict[str, object]:
     and return its fields; ``classification`` is filled with ``UNGRADED``."""
     check_schema(obj, UNGRADED_REVIEW_SCHEMA["schema"])
     assert isinstance(obj, dict)  # narrowed by check_schema
+    if not obj["message"].strip():
+        raise SchemaError("$.message: empty")
     return {
         "classification": UNGRADED,
         "message": obj["message"],

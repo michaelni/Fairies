@@ -186,7 +186,7 @@ REVIEW_SCHEMA = {
                 "description": (
                     "detailed Markdown comment body to post to Forgejo. "
                     "May be empty for approve. "
-                    "Do not include HTML or markdown fences."
+                    "Do not include HTML (except comments) or markdown fences."
                 ),
             },
             "head_vs_branch_diff_evidence": {
@@ -213,7 +213,7 @@ UNGRADED_REVIEW_SCHEMA = {
                 "description": (
                     "detailed Markdown comment body to post to Forgejo. "
                     "May not be empty. "
-                    "Do not include HTML or markdown fences."
+                    "Do not include HTML (except comments) or markdown fences."
                 ),
             },
             "head_vs_branch_diff_evidence":

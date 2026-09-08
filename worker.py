@@ -100,6 +100,7 @@ def verdict_fields(decision: fairy.Decision, prepared) -> dict:
             "branches": list(decision.branches),
         },
         "discussion": prepared.discussion,
+        "reviewer": prepared.reviewer_username,
         "action": decision.action,
         "reason": decision.reason,
         "auto_merge": decision.auto_merge,

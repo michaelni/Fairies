@@ -724,6 +724,14 @@ class TicketDecisionTests(AgentCase):
         plain = agent.ticket_decision("pr", "2", verdict_ticket(2, "approve"))
         self.assertNotIn("MERGES", fairy.manual_action_description(plain))
 
+    def test_own_pr_is_commented_not_approved(self) -> None:
+        own = agent.ticket_decision("pr", "1", verdict_ticket(
+            1, "minor_issues_approve", author="fairy", reviewer="fairy"))
+        self.assertEqual(own.action, "comment")
+        other = agent.ticket_decision("pr", "2", verdict_ticket(
+            2, "minor_issues_approve", author="a", reviewer="fairy"))
+        self.assertEqual(other.action, "approve")
+
     def test_hand_edited_label_junk_cannot_raise(self) -> None:
         d = agent.ticket_decision("pr", "1", {
             "title": "t", "review": {

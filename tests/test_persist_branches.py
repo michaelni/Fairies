@@ -1310,7 +1310,7 @@ class TicketRoundTripTests(unittest.TestCase):
             branches=(GOOD_RECORD, DELETE_RECORD))
         prepared = SimpleNamespace(
             pr={"updated_at": "2026-08-25T00:00:00Z", "head": {"ref": "b"}},
-            discussion=[])
+            discussion=[], reviewer_username="fairy")
         fields = worker.verdict_fields(decision, prepared)
         self.assertEqual(fields["review"]["branches"],
                          [GOOD_RECORD, DELETE_RECORD])

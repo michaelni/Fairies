@@ -2483,6 +2483,7 @@ def apply_llm_review(
         auto_merge=auto_merge,
         last_activity=last_activity,
         base_reason=base_reason,
+        reviewer_username=reviewer_username,
     )
 
 
@@ -2502,13 +2503,16 @@ def decision_from_review(
     auto_merge: str,
     last_activity: datetime | None,
     base_reason: str,
+    reviewer_username: str | None = None,
 ) -> Decision:
     reason = base_reason
     verdict_kwargs = {"label_changes": review.label_changes,
                       "branches": review.branches}
+    # the forge refuses a review approving its author's own PR
+    approve = "comment" if author == reviewer_username else "approve"
     if review.classification == "approve":
         return Decision(
-            number, title, author, auto_merge, "approve", reason, last_activity,
+            number, title, author, auto_merge, approve, reason, last_activity,
             review.classification, review.message, **verdict_kwargs,
         )
     if review.classification == "minor_issues_approve":
@@ -2517,7 +2521,7 @@ def decision_from_review(
             title,
             author,
             auto_merge,
-            "approve",
+            approve,
             f"{reason}; LLM: minor issues",
             last_activity,
             review.classification,

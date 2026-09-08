@@ -2102,6 +2102,21 @@ class FsWatchTests(DbCase):
         (Path(tmp.name) / "pr-1.json").write_text("{}", encoding="utf-8")
         self.assertTrue(fired.wait(2.0), "no event within 2s")
 
+    def test_reading_a_watched_file_is_no_event(self) -> None:
+        import common
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        ticket = Path(tmp.name) / "pr-1.json"
+        ticket.write_text("{}", encoding="utf-8")
+        fired = Event()
+        observer = common.watch_paths([Path(tmp.name)], fired.set)
+        if observer is None:
+            self.skipTest("watchdog not installed")
+        self.addCleanup(observer.stop)
+        list(Path(tmp.name).iterdir())
+        ticket.read_text(encoding="utf-8")
+        self.assertFalse(fired.wait(1.0))
+
     def test_a_state_directory_is_seen_through_its_root(self) -> None:
         """Watching each state directory cost one inotify instance per
         state per side -- 85 for seven sides, against the 128 a user

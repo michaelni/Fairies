@@ -690,7 +690,9 @@ def watch_paths(paths: list[Path], callback,
 
     class _Handler(FileSystemEventHandler):
         def on_any_event(self, event) -> None:
-            callback()
+            # a watcher that reads what it watches must not wake itself
+            if event.event_type not in ("opened", "closed_no_write"):
+                callback()
 
     observer = Observer()
     observer.daemon = True

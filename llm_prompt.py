@@ -732,6 +732,7 @@ You can fetch from it and you can push to it. This lets you publish or persist w
 - Branch names use only letters, digits, '_', '+' and '-'. Use pr1234- as name prefix for a branch related to PR 1234, issue1234- for one related to issue 1234.
 - To open a pull request from a pushed branch, declare it in the ``pull_requests`` field of your verdict instead: repository, branch, title, body, target branch; it needs no ``branches`` entry.
 - Commits you create carry the trailer ``Assisted-by: Fairy`` as the last line of the commit message.
+- Preserve the authorship of the commits, if there is no prior human authorship for some work then use the author configured in your environment.
 - Tell the user in your message what you pushed or deleted, where, and what it is for.
 
 ''' * persist_branches}\

@@ -60,6 +60,12 @@ class PatchStreamTests(unittest.TestCase):
         self.assertEqual([(c[0], c[-1]) for c in calls[1:]],
                          [("format-patch", SHA_A), ("log", SHA_MERGE)])
 
+    def test_no_base_streams_the_whole_history(self) -> None:
+        with mock.patch.object(git_util, "_git_stdout",
+                               return_value=b"") as git:
+            git_util.git_patch_stream(Path("repo"), None, "head")
+        self.assertEqual(git.call_args.args[-1], "head")
+
     def test_an_empty_range_yields_no_bytes_and_no_per_commit_calls(
             self) -> None:
         with mock.patch.object(git_util, "_git_stdout",

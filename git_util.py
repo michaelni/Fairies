@@ -149,13 +149,15 @@ def git_format_patch_series(
                        "--minimal", "--stdout", f"{base_sha}..{head_sha}")
 
 
-def git_patch_stream(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
-    """Every commit of base..head oldest first: a git-am-able
-    ``format-patch`` per non-merge commit, and ``git log -1`` for each
-    merge commit at its place in the range -- format-patch would drop
-    it silently, and git am could not apply it anyway."""
+def git_patch_stream(repo_root: Path, base_sha: str | None,
+                     head_sha: str) -> bytes:
+    """Every commit of base..head oldest first -- head's whole history
+    when there is no base: a git-am-able ``format-patch`` per non-merge
+    commit, and ``git log -1`` for each merge commit at its place in the
+    range -- format-patch would drop it silently, and git am could not
+    apply it anyway."""
     listing = _git_stdout(repo_root, "rev-list", "--reverse", "--parents",
-                          f"{base_sha}..{head_sha}")
+                          f"{base_sha}..{head_sha}" if base_sha else head_sha)
     chunks = []
     for entry in listing.decode(errors="replace").splitlines():
         sha, *parents = entry.split()

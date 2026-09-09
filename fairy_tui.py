@@ -1575,6 +1575,8 @@ class UILoop:
         branch = str(record.get("branch") or "")
         sha = str(record.get("sha") or "")
         base = record.get("diff_base_sha")
+        if not isinstance(base, str) or not base:
+            base = None
         want_range_diff = (self.branch_diff_mode == "range-diff"
                            and record.get("mode") == "force")
         cache_key = ("branch", item.repo, sha, base, want_range_diff)
@@ -1589,6 +1591,8 @@ class UILoop:
                 (b for b in _ticket_branches(ticket)
                  if b.get("branch") == branch and b.get("sha") == sha),
                 record)
+        rooted = base is None and not branch_persist.bundle_prerequisites(
+            base64.b64decode(str(record.get("bundle") or "")))
         patch_repo = self.patch_repos.get(item.repo)
         old_tip = git_util.git_resolve_first(
             patch_repo,
@@ -1617,8 +1621,11 @@ class UILoop:
                         # the record's checkout nor the patch repo
                         logger.info("range-diff unavailable (%s); showing "
                                     "the commits", exc)
-                if body is None and isinstance(base, str) and base:
-                    caption = [("label", f"branch commits {base[:12]}..{sha[:12]}")]
+                if body is None and (base or rooted):
+                    caption = [("log_warn", f"orphan branch ..{sha[:12]}  "
+                                            "shares no history with the forge")] \
+                        if rooted else \
+                        [("label", f"branch commits {base[:12]}..{sha[:12]}")]
                     text_lines = git_util.git_patch_stream(store, base, sha) \
                         .decode("utf-8", errors="replace").split("\n")
                     body = diff_render.DiffView(

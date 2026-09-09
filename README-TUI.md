@@ -51,8 +51,9 @@ last row).
   branch the review persists: name, push mode, the PR it would open
   with its description, and its commits, each under its own hash and
   author (`b` switches a force push to the range-diff against the
-  published branch it would overwrite) — `y` publishes them along
-  with the review. The
+  published branch it would overwrite); a branch that shares no
+  history with the forge is captioned `orphan branch` — `y`
+  publishes them along with the review. The
   thread is kept current
   by the agent's scan, with your `i` notes in it at their time; a
   `── sampled for the review … ──` line marks

@@ -31,6 +31,7 @@ fairy_tui: headless model round-trips over a filedb and a paint smoke."""
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import io
 import logging
@@ -1065,6 +1066,36 @@ class BranchMarkerTests(DbCase):
             text = fairy_tui._plain(ui.detail_lines(100))
         self.assertIn(f"branch commits {'b' * 12}..{'a' * 12}", text)
         patches.assert_called_once()
+
+    def _baseless_detail(self, bundle: bytes, patches: mock.Mock) -> str:
+        v = _branch_verdict(6)
+        v["review"]["branches"][0].update(
+            diff_base_sha=None, bundle=base64.b64encode(bundle).decode())
+        self.db.push("reviewed", "pr", "6", v)
+        self.model.poll()
+        ui = make_ui(self.model)
+        with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
+                               _fake_store), \
+                mock.patch.object(fairy_tui.git_util, "git_patch_stream",
+                                  patches), \
+                self.model.lock:
+            return fairy_tui._plain(ui.detail_lines(100))
+
+    def test_an_orphan_branch_shows_its_whole_history(self) -> None:
+        patches = mock.Mock(return_value=b"+x")
+        text = self._baseless_detail(
+            b"# v2 git bundle\n" + b"a" * 40 + b" refs/heads/fix-x\n\nPACK",
+            patches)
+        self.assertIn(f"orphan branch ..{'a' * 12}  shares no history", text)
+        self.assertIsNone(patches.call_args.args[1])
+
+    def test_a_branch_without_a_derivable_base_stays_baseless(self) -> None:
+        patches = mock.Mock()
+        text = self._baseless_detail(
+            b"# v2 git bundle\n-" + b"b" * 40 + b" one\n-" + b"c" * 40
+            + b" two\n" + b"a" * 40 + b" refs/heads/fix-x\n\nPACK", patches)
+        self.assertIn("no diff base recorded", text)
+        patches.assert_not_called()
 
 
 class HelpTests(DbCase):

@@ -359,7 +359,7 @@ def _forge_branch_tips(handle: ContainerHandle,
     return tips
 
 
-def _bundle_prerequisites(bundle: bytes) -> list[str]:
+def bundle_prerequisites(bundle: bytes) -> list[str]:
     """The prerequisite commits a bundle's header names (its ``-<sha>``
     lines): with every forge branch tip among the create's negatives,
     a single prerequisite is the branch's fork point off the forge --
@@ -501,7 +501,7 @@ def collect_declared_branches(
                 # target branch -- no base at all beats a wrong one
                 diff_base = _merge_base(handle, repo, sha, target_tip)
             else:
-                prerequisites = _bundle_prerequisites(
+                prerequisites = bundle_prerequisites(
                     base64.b64decode(bundle))
                 diff_base = prerequisites[0] \
                     if len(prerequisites) == 1 else None
@@ -599,7 +599,7 @@ def replace_invented_fairy_identities(
         return record
     author_name, author_email = commit_author
     configured = f"{author_name} <{author_email}>".encode()
-    prerequisites = _bundle_prerequisites(
+    prerequisites = bundle_prerequisites(
         base64.b64decode(str(record["bundle"])))
     branch, tip_sha = str(record["branch"]), str(record["sha"])
     with materialized_record(record) as scratch:

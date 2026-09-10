@@ -554,7 +554,7 @@ def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
         "--podman-host",
         action="append",
         default=[],
-        metavar="[LABEL=]USER@HOST[,port=N][,cpus=N][,memory=SIZE][,gpu=DEV]",
+        metavar="[LABEL=]USER@HOST[,port=N][,cpus=N][,memory=SIZE][,gpu=DEV][,device=PATH]...",
         help=(
             "Run LLM shell work (review, triage, repro, bisect, ...) in "
             "ephemeral containers on this podman host (passwordless ssh "

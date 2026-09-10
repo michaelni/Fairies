@@ -146,6 +146,8 @@ def _machine_line(m: ShellHostSpec) -> str:
         f"{m.cpus} {m.label} CPU cores, {m.memory} memory"
         + (", an NVIDIA GPU (see nvidia-smi; the CUDA driver libraries are "
            "injected, NVENC/NVDEC headers are installed)" if m.gpu else "")
+        + (f", and the host devices {', '.join(m.devices)} passed through"
+           if m.devices else "")
     )
 
 

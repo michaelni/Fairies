@@ -634,12 +634,18 @@ class ShellHostSpec:
     cpus: str = CONTAINER_CPUS
     memory: str = CONTAINER_MEMORY
     gpu: str | None = None  # podman --device value, e.g. nvidia.com/gpu=0
+    devices: tuple[str, ...] = ()
+
+    @property
+    def podman_device_args(self) -> tuple[str, ...]:
+        return tuple(f"--device={d}" for d in filter(None, (self.gpu, *self.devices)))
 
 
 def parse_shell_host(spec: str, *, identity: str | None = None) -> ShellHostSpec:
-    """Parse ``[LABEL=]SSH_DEST[,port=N][,cpus=N][,memory=SIZE][,gpu=DEVICE]``.
+    """Parse ``[LABEL=]SSH_DEST[,port=N][,cpus=N][,memory=SIZE][,gpu=DEVICE][,device=PATH]...``.
 
     A bare ``user@host`` (or ssh alias) gets the label ``x86_64``.
+    ``device=`` may repeat, one host device node per occurrence.
     Raises ValueError on unknown keys; callers turn that into a CLI error.
     """
     first, *rest = spec.split(",")
@@ -648,12 +654,16 @@ def parse_shell_host(spec: str, *, identity: str | None = None) -> ShellHostSpec
     if "=" in first.split("@", 1)[0]:
         label, ssh_dest = first.split("=", 1)
     options: dict[str, str] = {}
+    devices: list[str] = []
     for segment in rest:
         key, sep, value = segment.partition("=")
-        if not sep or key not in ("port", "cpus", "memory", "gpu"):
+        if not sep or key not in ("port", "cpus", "memory", "gpu", "device"):
             raise ValueError(f"unknown key {key!r} in shell host spec {spec!r} "
-                             "(valid: port=, cpus=, memory=, gpu=)")
-        options[key] = value
+                             "(valid: port=, cpus=, memory=, gpu=, device=)")
+        if key == "device":
+            devices.append(value)
+        else:
+            options[key] = value
     return ShellHostSpec(
         label=label,
         host=RemoteHost(ssh_dest, identity=identity,
@@ -661,6 +671,7 @@ def parse_shell_host(spec: str, *, identity: str | None = None) -> ShellHostSpec
         cpus=options.get("cpus", CONTAINER_CPUS),
         memory=options.get("memory", CONTAINER_MEMORY),
         gpu=options.get("gpu"),
+        devices=tuple(devices),
     )
 
 

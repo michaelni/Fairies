@@ -83,6 +83,13 @@ class RepoCookbookTests(unittest.TestCase):
             _prompt(["ffmpeg"], [_machine(gpu="nvidia.com/gpu=0")]),
         )
 
+    def test_devices_spec_toggles_devices_line(self) -> None:
+        self.assertNotIn("host devices", _prompt(["ffmpeg"]))
+        self.assertIn(
+            "the host devices /dev/snd/controlC10, /dev/snd/pcmC10D1c passed through",
+            _prompt(["ffmpeg"], [_machine(devices=("/dev/snd/controlC10", "/dev/snd/pcmC10D1c"))]),
+        )
+
     def test_single_machine_keeps_flat_sentence(self) -> None:
         text = _prompt(["ffmpeg"])
         self.assertIn(

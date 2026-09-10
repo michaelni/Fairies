@@ -46,6 +46,7 @@ class ParseShellHostTest(unittest.TestCase):
         self.assertEqual(podman_host.CONTAINER_CPUS, spec.cpus)
         self.assertEqual(podman_host.CONTAINER_MEMORY, spec.memory)
         self.assertIsNone(spec.gpu)
+        self.assertEqual((), spec.devices)
 
     def test_full_spec_preserves_inner_equals_in_gpu(self) -> None:
         spec = podman_host.parse_shell_host(
@@ -55,6 +56,15 @@ class ParseShellHostTest(unittest.TestCase):
         self.assertEqual("12", spec.cpus)
         self.assertEqual("16g", spec.memory)
         self.assertEqual("nvidia.com/gpu=0", spec.gpu)
+
+    def test_device_repeats_and_joins_gpu_in_podman_args(self) -> None:
+        spec = podman_host.parse_shell_host(
+            "fairy@h,gpu=nvidia.com/gpu=0,device=/dev/snd/controlC10,device=/dev/snd/pcmC10D1c")
+        self.assertEqual(("/dev/snd/controlC10", "/dev/snd/pcmC10D1c"), spec.devices)
+        self.assertEqual(
+            ("--device=nvidia.com/gpu=0", "--device=/dev/snd/controlC10",
+             "--device=/dev/snd/pcmC10D1c"),
+            spec.podman_device_args)
 
     def test_unknown_key_raises(self) -> None:
         with self.assertRaisesRegex(ValueError, "disk"):

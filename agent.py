@@ -538,14 +538,20 @@ REASON_CLOSED_UNMERGED = "closed without merge"
 REASON_CLOSED = "closed"
 
 
-def fetch_item(ns: argparse.Namespace, kind: str,
-               number: filedb.TicketId) -> dict:
-    if kind == "pr":
-        return fairy.get_pr(ns, filedb.forge_number(number))
-    return issue_fairy.get_issue(ns, filedb.forge_number(number))
+def ingest_item(db: filedb.Db, ns: argparse.Namespace, kind: str,
+                number: filedb.TicketId, cache) -> dict:
+    """Fetch the item behind ``number`` and refresh its filedb snapshot
+    with it: every forge read of an item lands in items/."""
+    forge_number = filedb.forge_number(number)
+    item = fairy.get_pr(ns, forge_number) if kind == "pr" \
+        else issue_fairy.get_issue(ns, forge_number)
+    _put_snapshot(db, ns, kind, str(forge_number), item, cache,
+                  timedelta(hours=ns.discussion_cache_max_age_hours))
+    return item
 
 
-def closure_reason(ns: argparse.Namespace, kind: str, number) -> str | None:
+def closure_reason(db: filedb.Db, ns: argparse.Namespace, kind: str,
+                   number: filedb.TicketId, cache) -> str | None:
     """One fetch to name WHY an item left the open listing: "merged" is
     the success story and must not read as a failure in the UI
     (production: #23913 showed plain cancelled after the operator
@@ -553,7 +559,7 @@ def closure_reason(ns: argparse.Namespace, kind: str, number) -> str | None:
     listing was transiently short -- and must not be cancelled at all.
     A failed fetch keeps the old revivable "not open"."""
     try:
-        item = fetch_item(ns, kind, number)
+        item = ingest_item(db, ns, kind, number, cache)
     except Exception as exc:
         logger.warning("%s #%s left the listing but the fate fetch "
                        "failed: %s", kind, number, exc)
@@ -566,8 +572,8 @@ def closure_reason(ns: argparse.Namespace, kind: str, number) -> str | None:
 
 
 def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
-                  kinds: set[str],
-                  nss: dict[str, argparse.Namespace]) -> None:
+                  kinds: set[str], nss: dict[str, argparse.Namespace],
+                  caches: dict[str, gcli_cache.Cache]) -> None:
     # attention tickets too: a merged PR's merge-ready/ci-blocked row
     # would otherwise sit there forever (prune skips non-settled states)
     for state in ("queued", "reviewed", "ci-blocked", "merge-ready",
@@ -575,7 +581,8 @@ def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
         for kind, number in db.list_state(state):
             if kind in kinds \
                     and (kind, filedb.forge_number(number)) not in open_set:
-                reason = closure_reason(nss[kind], kind, number)
+                reason = closure_reason(db, nss[kind], kind, number,
+                                        caches[kind])
                 if reason is None:
                     continue
                 # try_move: a claimed item's lock is held for the whole
@@ -624,25 +631,25 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     # open listing: everything else would look closed, so closing and
     # pruning are skipped for it.
     full_kinds: set[str] = set()
-    for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
-        if ns is None:
-            continue
-        kinds.add(kind)
-        if not ns.forced_only:
-            full_kinds.add(kind)
-        cache = gcli_cache.load_cache(ns.cache)
-        try:
+    nss = {kind: ns for kind, ns in (("pr", pr_ns), ("issue", issue_ns))
+           if ns is not None}
+    caches = {kind: gcli_cache.load_cache(ns.cache) for kind, ns in nss.items()}
+    try:
+        for kind, ns in nss.items():
+            kinds.add(kind)
+            if not ns.forced_only:
+                full_kinds.add(kind)
             self_login = forge_gcli.self_login(ns)
             open_set |= scan_side(
-                db, ns, kind, now=now, cache=cache, self_login=self_login,
-                forced=forced[kind],
+                db, ns, kind, now=now, cache=caches[kind],
+                self_login=self_login, forced=forced[kind],
                 closed_items=() if ns.forced_only else closed_for(ns, kind),
                 snapshot_memo=snapshot_memo)
-        finally:
-            gcli_cache.save_cache(ns.cache, cache)
-    finish_requests(db, forced, kinds)
-    cancel_closed(db, open_set, full_kinds,
-                  {"pr": pr_ns, "issue": issue_ns})
+        finish_requests(db, forced, kinds)
+        cancel_closed(db, open_set, full_kinds, nss, caches)
+    finally:
+        for kind, ns in nss.items():
+            gcli_cache.save_cache(ns.cache, caches[kind])
     for kind, number in db.reap():
         logger.warning("%s #%s re-queued: its worker died", kind, number)
     # A crash between a transition's dst-write and src-unlink leaves the
@@ -769,7 +776,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
                         fairy.manual_action_description(decision))
             claim.abort()
             return None
-        item = fetch_item(ns, kind, number)
+        item = ingest_item(db, ns, kind, number, cache)
         # the operator's Y: post as-is although the item may have
         # moved since the review; popped so the archive stays clean
         reason = None if ticket.pop("force_post", None) \

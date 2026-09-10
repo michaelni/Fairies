@@ -977,7 +977,7 @@ class ForcedOnlyTests(AgentCase):
         self.assertEqual(self.db.find("pr", "7"), "queued")
 
 
-class ItemSnapshotScanTests(AgentCase):
+class ItemSnapshotScanTests(SendCase):
     """The scan mirrors every listed item into the filedb items/
     state, where the UI reads the discussion between reviews."""
 
@@ -1072,6 +1072,27 @@ class ItemSnapshotScanTests(AgentCase):
         self.ns.force_review_prs = {7}
         self.scan([], fetch=lambda ns, n: {**make_pr(n), "state": "closed"})
         self.assertEqual(self.db.get("items", "pr", "7")["title"], "t7")
+
+    def test_blocked_send_refreshes_the_snapshot(self) -> None:
+        """Production #23820: the send guard saw a comment the mirror
+        would not show until the next scan, so the block named a
+        change the UI could not display."""
+        self.db.push("outgoing", "pr", "1", verdict_ticket(1))
+        self.thread.return_value = ([], [
+            {"user": {"login": "carol"}, "body": "addressed",
+             "created_at": "2026-07-19T11:00:00Z"}], [], [])
+        self.send(pr_ns=self.ns, changed={"updated_at": "later"})
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR updated_at changed")
+        self.assertEqual([c["body"] for c in
+                          self.db.get("items", "pr", "1")["discussion"]],
+                         ["addressed"])
+
+    def test_closure_refreshes_the_snapshot(self) -> None:
+        self.db.push("queued", "pr", "9", {"title": "gone"})
+        self.scan([], fetch=lambda ns, n: dict(make_pr(n), state="closed",
+                                               merged=True))
+        self.assertEqual(self.db.get("items", "pr", "9")["state"], "merged")
 
 
 class DiscussionWiringTests(unittest.TestCase):

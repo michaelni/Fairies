@@ -199,6 +199,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
             "author": fairy.get_pr_author(item),
             "body": str(item.get("body") or ""),
             "html_url": str(item.get("html_url") or ""),
+            "updated_at": item.get("updated_at"),
             **status,
             "discussion": fairy.build_llm_discussion(
                 reviews, comments, review_comments, timeline),

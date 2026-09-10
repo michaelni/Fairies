@@ -1365,6 +1365,17 @@ class DetailTests(DbCase):
         self.assertIn("send blocked: PR updated_at changed",
                       self._detail_text())
 
+    def test_send_blocked_note_names_the_forge_update_time(self) -> None:
+        self.db.push("reviewed", "pr", "5",
+                     verdict(5, send_blocked="PR updated_at changed"))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "",
+            "updated_at": "2026-07-20T09:00:00Z", "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.assertIn("send blocked: PR updated_at changed, forge updated "
+                      "2026-07-20", self._detail_text())
+
     def test_snapshot_replaces_the_thread_with_a_separator(self) -> None:
         old = {"kind": "comment", "author": "carol",
                "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"}

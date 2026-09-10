@@ -1406,9 +1406,12 @@ class UILoop:
                 [("log_err", str(data["error"]))], width,
                 initial=("log_err", f"error {when}: " if when else "error: "))
         if data.get("send_blocked"):
-            head += tui_core.wrap(
-                [("log_warn", str(data["send_blocked"]))], width,
-                initial=("log_warn", "send blocked: "))
+            blocked = str(data["send_blocked"])
+            forge_at = (snapshot or {}).get("updated_at")
+            if forge_at and forge_at != data.get("expected_updated_at"):
+                blocked += f", forge updated {_when(forge_at)}"
+            head += tui_core.wrap([("log_warn", blocked)], width,
+                                  initial=("log_warn", "send blocked: "))
         for failed in data.get("failed_reviewers") or []:
             head += tui_core.wrap([("log_warn", str(failed))], width,
                                   initial=("log_warn", "reviewer failed: "))

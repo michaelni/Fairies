@@ -135,7 +135,7 @@ ticket is adopted.
 
 | key | action |
 |-----|--------|
-| `y` | apply: hand the reviewed verdict to the agent's send pass (`reviewed/` → `outgoing/`). The send re-checks that the PR is unchanged since the review; a mismatch returns the ticket with a `send blocked:` note and, in manual mode, parks it for you — `r`, `s` or `Y` are the answers. |
+| `y` | apply: hand the reviewed verdict to the agent's send pass (`reviewed/` → `outgoing/`). The send re-checks that the PR is unchanged since the review; a mismatch returns the ticket with a `send blocked:` note naming when the forge last saw a change, refreshes the thread, and, in manual mode, parks it for you — `r`, `s` or `Y` are the answers. |
 | `Y` | post anyway: like `y` but waives the staleness guard once. For a verdict you have read and judged still valid. |
 | `s` | skip now: one-shot; the next scan reconsiders the item afresh (earned backoff history is kept). |
 | `S` | snooze: like `s` but the item waits out a doubling backoff (min 24h) before it is reconsidered; new PR activity bypasses the wait. |

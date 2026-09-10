@@ -121,10 +121,12 @@ _GIT_TIMEOUT_S = 600.0
 
 # Reviewer models invent a git identity for fairy itself instead of
 # leaving the configured one in effect (observed 2026-08-27..30 on six
-# commits from several models: emails fairy@ or forgejo_fairy@ under
-# made-up domains, overridden per command with git -c). Any other
-# local part is somebody's real authorship and is never rewritten.
-_INVENTED_FAIRY_EMAIL_LOCALS = (b"fairy", b"forgejo_fairy")
+# commits from several models: emails fairy@, forgejo_fairy@ or
+# forgejo-fairy@ under made-up domains, overridden per command with
+# git -c). Any other local part is somebody's real authorship and is
+# never rewritten.
+_INVENTED_FAIRY_EMAIL_LOCAL_RE = re.compile(rb"(forgejo[-_]?)?fairy",
+                                            re.IGNORECASE)
 
 _COMMIT_IDENT_RE = re.compile(
     rb"^(author|committer) .* <([^<>]*)> (\d+ [-+]\d{4})$")
@@ -591,8 +593,8 @@ def materialized_record(record: JsonObject,
 def replace_invented_fairy_identities(
         record: JsonObject, commit_author: tuple[str, str]) -> JsonObject:
     """The push record with every bundled commit whose author or
-    committer email has a local part from
-    ``_INVENTED_FAIRY_EMAIL_LOCALS`` rewritten to ``commit_author``
+    committer email has a local part matching
+    ``_INVENTED_FAIRY_EMAIL_LOCAL_RE`` rewritten to ``commit_author``
     ((name, email)), rebundled under the original prerequisites; the
     record itself when its commits are clean, a delete, or an empty
     bundle. Raises ``BranchTransferError`` when the record cannot be
@@ -622,8 +624,8 @@ def replace_invented_fairy_identities(
             changed = False
             for i, line in enumerate(lines):
                 ident = _COMMIT_IDENT_RE.match(line)
-                if ident and ident.group(2).split(b"@", 1)[0].lower() \
-                        in _INVENTED_FAIRY_EMAIL_LOCALS:
+                if ident and _INVENTED_FAIRY_EMAIL_LOCAL_RE.fullmatch(
+                        ident.group(2).split(b"@", 1)[0]):
                     lines[i] = b" ".join(
                         (ident.group(1), configured, ident.group(3)))
                     changed = True

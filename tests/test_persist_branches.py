@@ -667,6 +667,20 @@ class ReplaceInventedFairyIdentitiesTests(unittest.TestCase):
                           _bad_identity_record(BAD_IDENTITY_TIP).items()
                           if k not in ("sha", "bundle")})
 
+    def test_every_spelling_of_the_invented_local_part_is_rewritten(
+            self) -> None:
+        for email in (b"forgejo-fairy@localhost", b"forgejo_fairy@localhost",
+                      b"Fairy@code.ffmpeg.org"):
+            commit = BAD_IDENTITY_COMMIT.replace(b"fairy@forgejo.invalid",
+                                                 email)
+            with self.subTest(email=email):
+                _result, _calls, hashed = self._rewrite(
+                    _bad_identity_record(BAD_IDENTITY_TIP),
+                    {BAD_IDENTITY_TIP: commit}, [BAD_IDENTITY_TIP])
+                self.assertEqual(hashed, [commit.replace(
+                    b"author Forgejo Fairy <" + email + b">",
+                    b"author Carol <carol@example.org>")])
+
     def test_a_foreign_authored_child_keeps_its_identity(self) -> None:
         child_tip = "5" * 40
         child = (b"tree " + b"6" * 40 + b"\n"

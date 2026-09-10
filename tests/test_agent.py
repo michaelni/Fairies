@@ -538,6 +538,24 @@ class ReuseTests(AgentCase):
         self.assertEqual(self.db.find("pr", "1"), "outgoing")
 
 
+    def test_outgoing_is_served_between_scanned_items(self) -> None:
+        """A y pressed during a scan must not wait for the scan's end."""
+        seen: list[tuple[int, str | None]] = []
+
+        def prepare(ns, pr, **kw):
+            if pr["number"] == 1:
+                self.db.push("outgoing", "pr", "5", verdict_ticket(5))
+            seen.append((pr["number"], self.db.find("pr", "5")))
+            return prepared_for(pr)
+
+        self.prepare.side_effect = prepare
+        with mock.patch.object(fairy, "submit_decision_action",
+                               return_value=None):
+            self.scan([make_pr(1), make_pr(2)],
+                      fetch=lambda ns, n: dict(make_pr(n), state="open"))
+        self.assertEqual(seen, [(1, "outgoing"), (2, "posted")])
+
+
 class LifecycleTests(AgentCase):
     def test_closed_item_is_cancelled_with_its_fate(self) -> None:
         """Production #23913: the operator merged a fairy-approved PR
@@ -754,7 +772,8 @@ class SendCase(AgentCase):
                 mock.patch.object(fairy, "get_pr", side_effect=live(make_pr)), \
                 mock.patch.object(issue_fairy, "get_issue",
                                   side_effect=live(make_issue)):
-            agent.send_pass(self.db, pr_ns, issue_ns, dry_run=dry_run)
+            agent.send_pass(self.db, agent.sides_of(pr_ns, issue_ns),
+                            dry_run=dry_run)
 
 
 class SendTests(SendCase):

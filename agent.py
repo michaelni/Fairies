@@ -65,6 +65,7 @@ import logging
 import sys
 import time
 from threading import Event
+from collections.abc import Callable
 from dataclasses import replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -242,12 +243,14 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
               closed_items: list[dict] | tuple = (),
               snapshot_memo: dict[tuple[str, filedb.TicketId],
                                   str | None] | None = None,
+              serve_outgoing: Callable[[], None] = lambda: None,
               ) -> set[tuple[str, int]]:
     """One gate pass over the side's open items; returns the open set.
     ``closed_items`` (the --scan-closed-days window, caller-fetched)
     are snapshotted and nothing else; ``snapshot_memo`` remembers each
     one's snapshotted updated_at across passes so unchanged items cost
-    no rebuild."""
+    no rebuild; ``serve_outgoing`` runs before every item, so a y
+    pressed during the pass is posted without waiting for its end."""
     if snapshot_memo is None:
         snapshot_memo = {}
     if kind == "pr":
@@ -309,7 +312,8 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
                     self_login=self_login, forced_ns=forced_ns,
                     wip_re=wip_re if kind == "pr" else None,
                     cache_age=cache_age, limit=limit, evals=evals,
-                    template_only=template_only)
+                    template_only=template_only,
+                    serve_outgoing=serve_outgoing)
     finally:
         forced_ns -= added_forced
     # --scan-closed-days: snapshot-only visibility. Deliberately
@@ -332,10 +336,12 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
 
 def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 wip_re, cache_age, limit, evals={},
-                template_only=frozenset()) -> None:
+                template_only=frozenset(),
+                serve_outgoing: Callable[[], None] = lambda: None) -> None:
     queued = 0
     for item in sorted(items, key=lambda i: (int(i["number"]) not in forced_ns,
                                              int(i["number"]))):
+        serve_outgoing()
         number = int(item["number"])
         token = str(number)
         _put_snapshot(db, ns, kind, token, item, cache, cache_age)
@@ -574,7 +580,7 @@ def closure_reason(db: filedb.Db, ns: argparse.Namespace, kind: str,
 
 def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
                   kinds: set[str], nss: dict[str, argparse.Namespace],
-                  caches: dict[str, gcli_cache.Cache]) -> None:
+                  caches: SideCaches) -> None:
     # attention tickets too: a merged PR's merge-ready/ci-blocked row
     # would otherwise sit there forever (prune skips non-settled states)
     for state in ("queued", "reviewed", "ci-blocked", "merge-ready",
@@ -593,10 +599,39 @@ def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
                     logger.info("%s #%s cancelled: %s", kind, number, reason)
 
 
+class SideCaches:
+    """The sides' gcli caches, each loaded on first use and saved when
+    the holder closes, so a pass touches only the files it needs."""
+
+    def __init__(self, sides: dict[str, argparse.Namespace]) -> None:
+        self.sides = sides
+        self.loaded: dict[str, gcli_cache.Cache] = {}
+
+    def __getitem__(self, kind: str) -> gcli_cache.Cache:
+        if kind not in self.loaded:
+            self.loaded[kind] = gcli_cache.load_cache(self.sides[kind].cache)
+        return self.loaded[kind]
+
+    def __enter__(self) -> SideCaches:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        for kind, cache in self.loaded.items():
+            gcli_cache.save_cache(self.sides[kind].cache, cache)
+
+
+def sides_of(pr_ns: argparse.Namespace | None,
+             issue_ns: argparse.Namespace | None
+             ) -> dict[str, argparse.Namespace]:
+    return {kind: ns for kind, ns in (("pr", pr_ns), ("issue", issue_ns))
+            if ns is not None}
+
+
 def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
               issue_ns: argparse.Namespace | None,
               now: datetime | None = None,
-              snapshot_memo: dict | None = None) -> None:
+              snapshot_memo: dict | None = None,
+              dry_run: bool = False) -> None:
     now = now or datetime.now(timezone.utc)
     if snapshot_memo is None:
         snapshot_memo = {}
@@ -632,11 +667,11 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     # open listing: everything else would look closed, so closing and
     # pruning are skipped for it.
     full_kinds: set[str] = set()
-    nss = {kind: ns for kind, ns in (("pr", pr_ns), ("issue", issue_ns))
-           if ns is not None}
-    caches = {kind: gcli_cache.load_cache(ns.cache) for kind, ns in nss.items()}
-    try:
-        for kind, ns in nss.items():
+    sides = sides_of(pr_ns, issue_ns)
+    with SideCaches(sides) as caches:
+        def serve_outgoing() -> None:
+            send_outgoing(db, sides, caches, dry_run=dry_run)
+        for kind, ns in sides.items():
             kinds.add(kind)
             if not ns.forced_only:
                 full_kinds.add(kind)
@@ -645,12 +680,9 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                 db, ns, kind, now=now, cache=caches[kind],
                 self_login=self_login, forced=forced[kind],
                 closed_items=() if ns.forced_only else closed_for(ns, kind),
-                snapshot_memo=snapshot_memo)
+                snapshot_memo=snapshot_memo, serve_outgoing=serve_outgoing)
         finish_requests(db, forced, kinds)
-        cancel_closed(db, open_set, full_kinds, nss, caches)
-    finally:
-        for kind, ns in nss.items():
-            gcli_cache.save_cache(ns.cache, caches[kind])
+        cancel_closed(db, open_set, full_kinds, sides, caches)
     for kind, number in db.reap():
         logger.warning("%s #%s re-queued: its worker died", kind, number)
     # A crash between a transition's dst-write and src-unlink leaves the
@@ -923,37 +955,40 @@ def ask_pass(db: filedb.Db, kinds: set[str], retry=None) -> None:
                 print("please answer y, s, S, x, r, l or q")
 
 
-def send_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
-              issue_ns: argparse.Namespace | None, *, dry_run: bool = False) -> None:
-    for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
-        if ns is None:
-            continue
-        if ns.auto_mode:
-            if dry_run:
-                # promotion is a persistent staging step: a later normal
-                # run would post whatever a dry preview promoted
-                for k, number in db.list_state("reviewed"):
-                    if k == kind and postable(ticket_decision(
-                            k, number, db.get("reviewed", k, number) or {})):
-                        logger.info("%s #%s: DRY RUN, would promote to "
-                                    "outgoing/", k, number)
-            else:
-                promote_reviewed(db, kind)
+def send_outgoing(db: filedb.Db, sides: dict[str, argparse.Namespace],
+                  caches: SideCaches, *, dry_run: bool = False) -> None:
+    """Post every outgoing/ ticket through the sides' open caches."""
+    for kind, ns in sides.items():
         outgoing = [n for k, n in db.list_state("outgoing") if k == kind]
         if not outgoing:
             continue
         counts = {action: 0 for action in fairy.ACTIONABLE_DECISIONS}
-        cache = gcli_cache.load_cache(ns.cache)
-        try:
-            for number in outgoing:
-                try:
-                    send_one(db, ns, kind, number, cache=cache,
-                             counts=counts, dry_run=dry_run)
-                except Exception:
-                    logger.exception("%s #%s: send failed; stays in outgoing/",
-                                     kind, number)
-        finally:
-            gcli_cache.save_cache(ns.cache, cache)
+        for number in outgoing:
+            try:
+                send_one(db, ns, kind, number, cache=caches[kind],
+                         counts=counts, dry_run=dry_run)
+            except Exception:
+                logger.exception("%s #%s: send failed; stays in outgoing/",
+                                 kind, number)
+
+
+def send_pass(db: filedb.Db, sides: dict[str, argparse.Namespace],
+              *, dry_run: bool = False) -> None:
+    for kind, ns in sides.items():
+        if not ns.auto_mode:
+            continue
+        if dry_run:
+            # promotion is a persistent staging step: a later normal
+            # run would post whatever a dry preview promoted
+            for k, number in db.list_state("reviewed"):
+                if k == kind and postable(ticket_decision(
+                        k, number, db.get("reviewed", k, number) or {})):
+                    logger.info("%s #%s: DRY RUN, would promote to "
+                                "outgoing/", k, number)
+        else:
+            promote_reviewed(db, kind)
+    with SideCaches(sides) as caches:
+        send_outgoing(db, sides, caches, dry_run=dry_run)
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -1010,11 +1045,11 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
              issue_ns: argparse.Namespace | None,
              args: argparse.Namespace,
              snapshot_memo: dict | None = None) -> None:
-    sides = {k: v for k, v in (("pr", pr_ns), ("issue", issue_ns))
-             if v is not None}
+    sides = sides_of(pr_ns, issue_ns)
 
     def review_cycle() -> None:
-        scan_pass(db, pr_ns, issue_ns, snapshot_memo=snapshot_memo)
+        scan_pass(db, pr_ns, issue_ns, snapshot_memo=snapshot_memo,
+                  dry_run=args.dry_run)
         if args.drain:
             worker.drain(db, sides, parallel=args.drain)
 
@@ -1022,7 +1057,7 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     if args.ask:
         ask_pass(db, set(sides),
                  retry=review_cycle if args.drain else None)
-    send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
+    send_pass(db, sides, dry_run=args.dry_run)
     log_summary(db)
 
 
@@ -1100,6 +1135,7 @@ def main() -> int:
     # send pass, not a full forge scan.
     wake = Event()
     watch_paths([db.root / "requests", db.root / "outgoing"], wake.set)
+    sides = sides_of(pr_ns, issue_ns)
     next_scan = 0.0
     snapshot_memo: dict = {}
     while True:
@@ -1111,7 +1147,7 @@ def main() -> int:
             elif db.list_state("requests"):
                 requests_pass(db, pr_ns, issue_ns, args)
             else:
-                send_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
+                send_pass(db, sides, dry_run=args.dry_run)
         except Exception:
             # A transient forge/gcli error must not kill the daemon;
             # one-shot (cron) mode still fails loudly via its exit code.

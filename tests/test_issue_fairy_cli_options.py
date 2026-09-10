@@ -161,12 +161,11 @@ class ForceReviewIssueTests(unittest.TestCase):
     def test_the_send_guard_lets_a_forced_closed_issue_be_posted(self) -> None:
         decision = fairy.Decision(5, "i5", "dev", "-", "comment", "llm", None,
                                   "reply", "m")
-        with mock.patch.object(issue_fairy, "get_issue",
-                               return_value=make_issue(5, "closed")):
-            blocked = issue_fairy.check_issue_still_unchanged(
-                issue_ns("--force-review 5"), decision)
-            unnamed = issue_fairy.check_issue_still_unchanged(
-                issue_ns(""), decision)
+        closed = make_issue(5, "closed")
+        blocked = issue_fairy.check_issue_still_unchanged(
+            issue_ns("--force-review 5"), closed, decision)
+        unnamed = issue_fairy.check_issue_still_unchanged(
+            issue_ns(""), closed, decision)
         self.assertIsNone(blocked)
         self.assertEqual(unnamed, "issue is no longer open")
 

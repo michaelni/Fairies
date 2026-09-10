@@ -742,10 +742,18 @@ class TicketDecisionTests(AgentCase):
 
 
 class SendCase(AgentCase):
-    def send(self, *, pr_ns=None, issue_ns=None, dry_run=False) -> None:
+    def send(self, *, pr_ns=None, issue_ns=None, dry_run=False,
+             changed: dict | None = None) -> None:
+        """``changed``: how the forge's item differs from the scan
+        fixture at send time."""
+        def live(make):
+            return lambda ns, n: dict(make(n), state="open", **(changed or {}))
         with mock.patch.object(agent.gcli_cache, "load_cache",
                                return_value=mock.Mock()), \
-                mock.patch.object(agent.gcli_cache, "save_cache"):
+                mock.patch.object(agent.gcli_cache, "save_cache"), \
+                mock.patch.object(fairy, "get_pr", side_effect=live(make_pr)), \
+                mock.patch.object(issue_fairy, "get_issue",
+                                  side_effect=live(make_issue)):
             agent.send_pass(self.db, pr_ns, issue_ns, dry_run=dry_run)
 
 
@@ -755,8 +763,7 @@ class SendTests(SendCase):
         with mock.patch.object(fairy, "submit_decision_action",
                                return_value=None) as submit:
             self.send(pr_ns=self.ns)
-        decision = submit.call_args.args[2]
-        self.assertFalse(submit.call_args.kwargs["skip_guard"])
+        decision = submit.call_args.args[1]
         self.assertEqual(decision.action, "comment")
         # the ticket's guard rides on the rebuilt decision
         self.assertEqual(decision.expected_pr_updated_at, "2026-07-19T10:00:00Z")
@@ -771,29 +778,26 @@ class SendTests(SendCase):
                      dict(verdict_ticket(1), force_post=True))
         with mock.patch.object(fairy, "submit_decision_action",
                                return_value=None) as submit:
-            self.send(pr_ns=self.ns)
+            self.send(pr_ns=self.ns, changed={"updated_at": "later"})
         submit.assert_called_once()
-        self.assertTrue(submit.call_args.kwargs["skip_guard"])
         posted = self.db.get("posted", "pr", "1")
         self.assertTrue(posted["posted_at"])
         self.assertNotIn("force_post", posted)
 
     def test_guard_failure_manual_returns_to_reviewed_with_note(self) -> None:
         self.db.push("outgoing", "pr", "1", verdict_ticket(1))
-        with mock.patch.object(fairy, "submit_decision_action",
-                               return_value="PR updated_at changed") as submit:
-            self.send(pr_ns=self.ns)
-        submit.assert_called_once()
+        with mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns, changed={"updated_at": "later"})
+        submit.assert_not_called()
         t = self.db.get("reviewed", "pr", "1")
         self.assertEqual(t["send_blocked"], "PR updated_at changed")
 
     def test_guard_failure_auto_mode_skips_without_stalling(self) -> None:
         self.ns.auto_mode = True
         self.db.push("outgoing", "pr", "1", verdict_ticket(1))
-        with mock.patch.object(fairy, "submit_decision_action",
-                               return_value="PR head changed") as submit:
-            self.send(pr_ns=self.ns)
-        submit.assert_called_once()
+        with mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns, changed={"head": {"sha": "h2"}})
+        submit.assert_not_called()
         t = self.db.get("skipped", "pr", "1")
         self.assertEqual(t["send_blocked"], "PR head changed")
         self.assertNotIn("llm_at", t)  # next scan re-gates it immediately
@@ -873,7 +877,7 @@ class SendTests(SendCase):
         with mock.patch.object(fairy, "submit_decision_action",
                                return_value=None) as submit:
             self.send(pr_ns=self.ns)
-        self.assertEqual(submit.call_args.args[2].llm_message, "edited by hand")
+        self.assertEqual(submit.call_args.args[1].llm_message, "edited by hand")
 
     def test_pushed_branches_are_linked_at_send_time(self) -> None:
         record = {"branch": "pr1-fix", "mode": "ff", "repo": "ffmpeg",
@@ -889,7 +893,7 @@ class SendTests(SendCase):
                                return_value=None) as submit:
             self.send(pr_ns=ns)
         linked = "pushed [fairy/pr1-fix](https://forge/f/r/src/branch/fairy/pr1-fix)"
-        self.assertEqual(submit.call_args.args[2].llm_message, linked)
+        self.assertEqual(submit.call_args.args[1].llm_message, linked)
         self.assertEqual(self.db.get("posted", "pr", "1")["review"]["message"], linked)
 
     def test_label_only_verdict_posts_labels_then_lands_in_posted(self) -> None:
@@ -900,15 +904,15 @@ class SendTests(SendCase):
                 mock.patch.object(fairy, "submit_decision_action") as submit:
             self.send(pr_ns=self.ns)
         submit.assert_not_called()  # nothing to comment/approve
-        self.assertFalse(apply.call_args.kwargs["skip_guard"])
+        self.assertEqual(apply.call_args.args[1]["number"], 1)
         self.assertEqual(self.db.find("pr", "1"), "posted")
 
     def test_label_only_guard_failure_posts_nothing(self) -> None:
         labels = [{"label": "needs docs", "op": "add", "reason": "", "post": False}]
         self.db.push("outgoing", "pr", "1", verdict_ticket(1, "skip", labels=labels))
-        with mock.patch.object(fairy, "apply_triage_labels",
-                               return_value="PR updated_at changed"):
-            self.send(pr_ns=self.ns)
+        with mock.patch.object(fairy, "apply_triage_labels") as apply:
+            self.send(pr_ns=self.ns, changed={"updated_at": "later"})
+        apply.assert_not_called()
         t = self.db.get("reviewed", "pr", "1")
         self.assertEqual(t["send_blocked"], "PR updated_at changed")
 
@@ -919,8 +923,8 @@ class SendTests(SendCase):
         with mock.patch.object(issue_fairy, "submit_issue_decision",
                                return_value=None) as submit:
             self.send(issue_ns=issue_ns)
-        decision = submit.call_args.args[1]
-        self.assertEqual(decision.action, "comment")
+        self.assertEqual(submit.call_args.args[1]["number"], 5)
+        self.assertEqual(submit.call_args.args[2].action, "comment")
         self.assertEqual(self.db.find("issue", "5"), "posted")
 
     def test_auto_mode_promotes_and_posts_an_issue_verdict(self) -> None:
@@ -931,7 +935,7 @@ class SendTests(SendCase):
         with mock.patch.object(issue_fairy, "submit_issue_decision",
                                return_value=None) as submit:
             self.send(issue_ns=issue_ns)
-        self.assertEqual(submit.call_args.args[1].action, "comment")
+        self.assertEqual(submit.call_args.args[2].action, "comment")
         self.assertEqual(self.db.find("issue", "5"), "posted")
 
 

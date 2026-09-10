@@ -875,8 +875,7 @@ class SendPathBranchTests(unittest.TestCase):
         decision = _branch_decision()
         with mock.patch.object(fairy, "post_issue_comment") as post:
             reason = fairy.submit_decision_action(
-                _send_args(branch_push=[]), decision, decision,
-                skip_guard=True)
+                _send_args(branch_push=[]), decision)
         self.assertIn("--branch-push", reason)
         post.assert_not_called()
 
@@ -884,7 +883,7 @@ class SendPathBranchTests(unittest.TestCase):
         decision = _branch_decision(dict(GOOD_RECORD, repo="ffmpeg-web"))
         with mock.patch.object(fairy, "post_issue_comment") as post:
             reason = fairy.submit_decision_action(
-                _send_args(), decision, decision, skip_guard=True)
+                _send_args(), decision)
         self.assertIn("branch publication failed", reason)
         self.assertIn("ffmpeg-web", reason)
         post.assert_not_called()
@@ -905,7 +904,7 @@ class SendPathBranchTests(unittest.TestCase):
                     fairy, "publish_decision_branches",
                     side_effect=branch_persist.BranchTransferError("ref moved")):
             reason = fairy.submit_decision_action(
-                _send_args(), decision, decision, skip_guard=True)
+                _send_args(), decision)
         self.assertEqual(reason, "branch publication failed: ref moved")
         post.assert_not_called()
 
@@ -917,7 +916,7 @@ class SendPathBranchTests(unittest.TestCase):
                     fairy, "publish_decision_branches",
                     side_effect=subprocess.TimeoutExpired("git push", 300)):
             reason = fairy.submit_decision_action(
-                _send_args(), decision, decision, skip_guard=True)
+                _send_args(), decision)
         self.assertIn("branch publication failed", reason)
         post.assert_not_called()
 
@@ -926,7 +925,7 @@ class SendPathBranchTests(unittest.TestCase):
         with mock.patch.object(fairy, "post_issue_comment") as post, \
                 mock.patch.object(fairy, "publish_decision_branches") as publish:
             reason = fairy.submit_decision_action(
-                _send_args(), decision, decision, skip_guard=True)
+                _send_args(), decision)
         self.assertIsNone(reason)
         publish.assert_called_once()
         post.assert_called_once()
@@ -1295,8 +1294,8 @@ class CrossItemBranchTests(unittest.TestCase):
                                   return_value="k"), \
                 mock.patch.object(issue_fairy.gcli_cache, "save_cache"):
             reason = issue_fairy.submit_issue_decision(
-                args, decision, cache=cache,
-                submitted_counts={"comment": 0}, skip_guard=True)
+                args, {"number": 4321}, decision, cache=cache,
+                submitted_counts={"comment": 0})
         self.assertIsNone(reason)
         self.assertEqual(published, ["pr4321-fix"])
         post.assert_called_once()

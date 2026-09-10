@@ -538,6 +538,13 @@ REASON_CLOSED_UNMERGED = "closed without merge"
 REASON_CLOSED = "closed"
 
 
+def fetch_item(ns: argparse.Namespace, kind: str,
+               number: filedb.TicketId) -> dict:
+    if kind == "pr":
+        return fairy.get_pr(ns, filedb.forge_number(number))
+    return issue_fairy.get_issue(ns, filedb.forge_number(number))
+
+
 def closure_reason(ns: argparse.Namespace, kind: str, number) -> str | None:
     """One fetch to name WHY an item left the open listing: "merged" is
     the success story and must not read as a failure in the UI
@@ -546,10 +553,7 @@ def closure_reason(ns: argparse.Namespace, kind: str, number) -> str | None:
     listing was transiently short -- and must not be cancelled at all.
     A failed fetch keeps the old revivable "not open"."""
     try:
-        if kind == "pr":
-            item = fairy.get_pr(ns, filedb.forge_number(number))
-        else:
-            item = issue_fairy.get_issue(ns, filedb.forge_number(number))
+        item = fetch_item(ns, kind, number)
     except Exception as exc:
         logger.warning("%s #%s left the listing but the fate fetch "
                        "failed: %s", kind, number, exc)
@@ -704,27 +708,32 @@ def postable(decision: fairy.Decision | None) -> bool:
         or fairy.decision_has_label_changes(decision))
 
 
-def post_decision(ns: argparse.Namespace, kind: str, decision: fairy.Decision,
-                  *, cache, counts: dict[str, int],
-                  skip_guard: bool = False) -> str | None:
-    """The forge side effects, through fairy/issue_fairy's guarded
-    submit seams; the staleness guard's block reason when it refused,
-    None when everything went out. ``skip_guard`` is the operator's
-    force_post riding through to the seams."""
+def staleness_reason(ns: argparse.Namespace, kind: str, item: dict,
+                     decision: fairy.Decision) -> str | None:
+    """Why ``decision`` must not be posted onto ``item`` as it is now:
+    the item moved since the review, or is no longer open."""
+    if kind == "pr":
+        return fairy.check_pr_still_unchanged(ns, item, decision)
+    return issue_fairy.check_issue_still_unchanged(ns, item, decision)
+
+
+def post_decision(ns: argparse.Namespace, kind: str, item: dict,
+                  decision: fairy.Decision, *, cache,
+                  counts: dict[str, int]) -> str | None:
+    """The forge side effects, through fairy/issue_fairy's submit
+    seams; the block reason when one refused, None when everything
+    went out."""
     if kind == "issue":
         return issue_fairy.submit_issue_decision(
-            ns, decision, cache=cache, submitted_counts=counts,
-            skip_guard=skip_guard)
+            ns, item, decision, cache=cache, submitted_counts=counts)
     if decision.action in fairy.ACTIONABLE_DECISIONS:
-        reason = fairy.submit_decision_action(ns, decision, decision, cache=cache,
-                                              skip_guard=skip_guard)
+        reason = fairy.submit_decision_action(ns, decision, cache=cache)
         if reason is not None:
             return reason
         counts[decision.action] += 1
-        if fairy.decision_has_label_changes(decision):
-            fairy.apply_triage_labels(ns, decision, decision, skip_guard=True)
-        return None
-    return fairy.apply_triage_labels(ns, decision, decision, skip_guard=skip_guard)
+    if fairy.decision_has_label_changes(decision):
+        fairy.apply_triage_labels(ns, item, decision)
+    return None
 
 
 def link_ticket_branches(ns: argparse.Namespace, ticket: dict) -> None:
@@ -760,10 +769,14 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
                         fairy.manual_action_description(decision))
             claim.abort()
             return None
+        item = fetch_item(ns, kind, number)
         # the operator's Y: post as-is although the item may have
         # moved since the review; popped so the archive stays clean
-        reason = post_decision(ns, kind, decision, cache=cache, counts=counts,
-                               skip_guard=bool(ticket.pop("force_post", None)))
+        reason = None if ticket.pop("force_post", None) \
+            else staleness_reason(ns, kind, item, decision)
+        if reason is None:
+            reason = post_decision(ns, kind, item, decision, cache=cache,
+                                   counts=counts)
         if reason is None:
             claim.finish("posted", dict(
                 ticket, posted_at=datetime.now(timezone.utc).isoformat()))

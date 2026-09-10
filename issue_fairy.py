@@ -464,9 +464,8 @@ def issue_decision_from_review(prepared: PreparedIssue, review: LLMReview) -> De
 
 
 def check_issue_still_unchanged(
-    args: argparse.Namespace, decision: Decision,
+    args: argparse.Namespace, current: ApiObject, decision: Decision,
 ) -> str | None:
-    current = get_issue(args, decision.pr_number)
     if current.get("state") != "open" and decision.pr_number not in args.force_review_issues:
         return "issue is no longer open"
     if (
@@ -479,31 +478,17 @@ def check_issue_still_unchanged(
 
 def submit_issue_decision(
     args: argparse.Namespace,
+    issue: ApiObject,
     decision: Decision,
     *,
     cache: gcli_cache.Cache,
     submitted_counts: dict[str, int],
-    skip_guard: bool = False,
 ) -> str | None:
     """Post the comment (if any), then apply label changes; None when
-    done, the staleness guard's block reason when it blocked the submit.
-    ``skip_guard`` posts without the staleness check: the operator's
-    force_post waives it. Branches are published before the comment,
-    through the same seam as fairy's PR submit path, so the posted text
-    never names a branch that failed to appear.
-
-    The staleness guard runs once, before the comment, on pristine
-    ``updated_at``; the comment itself bumps updated_at so labels are
-    applied without re-checking (same ordering as fairy's PR submit
-    path).
-    """
-    changed_reason = None if skip_guard else check_issue_still_unchanged(args, decision)
-    if changed_reason is not None:
-        logger.info(
-            "issue #%s: SKIP            submit skipped because %s",
-            decision.pr_number, changed_reason,
-        )
-        return changed_reason
+    done, the branch publication block reason otherwise. Branches are
+    published before the comment, through the same seam as fairy's PR
+    submit path, so the posted text never names a branch that failed
+    to appear."""
     blocked = branch_publication_block(args, decision)
     if blocked is not None:
         return blocked
@@ -527,7 +512,7 @@ def submit_issue_decision(
                 "issue #%s: %s", decision.pr_number, exc,
             )
     if decision_has_label_changes(decision):
-        current = set(labels(get_issue(args, decision.pr_number)))
+        current = set(labels(issue))
         apply_issue_label_changes(
             args,
             args.owner,

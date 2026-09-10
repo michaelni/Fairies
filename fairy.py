@@ -958,19 +958,11 @@ def branch_publication_block(
     return None
 
 
-def get_submission_guard(prepared: PreparedItem, decision: Decision) -> tuple[str | None, str | None]:
-    if isinstance(prepared, PreparedPR):
-        return prepared.pr.get("updated_at"), get_pr_head_ref(prepared.pr)
-    return decision.expected_pr_updated_at, decision.expected_head_ref
-
-
 def check_pr_still_unchanged(
     args: argparse.Namespace,
-    prepared: PreparedItem,
+    current: ApiObject,
     decision: Decision,
 ) -> str | None:
-    expected_pr_updated_at, expected_head_ref = get_submission_guard(prepared, decision)
-    current = get_pr(args, decision.pr_number)
     # ``--force-review`` with --force-review-non-open posts even to a
     # closed/merged PR (the forge still accepts comments there); the
     # heuristic open-state guard is for cron mode. Without the opt-in,
@@ -982,30 +974,24 @@ def check_pr_still_unchanged(
     )
     if current.get("state") != "open" and not forced_non_open:
         return "PR is no longer open"
-    if expected_pr_updated_at is not None and current.get("updated_at") != expected_pr_updated_at:
+    if (decision.expected_pr_updated_at is not None
+            and current.get("updated_at") != decision.expected_pr_updated_at):
         return "PR updated_at changed"
-    if expected_head_ref is not None and get_pr_head_ref(current) != expected_head_ref:
+    if (decision.expected_head_ref is not None
+            and get_pr_head_ref(current) != decision.expected_head_ref):
         return "PR head changed"
     return None
 
 
 def submit_decision_action(
     args: argparse.Namespace,
-    prepared: PreparedItem,
     decision: Decision,
     *,
     cache: gcli_cache.Cache | None = None,
-    skip_guard: bool = False,
 ) -> str | None:
-    """Post ``decision``; None on success, the staleness guard's block
-    reason otherwise. ``skip_guard`` posts without the staleness check:
-    the operator's force_post waives it. Branches are published before
-    the review message, so the posted text never names a branch that
-    failed to appear."""
-    changed_reason = None if skip_guard else check_pr_still_unchanged(args, prepared, decision)
-    if changed_reason is not None:
-        logger.info("PR #%s: SKIP            submit skipped because %s", decision.pr_number, changed_reason)
-        return changed_reason
+    """Post ``decision``; None on success, the branch publication block
+    reason otherwise. Branches are published before the review message,
+    so the posted text never names a branch that failed to appear."""
     blocked = branch_publication_block(args, decision)
     if blocked is not None:
         return blocked
@@ -1893,30 +1879,10 @@ def manual_action_description(decision: Decision) -> str:
 
 def apply_triage_labels(
     args: argparse.Namespace,
-    prepared: PreparedItem,
+    pr: ApiObject,
     decision: Decision,
-    *,
-    skip_guard: bool,
-) -> str | None:
-    """Apply label changes for ``decision``; None when applied, the
-    staleness guard's block reason when it suppressed them.
-
-    When ``skip_guard`` is True the caller has just successfully run
-    ``submit_decision_action``; re-checking ``check_pr_still_unchanged``
-    would fail spuriously because Forgejo bumps ``pr.updated_at`` on
-    the comment/approval we just posted.
-    """
-    if not skip_guard:
-        changed_reason = check_pr_still_unchanged(args, prepared, decision)
-        if changed_reason is not None:
-            logger.info(
-                "PR #%s: SKIP            label changes skipped because %s",
-                decision.pr_number,
-                changed_reason,
-            )
-            return changed_reason
-
-    pr = get_pr(args, decision.pr_number)
+) -> None:
+    """Apply ``decision``'s label changes to ``pr``."""
     current = set(labels(pr))
     apply_issue_label_changes(
         args,
@@ -1928,7 +1894,6 @@ def apply_triage_labels(
         current,
     )
     post_label_explanations(args, decision.pr_number, decision.label_changes, current)
-    return None
 
 
 def post_label_explanations(

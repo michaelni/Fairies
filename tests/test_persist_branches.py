@@ -442,6 +442,36 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
         self.assertEqual(records[0].old_sha, "2" * 40)
         self.assertEqual(bundle_negatives, [("2" * 40,)])
 
+    def test_the_container_remotes_tracking_refs_are_no_negatives(self) -> None:
+        """A branch the model pushed or fetched at the container remote
+        is tracked under refs/remotes/fairy/ like a forge branch; thinning
+        against it would bundle on top of commits only the container
+        has (observed: a combiner's push thinned against the draft tip
+        injected before it)."""
+        draft_tip = "d" * 40
+        bundle_negatives: list[tuple] = []
+
+        def fake_cgit(handle, repo_path, *args, **kwargs):
+            if args[0] == "for-each-ref":
+                listed = f"fforge/master {'c' * 40}\n"
+                if "refs/remotes/fairy" in args:
+                    listed += f"fairy/new {draft_tip}\n"
+                return _cmd(stdout=listed.encode())
+            if args[:2] == ("bundle", "create"):
+                bundle_negatives.append(args[args.index("--not") + 1:])
+                return _cmd(stdout=b"BUNDLE")
+            raise AssertionError(f"unexpected container git {args}")
+
+        with mock.patch.object(branch_persist, "_list_fake_refs",
+                               return_value={"new": "f" * 40}), \
+                mock.patch.object(branch_persist, "_container_git",
+                                  side_effect=fake_cgit):
+            branch_persist.collect_declared_branches(
+                [(HANDLE, {"ffmpeg": {}})],
+                [{"repo": "ffmpeg", "branch": "new", "action": "push"}],
+                [], repo_specs=[_repo_spec()], base_shas={})
+        self.assertEqual(bundle_negatives, [("c" * 40,)])
+
     def test_a_pr_target_thins_the_bundle_and_anchors_the_diff(self) -> None:
         target_tip = "9" * 40
         bundle_args: list[tuple] = []

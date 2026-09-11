@@ -336,13 +336,15 @@ def _merge_base(handle: ContainerHandle, repo: str, sha: str,
 def _forge_branch_tips(handle: ContainerHandle,
                        container_path: str) -> dict[str, str]:
     """{remote-qualified branch name -> sha} for every branch the
-    checkout's remotes track, PR head refs excluded -- the commits the
-    forge is known to have, where a PR target resolves, and the
-    negatives that keep a bundle to the model's own commits."""
+    checkout's forge remotes track, PR head refs excluded -- the commits
+    the forge is known to have, where a PR target resolves, and the
+    negatives that keep a bundle to the model's own commits. The
+    container remote's tracking refs follow what the model pushed and
+    fetched there, so they are not consulted."""
     cp = _container_git(
         handle, container_path, "for-each-ref",
         "--format=%(refname:short) %(objectname)",
-        *(f"refs/remotes/{remote}" for remote in FAIRY_BRANCH_REMOTES),
+        *(f"refs/remotes/{remote}" for remote in FORGE_REMOTES),
         max_output_bytes=MAX_BUNDLE_BYTES)
     if cp.returncode != 0:
         raise BranchTransferError(

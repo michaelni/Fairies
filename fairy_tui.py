@@ -1178,6 +1178,7 @@ class UILoop:
         self.branch_diff_mode = BRANCH_DIFF_MODES[0]
         self._diff_cache: dict[
             tuple, tuple[tui_core.Chain, float | None]] = {}
+        self._diff_failures: dict[tuple, str] = {}
         repos = [repo for repo, _ in model.sides]
         short = [_repo_short(r) for r in repos]
         self._repo_disp = {r: (s if short.count(s) == 1 else r)
@@ -1642,9 +1643,8 @@ class UILoop:
                     body = [[("log_warn", "no diff base recorded for this branch")]]
         except RuntimeError as exc:
             caption = [("label", "branch commits")]
-            logger.error("%s", exc)
             retry_at = time.monotonic() + 5
-            body = [[("log_err", line)] for line in str(exc).splitlines()]
+            body = self._diff_failure_lines(cache_key, exc)
         return self._diff_cache_put(
             cache_key, tui_core.Chain([caption], body, tail or []), retry_at)
 
@@ -1664,7 +1664,19 @@ class UILoop:
         if len(self._diff_cache) >= _DIFF_CACHE_ENTRIES:
             self._diff_cache.pop(next(iter(self._diff_cache)))
         self._diff_cache[cache_key] = (lines, retry_at)
+        if retry_at is None:
+            self._diff_failures.pop(cache_key, None)
         return lines
+
+    def _diff_failure_lines(self, cache_key: tuple,
+                            exc: Exception) -> list[tui_core.StyledLine]:
+        """The failure as error lines for the pane; logged when it is
+        new for the key, since the retry every few seconds repeats it
+        until the operator fetches what is missing."""
+        if self._diff_failures.get(cache_key) != str(exc):
+            self._diff_failures[cache_key] = str(exc)
+            logger.error("%s", exc)
+        return [[("log_err", line)] for line in str(exc).splitlines()]
 
     def _diff_body(self, item: Item, snapshot: dict | None,
                    mode: str) -> tui_core.Chain:
@@ -1709,9 +1721,8 @@ class UILoop:
                     tail = [[("log_warn", f"… truncated at {DIFF_MAX_LINES}"
                                           f" of {len(patch_lines)} lines")]]
             except RuntimeError as exc:
-                logger.error("%s", exc)
                 retry_at = time.monotonic() + 5
-                body = [[("log_err", line)] for line in str(exc).splitlines()]
+                body = self._diff_failure_lines(cache_key, exc)
                 body.append([("label", "if the head is not fetched yet: "
                                        f"git -C {repo} fetch --all")])
         return self._diff_cache_put(

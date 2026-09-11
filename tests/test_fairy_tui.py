@@ -1035,6 +1035,33 @@ class BranchMarkerTests(DbCase):
                 item, fairy_tui._ticket_branches(item.data)[0])
         self.assertEqual(seen, ["QUJD"])
 
+    def test_a_failing_branch_preview_is_logged_once(self) -> None:
+        self.db.push("reviewed", "pr", "6", _branch_verdict(6))
+        self.model.poll()
+        ui = make_ui(self.model)
+        item = next(iter(self.model.items.values()))
+        record = fairy_tui._ticket_branches(item.data)[0]
+        failing = mock.patch.object(
+            fairy_tui.branch_persist, "materialized_record",
+            side_effect=RuntimeError("lacks prerequisite"))
+        with failing, mock.patch.object(fairy_tui.time, "monotonic",
+                                        side_effect=[0, 100, 100]), \
+                self.assertLogs(fairy_tui.logger, level="ERROR") as logs:
+            ui._branch_diff_body(item, record)
+            ui._branch_diff_body(item, record)
+        self.assertEqual(len(logs.output), 1)
+        with mock.patch.object(fairy_tui.branch_persist, "materialized_record",
+                               _fake_store), \
+                mock.patch.object(fairy_tui.git_util, "git_patch_stream",
+                                  return_value=b"+x"), \
+                mock.patch.object(fairy_tui.time, "monotonic",
+                                  return_value=200):
+            ui._branch_diff_body(item, record)
+        with failing, self.assertLogs(fairy_tui.logger, level="ERROR") as logs:
+            ui._diff_cache.clear()
+            ui._branch_diff_body(item, record)
+        self.assertEqual(len(logs.output), 1)
+
     def test_issue_branch_diffs_are_warmed_before_paint(self) -> None:
         v = _branch_verdict(9)
         self.db.push("reviewed", "issue", "9", v)

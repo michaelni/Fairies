@@ -66,6 +66,10 @@ EXIT_REVIEW_HALTED = 4
 # ensemble against the same content flag, so fairy sends the item to
 # error/ where the agent's doubling backoff paces the next try.
 EXIT_TURN_FAILED = 5
+# The wrapper's "the operator cancelled this review" exit status: the
+# ticket goes to cancelled/ and the remaining --llm-max-attempts are
+# not spent on a verdict nobody wants.
+EXIT_REVIEW_CANCELLED = 6
 
 
 def format_turn_failure(exc: BaseException) -> str:

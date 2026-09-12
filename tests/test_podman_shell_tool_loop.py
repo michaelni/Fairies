@@ -42,6 +42,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import podman_host as lc  # noqa: E402
+from common import EXIT_REVIEW_CANCELLED  # noqa: E402
 import openai_reviewer  # noqa: E402
 
 
@@ -515,10 +516,11 @@ class CancelPlaneTests(unittest.TestCase):
     def test_flagged_claim_stops_before_the_command_runs(self) -> None:
         self.path.write_text('{"cancel": true}')
         session = mock.Mock()
-        with self.assertRaises(SystemExit):
+        with self.assertRaises(SystemExit) as caught:
             self.shell_tool.exec_shell_call(session, {"command": "true"},
                                             max_timeout_s=5)
         session.exec.assert_not_called()
+        self.assertEqual(EXIT_REVIEW_CANCELLED, caught.exception.code)
 
     def test_unflagged_claim_does_not_interfere(self) -> None:
         payload = self.shell_tool.exec_shell_call(

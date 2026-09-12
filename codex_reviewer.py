@@ -550,8 +550,7 @@ class CodexReviewer(Reviewer):
         except BranchCollectionFailed:
             raise  # codex ran fine; fairy's own branch packing failed
         except Exception:
-            if shell_tool.cancelled():
-                raise SystemExit("operator cancelled")
+            shell_tool.abort_if_cancelled()
             if shell_tool.halted():
                 raise  # a sibling's halt tore this run down; not evidence
 

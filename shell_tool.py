@@ -48,7 +48,7 @@ import os
 import threading
 from typing import Callable, Sequence
 
-from common import EXIT_REVIEW_HALTED, JsonObject
+from common import EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED, JsonObject
 from podman_host import ContainerShellSession
 from shell_bridge_client import (  # noqa: F401
     SHELL_TOOL_DESCRIPTION,
@@ -58,6 +58,7 @@ from shell_bridge_client import (  # noqa: F401
 
 __all__ = [
     "DEFAULT_SHELL_TIMEOUT_S",
+    "abort_if_cancelled",
     "build_shell_tool_schema",
     "cancelled",
     "exec_machine_call",
@@ -101,6 +102,14 @@ def cancelled() -> bool:
     return _cancel_state[1]
 
 
+def abort_if_cancelled() -> None:
+    """Exit the wrapper with EXIT_REVIEW_CANCELLED once the operator has
+    flagged the claimed ticket; called before every model turn and
+    shell command so a review stops at its next boundary."""
+    if cancelled():
+        raise SystemExit(EXIT_REVIEW_CANCELLED)
+
+
 def exec_shell_call(
     session: ContainerShellSession,
     args: object,
@@ -117,8 +126,7 @@ def exec_shell_call(
     rather than raising. ``timeout_seconds`` is clamped to
     ``[1.0, max_timeout_s]``.
     """
-    if cancelled():
-        raise SystemExit("operator cancelled")
+    abort_if_cancelled()
     # SystemExit, not a plain raise: the codex dispatch loop turns any
     # Exception into a tool-error payload and lets the model carry on.
     if _halted:

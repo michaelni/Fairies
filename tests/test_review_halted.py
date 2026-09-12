@@ -51,8 +51,8 @@ if str(REPO_ROOT) not in sys.path:
 
 import fairy  # noqa: E402
 import shell_tool  # noqa: E402
-from common import (EXIT_REVIEW_HALTED, EXIT_TURN_FAILED,  # noqa: E402
-                    format_turn_failure)
+from common import (EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED,  # noqa: E402
+                    EXIT_TURN_FAILED, format_turn_failure)
 
 
 def _args(attempts: int) -> argparse.Namespace:
@@ -69,6 +69,17 @@ class ReviewHaltedRetryPolicyTests(unittest.TestCase):
             raise fairy.ReviewHalted("container is suspect")
 
         with self.assertRaises(fairy.ReviewHalted):
+            fairy.call_llm_with_retries(_args(3), 23750, invoke)
+        self.assertEqual(1, len(calls))
+
+    def test_cancelled_review_is_not_retried(self) -> None:
+        calls = []
+
+        def invoke(extra_cmd_args):
+            calls.append(extra_cmd_args)
+            raise fairy.ReviewCancelled("operator cancelled")
+
+        with self.assertRaises(fairy.ReviewCancelled):
             fairy.call_llm_with_retries(_args(3), 23750, invoke)
         self.assertEqual(1, len(calls))
 
@@ -124,6 +135,21 @@ class TurnFailedErrorPropagationTests(unittest.TestCase):
                     label_allowlist=[])
         self.assertIn(self.PROVIDER_ERROR, str(caught.exception))
         self.assertIn("in-run retry budget", str(caught.exception))
+
+
+class CancelledExitPropagationTests(unittest.TestCase):
+    def test_cancelled_exit_becomes_review_cancelled(self) -> None:
+        args = argparse.Namespace(
+            llm_review_cmd="./pr_review_wrapper.py", verbose=0,
+            llm_timeout=10)
+        cp = subprocess.CompletedProcess(
+            [], EXIT_REVIEW_CANCELLED, stdout="", stderr="")
+        with mock.patch.object(fairy, "run_cmd", return_value=cp):
+            with self.assertRaises(fairy.ReviewCancelled):
+                fairy.invoke_llm_wrapper(
+                    args, {}, number=42,
+                    allowed_classifications=frozenset(),
+                    label_allowlist=[])
 
 
 class HaltStopsSiblingReviewersTests(unittest.TestCase):

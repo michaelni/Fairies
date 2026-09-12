@@ -1507,7 +1507,7 @@ class LoopTests(unittest.TestCase):
     cron sees the failure in the exit code."""
 
     def run_main(self, flags: str, outcomes: list,
-                 wait=None) -> list[int]:
+                 wait=None, watched: bool = True) -> list[int]:
         import shlex
         import time
         tmp = tempfile.TemporaryDirectory()
@@ -1529,7 +1529,9 @@ class LoopTests(unittest.TestCase):
         with mock.patch.object(agent, "one_pass", side_effect=one_pass), \
                 mock.patch.object(agent, "send_pass") as self.send_pass, \
                 mock.patch.object(agent, "setup_logging"), \
-                mock.patch.object(agent, "watch_paths"), \
+                mock.patch.object(agent, "watch_paths",
+                                  return_value=mock.Mock() if watched
+                                  else None), \
                 mock.patch.object(agent, "Event", return_value=wake), \
                 mock.patch.object(sys, "argv", argv):
             self.rc = agent.main()
@@ -1569,6 +1571,17 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(waits[0], 5.0)
         self.assertEqual(len(self.calls), 1)
         self.send_pass.assert_called_once()
+
+    def test_without_a_watch_the_operator_files_are_polled(self) -> None:
+        waits = []
+
+        def wait(timeout=None):
+            waits.append(timeout)
+            raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            self.run_main("--loop 100", [None], wait=wait, watched=False)
+        self.assertEqual(waits, [agent.WATCH_FALLBACK_POLL_S])
 
     def test_a_failed_pass_is_fatal_in_one_shot_mode(self) -> None:
         with self.assertRaises(RuntimeError):

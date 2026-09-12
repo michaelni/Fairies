@@ -84,7 +84,7 @@ from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     config_option_groups, grouped_help,
                     iso_to_dt, options_argv, parse_scoped_overrides,
                     side_actions, setup_logging, split_side_actions,
-                    watch_paths)
+                    WATCH_FALLBACK_POLL_S, watch_paths)
 
 __all__ = ["main", "scan_pass", "send_pass",
            "REASON_MERGED", "REASON_CLOSED_UNMERGED", "REASON_CLOSED"]
@@ -1162,7 +1162,8 @@ def main() -> int:
     # loop within milliseconds; a wake without a request only needs the
     # send pass, not a full forge scan.
     wake = Event()
-    watch_paths([db.root / "requests", db.root / "outgoing"], wake.set)
+    watched = watch_paths([db.root / "requests", db.root / "outgoing"],
+                          wake.set) is not None
     sides = sides_of(pr_ns, issue_ns)
     next_scan = 0.0
     snapshot_memo: dict = {}
@@ -1188,7 +1189,9 @@ def main() -> int:
             continue
         if not args.loop:
             return 0
-        wake.wait(max(0.0, next_scan - time.monotonic()))
+        wait_s = next_scan - time.monotonic()
+        wake.wait(max(0.0, wait_s if watched
+                      else min(wait_s, WATCH_FALLBACK_POLL_S)))
         wake.clear()
 
 

@@ -243,14 +243,14 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
               closed_items: list[dict] | tuple = (),
               snapshot_memo: dict[tuple[str, filedb.TicketId],
                                   str | None] | None = None,
-              serve_outgoing: Callable[[], None] = lambda: None,
+              serve_operator: Callable[[], None] = lambda: None,
               ) -> set[tuple[str, int]]:
     """One gate pass over the side's open items; returns the open set.
     ``closed_items`` (the --scan-closed-days window, caller-fetched)
     are snapshotted and nothing else; ``snapshot_memo`` remembers each
     one's snapshotted updated_at across passes so unchanged items cost
-    no rebuild; ``serve_outgoing`` runs before every item, so a y
-    pressed during the pass is posted without waiting for its end."""
+    no rebuild; ``serve_operator`` runs before every item, so a y or r
+    pressed during the pass is answered without waiting for its end."""
     if snapshot_memo is None:
         snapshot_memo = {}
     if kind == "pr":
@@ -313,7 +313,7 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
                     wip_re=wip_re if kind == "pr" else None,
                     cache_age=cache_age, limit=limit, evals=evals,
                     template_only=template_only,
-                    serve_outgoing=serve_outgoing)
+                    serve_operator=serve_operator)
     finally:
         forced_ns -= added_forced
     # --scan-closed-days: snapshot-only visibility. Deliberately
@@ -337,11 +337,11 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
 def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 wip_re, cache_age, limit, evals={},
                 template_only=frozenset(),
-                serve_outgoing: Callable[[], None] = lambda: None) -> None:
+                serve_operator: Callable[[], None] = lambda: None) -> None:
     queued = 0
     for item in sorted(items, key=lambda i: (int(i["number"]) not in forced_ns,
                                              int(i["number"]))):
-        serve_outgoing()
+        serve_operator()
         number = int(item["number"])
         token = str(number)
         _put_snapshot(db, ns, kind, token, item, cache, cache_age)
@@ -527,7 +527,6 @@ def finish_requests(db: filedb.Db, forced: dict[str, set[filedb.TicketId]],
                     kinds: set[str]) -> None:
     """Drop the requests this pass consumed, but only once some ticket
     exists for the item (at-least-once: a crashed pass retries). A
-    request that arrived mid-pass is not in ``forced`` and waits; a
     request for a kind this agent never scanned is not ours to consume
     (a pr-only agent must not eat an issue rerun)."""
     for kind, numbers in forced.items():
@@ -668,19 +667,45 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     # pruning are skipped for it.
     full_kinds: set[str] = set()
     sides = sides_of(pr_ns, issue_ns)
+    served: dict[str, set[filedb.TicketId]] = {kind: set() for kind in sides}
+    logins: dict[str, str | None] = {}
+
+    def login(kind: str) -> str | None:
+        if kind not in logins:
+            logins[kind] = forge_gcli.self_login(sides[kind])
+        return logins[kind]
+
     with SideCaches(sides) as caches:
         def serve_outgoing() -> None:
             send_outgoing(db, sides, caches, dry_run=dry_run)
+
+        def serve_operator() -> None:
+            """Between two scanned items: post the y presses and answer
+            the requests that arrived since the pass consumed its set,
+            each by fetching just the named item."""
+            serve_outgoing()
+            for kind, ns in sides.items():
+                late = {n for k, n in db.list_state("requests")
+                        if k == kind} - served[kind]
+                if not late:
+                    continue
+                served[kind] |= late
+                open_set.update(scan_side(
+                    db, _forced_only(ns), kind, now=now, cache=caches[kind],
+                    self_login=login(kind), forced=late,
+                    serve_operator=serve_outgoing))
+                finish_requests(db, {kind: late}, {kind})
         for kind, ns in sides.items():
             kinds.add(kind)
             if not ns.forced_only:
                 full_kinds.add(kind)
-            self_login = forge_gcli.self_login(ns)
+            pending = forced[kind] - served[kind]
+            served[kind] |= forced[kind]
             open_set |= scan_side(
                 db, ns, kind, now=now, cache=caches[kind],
-                self_login=self_login, forced=forced[kind],
+                self_login=login(kind), forced=pending,
                 closed_items=() if ns.forced_only else closed_for(ns, kind),
-                snapshot_memo=snapshot_memo, serve_outgoing=serve_outgoing)
+                snapshot_memo=snapshot_memo, serve_operator=serve_operator)
         finish_requests(db, forced, kinds)
         cancel_closed(db, open_set, full_kinds, sides, caches)
     for kind, number in db.reap():

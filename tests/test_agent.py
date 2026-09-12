@@ -555,6 +555,22 @@ class ReuseTests(AgentCase):
                       fetch=lambda ns, n: dict(make_pr(n), state="open"))
         self.assertEqual(seen, [(1, "outgoing"), (2, "posted")])
 
+    def test_requests_are_served_between_scanned_items(self) -> None:
+        """An r pressed during a scan must not wait for the scan's end."""
+        seen: list[tuple[int, str | None]] = []
+
+        def prepare(ns, pr, **kw):
+            if pr["number"] == 1:
+                self.db.push("requests", "pr", "9", {"action": "rerun"})
+            seen.append((pr["number"], self.db.find("pr", "9")))
+            return prepared_for(pr)
+
+        self.prepare.side_effect = prepare
+        self.scan([make_pr(1), make_pr(2)])
+        self.assertEqual(seen, [(1, "requests"), (9, "requests"),
+                               (2, "queued")])
+        self.assertIsNone(self.db.get("requests", "pr", "9"))
+
 
 class LifecycleTests(AgentCase):
     def test_closed_item_is_cancelled_with_its_fate(self) -> None:

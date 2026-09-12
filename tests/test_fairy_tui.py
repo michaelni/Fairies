@@ -2220,6 +2220,21 @@ class FsWatchTests(DbCase):
         (root / "queued" / "pr-1.json").write_text("{}", encoding="utf-8")
         self.assertFalse(fired.wait(1.0))
 
+    def test_an_unwatchable_path_means_polling(self) -> None:
+        import common
+        try:
+            import watchdog.observers
+        except ImportError:
+            self.skipTest("watchdog not installed")
+        observer = mock.Mock()
+        observer.schedule.side_effect = OSError("inotify instance limit")
+        with mock.patch.object(watchdog.observers, "Observer",
+                               return_value=observer), \
+                self.assertLogs("common", level="ERROR"):
+            self.assertIsNone(common.watch_paths([Path("/nowhere")],
+                                                 Event().set))
+        observer.start.assert_not_called()
+
     def test_needs_poll_wakes_the_poll_thread(self) -> None:
         ui = make_ui(self.model)
         polled = Event()

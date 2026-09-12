@@ -674,13 +674,16 @@ def setup_logging(
             target.addHandler(debug_handler)
 
 
+WATCH_FALLBACK_POLL_S = 1.0
+
+
 def watch_paths(paths: list[Path], callback,
                 recursive: bool = False) -> object | None:
     """Fire ``callback()`` (from the observer thread; keep it to setting
     an Event) on any change under the given directories. Returns the
     started watchdog observer, or None when the watchdog package is not
-    installed or a path cannot be watched -- callers keep their
-    interval fallback and merely react slower.
+    installed or a path cannot be watched, both logged -- callers then
+    poll every WATCH_FALLBACK_POLL_S instead.
 
     Each path costs one inotify instance, of which a user gets 128 by
     default (``fs.inotify.max_user_instances``) across every program
@@ -690,6 +693,8 @@ def watch_paths(paths: list[Path], callback,
         from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
     except ImportError:
+        logger.warning("watchdog is not installed; polling every %gs",
+                       WATCH_FALLBACK_POLL_S)
         return None
 
     class _Handler(FileSystemEventHandler):
@@ -705,7 +710,9 @@ def watch_paths(paths: list[Path], callback,
         try:
             observer.schedule(handler, str(path), recursive=recursive)
         except OSError as exc:
-            logging.getLogger(__name__).debug("cannot watch %s: %s", path, exc)
+            logger.error("cannot watch %s: %s; polling every %gs",
+                         path, exc, WATCH_FALLBACK_POLL_S)
+            return None
     observer.start()
     return observer
 

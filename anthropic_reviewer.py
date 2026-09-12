@@ -59,7 +59,8 @@ from llm_review_api import (
     RoleSpec,
 )
 from anthropic_common import call_with_anthropic_retry, load_api_key
-from shell_tool import build_shell_tool_schema, exec_machine_call
+from shell_tool import (abort_if_cancelled, build_shell_tool_schema,
+                        exec_machine_call)
 
 __all__ = [
     "ANTHROPIC_EFFORTS",
@@ -261,6 +262,7 @@ class AnthropicReviewer(Reviewer):
                     thinking["display"] = "summarized"
                 request_kwargs["thinking"] = thinking
                 request_kwargs["output_config"] = {"effort": self.effort}
+            abort_if_cancelled()
             with concurrency.slot(self.name.partition(":")[0]):
                 response = call_with_anthropic_retry(
                     lambda: client.messages.create(**request_kwargs),

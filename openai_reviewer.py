@@ -76,7 +76,8 @@ from openai_common import (
     upload_text_file,
 )
 import podman_host
-from shell_tool import build_shell_tool_schema, exec_machine_call
+from shell_tool import (abort_if_cancelled, build_shell_tool_schema,
+                        exec_machine_call)
 
 __all__ = [
     "EXIT_CONTAINER_UNHEALTHY",
@@ -344,6 +345,7 @@ def run_responses_resolving_podman_shell(
 
     def create_and_dump(kwargs: ResponseKwargs, what_label: str) -> object:
         nonlocal conv_path
+        abort_if_cancelled()
         with concurrency.slot("openai"):
             resp = call_with_rate_limit_retry(
                 lambda: client.responses.create(**kwargs),
@@ -897,6 +899,7 @@ class OpenAIReviewer(Reviewer):
                     parallel_tool_calls=args.podman_parallel_tool_calls,
                 )
             else:
+                abort_if_cancelled()
                 with concurrency.slot("openai"):
                     response = call_with_rate_limit_retry(
                         lambda: client.responses.create(**response_kwargs),

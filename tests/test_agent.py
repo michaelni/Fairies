@@ -1506,7 +1506,8 @@ class LoopTests(unittest.TestCase):
     failed pass. Without it one pass runs and an error is fatal, so
     cron sees the failure in the exit code."""
 
-    def run_main(self, flags: str, outcomes: list) -> list[int]:
+    def run_main(self, flags: str, outcomes: list,
+                 wait=None) -> list[int]:
         import shlex
         import time
         tmp = tempfile.TemporaryDirectory()
@@ -1523,9 +1524,10 @@ class LoopTests(unittest.TestCase):
                 raise outcome
 
         wake = mock.Mock()
-        wake.wait.side_effect = lambda timeout=None: time.sleep(timeout or 0)
+        wake.wait.side_effect = wait or (
+            lambda timeout=None: time.sleep(timeout or 0))
         with mock.patch.object(agent, "one_pass", side_effect=one_pass), \
-                mock.patch.object(agent, "send_pass"), \
+                mock.patch.object(agent, "send_pass") as self.send_pass, \
                 mock.patch.object(agent, "setup_logging"), \
                 mock.patch.object(agent, "watch_paths"), \
                 mock.patch.object(agent, "Event", return_value=wake), \
@@ -1549,6 +1551,24 @@ class LoopTests(unittest.TestCase):
             self.run_main("--loop 0.01", [RuntimeError("forge 500"),
                                           _StopLoop()])
         self.assertEqual(len(self.calls), 2)
+
+    def test_a_failed_pass_does_not_park_the_operator_files(self) -> None:
+        """The retry comes after PASS_RETRY_S, not after the whole
+        --loop, and the operator passes run in between."""
+        waits = []
+
+        def wait(timeout=None):
+            waits.append(timeout)
+            if len(waits) == 2:
+                raise _StopLoop()
+
+        with mock.patch.object(agent, "PASS_RETRY_S", 5.0), \
+                self.assertRaises(_StopLoop):
+            self.run_main("--loop 100", [RuntimeError("forge 500")],
+                          wait=wait)
+        self.assertEqual(waits[0], 5.0)
+        self.assertEqual(len(self.calls), 1)
+        self.send_pass.assert_called_once()
 
     def test_a_failed_pass_is_fatal_in_one_shot_mode(self) -> None:
         with self.assertRaises(RuntimeError):

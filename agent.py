@@ -1086,6 +1086,9 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     log_summary(db)
 
 
+PASS_RETRY_S = 60.0
+
+
 def _forced_only(ns: argparse.Namespace | None) -> argparse.Namespace | None:
     if ns is None:
         return None
@@ -1166,9 +1169,9 @@ def main() -> int:
     while True:
         try:
             if time.monotonic() >= next_scan:
+                next_scan = time.monotonic() + args.loop
                 one_pass(db, pr_ns, issue_ns, args,
                          snapshot_memo=snapshot_memo)
-                next_scan = time.monotonic() + args.loop
             elif db.list_state("requests"):
                 requests_pass(db, pr_ns, issue_ns, args)
             else:
@@ -1178,8 +1181,11 @@ def main() -> int:
             # one-shot (cron) mode still fails loudly via its exit code.
             if not args.loop:
                 raise
-            logger.exception("pass failed; retrying in %gs", args.loop)
-            next_scan = time.monotonic() + args.loop
+            retry_s = min(PASS_RETRY_S, args.loop)
+            logger.exception("pass failed; retrying in %gs", retry_s)
+            wake.wait(retry_s)
+            wake.clear()
+            continue
         if not args.loop:
             return 0
         wake.wait(max(0.0, next_scan - time.monotonic()))

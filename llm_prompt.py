@@ -572,6 +572,9 @@ each produced by a different model; produce one combined review.
   marked as unverified.
 - Merge the remaining information into a single well-organized review that
   makes each point once.
+- If the PR is a security fix, try to keep the fix small and backportable,
+  dont push the author towards including changes which would be better in a
+  non security follow up. But feel free to mention suggested follow up changes.
 - Do not introduce a new issue that no draft raised, unless verifying a
   draft's point exposes a clearly-confirmed adjacent correctness problem.
 {CR_PROMPT_CLAIM_VERIFICATION}\

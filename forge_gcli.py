@@ -153,14 +153,19 @@ def gcli_prefix(args: argparse.Namespace) -> list[str]:
     return cmd
 
 
+GCLI_TIMEOUT_S = 300
+
+
 def run_gcli(args: argparse.Namespace, cmd: list[str], **kwargs):
     """Run a gcli command with whatever credentials ``args`` select.
 
     Every gcli invocation goes through here so App auth is arranged in
     one place: ``github_app.gcli_env`` answers None for static-token
     deployments, which is the inherited environment and today's
-    behavior.
+    behavior. A hung forge call would stall the caller's whole loop, so
+    each is bounded by GCLI_TIMEOUT_S unless the caller passes its own.
     """
+    kwargs.setdefault("timeout", GCLI_TIMEOUT_S)
     return run_cmd(cmd, verbose=getattr(args, "verbose", 0),
                    env=github_app.gcli_env(args), **kwargs)
 
@@ -399,7 +404,7 @@ def run_gcli_editor_submission(
     *,
     message: str,
     verbose: int,
-    timeout: int | None = None,
+    timeout: int = GCLI_TIMEOUT_S,
     base_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="gcli-review-") as tmpdir:
@@ -608,7 +613,6 @@ def gcli_create_pr(
     logger.info("+ %s   # body bytes=%d", shlex.join(cmd), len(body))
     cp = run_gcli_editor_submission(
         cmd, message=body, verbose=getattr(args, "verbose", 0),
-        timeout=300,
         base_env=github_app.gcli_env(args),
     )
     if cp.returncode != 0:

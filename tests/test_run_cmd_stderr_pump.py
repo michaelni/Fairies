@@ -96,6 +96,16 @@ class RunCmdStderrPumpTest(unittest.TestCase):
         self.assertEqual(observed, expected)
 
 
+class GcliTimeoutTests(unittest.TestCase):
+    def test_every_gcli_call_is_bounded(self) -> None:
+        with mock.patch.object(forge_gcli, "run_cmd") as run_cmd, \
+                mock.patch.object(forge_gcli.github_app, "gcli_env",
+                                  return_value=None):
+            forge_gcli.run_gcli(mock.Mock(verbose=0), ["gcli", "api", "/user"])
+        self.assertEqual(forge_gcli.GCLI_TIMEOUT_S,
+                         run_cmd.call_args.kwargs["timeout"])
+
+
 class WireRelayTests(unittest.TestCase):
     """A child logging in FAIRY_LOG_WIRE shape keeps level and time
     through the relay: the pane colors wrapper errors red, and exactly

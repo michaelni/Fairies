@@ -66,7 +66,8 @@ import issue_fairy
 import workset
 from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     config_option_groups, grouped_help, options_argv,
-                    parse_scoped_overrides, setup_logging, watch_paths)
+                    parse_scoped_overrides, setup_logging,
+                    WATCH_FALLBACK_POLL_S, watch_paths)
 
 __all__ = ["main", "review_claim", "drain"]
 
@@ -192,23 +193,26 @@ def _review_claimed(sides: dict[str, argparse.Namespace],
 
 
 def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
-          parallel: int = 1, wake: Event | None = None) -> int:
+          parallel: int = 1, wake: Event | None = None,
+          watched: bool = False) -> int:
     """Claim and review every queued ticket of the configured kinds, up
     to ``parallel`` at a time; returns the number reviewed. Purely
     event-driven: a finished review and a new queued/ file both set
-    ``wake`` (the caller's queued/-watching event, or an own watch when
-    none is given), so slots refill the moment either happens and one
-    slow review never idles the others. Without the watchdog package a
-    1s poll is the fallback. The claim protocol arbitrates, so threads
-    and other worker processes compose freely; per-provider rate limits
-    stay with concurrency.py inside the wrapper."""
+    ``wake`` (the caller's event, ``watched`` when its queued/ watch is
+    live, or an own watch when none is given), so slots refill the
+    moment either happens and one slow review never idles the others.
+    Without a live watch a WATCH_FALLBACK_POLL_S poll is the fallback.
+    The claim protocol arbitrates, so threads and other worker
+    processes compose freely; per-provider rate limits stay with
+    concurrency.py inside the wrapper."""
     slots = max(1, int(parallel or 1))
     done = 0
     in_flight: set = set()
-    watched = wake is not None
+    own_watch = None
     if wake is None:
         wake = Event()
-    own_watch = None if watched else watch_paths([db.root / "queued"], wake.set)
+        own_watch = watch_paths([db.root / "queued"], wake.set)
+        watched = own_watch is not None
     try:
         with ThreadPoolExecutor(max_workers=slots) as pool:
             while True:
@@ -238,7 +242,7 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
                 if not in_flight and not claimed:
                     return done
                 if in_flight:
-                    wake.wait(None if watched or own_watch else 1.0)
+                    wake.wait(None if watched else WATCH_FALLBACK_POLL_S)
     finally:
         if own_watch is not None:
             own_watch.stop()
@@ -300,10 +304,11 @@ def main() -> int:
         options_argv(issue_over)
         if issue_opts is not None or "--issues" in sections else [])
     wake = Event()
-    watch_paths([db.root / "queued"], wake.set)
+    watched = watch_paths([db.root / "queued"], wake.set) is not None
     while True:
         try:
-            drain(db, sides, parallel=args.parallel, wake=wake)
+            drain(db, sides, parallel=args.parallel, wake=wake,
+                  watched=watched)
         except Exception:
             # same contract as the agent loop: a transient error must
             # not kill the daemon; one-shot mode fails loudly
@@ -312,7 +317,8 @@ def main() -> int:
             logger.exception("drain failed; retrying in %gs", args.loop)
         if not args.loop:
             return 0
-        wake.wait(args.loop)
+        wake.wait(args.loop if watched
+                  else min(args.loop, WATCH_FALLBACK_POLL_S))
         wake.clear()
 
 

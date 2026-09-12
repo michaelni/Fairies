@@ -308,7 +308,8 @@ class LoopTests(unittest.TestCase):
     keep draining, and survive a failed drain. Without it the worker
     drains once and an error is fatal, so cron sees the exit code."""
 
-    def run_main(self, flags: str, outcomes: list) -> list[int]:
+    def run_main(self, flags: str, outcomes: list, wait=None,
+                 watched: bool = True) -> list[int]:
         import shlex
         import time
         tmp = tempfile.TemporaryDirectory()
@@ -326,10 +327,13 @@ class LoopTests(unittest.TestCase):
             return 0
 
         wake = mock.Mock()
-        wake.wait.side_effect = lambda timeout=None: time.sleep(timeout or 0)
+        wake.wait.side_effect = wait or (
+            lambda timeout=None: time.sleep(timeout or 0))
         with mock.patch.object(worker, "drain", side_effect=drain), \
                 mock.patch.object(worker, "setup_logging"), \
-                mock.patch.object(worker, "watch_paths"), \
+                mock.patch.object(worker, "watch_paths",
+                                  return_value=mock.Mock() if watched
+                                  else None), \
                 mock.patch.object(worker, "Event", return_value=wake), \
                 mock.patch.object(sys, "argv", argv):
             self.rc = worker.main()
@@ -351,6 +355,17 @@ class LoopTests(unittest.TestCase):
             self.run_main("--loop 0.01", [RuntimeError("provider 503"),
                                           _StopLoop()])
         self.assertEqual(len(self.calls), 2)
+
+    def test_without_a_watch_queued_is_polled(self) -> None:
+        waits = []
+
+        def wait(timeout=None):
+            waits.append(timeout)
+            raise _StopLoop()
+
+        with self.assertRaises(_StopLoop):
+            self.run_main("--loop 100", [None], wait=wait, watched=False)
+        self.assertEqual(waits, [worker.WATCH_FALLBACK_POLL_S])
 
     def test_a_failed_drain_is_fatal_in_one_shot_mode(self) -> None:
         with self.assertRaises(RuntimeError):

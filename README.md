@@ -42,8 +42,8 @@ One db root is one config: each configurator run replaces the whole
 file, so exactly one invocation owns a root -- a deployment that
 configures the sides of a repo separately uses a separate root per
 side. With `pip install
-watchdog` the processes react to new files within 100ms; without it
-they fall back to their poll intervals:
+watchdog` the processes react to new files within 100ms; without it,
+or when a watch cannot be set up (logged), they poll every second:
 
 - `agent.py` (one per repository, PRs and issues together, one shared
   gcli cache): lists the forge, runs the gates, creates tickets in

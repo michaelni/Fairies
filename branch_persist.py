@@ -523,7 +523,7 @@ def collect_declared_branches(
 def _checked_record(record: JsonObject) -> tuple[str, str]:
     """Boundary check for a record read back from a filedb ticket, which
     is hand-editable: safe branch name, known mode, well-formed SHAs, a
-    bounded base64 bundle. Returns (branch, sha)."""
+    bounded base64 bundle, a checkout path. Returns (branch, sha)."""
     branch, mode = record.get("branch"), record.get("mode")
     sha, old_sha = record.get("sha"), record.get("old_sha")
     bundle = record.get("bundle")
@@ -534,7 +534,8 @@ def _checked_record(record: JsonObject) -> tuple[str, str]:
                                         and _SHA_RE.fullmatch(old_sha))) \
             or (mode == "force" and old_sha is None) \
             or not isinstance(bundle, str) \
-            or len(bundle) > MAX_BUNDLE_BYTES * 4 // 3 + 4:
+            or len(bundle) > MAX_BUNDLE_BYTES * 4 // 3 + 4 \
+            or not isinstance(record.get("objects_repo"), str):
         raise BranchTransferError(
             "invalid branch record: "
             f"{ {k: v for k, v in record.items() if k != 'bundle'} }")
@@ -654,15 +655,28 @@ def replace_invented_fairy_identities(
     return {**record, "sha": new_sha, "bundle": bundle}
 
 
+def _remote_named_for(checkout: Path, remote_url: str) -> str:
+    """The name of ``checkout``'s remote whose URL is ``remote_url``."""
+    for line in _git(checkout, "config", "--get-regexp",
+                     r"^remote\..*\.url$").stdout.splitlines():
+        name, _, url = line.partition(" ")
+        if url == remote_url:
+            return name[len("remote."):-len(".url")]
+    raise BranchTransferError(f"{checkout} has no remote for {remote_url}")
+
+
 def publish_branch_record(
     record: JsonObject,
     *,
     remote_url: str,
     timeout_s: float = 300.0,
 ) -> str:
-    """Apply one branch record to ``remote_url``: push the recorded tip
-    as ``fairy/<branch>``, or delete the published branch. Returns the
-    forge branch name.
+    """Apply one branch record to ``remote_url`` through the remote of
+    that URL in the record's ``objects_repo`` checkout: push the
+    recorded tip as ``fairy/<branch>``, or delete the published branch.
+    Pushing by remote name moves the checkout's remote-tracking ref --
+    the seed of every later review's fairy remote -- with the forge.
+    Returns the forge branch name.
 
     An ``ff`` record pushes plainly, so it fails once ``fairy/<branch>``
     moved since collection -- two reviews can both look fast-forward,
@@ -673,38 +687,39 @@ def publish_branch_record(
     retried sends idempotent.
     """
     branch, sha = _checked_record(record)
+    checkout = Path(record["objects_repo"])
+    remote = _remote_named_for(checkout, remote_url)
     forge_branch = f"{FAIRY_BRANCH_PREFIX}{branch}"
     forge_ref = f"refs/heads/{forge_branch}"
     if record["mode"] == "delete":
-        with tempfile.TemporaryDirectory(prefix="fairy-branch-") as tmp:
-            scratch = Path(tmp) / "record.git"
-            _git(Path(tmp), "init", "--bare", "--quiet", str(scratch))
-            logger.info("deleting %s (%s) from %s", forge_branch, sha[:12],
-                        remote_url)
-            try:
-                git_push_refspecs(scratch, remote_url, [f":{forge_ref}"],
-                                  force=False,
-                                  force_with_lease=f"{forge_ref}:{sha}",
-                                  timeout_s=timeout_s)
-            except RuntimeError as exc:
-                listed = _git(scratch, "ls-remote", remote_url, forge_ref,
-                              timeout_s=timeout_s).stdout.split()
-                if listed:
-                    raise BranchTransferError(
-                        f"{forge_branch} moved on {remote_url}: ticket would "
-                        f"delete {sha[:12]}, forge has {listed[0][:12]}") from exc
-                logger.info("%s is already gone from %s", forge_branch,
-                            remote_url)
-        return forge_branch
-    with materialized_record(record) as scratch:
-        logger.info("pushing %s (%s) %s -> %s %s", branch, record["mode"],
-                    sha[:12], remote_url, forge_branch)
-        lease = f"{forge_ref}:{record['old_sha']}" \
-            if record["mode"] == "force" else None
+        logger.info("deleting %s (%s) from %s", forge_branch, sha[:12],
+                    remote_url)
         try:
-            git_push_refspecs(scratch, remote_url, [f"{sha}:{forge_ref}"],
-                              force=False, force_with_lease=lease,
+            git_push_refspecs(checkout, remote, [f":{forge_ref}"], force=False,
+                              force_with_lease=f"{forge_ref}:{sha}",
                               timeout_s=timeout_s)
         except RuntimeError as exc:
-            raise BranchTransferError(str(exc)) from exc
+            listed = _git(checkout, "ls-remote", remote, forge_ref,
+                          timeout_s=timeout_s).stdout.split()
+            if listed:
+                raise BranchTransferError(
+                    f"{forge_branch} moved on {remote_url}: ticket would "
+                    f"delete {sha[:12]}, forge has {listed[0][:12]}") from exc
+            logger.info("%s is already gone from %s", forge_branch, remote_url)
+            _git(checkout, "update-ref", "-d",
+                 f"refs/remotes/{remote}/{forge_branch}")
+        return forge_branch
+    with materialized_record(record) as scratch:
+        _git(checkout, "fetch", "--no-tags", str(scratch),
+             f"refs/heads/{branch}")
+    logger.info("pushing %s (%s) %s -> %s %s", branch, record["mode"],
+                sha[:12], remote_url, forge_branch)
+    lease = f"{forge_ref}:{record['old_sha']}" \
+        if record["mode"] == "force" else None
+    try:
+        git_push_refspecs(checkout, remote, [f"{sha}:{forge_ref}"],
+                          force=False, force_with_lease=lease,
+                          timeout_s=timeout_s)
+    except RuntimeError as exc:
+        raise BranchTransferError(str(exc)) from exc
     return forge_branch

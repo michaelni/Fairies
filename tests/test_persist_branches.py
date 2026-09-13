@@ -225,6 +225,7 @@ class ValidateWithBranchesTests(unittest.TestCase):
                 llm_review_api.validate_review)
 
 
+FORK_URL = "https://forge.example.com/r.git"
 GOOD_RECORD = {
     "branch": "pr7-fix-overflow", "mode": "ff", "pr": None, "repo": "ffmpeg",
     "sha": "a" * 40, "old_sha": None,
@@ -568,6 +569,11 @@ def _fake_host_git(calls: list[tuple] | None = None,
         if args[0] == "ls-remote":
             out = ls_remote if isinstance(ls_remote, str) else ls_remote.decode()
             return SimpleNamespace(returncode=0, stdout=out, stderr="")
+        if args[:2] == ("config", "--get-regexp"):
+            return SimpleNamespace(
+                returncode=0, stderr="",
+                stdout=f"remote.fairy.url {FORK_URL}\n"
+                       "remote.fforge.url https://forge.example.com/up.git\n")
         if args[:2] == ("rev-parse", "--path-format=absolute"):
             return SimpleNamespace(returncode=0, stdout="/client/objects\n",
                                    stderr="")
@@ -737,7 +743,17 @@ class ReplaceInventedFairyIdentitiesTests(unittest.TestCase):
 
 
 class PublishBranchRecordTests(unittest.TestCase):
-    URL = "https://forge.example.com/r.git"
+    URL = FORK_URL
+
+    def test_a_checkout_without_the_urls_remote_refuses(self) -> None:
+        with mock.patch.object(branch_persist, "_git",
+                               side_effect=_fake_host_git()), \
+                mock.patch.object(branch_persist, "git_push_refspecs",
+                                  side_effect=AssertionError("pushed")):
+            with self.assertRaisesRegex(branch_persist.BranchTransferError,
+                                        "no remote"):
+                branch_persist.publish_branch_record(
+                    GOOD_RECORD, remote_url="https://forge.example.com/o.git")
 
     def test_bad_records_are_refused_before_any_git(self) -> None:
         for bad in (dict(GOOD_RECORD, branch="a b"),
@@ -746,6 +762,7 @@ class PublishBranchRecordTests(unittest.TestCase):
                     dict(GOOD_RECORD, mode="force"),
                     dict(GOOD_RECORD, old_sha="xyz"),
                     dict(GOOD_RECORD, bundle=None),
+                    dict(GOOD_RECORD, objects_repo=None),
                     {}):
             with self.subTest(bad=bad), \
                     mock.patch.object(branch_persist, "_git",
@@ -764,6 +781,7 @@ class PublishBranchRecordTests(unittest.TestCase):
             name = branch_persist.publish_branch_record(
                 GOOD_RECORD, remote_url=self.URL)
         self.assertEqual(name, "fairy/pr7-fix-overflow")
+        self.assertEqual(push.call_args.args[:2], (Path("/client/ffmpeg"), "fairy"))
         self.assertEqual(
             push.call_args.args[2],
             [f"{GOOD_RECORD['sha']}:refs/heads/fairy/pr7-fix-overflow"])
@@ -799,19 +817,24 @@ class PublishBranchRecordTests(unittest.TestCase):
                 mock.patch.object(branch_persist, "git_push_refspecs") as push:
             branch_persist.publish_branch_record(DELETE_RECORD,
                                                  remote_url=self.URL)
-        self.assertEqual(push.call_args.args[2],
-                         [":refs/heads/fairy/pr7-stale"])
+        self.assertEqual(push.call_args.args[:3],
+                         (Path("/client/ffmpeg"), "fairy",
+                          [":refs/heads/fairy/pr7-stale"]))
         self.assertEqual(
             push.call_args.kwargs["force_with_lease"],
             f"refs/heads/fairy/pr7-stale:{DELETE_RECORD['sha']}")
 
-    def test_delete_of_an_already_gone_branch_passes(self) -> None:
+    def test_delete_of_an_already_gone_branch_drops_the_tracking_ref(
+            self) -> None:
+        calls: list[tuple] = []
         with mock.patch.object(branch_persist, "_git",
-                               side_effect=_fake_host_git(ls_remote="")), \
+                               side_effect=_fake_host_git(calls, ls_remote="")), \
                 mock.patch.object(branch_persist, "git_push_refspecs",
                                   side_effect=RuntimeError("stale info")):
             branch_persist.publish_branch_record(DELETE_RECORD,
                                                  remote_url=self.URL)
+        self.assertIn(("update-ref", "-d", "refs/remotes/fairy/fairy/pr7-stale"),
+                      calls)
 
     def test_delete_of_a_moved_tip_is_refused(self) -> None:
         listed = f"{'e' * 40}\trefs/heads/fairy/pr7-stale\n"
@@ -835,6 +858,8 @@ class PublishBranchRecordTests(unittest.TestCase):
             branch_persist.publish_branch_record(record, remote_url=self.URL)
         self.assertIn(("update-ref", "refs/heads/pr7-fix-overflow",
                        record["sha"]), calls)
+        self.assertEqual([c[-1] for c in calls if c[:2] == ("fetch", "--no-tags")],
+                         ["refs/heads/pr7-fix-overflow"])
 
 
 class ParseBranchRecordsTests(unittest.TestCase):

@@ -171,6 +171,7 @@ class RemoteProvisionTests(unittest.TestCase):
             [f"{'a' * 40}:refs/fairy/heads/ffmpeg", "refs/*:refs/*"],
             args[2],
         )
+        self.assertTrue(kwargs["prune"])
         self.assertEqual(
             "ssh -o BatchMode=yes -o ServerAliveInterval=30 "
             "-o ServerAliveCountMax=3 -o LogLevel=ERROR -i /k/id -p 17022",

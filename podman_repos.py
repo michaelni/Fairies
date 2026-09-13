@@ -215,7 +215,8 @@ def ensure_remote_mirror(
 def sync_repo_to_mirror(
     spec: RepoSpec, host: RemoteHost, *, timeout_s: float = 600.0, attempts: int = 3,
 ) -> None:
-    """Force-push ``spec.head_sha`` and ALL client refs into the mirror.
+    """Force-push ``spec.head_sha`` and ALL client refs into the mirror,
+    pruning mirror refs the client no longer has.
 
     The full ``refs/*`` refspec carries every ref the client repo has --
     for ffmpeg that includes the thousands of ``refs/remotes/fforge/pr/*``
@@ -240,7 +241,7 @@ def sync_repo_to_mirror(
         try:
             git_push_refspecs(
                 spec.repo_root, remote_url, refspecs,
-                ssh_command=ssh_command, timeout_s=timeout_s,
+                ssh_command=ssh_command, timeout_s=timeout_s, prune=True,
             )
             logger.info(
                 "synced repo name=%s head=%s dt=%.3fs attempts=%d",

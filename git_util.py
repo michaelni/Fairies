@@ -226,8 +226,10 @@ def git_push_refspecs(
     timeout_s: float = 60.0,
     force: bool = True,
     force_with_lease: str | None = None,
+    prune: bool = False,
 ) -> None:
-    """Push ``refspecs`` from ``repo_root`` to ``remote_url``.
+    """Push ``refspecs`` from ``repo_root`` to ``remote_url`` (a URL or
+    a configured remote's name).
 
     git negotiates a thin pack, so only objects the remote lacks are
     sent: the first push to a fresh mirror transfers full history, every
@@ -237,6 +239,8 @@ def git_push_refspecs(
     the mirror syncs need; pass False for a push that must refuse
     non-fast-forward updates. ``force_with_lease`` (a ``ref:sha``) makes
     the push succeed only while the remote ref still is that sha.
+    ``prune`` deletes remote refs the refspecs match but no local ref
+    maps to.
     """
     env = None
     if ssh_command is not None:
@@ -245,6 +249,7 @@ def git_push_refspecs(
            *(["--force"] if force else []),
            *([f"--force-with-lease={force_with_lease}"]
              if force_with_lease else []),
+           *(["--prune"] if prune else []),
            remote_url, *refspecs]
     cp = subprocess.run(cmd, env=env, capture_output=True, check=False, text=True, timeout=timeout_s)
     if cp.returncode != 0:

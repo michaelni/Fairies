@@ -451,16 +451,40 @@ class CopyAndOpenShellTests(unittest.TestCase):
         self.assertEqual(["tar", "-C", "/x", "-cf", "-", "agent.py"], popen_argvs[0])
         self.assertEqual(_ssh("podman cp - cid:/work/.fairy"), popen_argvs[1])
 
-    def test_copy_raises_when_cp_fails(self) -> None:
+    def test_copy_raises_when_cp_fails_every_attempt(self) -> None:
         handle = lc.ContainerHandle(container_id="cid", image="i", network=None, host=HOST)
+        cp_argvs: list = []
 
         def fake_popen(argv, **_kw):
+            if argv[0] != "tar":
+                cp_argvs.append(argv)
             return _FakePopen(argv, rc=1, comm=(b"", b"cp boom"))
 
         with mock.patch.object(lc.subprocess, "run", return_value=_completed(0)), \
-                mock.patch.object(lc.subprocess, "Popen", side_effect=fake_popen):
+                mock.patch.object(lc.subprocess, "Popen", side_effect=fake_popen), \
+                mock.patch.object(lc.time, "sleep") as sleep:
             with self.assertRaisesRegex(RuntimeError, "cp boom"):
-                lc.copy_into_container(handle, Path("/x/agent.py"), "/work/.fairy")
+                lc.copy_into_container(handle, Path("/x/agent.py"), "/work/.fairy",
+                                       attempts=3)
+        self.assertEqual(3, len(cp_argvs))
+        self.assertEqual(2, sleep.call_count)
+
+    def test_copy_retries_cp_after_a_failure(self) -> None:
+        handle = lc.ContainerHandle(container_id="cid", image="i", network=None, host=HOST)
+        cp_results = iter([1, 0])
+
+        def fake_popen(argv, **_kw):
+            if argv[0] == "tar":
+                return _FakePopen(argv, rc=0)
+            return _FakePopen(argv, rc=next(cp_results),
+                              comm=(b"", b"io: read/write on closed pipe"))
+
+        with mock.patch.object(lc.subprocess, "run", return_value=_completed(0)), \
+                mock.patch.object(lc.subprocess, "Popen", side_effect=fake_popen), \
+                mock.patch.object(lc.time, "sleep") as sleep:
+            lc.copy_into_container(handle, Path("/x/agent.py"), "/work/.fairy")
+        self.assertEqual(1, sleep.call_count)
+        self.assertEqual([], list(cp_results))
 
     def test_open_container_shell_builds_ssh_exec_argv(self) -> None:
         handle = lc.ContainerHandle(container_id="cid", image="i", network=None, host=HOST)

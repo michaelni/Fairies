@@ -63,6 +63,7 @@ import json
 import logging
 import math
 import queue
+import random
 import shlex
 import subprocess
 import threading
@@ -831,10 +832,12 @@ def copy_into_container(
     dest_dir: str,
     *,
     timeout_s: float = 120.0,
+    attempts: int = 3,
 ) -> None:
     """Copy one local file into the container by streaming a single-file
     tar into ``podman cp -`` over ssh (no host temp file, no quoting).
-    ``dest_dir`` is created first."""
+    ``dest_dir`` is created first. A failed ``podman cp`` is retried up
+    to ``attempts`` times with a short random delay."""
     local_path = Path(local_path)
     cp = _podman(handle.host, "exec", handle.container_id, "mkdir", "-p", dest_dir,
                  timeout_s=timeout_s)
@@ -847,6 +850,23 @@ def copy_into_container(
     cp_argv = handle.host.argv(["podman", "cp", "-", f"{handle.container_id}:{dest_dir}"])
     logger.info("copy into container id=%s file=%s -> %s",
                 handle.container_id[:12], local_path, dest_dir)
+    for attempt in range(1, attempts + 1):
+        error = _pipe_tar_into_cp(tar_argv, cp_argv, timeout_s)
+        if error is None:
+            return
+        if attempt == attempts:
+            raise ContainerInfraError(f"podman cp into container failed: {error}")
+        delay = random.uniform(0.5, 3.0)
+        logger.info(
+            "podman cp into container id=%s failed (attempt %d/%d): %s; retrying in %.1fs",
+            handle.container_id[:12], attempt, attempts, error.replace("\n", " "), delay,
+        )
+        time.sleep(delay)
+
+
+def _pipe_tar_into_cp(tar_argv: list[str], cp_argv: list[str],
+                      timeout_s: float) -> str | None:
+    """Run ``tar_argv | cp_argv``; None on success, else cp's stderr."""
     tar = subprocess.Popen(tar_argv, stdout=subprocess.PIPE)
     cpp = subprocess.Popen(cp_argv, stdin=tar.stdout,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -860,10 +880,9 @@ def copy_into_container(
         tar.wait()
         raise
     tar.wait()
-    if cpp.returncode != 0:
-        raise ContainerInfraError(
-            f"podman cp into container failed: {err.decode(errors='replace').strip()}"
-        )
+    if cpp.returncode == 0:
+        return None
+    return err.decode(errors="replace").strip()
 
 
 def open_container_shell(

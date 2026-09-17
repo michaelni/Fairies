@@ -646,6 +646,9 @@ class Model:
                 tokens = [item.number] if count == 1 \
                     else [f"{base}s{i}" for i in range(1, count + 1)]
                 for token in tokens:
+                    pending = db.get("reviewed", item.kind, token)
+                    if pending:
+                        db.push(filedb.SUPERSEDED_STATE, item.kind, token, pending)
                     db.request(item.kind, token, {"action": "rerun"})
                 logger.info("requested %s of %s", "a fresh review" if count == 1
                             else f"{count} sample evaluations", label)

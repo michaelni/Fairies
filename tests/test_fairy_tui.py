@@ -354,6 +354,19 @@ class ActTests(DbCase):
         self.model.act("rerun")
         self.assertIsNone(self.db.get("requests", "pr", "5"))
 
+    def test_rerun_keeps_the_displaced_verdict(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, msg="keep me"))
+        self.db.push("reviewed", "pr", "5s1", verdict(5, msg="sample"))
+        self.model.poll()
+        self.model.act("rerun")
+        self.assertEqual(self.db.get(filedb.SUPERSEDED_STATE, "pr", "5")
+                         ["review"]["message"], "keep me")
+        self.assertIsNone(self.db.get(filedb.SUPERSEDED_STATE, "pr", "5s1"))
+        self.model.act("rerun", 2)
+        self.assertEqual(self.db.get(filedb.SUPERSEDED_STATE, "pr", "5s1")
+                         ["review"]["message"], "sample")
+        self.assertIsNone(self.db.get(filedb.SUPERSEDED_STATE, "pr", "5s2"))
+
     def test_skip_and_cancel_move_with_a_reason(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.db.push("merge-ready", "pr", "6", {"title": "t"})

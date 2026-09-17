@@ -139,7 +139,7 @@ ticket is adopted.
 | `Y` | post anyway: like `y` but waives the staleness guard once. For a verdict you have read and judged still valid. |
 | `s` | skip now: one-shot; the next scan reconsiders the item afresh (earned backoff history is kept). |
 | `S` | snooze: like `s` but the item waits out a doubling backoff (min 24h) before it is reconsidered; new PR activity bypasses the wait. |
-| `r` | request a fresh, gate-bypassing review of the item. `2r`..`9r` request that many parallel sample evaluations (slots `s1..sN` — refilling slots clobbers earlier samples in them). Refused while the item is in flight. |
+| `r` | request a fresh, gate-bypassing review of the item. `2r`..`9r` request that many parallel sample evaluations (slots `s1..sN` — refilling slots clobbers earlier samples in them). A pending verdict the request replaces is kept in the filedb's `superseded/`, one file per ticket. Refused while the item is in flight. |
 | `R` | one more evaluation: takes the next FREE sample slot, never touching the base verdict or earlier samples. Each press adds one; capped at `s9`. |
 | `x` | drop: ticket → `cancelled/`; sticks until new PR activity. On an `llm/` row it cancels the running review: the wrapper stops at the next shell call and the container is torn down. |
 | `o` | edit the review message in `$EDITOR` (markdown round-trip; refused while a worker holds the ticket). |

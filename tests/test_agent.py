@@ -706,14 +706,16 @@ class LifecycleTests(AgentCase):
         self.assertIsNone(self.db.get("requests", "pr", "7s1"))
 
     def test_old_settled_tickets_are_pruned_open_ones_kept(self) -> None:
-        self.db.push("posted", "pr", "1", {})   # still open -> kept
-        self.db.push("posted", "pr", "99", {})  # closed + old -> pruned
-        self.age("posted", "pr", "1", hours=24 * 30)
-        self.age("posted", "pr", "99", hours=24 * 30)
+        for state in ("posted", filedb.SUPERSEDED_STATE):
+            self.db.push(state, "pr", "1", {})   # still open -> kept
+            self.db.push(state, "pr", "99", {})  # closed + old -> pruned
+            self.age(state, "pr", "1", hours=24 * 30)
+            self.age(state, "pr", "99", hours=24 * 30)
         self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(pr)
         self.scan([make_pr(1)])
-        self.assertIsNotNone(self.db.get("posted", "pr", "1"))
-        self.assertIsNone(self.db.get("posted", "pr", "99"))
+        for state in ("posted", filedb.SUPERSEDED_STATE):
+            self.assertIsNotNone(self.db.get(state, "pr", "1"))
+            self.assertIsNone(self.db.get(state, "pr", "99"))
 
     def test_each_side_prunes_by_its_own_retention(self) -> None:
         self.ns.workset_retention_days = 30.0

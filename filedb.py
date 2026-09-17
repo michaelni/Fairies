@@ -77,6 +77,10 @@ notes/ holds the operator's notes on a forge item: discussion entries
 the forge never sees, handed to the LLM with every evaluation of the
 item. Outside the pipeline like items/, written by the operator alone.
 
+superseded/ holds the verdict a rerun request displaced, so an operator
+can get it back. Outside the pipeline like items/, written by the
+operator alone, pruned with the settled states.
+
 Which operation:
 
     claim/finish  work that spans a whole review
@@ -116,6 +120,7 @@ from pathlib import Path
 from typing import Callable
 
 __all__ = ["Db", "Claim", "STATES", "KINDS", "ITEM_STATE", "NOTE_STATE",
+           "SUPERSEDED_STATE",
            "TicketId",
            "forge_number", "is_base", "logger"]
 
@@ -129,6 +134,7 @@ STATES = ("requests", "queued", "llm", "reviewed", "outgoing",
 KINDS = ("pr", "issue")
 ITEM_STATE = "items"
 NOTE_STATE = "notes"
+SUPERSEDED_STATE = "superseded"
 _TMP = "tmp"
 _LOCKS = "locks"
 # Ticket identity: the forge number, optionally refined by a sample
@@ -220,14 +226,15 @@ class Db:
 
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
-        for d in (*STATES, ITEM_STATE, NOTE_STATE, _TMP, _LOCKS):
+        for d in (*STATES, ITEM_STATE, NOTE_STATE, SUPERSEDED_STATE, _TMP,
+                  _LOCKS):
             (self.root / d).mkdir(parents=True, exist_ok=True)
 
     def path(self, state: str, kind: str, number: TicketId) -> Path:
         """Where the item's ticket lives while in ``state``; the file
         need not exist. ValueError for an unknown state, kind or
         token."""
-        if state not in (*STATES, ITEM_STATE, NOTE_STATE):
+        if state not in (*STATES, ITEM_STATE, NOTE_STATE, SUPERSEDED_STATE):
             raise ValueError(f"unknown state {state!r}")
         return self.root / state / _name(kind, number)
 

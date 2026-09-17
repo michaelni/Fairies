@@ -724,7 +724,8 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
             if ns is None:
                 continue
             before = now - timedelta(days=ns.workset_retention_days)
-            for state in ("posted", "skipped", "cancelled", "error"):
+            for state in ("posted", "skipped", "cancelled", "error",
+                          filedb.SUPERSEDED_STATE):
                 db.prune(state, before, keep=open_set, kinds={kind},
                          key=lambda kn: (kn[0], filedb.forge_number(kn[1])))
 

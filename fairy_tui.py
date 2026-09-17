@@ -642,16 +642,13 @@ class Model:
                     logger.error("%s: refusing %d evaluations (max 9)",
                                  label, count)
                     return
-                if count == 1:
-                    db.request(item.kind, item.number, {"action": "rerun"})
-                    logger.info("requested a fresh review of %s", label)
-                else:
-                    base = filedb.forge_number(item.number)
-                    for i in range(1, count + 1):
-                        db.request(item.kind, f"{base}s{i}",
-                                   {"action": "rerun"})
-                    logger.info("requested %d sample evaluations of %s",
-                                count, label)
+                base = filedb.forge_number(item.number)
+                tokens = [item.number] if count == 1 \
+                    else [f"{base}s{i}" for i in range(1, count + 1)]
+                for token in tokens:
+                    db.request(item.kind, token, {"action": "rerun"})
+                logger.info("requested %s of %s", "a fresh review" if count == 1
+                            else f"{count} sample evaluations", label)
                 self.seen_live.add(key)
             elif action in ("apply", "apply-force"):
                 if item.state != "reviewed" or not agent.postable(

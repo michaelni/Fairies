@@ -200,20 +200,23 @@ class Claim:
         self.db._write(self.path, data)
 
     def finish(self, dst_state: str, data: dict) -> Path:
-        """Write ``data`` into ``dst_state`` and drop the claimed file."""
-        dst = self.db._write_state(dst_state, self.kind, self.number, data)
-        if dst != self.path:  # a same-state finish is an in-place update
-            self.path.unlink(missing_ok=True)
-        self._release()
+        """Write ``data`` into ``dst_state``, drop the claimed file and
+        release the lease, as one transition."""
+        with self.db.lock(self.kind, self.number):
+            dst = self.db._write_state(dst_state, self.kind, self.number, data)
+            if dst != self.path:  # a same-state finish is an in-place update
+                self.path.unlink(missing_ok=True)
+            self._release()
         return dst
 
     def abort(self) -> None:
         """Return the ticket to its source state (clean shutdown); an
         in-place claim just releases -- no rename, no watcher event."""
         target = self.db.path(self.src_state, self.kind, self.number)
-        if target != self.path:
-            os.replace(self.path, target)
-        self._release()
+        with self.db.lock(self.kind, self.number):
+            if target != self.path:
+                os.replace(self.path, target)
+            self._release()
 
     def _release(self) -> None:
         if self._fd >= 0:
@@ -283,7 +286,11 @@ class Db:
 
     @contextmanager
     def lock(self, kind: str, number: TicketId):
-        """Exclusive per-item transition lock (blocking)."""
+        """Exclusive per-item transition lock, blocking and held for
+        microseconds: every state transition and every acquisition,
+        release or probe of the review lease happens under it, so a
+        watcher woken by a half-done transition waits it out instead of
+        finding the lease taken for that moment."""
         fd = self._lock_fd(kind, number, block=True)
         try:
             yield
@@ -344,71 +351,50 @@ class Db:
         """Put the item into ``state`` wherever it currently is: dst is
         written FIRST, then the old file dropped, so a crash leaves a
         remnant for the precedence rule, never a lost ticket. Non-
-        blocking, and refused (False) when the item is claimed or no
+        blocking, and refused (False) when the item is leased or no
         longer in ``expect`` -- any move under the caller's feet (a
         worker claim, an operator y/s/x) invalidates the decision."""
-        if self._leased(kind, number):
-            return False
-        try:
-            fd = self._lock_fd(kind, number, block=False)
-        except OSError:
-            return False
-        try:
-            prior = self.find(kind, number)
-            if prior != expect:
+        with self.lock(kind, number):
+            if self._leased(kind, number) or self.find(kind, number) != expect:
                 return False
             self._write_state(state, kind, number, data)
-            if prior is not None and prior != state:
-                self.path(prior, kind, number).unlink(missing_ok=True)
+            if expect is not None and expect != state:
+                self.path(expect, kind, number).unlink(missing_ok=True)
             return True
-        finally:
-            os.close(fd)
 
     def try_pop(self, state: str, kind: str, number: TicketId) -> dict | None:
-        """Non-blocking ``pop``: None when absent or claimed (a worker
+        """Non-blocking ``pop``: None when absent or leased (a worker
         holds the item's lease for its whole review; blocking callers
         would stall that long). requests/ is exempt like its writer:
         a request must be consumable WHILE the review it caused runs,
         or it re-forces the item every pass and destroys each fresh
         verdict (production: pr #23914 in an endless re-review loop)."""
-        if state != "requests" and self._leased(kind, number):
-            return None
-        try:
-            fd = self._lock_fd(kind, number, block=False)
-        except OSError:
-            return None
-        try:
+        with self.lock(kind, number):
+            if state != "requests" and self._leased(kind, number):
+                return None
             path = self.path(state, kind, number)
             data = self._load(path)
-            if data is None:
-                # a torn command file carries no recoverable intent:
-                # consuming it beats wedging every pass on it
-                path.unlink(missing_ok=True)
-                return None
-            path.unlink()
+            # a torn command file carries no recoverable intent:
+            # consuming it beats wedging every pass on it
+            path.unlink(missing_ok=True)
             return data
-        finally:
-            os.close(fd)
 
     def try_move(self, src_state: str, dst_state: str, kind: str, number: TicketId,
                  mutate=None) -> bool:
         """Non-blocking ``move`` for interactive callers: False when the
-        item is absent from ``src_state`` or its lock is held (a worker
-        owns it -- blocking would stall the caller for the whole
-        review). ``dst_state == src_state`` updates the content in
-        place."""
-        c = self.claim(src_state, src_state, kind, number)
-        if c is None:
-            return False
-        try:
-            data = c.read()
+        item is absent from ``src_state`` or leased (a worker owns it --
+        blocking would stall the caller for the whole review).
+        ``dst_state == src_state`` updates the content in place."""
+        with self.lock(kind, number):
+            src = self.path(src_state, kind, number)
+            data = None if self._leased(kind, number) else self._load(src)
+            if data is None:
+                return False
             if mutate is not None:
                 mutate(data)
-        except BaseException:
-            c.abort()
-            raise
-        c.finish(dst_state, data)
-        return True
+            if self._write_state(dst_state, kind, number, data) != src:
+                src.unlink()
+            return True
 
     def request(self, kind: str, number: TicketId, data: dict) -> Path:
         """Create an operator request. Deliberately lock-free: the
@@ -457,36 +443,32 @@ class Db:
 
     def claim(self, src_state: str, dst_state: str, kind: str,
               number: TicketId) -> Claim | None:
-        """Lease first, then rename under the transition lock: a claim
-        that loses the rename race releases and returns None. The
-        ``.claim`` flock held across the review is the worker's
-        liveness signal; it is a namespace of its own so the
-        micro-duration ``.lock`` transitions (push/pop/move/prune)
-        never block for a review's length."""
-        try:
-            fd = self._lock_fd(kind, number, block=False, suffix="claim")
-        except OSError:
-            return None
+        """Take the item's review lease and move it into ``dst_state``,
+        under the transition lock; None when the item is not in
+        ``src_state`` or a live holder has the lease. The ``.claim``
+        flock held across the review is the holder's liveness signal;
+        it is a namespace of its own so the micro-duration ``.lock``
+        transitions (push/pop/move/prune) never block for a review's
+        length."""
         src = self.path(src_state, kind, number)
         dst = self.path(dst_state, kind, number)
         with self.lock(kind, number):
-            if src == dst:
+            if not src.exists():
+                return None
+            try:
+                fd = self._lock_fd(kind, number, block=False, suffix="claim")
+            except OSError:
+                return None
+            if src != dst:
                 # an in-place claim must not rename: the no-op rename still
                 # fires a watcher event, and an agent watching the dir would
                 # wake itself in a loop
-                if not src.exists():
-                    os.close(fd)
-                    return None
-            else:
-                try:
-                    os.rename(src, dst)
-                except FileNotFoundError:
-                    os.close(fd)
-                    return None
+                os.rename(src, dst)
         return Claim(self, fd, kind, number, src_state, dst)
 
     def _leased(self, kind: str, number: TicketId) -> bool:
-        """True while a live worker holds the item's review lease."""
+        """True while a live holder has the item's review lease; call
+        under the transition lock."""
         try:
             fd = self._lock_fd(kind, number, block=False, suffix="claim")
         except OSError:
@@ -503,16 +485,14 @@ class Db:
         is simply valid)."""
         recovered = []
         for kind, number in self.list_state(state):
-            try:
-                fd = self._lock_fd(kind, number, block=False, suffix="claim")
-            except OSError:
-                continue  # live claim
-            try:
-                path = self.path(state, kind, number)
-                # the transition lock too: a writer's dst-write and
-                # src-unlink are one step, and a reap between them takes
-                # the file just written for a remnant
-                with self.lock(kind, number):
+            path = self.path(state, kind, number)
+            with self.lock(kind, number):
+                try:
+                    fd = self._lock_fd(kind, number, block=False,
+                                       suffix="claim")
+                except OSError:
+                    continue  # live claim
+                try:
                     later = [s for s in STATES[STATES.index(state) + 1:]
                              if self.path(s, kind, number).exists()]
                     if later:
@@ -522,12 +502,12 @@ class Db:
                     elif to_state is not None and path.exists():
                         os.rename(path, self.path(to_state, kind, number))
                         recovered.append((kind, number))
+                finally:
+                    os.close(fd)
                 # a dead worker also leaves the wrapper's sidecar lock
                 # and tmp next to the claimed file
                 for suffix in (".lock", ".tmp"):
                     path.with_suffix(suffix).unlink(missing_ok=True)
-            finally:
-                os.close(fd)
         return recovered
 
     def prune(self, state: str, before: datetime,

@@ -248,6 +248,64 @@ class LeaseSplitTests(DbCase):
         self.assertEqual(self.db.find("pr", "5"), "queued")
 
 
+class TransitionRaceTests(DbCase):
+    """A watcher wakes on a transition's dst write while the writer is
+    still busy; the claim it then makes waits the transition out."""
+
+    def test_a_claim_during_a_move_waits_and_wins(self) -> None:
+        """Production 2026-09-20: the agent, woken by an operator y,
+        found web pr-15s1's lease taken by the TUI's own move and left
+        the ticket in outgoing/ until the next scan."""
+        self.db.push("reviewed", "pr", "5", {"title": "t"})
+        written = threading.Event()
+        write_state = self.db._write_state
+
+        def slow_write_state(*args):
+            dst = write_state(*args)
+            written.set()
+            time.sleep(0.3)
+            return dst
+
+        self.db._write_state = slow_write_state
+        mover = threading.Thread(
+            target=self.db.try_move, args=("reviewed", "outgoing", "pr", "5"))
+        mover.start()
+        try:
+            self.assertTrue(written.wait(10))
+            claim = self.db.claim("outgoing", "outgoing", "pr", "5")
+        finally:
+            mover.join(timeout=10)
+        self.assertIsNotNone(claim)
+        claim.abort()
+        self.assertEqual(self.db.find("pr", "5"), "outgoing")
+
+    def test_a_claim_during_a_reap_waits_and_wins(self) -> None:
+        """Production 2026-09-20: the worker, woken by the agent queueing
+        web pr-15s1, found its lease taken by the agent's reap of the
+        same pass and left the ticket in queued/ until the --loop
+        fallback."""
+        self.db.push("queued", "pr", "5", {"title": "t"})
+        reaping = threading.Event()
+
+        def reap_in_progress() -> None:
+            with self.db.lock("pr", "5"):
+                fd = self.db._lock_fd("pr", "5", block=False, suffix="claim")
+                reaping.set()
+                time.sleep(0.3)
+                os.close(fd)
+
+        reaper = threading.Thread(target=reap_in_progress)
+        reaper.start()
+        try:
+            self.assertTrue(reaping.wait(10))
+            claim = self.db.claim("queued", "llm", "pr", "5")
+        finally:
+            reaper.join(timeout=10)
+        self.assertIsNotNone(claim)
+        claim.finish("reviewed", claim.read())
+        self.assertEqual(self.db.find("pr", "5"), "reviewed")
+
+
 class InPlaceClaimTests(DbCase):
     """A same-state claim renames nothing: a no-op rename still fires a
     watcher event, and an agent watching the dir would wake itself in

@@ -95,7 +95,8 @@ PUSH_TIMELINE = [{
 }]
 
 
-def _call(*, timeline: list[dict], min_age_days: float = 0.25) -> object:
+def _call(*, timeline: list[dict], min_age_days: float = 0.25,
+          reviews: list[dict] = [REQUEST_REVIEW]) -> object:
     args = SimpleNamespace(
         force_skip_prs=frozenset(),
         force_review_prs=frozenset(),
@@ -117,7 +118,7 @@ def _call(*, timeline: list[dict], min_age_days: float = 0.25) -> object:
     }
     with patch.object(
         fairy, "get_pr_discussion",
-        return_value=([REQUEST_REVIEW], [FAIRY_COMMENT], []),
+        return_value=(reviews, [FAIRY_COMMENT], []),
     ), patch.object(
         fairy.gcli_cache, "get",
         return_value={"timeline": [forge_gcli.project_timeline_event(e)
@@ -152,6 +153,15 @@ class PushResetsActivityGateTests(unittest.TestCase):
             decision.reason,
             f"no activity since prior non-approval message by {SELF}",
         )
+
+    def test_comment_review_shortens_settle_window(self) -> None:
+        # Fairy's review is an issue comment and nobody requested her
+        # review, so the forge review list has no row of hers. Her
+        # comment alone must shrink the settle window to 6h; the 12h
+        # old push then clears the threshold gate.
+        decision = _call(timeline=PUSH_TIMELINE, min_age_days=10, reviews=[])
+        self.assertEqual(decision.action, "skip")
+        self.assertEqual(decision.reason, "no commit statuses / CI results found")
 
 
 if __name__ == "__main__":

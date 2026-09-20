@@ -1693,11 +1693,11 @@ def has_review_by_user(reviews: list[ApiObject], login: str | None) -> bool:
 
 def effective_min_age_days(
     args: argparse.Namespace,
-    reviews: list[ApiObject],
+    discussion: list[ApiObject],
     self_login: str | None,
 ) -> float:
     d = float(args.min_age_days)
-    if self_login and has_review_by_user(reviews, self_login):
+    if self_login and has_review_by_user(discussion, self_login):
         d = min(d, REVIEWED_PR_MIN_AGE_DAYS)
     return d
 
@@ -2924,7 +2924,8 @@ def prepare_pr(
     if last_activity is None:
         return skip("cannot determine activity timestamp", last_activity_value=None)
 
-    min_age_days = effective_min_age_days(args, reviews, self_login)
+    min_age_days = effective_min_age_days(
+        args, reviews + comments + review_comments, self_login)
     if last_activity > now - timedelta(days=min_age_days):
         return skip(
             "activity is newer than threshold",

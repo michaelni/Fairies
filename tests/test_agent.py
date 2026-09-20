@@ -1110,6 +1110,19 @@ class ItemSnapshotScanTests(SendCase):
         self.scan([], fetch=lambda ns, n: {**make_pr(n), "state": "closed"})
         self.assertEqual(self.db.get("items", "pr", "7")["title"], "t7")
 
+    def test_closed_snapshots_serve_the_operator_between_items(self) -> None:
+        """Production 2026-09-20: a y pressed while the first pass after
+        a restart snapshotted 1400 closed PRs waited for that loop's
+        end."""
+        served = mock.Mock()
+        with mock.patch.object(fairy, "list_open_prs", return_value=[]):
+            agent.scan_side(self.db, self.ns, "pr", now=NOW, cache=mock.Mock(),
+                            self_login="fairy", forced=set(),
+                            closed_items=[dict(make_pr(n), state="closed")
+                                          for n in (1, 2)],
+                            serve_operator=served)
+        self.assertEqual(served.call_count, 2)
+
     def test_blocked_send_refreshes_the_snapshot(self) -> None:
         """Production #23820: the send guard saw a comment the mirror
         would not show until the next scan, so the block named a

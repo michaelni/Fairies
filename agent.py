@@ -324,6 +324,7 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
     # discussion TTL for these items only, and the memo skips the
     # whole rebuild while an item's updated_at stands still.
     for item in closed_items:
+        serve_operator()
         token = str(item.get("number"))
         if not token.isdigit():
             continue

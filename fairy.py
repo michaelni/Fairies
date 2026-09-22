@@ -55,7 +55,8 @@ these classifications:
 
 Reads go through `gcli api`, approvals through `gcli pulls ... approve`.
 --auto-mode lets the agent's send pass post standing verdicts
-by itself; without it every verdict waits in reviewed/ for the operator.
+by itself, --vetted-auto-mode only those the wrapper's vetter passed;
+without them every verdict waits in reviewed/ for the operator.
 
 When a human @-mentions fairy or requests it as a reviewer, the run may enter a
 "forced review" path, which bypasses the rules above but not the reviewer.
@@ -460,6 +461,12 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
         help="The agent's send pass posts standing verdicts on its own. "
              "Without this flag they wait in reviewed/ for the TUI's y "
              "or --ask.",
+    )
+    p.add_argument(
+        "--vetted-auto-mode",
+        action="store_true",
+        help="--auto-mode for the verdicts the wrapper's vetter passed; "
+             "the others wait in reviewed/ like without --auto-mode.",
     )
     p.add_argument(
         "--limit",

@@ -501,6 +501,18 @@ class ReuseTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "queued")
 
+    def test_vetted_auto_mode_requeues_only_a_vetted_stale_verdict(self) -> None:
+        self.ns.vetted_auto_mode = True
+        for number, vetting in (("1", {"hold_for_human_inspection": False, "reason": ""}),
+                                ("2", {"hold_for_human_inspection": True, "reason": "rude"})):
+            self.db.push("reviewed", "pr", number, {
+                "review": {"classification": "moderate_issues", "message": "KEEP"},
+                "expected_updated_at": "2026-07-01T00:00:00Z",  # PR changed since
+                "expected_head_ref": "old", "vetting": vetting})
+        self.scan([make_pr(1), make_pr(2)])
+        self.assertEqual(self.db.find("pr", "1"), "queued")
+        self.assertEqual(self.db.get("reviewed", "pr", "2")["review"]["message"], "KEEP")
+
     def test_s_and_x_during_the_slow_prepare_are_not_clobbered(self) -> None:
         # Same race as the y test below, for the decline actions: the
         # operator said no during the prepare; the fresh queued ticket
@@ -831,7 +843,7 @@ class SendTests(SendCase):
 
     def test_guard_failure_auto_mode_skips_without_stalling(self) -> None:
         self.ns.auto_mode = True
-        self.db.push("outgoing", "pr", "1", verdict_ticket(1))
+        self.db.push("outgoing", "pr", "1", verdict_ticket(1, agent_promoted=True))
         with mock.patch.object(fairy, "submit_decision_action") as submit:
             self.send(pr_ns=self.ns, changed={"head": {"sha": "h2"}})
         submit.assert_not_called()
@@ -839,6 +851,39 @@ class SendTests(SendCase):
         self.assertEqual(t["send_blocked"], "PR head changed")
         self.assertNotIn("llm_at", t)  # next scan re-gates it immediately
         self.assertEqual(t["skip_backoff_h"], 24)  # earned history kept
+        self.assertNotIn("agent_promoted", t)
+
+    def test_guard_failure_after_an_operator_y_parks_in_any_mode(self) -> None:
+        self.ns.auto_mode = True
+        self.db.push("outgoing", "pr", "1", verdict_ticket(1))
+        with mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns, changed={"head": {"sha": "h2"}})
+        submit.assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR head changed")
+
+    def test_vetted_auto_mode_promotes_only_what_the_vetter_passed(self) -> None:
+        self.ns.vetted_auto_mode = True
+        self.db.push("reviewed", "pr", "1", verdict_ticket(
+            1, vetting={"hold_for_human_inspection": False, "reason": "clean"}))
+        self.db.push("reviewed", "pr", "2", verdict_ticket(
+            2, vetting={"hold_for_human_inspection": True, "reason": "rude"}))
+        self.db.push("reviewed", "pr", "3", verdict_ticket(3))
+        with mock.patch.object(fairy, "submit_decision_action",
+                               return_value=None):
+            self.send(pr_ns=self.ns)
+        self.assertTrue(self.db.get("posted", "pr", "1")["agent_promoted"])
+        self.assertEqual(self.db.find("pr", "2"), "reviewed")
+        self.assertEqual(self.db.find("pr", "3"), "reviewed")
+
+    def test_vetted_auto_mode_dry_run_promotes_nothing(self) -> None:
+        self.ns.vetted_auto_mode = True
+        self.db.push("reviewed", "pr", "1", verdict_ticket(
+            1, vetting={"hold_for_human_inspection": False, "reason": "clean"}))
+        with mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns, dry_run=True)
+        submit.assert_not_called()
+        self.assertEqual(self.db.find("pr", "1"), "reviewed")
 
     def test_approve_promotes_only_actionable_reviewed_verdicts(self) -> None:
         self.ns.auto_mode = True
@@ -865,7 +910,7 @@ class SendTests(SendCase):
         self.db.push("outgoing", "pr", "1", verdict_ticket(1))
         self.db.path("reviewed", "pr", "1").write_text(
             self.db.path("outgoing", "pr", "1").read_text())
-        agent.promote_reviewed(self.db, "pr")
+        agent.promote_reviewed(self.db, self.ns, "pr", dry_run=False)
         self.assertIsNotNone(self.db.get("outgoing", "pr", "1"))
         self.assertIsNotNone(self.db.get("reviewed", "pr", "1"))  # the scan pass reaps it, not promote
 

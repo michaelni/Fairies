@@ -26,7 +26,8 @@ for additional development workflows being added over time.
   every configured repository's checkout carries a "fairy" remote they
   fetch from and push to; the branches the verdict declares travel
   with it, quarantined until the review is approved and sent (operator
-  y, or --auto-mode), then applied to the forge as fairy/<name>
+  y, --auto-mode or a vetted verdict under --vetted-auto-mode), then
+  applied to the forge as fairy/<name>
   branches -- pushes and declared deletions, optionally opening pull
   requests
 - ...

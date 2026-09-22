@@ -46,9 +46,10 @@ tickets whose item left the open listing, and prunes settled tickets.
 A send pass follows each scan: every outgoing/ item is re-read under
 its claim lock, guard-checked against the live forge and posted
 through fairy/issue_fairy's guarded submit seams. A guard failure
-returns the verdict to reviewed/ with a note (manual mode) or, under
---auto-mode -- which itself promotes actionable reviewed/
-verdicts to outgoing/ -- re-gates it via skipped/ so a cron run never
+returns the verdict to reviewed/ with a note (an operator's y) or,
+for a verdict the send pass promoted itself -- under --auto-mode every
+actionable reviewed/ verdict, under --vetted-auto-mode those the
+wrapper's vetter passed -- re-gates it via skipped/ so a cron run never
 stalls. --dry-run logs what would be posted and posts nothing.
 
 What belongs here: the scan pass, the ticket routing policy and the
@@ -430,7 +431,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                         "expected_updated_at": item.get("updated_at"),
                     }, prior)
                 continue
-        if prior == "reviewed" and not ns.auto_mode and number not in forced_ns:
+        if prior == "reviewed" and not agent_promotes(ns, prior_data or {}) \
+                and number not in forced_ns:
             # A reviewed/ verdict in manual mode is the operator's
             # case, changed item or not: requeueing here replaced
             # their verdict with whatever the fresh round produced
@@ -850,7 +852,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
             logger.info("%s #%s posted: %s", kind, number,
                         fairy.manual_action_description(decision))
             return "posted"
-        if ns.auto_mode:
+        if ticket.pop("agent_promoted", None):
             # Auto mode must not stall on a stale verdict: without
             # llm_at the skipped/ ticket is re-gated (and, the item
             # having changed, freshly re-reviewed) on the next scan.
@@ -868,15 +870,36 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
         raise
 
 
-def promote_reviewed(db: filedb.Db, kind: str) -> None:
-    """--auto-mode: standing actionable verdicts go out without an operator."""
+def agent_promotes(ns: argparse.Namespace, ticket: dict) -> bool:
+    """Whether the send pass, not an operator, sends this reviewed/
+    verdict: every one under --auto-mode, under --vetted-auto-mode
+    those the wrapper's vetter passed."""
+    vetting = ticket.get("vetting") or {}
+    return ns.auto_mode or (
+        ns.vetted_auto_mode and vetting.get("hold_for_human_inspection") is False)
+
+
+def promote_reviewed(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
+                     dry_run: bool) -> None:
+    """Move the standing verdicts the side's mode lets the agent post
+    to outgoing/, stamped agent_promoted; a dry run only logs them,
+    since a promotion is persistent staging a later normal run would
+    post."""
     for k, number in db.list_state("reviewed"):
         # find() precedence: a reviewed/ crash remnant behind a later
         # state must not be promoted (and posted) a second time
-        if k == kind and filedb.is_base(number) \
-                and db.find(kind, number) == "reviewed" and postable(
-                ticket_decision(kind, number, db.get("reviewed", kind, number) or {})):
-            db.try_move("reviewed", "outgoing", kind, number)
+        if k != kind or not filedb.is_base(number) \
+                or db.find(kind, number) != "reviewed":
+            continue
+        ticket = db.get("reviewed", kind, number) or {}
+        if not (postable(ticket_decision(kind, number, ticket))
+                and agent_promotes(ns, ticket)):
+            continue
+        if dry_run:
+            logger.info("%s #%s: DRY RUN, would promote to outgoing/", kind, number)
+        else:
+            db.try_move("reviewed", "outgoing", kind, number,
+                        mutate=lambda data: data.update(agent_promoted=True))
 
 
 def log_summary(db: filedb.Db) -> None:
@@ -1002,18 +1025,8 @@ def send_outgoing(db: filedb.Db, sides: dict[str, argparse.Namespace],
 def send_pass(db: filedb.Db, sides: dict[str, argparse.Namespace],
               *, dry_run: bool = False) -> None:
     for kind, ns in sides.items():
-        if not ns.auto_mode:
-            continue
-        if dry_run:
-            # promotion is a persistent staging step: a later normal
-            # run would post whatever a dry preview promoted
-            for k, number in db.list_state("reviewed"):
-                if k == kind and postable(ticket_decision(
-                        k, number, db.get("reviewed", k, number) or {})):
-                    logger.info("%s #%s: DRY RUN, would promote to "
-                                "outgoing/", k, number)
-        else:
-            promote_reviewed(db, kind)
+        if ns.auto_mode or ns.vetted_auto_mode:
+            promote_reviewed(db, ns, kind, dry_run=dry_run)
     with SideCaches(sides) as caches:
         send_outgoing(db, sides, caches, dry_run=dry_run)
 

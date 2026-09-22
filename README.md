@@ -68,7 +68,11 @@ or when a watch cannot be set up (logged), they poll every second:
 A human moves any reviewed verdict out whenever they choose (`y` in the
 TUI, `agent.py --ask` for the classic per-verdict terminal prompt, or
 plain `mv reviewed/pr-N.json outgoing/`); with `--auto-mode` in a side's
-options the agent promotes actionable verdicts itself.
+options the agent promotes actionable verdicts itself, with
+`--vetted-auto-mode` only those the wrapper's vetter passed, the rest
+wait for the human as without either flag. A send the forge refuses
+(the item moved since the review) parks a human-sent verdict in
+`reviewed/` with the reason and re-queues an agent-sent one.
 
 The reviewer (`pr_review_wrapper.py`) receives the PR data and returns one
 structured JSON review. Inside it runs a pipeline: an optional cheap triage

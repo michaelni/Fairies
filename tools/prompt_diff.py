@@ -34,8 +34,9 @@ Each revision is exported with ``git archive`` into a temp dir, and this
 script re-invokes itself with that checkout first on sys.path, so the
 revision's own code generates every prompt into one text file per
 prompt: the developer prompts of all roles (review, code_review,
-design_review, combiner, triager, issue_investigator, issue_combiner,
-issue_triager, plus the CI-failure variants) and the user-text builders.
+design_review, combiner, triager, vetter, issue_investigator,
+issue_combiner, issue_triager, issue_vetter, plus the CI-failure
+variants) and the user-text builders.
 The two directories are then compared with ``git diff --no-index``.
 All generation inputs (model, features, repos, machines, fixtures) are
 fixed by the invoking script, so the diff shows exactly what the code
@@ -74,7 +75,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 ROLES = ("review", "code_review", "design_review", "combiner", "triager",
-         "issue_investigator", "issue_combiner", "issue_triager")
+         "vetter", "issue_investigator", "issue_combiner", "issue_triager",
+         "issue_vetter")
 CI_ROLES = ("review", "combiner", "triager")
 
 MODEL = "openai:gpt-5.5"
@@ -179,6 +181,8 @@ def dump_prompts(checkout: Path, outdir: Path, project_facts: str,
             kwargs = {k: v for k, v in
                       {**common_kwargs, "role": role, "ci_triage_mode": ci}.items()
                       if k in params}
+            if role.endswith("vetter"):
+                kwargs.pop("allowed_labels"), kwargs.pop("allowed_models")
             generate(role + "+ci" * ci,
                      lambda kw=kwargs: llm_prompt.generate_llm_prompt(**kw))
 
@@ -198,6 +202,16 @@ def dump_prompts(checkout: Path, outdir: Path, project_facts: str,
                    model="anthropic:claude-opus-5", prompt="design_review"),
         ])
     generate("user_combiner_drafts", combiner_drafts)
+
+    def vet_verdict() -> str:
+        from llm_review_api import Review
+        return llm_prompt.make_vet_user_text(Review(
+            classification="moderate_issues", message="Verdict body",
+            label_changes=({"label": "fix/bug", "op": "add", "reason": "", "post": False},),
+            branches=({"repo": "example", "branch": "pr12345-fix", "mode": "push",
+                       "sha": "0123456789abcdef0123456789abcdef01234567"},),
+            model="openai:gpt-5.5"))
+    generate("user_vet_verdict", vet_verdict)
     return 0
 
 

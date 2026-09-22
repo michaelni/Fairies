@@ -769,9 +769,9 @@ class WrapperWorksetNoteTests(unittest.TestCase):
         return json.loads(self.path.read_text(encoding="utf-8"))
 
     def test_stage_and_triage_result_recorded(self) -> None:
-        pr_review_wrapper.workset_note_stage(self.args, "triage")
-        pr_review_wrapper.workset_note_triage(
-            self.args, {"route": "engage", "reason": "r"})
+        pr_review_wrapper.workset_note(self.args, "stage", "triage")
+        pr_review_wrapper.workset_note(
+            self.args, "triage", {"route": "engage", "reason": "r"})
         data = self._raw()
         self.assertEqual(data["stage"], "triage")
         self.assertEqual(data["triage"], {"route": "engage", "reason": "r"})
@@ -799,12 +799,12 @@ class WrapperWorksetNoteTests(unittest.TestCase):
 
     def test_notes_work_on_a_stateless_filedb_ticket(self) -> None:
         self.path.write_text('{"title": "t"}\n', encoding="utf-8")
-        pr_review_wrapper.workset_note_stage(self.args, "review")
+        pr_review_wrapper.workset_note(self.args, "stage", "review")
         self.assertEqual(self._raw()["stage"], "review")
 
     def test_no_workset_file_is_a_noop(self) -> None:
-        pr_review_wrapper.workset_note_stage(
-            argparse.Namespace(workset_file=None), "triage")
+        pr_review_wrapper.workset_note(
+            argparse.Namespace(workset_file=None), "stage", "triage")
 
 
 if __name__ == "__main__":

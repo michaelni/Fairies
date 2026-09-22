@@ -796,23 +796,15 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def workset_note_stage(args: argparse.Namespace, stage: str) -> None:
-    """Record wrapper progress ("triage" | "review" | "combine") in the
-    caller's work file (if any).
-
-    The wrapper owns the file while it runs (the caller blocks on the
-    subprocess); it writes only the ``stage`` progress field -- the
-    final verdict travels on stdout and is persisted by the caller."""
+def workset_note(args: argparse.Namespace, field: str, value: object) -> None:
+    """Record one wrapper field in the caller's work file (if any):
+    ``stage`` progress ("triage" | "review" | "combine") or a stage's
+    result. The wrapper owns the file while it runs (the caller blocks
+    on the subprocess); the final verdict travels on stdout and is
+    persisted by the caller."""
     if args.workset_file:
         def record(data: dict) -> None:
-            data["stage"] = stage
-        workset.update_json(args.workset_file, record)
-
-
-def workset_note_triage(args: argparse.Namespace, triage_result: dict[str, object]) -> None:
-    if args.workset_file:
-        def record(data: dict) -> None:
-            data["triage"] = triage_result
+            data[field] = value
         workset.update_json(args.workset_file, record)
 
 
@@ -1794,10 +1786,10 @@ def main() -> int:
                 max_output_tokens=args.triage_max_output_tokens,
                 service_tier=args.triage_service_tier,
             )
-            workset_note_stage(args, "triage")
+            workset_note(args, "stage", "triage")
             triage_result = run_triage(triager, triage_ctx)
             if triage_result is not None:
-                workset_note_triage(args, triage_result)
+                workset_note(args, "triage", triage_result)
             if triage_result is None:
                 logger.warning(
                     "triage stage failed; falling through to main reviewer pass"
@@ -1956,7 +1948,7 @@ def main() -> int:
             attach_turn_fallbacks(
                 combiner, args=args, resources=openai_resources,
                 verbosity=final_verbosity, failure_fails_run=True)
-        workset_note_stage(args, "review")
+        workset_note(args, "stage", "review")
 
         def note_drafts(drafts) -> None:
             # the drafts' collected records preload the combiner's fairy

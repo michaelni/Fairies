@@ -1540,6 +1540,18 @@ def main() -> int:
                 {s.name: s.container_path for s in persist_repos})
         return session, transcript
 
+    def hand_over_branches(records: list[JsonObject]) -> None:
+        """Put a finished stage's branch records on the fairy remotes of
+        the shells open now and of every shell opened later, so the
+        next stage verifies them like its own work."""
+        inherited_branches[:] = records
+        for session in primary_shells.values():
+            handle = session_handles.get(id(session))
+            if handle is not None:
+                branch_persist.add_to_container_remote(
+                    handle, records,
+                    {s.name: s.container_path for s in persist_repos})
+
     def collect_review_branches(
         sessions: Sequence[podman_host.ContainerShellSession],
         declared: list[JsonObject],
@@ -1958,15 +1970,9 @@ def main() -> int:
             # applies the same list to combiner containers that open later
             workset_note_drafts(args, drafts, combining=combiner is not None,
                                 failed=review_ctx.failed_reviewers)
-            inherited_branches[:] = [
-                record for draft in drafts for record in draft.branches]
-            if combiner is not None and inherited_branches:
-                for session in primary_shells.values():
-                    handle = session_handles.get(id(session))
-                    if handle is not None:
-                        branch_persist.add_to_container_remote(
-                            handle, inherited_branches,
-                            {s.name: s.container_path for s in persist_repos})
+            if combiner is not None:
+                hand_over_branches(
+                    [record for draft in drafts for record in draft.branches])
 
         try:
             review = review_pr(

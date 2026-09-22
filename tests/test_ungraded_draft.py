@@ -103,7 +103,7 @@ class UngradedPromptTests(unittest.TestCase):
     def test_draft_prompt_keeps_the_issue_cases(self) -> None:
         text = prompt_for("review", classifies=False)
         for case in ("Unrelated changes should be in separate patches.",
-                     "Public API should be documented.",
+                     "Public API should be reasonably documented.",
                      "* Out of array access.",
                      "Non issues:"):
             self.assertIn(case, text)

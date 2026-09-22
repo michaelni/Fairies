@@ -1416,6 +1416,13 @@ class UILoop:
         for failed in data.get("failed_reviewers") or []:
             head += tui_core.wrap([("log_warn", str(failed))], width,
                                   initial=("log_warn", "reviewer failed: "))
+        if data.get("vetting"):
+            vetting = data["vetting"]
+            head += tui_core.wrap(
+                [("text", str(vetting.get("reason") or ""))], width,
+                initial=(("log_warn", "vetted, hold for human inspection: ")
+                         if vetting.get("hold_for_human_inspection")
+                         else ("sc_good", "vetted, may be posted: ")))
         if self.detail_mode in DIFF_MODES and item.kind == "pr":
             return tui_core.Chain(
                 head, self._diff_body(item, snapshot, self.detail_mode))

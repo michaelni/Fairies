@@ -45,6 +45,9 @@ last row).
   same views `m` offers, so a diff and the review can sit side by
   side.
 - **¶ message** — the selected ticket: the action `y` would perform,
+  a `vetted, may be posted:` / `vetted, hold for human inspection:`
+  line with the reason when the
+  wrapper's vetter judged the verdict,
   then the discussion with the review at its end, where posting will
   put it, marked `NOT POSTED` until it is; once posted it sits in the
   thread at the time it was sent. Below the review, each

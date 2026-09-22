@@ -1379,6 +1379,17 @@ class DetailTests(DbCase):
         self.assertIn("reviewer failed: codex:gpt-5.6-sol: content flagged",
                       self._detail_text())
 
+    def test_vetting_result_is_shown(self) -> None:
+        for vetting, line in (
+                ({"hold_for_human_inspection": False, "reason": "clean"},
+                 "vetted, may be posted: clean"),
+                ({"hold_for_human_inspection": True, "reason": "rude"},
+                 "vetted, hold for human inspection: rude")):
+            with self.subTest(vetting=vetting):
+                self.db.push("reviewed", "pr", "5", verdict(5, vetting=vetting))
+                self.model.poll()
+                self.assertIn(line, self._detail_text())
+
     def test_long_error_wraps_instead_of_clipping(self) -> None:
         """Regression (review finding): the error line was clipped at
         terminal width, hiding the provider's actual failure text

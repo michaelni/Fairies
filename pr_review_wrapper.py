@@ -1521,7 +1521,7 @@ def main() -> int:
     session_seeds: dict[int, branch_persist.RemoteSeeds] = {}
     persist_repos: list[podman_repos.RepoSpec] = []
     persist_base_shas: dict[str, list[str]] = {}
-    combiner_inject: list[JsonObject] = []
+    inherited_branches: list[JsonObject] = []
 
     def open_machine_shell(
         label: str,
@@ -1534,9 +1534,9 @@ def main() -> int:
         if args.persist_branches:
             session_seeds[id(session)] = branch_persist.setup_container_remotes(
                 handle, podman_repo_specs, [s.name for s in persist_repos])
-        if combiner_inject:
+        if inherited_branches:
             branch_persist.add_to_container_remote(
-                handle, combiner_inject,
+                handle, inherited_branches,
                 {s.name: s.container_path for s in persist_repos})
         return session, transcript
 
@@ -1958,14 +1958,14 @@ def main() -> int:
             # applies the same list to combiner containers that open later
             workset_note_drafts(args, drafts, combining=combiner is not None,
                                 failed=review_ctx.failed_reviewers)
-            combiner_inject[:] = [
+            inherited_branches[:] = [
                 record for draft in drafts for record in draft.branches]
-            if combiner is not None and combiner_inject:
+            if combiner is not None and inherited_branches:
                 for session in primary_shells.values():
                     handle = session_handles.get(id(session))
                     if handle is not None:
                         branch_persist.add_to_container_remote(
-                            handle, combiner_inject,
+                            handle, inherited_branches,
                             {s.name: s.container_path for s in persist_repos})
 
         try:

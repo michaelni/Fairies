@@ -304,7 +304,8 @@ def make_user_text(
     return "".join(parts)
 
 
-def make_triage_user_text(request: JsonObject, patch_was_truncated: bool) -> str:
+def make_triage_user_text(request: JsonObject, patch_was_truncated: bool, *,
+                          lead: str = "Triage this pull request.") -> str:
     pr = request.get("pull_request")
     if not isinstance(pr, dict):
         pr = {}
@@ -340,7 +341,7 @@ def make_triage_user_text(request: JsonObject, patch_was_truncated: bool) -> str
     discussion_text = json.dumps(discussion, ensure_ascii=False, indent=2)
 
     parts = [
-        "Triage this pull request.\n\n",
+        f"{lead}\n\n",
         "Pull request metadata:\n",
         f"{json.dumps(info, ensure_ascii=False, indent=2)}\n\n",
         "Pull request body:\n",
@@ -391,6 +392,15 @@ def make_issue_user_text(request: JsonObject, *, lead: str = "Analyze this issue
         f"Issue body:\n{body}\n\n"
         f"Prior issue discussion:\n{json.dumps(discussion, ensure_ascii=False, indent=2)}\n"
     )
+
+
+def subject_user_text(ctx: ReviewContext, task: str, lead: str) -> str:
+    """The metadata-and-discussion user text of the item under
+    ``task`` ("pr" | "issue", the wrapper's ``--task``), for the roles
+    that work without the reviewer's source notes."""
+    if task == "issue":
+        return make_issue_user_text(ctx.request, lead=lead)
+    return make_triage_user_text(ctx.request, ctx.patch_truncated, lead=lead)
 
 
 def make_combiner_user_text(drafts: list[Review]) -> str:
@@ -1124,21 +1134,12 @@ def make_triager_role(
         check_schema(obj, schema["schema"])
         return validate_triage_result(obj, allowed_labels=allowed_labels)
 
-    if task == "issue":
-        name = "issue_triager"
-        user_texts = lambda ctx: [
-            make_issue_user_text(ctx.request, lead="Triage this issue."),
-        ]
-    else:
-        name = "triager"
-        user_texts = lambda ctx: [
-            make_triage_user_text(ctx.request, ctx.patch_truncated),
-        ]
-
+    issue = task == "issue"
     return RoleSpec(
-        name=name,
+        name="issue_triager" if issue else "triager",
         schema=schema,
-        user_texts=user_texts,
+        user_texts=lambda ctx: [subject_user_text(
+            ctx, task, f"Triage this {'issue' if issue else 'pull request'}.")],
         validate=validate,
         prompt_kwargs={
             "allowed_models": allowed_models,

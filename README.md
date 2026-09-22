@@ -70,7 +70,9 @@ TUI, `agent.py --ask` for the classic per-verdict terminal prompt, or
 plain `mv reviewed/pr-N.json outgoing/`); with `--auto-mode` in a side's
 options the agent promotes actionable verdicts itself, with
 `--vetted-auto-mode` only those the wrapper's vetter passed, the rest
-wait for the human as without either flag. A send the forge refuses
+wait for the human as without either flag. An item with sample
+evaluations (`R`, `2r`..`9r`) is never promoted, in any state of the
+samples: the operator who asked for several reviews picks one. A send the forge refuses
 (the item moved since the review) parks a human-sent verdict in
 `reviewed/` with the reason and re-queues an agent-sent one.
 

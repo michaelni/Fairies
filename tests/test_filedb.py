@@ -121,6 +121,17 @@ class TokenTests(DbCase):
         self.assertEqual(self.db.get("queued", "pr", "12345s2")["eval"],
                          "12345s2")
 
+    def test_evaluations_lists_an_items_samples_in_any_state(self) -> None:
+        self.db.push("reviewed", "pr", "12345", {})
+        self.db.push("reviewed", "pr", "12345s1", {})
+        self.db.push("skipped", "pr", "12345s2", {})
+        self.db.push("reviewed", "pr", "12346s1", {})
+        self.db.push("reviewed", "issue", "12345s3", {})
+        self.assertEqual(["12345s1", "12345s2"],
+                         sorted(self.db.evaluations("pr", "12345")))
+        self.assertEqual(["12346s1"], self.db.evaluations("pr", "12346s1"))
+        self.assertEqual([], self.db.evaluations("pr", "12347"))
+
     def test_forge_number_and_is_base(self) -> None:
         self.assertEqual(filedb.forge_number("12345s1r2"), 12345)
         self.assertEqual(filedb.forge_number("12345"), 12345)

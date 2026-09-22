@@ -431,6 +431,13 @@ class Db:
                         continue  # racing an unlink/rename
         return out
 
+    def evaluations(self, kind: str, number: TicketId) -> list[TicketId]:
+        """The suffixed evaluation tickets of ``number``'s forge item,
+        whatever state each is in."""
+        item = forge_number(number)
+        return [token for state in STATES for k, token in self.list_state(state)
+                if k == kind and not is_base(token) and forge_number(token) == item]
+
     def find(self, kind: str, number: TicketId) -> str | None:
         """The item's state; with crash remnants, the latest one."""
         found = None

@@ -143,7 +143,7 @@ ticket is adopted.
 | `s` | skip now: one-shot; the next scan reconsiders the item afresh (earned backoff history is kept). |
 | `S` | snooze: like `s` but the item waits out a doubling backoff (min 24h) before it is reconsidered; new PR activity bypasses the wait. |
 | `r` | request a fresh, gate-bypassing review of the item. `2r`..`9r` request that many parallel sample evaluations (slots `s1..sN` — refilling slots clobbers earlier samples in them). A pending verdict the request replaces is kept in the filedb's `superseded/`, one file per ticket. Refused while the item is in flight. |
-| `R` | one more evaluation: takes the next FREE sample slot, never touching the base verdict or earlier samples. Each press adds one; capped at `s9`. |
+| `R` | one more evaluation: takes the next FREE sample slot, never touching the base verdict or earlier samples. Each press adds one; capped at `s9`. While an item has any sample ticket, the agent's auto modes never post its verdicts. |
 | `x` | drop: ticket → `cancelled/`; sticks until new PR activity. On an `llm/` row it cancels the running review: the wrapper stops at the next shell call and the container is torn down. |
 | `o` | edit the review message in `$EDITOR` (markdown round-trip; refused while a worker holds the ticket). |
 | `i` | add an internal note: `$EDITOR` opens empty; what you write joins the item's discussion for the LLM only, in every later evaluation of the item, never posted. It shows in the thread at its time; `r` asks for the evaluation that sees it. Notes live in the filedb's `notes/`, one file per item; edit that file to remove one. |

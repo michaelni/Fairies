@@ -876,6 +876,23 @@ class SendTests(SendCase):
         self.assertEqual(self.db.find("pr", "2"), "reviewed")
         self.assertEqual(self.db.find("pr", "3"), "reviewed")
 
+    def test_an_item_with_sample_evaluations_is_never_promoted(self) -> None:
+        for mode in ("auto_mode", "vetted_auto_mode"):
+            for sample_state in ("reviewed", "skipped", "cancelled"):
+                with self.subTest(mode=mode, sample_state=sample_state):
+                    self.ns.auto_mode = self.ns.vetted_auto_mode = False
+                    setattr(self.ns, mode, True)
+                    self.db.push("reviewed", "pr", "1", verdict_ticket(
+                        1, vetting={"hold_for_human_inspection": False, "reason": ""}))
+                    self.db.push(sample_state, "pr", "1s1", verdict_ticket(1))
+                    with mock.patch.object(fairy, "submit_decision_action") as submit:
+                        self.send(pr_ns=self.ns)
+                    submit.assert_not_called()
+                    self.assertEqual(self.db.find("pr", "1"), "reviewed")
+                    self.assertEqual(self.db.find("pr", "1s1"), sample_state)
+                    self.db.path("reviewed", "pr", "1").unlink()
+                    self.db.path(sample_state, "pr", "1s1").unlink()
+
     def test_vetted_auto_mode_dry_run_promotes_nothing(self) -> None:
         self.ns.vetted_auto_mode = True
         self.db.push("reviewed", "pr", "1", verdict_ticket(

@@ -431,8 +431,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                         "expected_updated_at": item.get("updated_at"),
                     }, prior)
                 continue
-        if prior == "reviewed" and not agent_promotes(ns, prior_data or {}) \
-                and number not in forced_ns:
+        if prior == "reviewed" and number not in forced_ns \
+                and not agent_promotes(db, ns, kind, token, prior_data or {}):
             # A reviewed/ verdict in manual mode is the operator's
             # case, changed item or not: requeueing here replaced
             # their verdict with whatever the fresh round produced
@@ -870,10 +870,15 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
         raise
 
 
-def agent_promotes(ns: argparse.Namespace, ticket: dict) -> bool:
+def agent_promotes(db: filedb.Db, ns: argparse.Namespace, kind: str,
+                   number: filedb.TicketId, ticket: dict) -> bool:
     """Whether the send pass, not an operator, sends this reviewed/
-    verdict: every one under --auto-mode, under --vetted-auto-mode
-    those the wrapper's vetter passed."""
+    verdict: every base verdict under --auto-mode, under
+    --vetted-auto-mode those the wrapper's vetter passed. Never a
+    sample evaluation, and never an item that has any: the operator
+    who asked for several reviews picks the one to post."""
+    if not filedb.is_base(number) or db.evaluations(kind, number):
+        return False
     vetting = ticket.get("vetting") or {}
     return ns.auto_mode or (
         ns.vetted_auto_mode and vetting.get("hold_for_human_inspection") is False)
@@ -888,12 +893,11 @@ def promote_reviewed(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
     for k, number in db.list_state("reviewed"):
         # find() precedence: a reviewed/ crash remnant behind a later
         # state must not be promoted (and posted) a second time
-        if k != kind or not filedb.is_base(number) \
-                or db.find(kind, number) != "reviewed":
+        if k != kind or db.find(kind, number) != "reviewed":
             continue
         ticket = db.get("reviewed", kind, number) or {}
         if not (postable(ticket_decision(kind, number, ticket))
-                and agent_promotes(ns, ticket)):
+                and agent_promotes(db, ns, kind, number, ticket)):
             continue
         if dry_run:
             logger.info("%s #%s: DRY RUN, would promote to outgoing/", kind, number)

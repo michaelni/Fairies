@@ -75,7 +75,11 @@ structured JSON review. Inside it runs a pipeline: an optional cheap triage
 pass (skip / helpful reply / engage; it can also honor the PR author's model
 requests within `--allowed-model`), then one or more model reviewers (run
 concurrently), then -- when there is more than one -- a combiner model that
-verifies and merges the drafts. Every backend (OpenAI, Anthropic, z.ai GLM)
+verifies and merges the drafts, then an optional vetter model (`--vet-model`)
+that judges whether the verdict and the branches it declares can be
+posted without an operator looking first (nothing offensive, malicious or
+advertising; authorship and licensing of the branches' commits in order) and
+records `hold_for_human_inspection` plus its reason on the ticket. Every backend (OpenAI, Anthropic, z.ai GLM)
 implements the same small `Reviewer` interface (`llm_review_api.py`):
 `review(ctx) -> Review`. The stages are plain Python in `review_pr`, so
 adding, removing or reordering them is an edit, not a restructuring.

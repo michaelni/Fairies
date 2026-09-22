@@ -45,6 +45,7 @@ response), which is all this replay needs.
 import io
 import json
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -367,6 +368,55 @@ class MainPassPromptWiringTests(unittest.TestCase):
         self.assertEqual(["code_review", "design_review"], seen["roles"])
         self.assertEqual(["openai:gpt-5.4", "openai:gpt-5.4"], seen["names"])
         self.assertEqual("combiner", seen["combiner_role"])
+
+
+class VetStageTests(unittest.TestCase):
+    """The vet stage runs on a postable verdict after the main pass and
+    records its result on the workset ticket, where the agent's vetted
+    auto mode and the TUI read it."""
+
+    def _run(self, review: Review, *extra_args: str) -> tuple[dict, list]:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        ticket = Path(tmp.name) / "pr-1.json"
+        ticket.write_text("{}", encoding="utf-8")
+        seen: list = []
+
+        def fake_vet(vetter: object, ctx: object) -> dict:
+            seen.append((vetter.name, vetter.role.name, vetter.role.user_texts(ctx)))
+            return {"hold_for_human_inspection": False, "reason": "clean"}
+
+        with mock.patch.object(wrapper, "vet_review", side_effect=fake_vet):
+            exit_code, _out, _reached = _run_wrapper_with_stubbed_triage(
+                _fixture_request(),
+                {"route": "engage", "reason": "r", "label_changes": []},
+                review_pr_stub=lambda ctx, reviewers, combiner, **kw: review,
+                model_args=["--model", "openai:gpt-5.4",
+                            "--workset-file", str(ticket), *extra_args],
+            )
+        self.assertEqual(0, exit_code)
+        return json.loads(ticket.read_text(encoding="utf-8")), seen
+
+    def test_verdict_is_vetted_and_the_result_recorded(self) -> None:
+        ticket, seen = self._run(
+            Review("moderate_issues", "LLM-GPT-5.4: one issue", model="openai:gpt-5.4"),
+            "--vet-model", "openai:gpt-x@low")
+        self.assertEqual(ticket["stage"], "vet")
+        self.assertEqual(ticket["vetting"],
+                         {"hold_for_human_inspection": False, "reason": "clean"})
+        [(name, role, texts)] = seen
+        self.assertEqual("openai:gpt-x", name)
+        self.assertEqual("vetter", role)
+        self.assertIn("LLM-GPT-5.4: one issue", texts[-1])
+
+    def test_unconfigured_vetter_and_unpostable_skip_verdict_vet_nothing(self) -> None:
+        for review, extra in (
+                (Review("approve", "", model="openai:gpt-5.4"), ()),
+                (Review("skip", "", model="openai:gpt-5.4"), ("--vet-model", "openai:gpt-x"))):
+            with self.subTest(review=review, extra=extra):
+                ticket, seen = self._run(review, *extra)
+                self.assertEqual([], seen)
+                self.assertNotIn("vetting", ticket)
 
 
 class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):

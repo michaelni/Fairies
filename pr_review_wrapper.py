@@ -65,6 +65,7 @@ Responses API file_search for additional retrieval.
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import logging
 import re
@@ -102,7 +103,7 @@ from llm_review_api import (
 from codex_container import DEFAULT_CODEX_IMAGE
 import branch_persist
 import review_pipeline
-from review_pipeline import make_reviewer, review_pr, run_triage
+from review_pipeline import make_reviewer, review_pr, run_triage, vet_review
 import workset
 import podman_host
 import podman_repos
@@ -116,6 +117,7 @@ from llm_prompt import (
     UNGRADED_REVIEWER_ROLE,
     load_project_facts,
     make_triager_role,
+    make_vetter_role,
     review_role,
     role_with_branches,
     role_with_labels,
@@ -305,6 +307,18 @@ def parse_args() -> argparse.Namespace:
             f"Maximum output tokens from the triage model "
             f"(default: {DEFAULT_TRIAGE_MAX_OUTPUT_TOKENS}). "
             "Includes reasoning tokens. Ignored when --triage-model is unset."
+        ),
+    )
+    p.add_argument(
+        "--vet-model",
+        default=None,
+        metavar="PROVIDER:MODEL[@EFFORT]",
+        help=(
+            "Optional model that vets the verdict before it is posted: "
+            "nothing offensive, malicious or advertising in the message, "
+            "authorship and licensing of the PR's and the declared branches' "
+            "commits in order; the workset ticket records the result. "
+            "When unset, vetting is disabled."
         ),
     )
     p.add_argument(
@@ -777,12 +791,13 @@ def parse_args() -> argparse.Namespace:
     args.model, args.extra_model = bare_specs[0], bare_specs[1:]
     for flag, spec in (("--triage-model", args.triage_model),
                        ("--combine-model", args.combine_model),
+                       ("--vet-model", args.vet_model),
                        *(("--allowed-model", s) for s in args.allowed_model)):
         if spec and "=" in spec:
             p.error(f"{flag} {spec!r}: the prompt of this pass is fixed by the flag")
     codex_specs = [
         s for s in (args.model, *args.extra_model, args.combine_model,
-                    args.triage_model, *args.allowed_model)
+                    args.triage_model, args.vet_model, *args.allowed_model)
         if s and s.startswith("codex:")
     ]
     if codex_specs and args.codex_host is None:
@@ -1384,7 +1399,7 @@ def main() -> int:
     # OPENAI_API_KEY is only required when an OpenAI backend actually runs.
     model_specs = [
         s for s in (args.model, *args.extra_model, args.triage_model,
-                    args.combine_model, *args.allowed_model)
+                    args.combine_model, args.vet_model, *args.allowed_model)
         if s
     ]
     openai_provider_requested = any(s.startswith("openai:") for s in model_specs)
@@ -2004,6 +2019,24 @@ def main() -> int:
                 len(poisoned_session_ids),
             )
             return EXIT_REVIEW_HALTED
+
+        if args.vet_model and (review.classification != "skip" or review.label_changes):
+            workset_note(args, "stage", "vet")
+            hand_over_branches(list(review.branches))
+            vetter = make_reviewer(
+                args.vet_model, args=args, resources=openai_resources,
+                role=make_vetter_role(review, task=args.task,
+                                      inherits_branches=args.persist_branches),
+                verbose=args.verbose)
+            try:
+                vetting = vet_review(vetter, replace(
+                    review_ctx, source_bundle=None, source_files=[],
+                    source_notes=[], collect_branches=None))
+            except OpenAIContainerUnhealthy:
+                container_lease_healthy = False
+                vetting = {"hold_for_human_inspection": True,
+                           "reason": "openai container unhealthy during the vet stage"}
+            workset_note(args, "vetting", vetting)
 
         emit_review_stdout(
             review.classification, review.message,

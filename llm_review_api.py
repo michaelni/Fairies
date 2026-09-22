@@ -79,6 +79,7 @@ __all__ = [
     "UNGRADED",
     "REVIEW_SCHEMA",
     "UNGRADED_REVIEW_SCHEMA",
+    "VET_SCHEMA",
     "Z_AI_ANTHROPIC_URL",
     "BadModelOutput",
     "BranchCollectionFailed",
@@ -108,6 +109,7 @@ __all__ = [
     "validate_review_result",
     "validate_ungraded_review",
     "validate_triage_result",
+    "validate_vet_result",
 ]
 
 logger = logging.getLogger(__name__)
@@ -914,6 +916,39 @@ def validate_triage_result(
         "requested_verbosity": requested_verbosity,
         "label_changes": label_changes,
     }
+
+
+VET_SCHEMA = {
+    "name": "vet_result",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "hold_for_human_inspection": {
+                "type": "boolean",
+                "description": (
+                    "True when an operator must look at the verdict before "
+                    "it is posted, false when it can be posted as it is."
+                ),
+            },
+            "reason": {
+                "type": "string",
+                "description": (
+                    "What was checked and, when holding, what fails, in as "
+                    "much text as that needs. Read by the operator, never posted."
+                ),
+            },
+        },
+        "required": ["hold_for_human_inspection", "reason"],
+    },
+}
+
+
+def validate_vet_result(obj: object) -> dict[str, object]:
+    check_schema(obj, VET_SCHEMA["schema"])
+    return {"hold_for_human_inspection": obj["hold_for_human_inspection"],
+            "reason": obj["reason"]}
 
 
 @dataclass(frozen=True)

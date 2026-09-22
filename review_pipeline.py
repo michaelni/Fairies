@@ -70,6 +70,7 @@ __all__ = [
     "make_reviewer",
     "review_pr",
     "run_triage",
+    "vet_review",
 ]
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,25 @@ def run_triage(triager: Reviewer, ctx: ReviewContext) -> dict[str, object] | Non
         len(str(result.get("message") or "")),
         result.get("reason", ""),
     )
+    return result
+
+
+def vet_review(vetter: Reviewer, ctx: ReviewContext) -> dict[str, object]:
+    """Run the vetter role over ``ctx``. A run that fails holds the
+    verdict for human inspection with the failure as its reason; a dead
+    OpenAI container propagates for the wrapper to drop it from the
+    pool."""
+    try:
+        result = vetter.run(ctx)
+    except OpenAIContainerUnhealthy:
+        raise
+    except Exception as exc:
+        logger.warning("vet stage failed with %s: %s", type(exc).__name__,
+                       str(exc).replace("\n", " "))
+        return {"hold_for_human_inspection": True,
+                "reason": f"vet stage failed: {type(exc).__name__}: {exc}"}
+    logger.info("vet decision hold_for_human_inspection=%s reason=%r",
+                result["hold_for_human_inspection"], result["reason"])
     return result
 
 

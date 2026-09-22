@@ -71,6 +71,7 @@ import review_pipeline  # noqa: E402
 from codex_reviewer import CodexReviewer  # noqa: E402
 import workset  # noqa: E402
 from openai_reviewer import OpenAIReviewer  # noqa: E402
+from openai_reviewer import OpenAIContainerUnhealthy  # noqa: E402
 from anthropic_reviewer import AnthropicReviewer  # noqa: E402
 
 
@@ -261,6 +262,34 @@ class MakeReviewerTests(unittest.TestCase):
         self.assertIsNone(r.service_tier)
         r = review_pipeline.make_reviewer("openai:gpt-5.4-mini", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
         self.assertEqual("flex", r.service_tier)
+
+
+class _FakeVetter(Reviewer):
+    def __init__(self, result: dict | Exception) -> None:
+        self.name = "openai:vet"
+        self._result = result
+
+    def run(self, ctx: ReviewContext) -> dict[str, object]:
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+class VetReviewTests(unittest.TestCase):
+    def test_result_passes_through(self) -> None:
+        out = review_pipeline.vet_review(
+            _FakeVetter({"hold_for_human_inspection": False, "reason": "r"}), _ctx())
+        self.assertEqual({"hold_for_human_inspection": False, "reason": "r"}, out)
+
+    def test_a_failed_run_holds_with_the_failure_as_reason(self) -> None:
+        out = review_pipeline.vet_review(_FakeVetter(RuntimeError("boom")), _ctx())
+        self.assertIs(True, out["hold_for_human_inspection"])
+        self.assertEqual("vet stage failed: RuntimeError: boom", out["reason"])
+
+    def test_a_dead_openai_container_propagates(self) -> None:
+        with self.assertRaises(OpenAIContainerUnhealthy):
+            review_pipeline.vet_review(
+                _FakeVetter(OpenAIContainerUnhealthy("dead")), _ctx())
 
 
 class ReviewPrTests(unittest.TestCase):

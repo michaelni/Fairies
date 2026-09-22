@@ -56,7 +56,7 @@ FFMPEG_DB="$HOME/.fairy/db/gitea~ff~FFmpeg~FFmpeg-issues"
     --llm-review-cmd './pr_review_wrapper.py
         --repo-root ffmpeg
         --extra-repo-root all_ffmpeg
-        --triage-model openai:gpt-5.6-luna
+        --triage-model openai:gpt-5.6-luna --vet-model openai:gpt-5.6-luna
         --triage-service-tier flex
         --model openai:gpt-5.6@high
         --service-tier flex

@@ -551,7 +551,7 @@ f"""{f'''##In your Code Reviewer role
 ''' * ctx.reviews_code}\
 {f'''##In your Design Reviewer role
 - review design, maintainability, reviewability, simplicity, performance and license compatibility.
-- benchmark any code intended as an optimization, or changes to speed critical code.
+- benchmark any code intended as an optimization, or changes to speed critical code. When benchmarking consider the load on the host from other users, interleave tests.
 - check for performance/speed improvements for code where it matters, warn if speed/performance regressions are expected, suggest changes to improve performance/speed
 - check for potential code reuse and suggest factorizations and simplifications if there are any.
 - Check if the algorithms used are reasonable (complexity, asymptotic performance (cpu & memory)) for the range of input expected.

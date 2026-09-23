@@ -1598,6 +1598,11 @@ def get_auto_merge_info(
     return forge_gcli.auto_merge_state(args, pr, timeline)
 
 
+def _timeline_name(user: dict | None) -> str:
+    user = user or {}
+    return user.get("login") or user.get("full_name") or "?"
+
+
 def push_events_from_timeline(timeline: list[ApiObject]) -> list[DiscussionItem]:
     """Extract ``pull_push`` timeline entries as discussion-list items.
 
@@ -1618,10 +1623,9 @@ def push_events_from_timeline(timeline: list[ApiObject]) -> list[DiscussionItem]
         if entry.get("type") != PUSH_EVENT or "commit_ids" not in entry:
             continue
         commit_ids = entry["commit_ids"]
-        user = entry.get("user") or {}
         items.append({
             "kind": "push",
-            "author": user.get("login") or user.get("full_name") or "?",
+            "author": _timeline_name(entry.get("user")),
             "created_at": entry.get("created_at"),
             "head_sha": commit_ids[-1] if commit_ids else None,
             "is_force_push": entry.get("is_force_push"),
@@ -1641,13 +1645,10 @@ def review_request_events_from_timeline(
     for entry in timeline:
         if entry.get("type") != forge_gcli.REVIEW_REQUEST_EVENT:
             continue
-        user = entry.get("user") or {}
-        assignee = entry.get("assignee") or {}
         items.append({
             "kind": "review_request",
-            "author": user.get("login") or user.get("full_name") or "?",
-            "reviewer": assignee.get("login") or assignee.get("full_name")
-            or "?",
+            "author": _timeline_name(entry.get("user")),
+            "reviewer": _timeline_name(entry.get("assignee")),
             "removed": bool(entry.get("removed_assignee")),
             "created_at": entry.get("created_at"),
         })

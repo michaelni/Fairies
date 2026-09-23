@@ -1245,6 +1245,13 @@ class DetailTests(DbCase):
         self.assertIn("michaelni", text)
         self.assertIn("requested a review from fairy", text)
 
+    def test_a_state_line_names_who_closed_the_item(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
+            {"kind": "state", "author": "michaelni", "state": "closed",
+             "created_at": "2026-07-19T09:00:00Z"}]))
+        self.model.poll()
+        self.assertIn("michaelni  closed", self._detail_text())
+
     def test_the_opening_description_leads_the_thread(self) -> None:
         """An item whose only text is its description (no comments yet)
         showed an empty thread while the forge web UI showed the post."""

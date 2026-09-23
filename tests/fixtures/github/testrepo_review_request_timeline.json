@@ -180,5 +180,38 @@
    "site_admin": false
   },
   "performed_via_github_app": null
+ },
+ {
+  "id": 29537581970,
+  "node_id": "CE_lADOTlgupM8AAAABNAB_V88AAAAG4JO7kg",
+  "url": "https://api.github.com/repos/michaelni/testrepo/issues/events/29537581970",
+  "actor": {
+   "login": "forgejo-fairy[bot]",
+   "id": 309778429,
+   "node_id": "BOT_kgDOEnbX_Q",
+   "avatar_url": "https://avatars.githubusercontent.com/in/4406646?v=4",
+   "gravatar_id": "",
+   "url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D",
+   "html_url": "https://github.com/apps/forgejo-fairy",
+   "followers_url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D/followers",
+   "following_url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D/following{/other_user}",
+   "gists_url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D/gists{/gist_id}",
+   "starred_url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D/starred{/owner}{/repo}",
+   "subscriptions_url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D/subscriptions",
+   "organizations_url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D/orgs",
+   "repos_url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D/repos",
+   "events_url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D/events{/privacy}",
+   "received_events_url": "https://api.github.com/users/forgejo-fairy%5Bbot%5D/received_events",
+   "type": "Bot",
+   "user_view_type": "public",
+   "site_admin": false
+  },
+  "event": "closed",
+  "commit_id": null,
+  "commit_url": null,
+  "created_at": "2026-08-17T01:39:19Z",
+  "state_reason": null,
+  "intent": null,
+  "performed_via_github_app": null
  }
 ]

@@ -32,6 +32,9 @@ rebase-merge
 squash
 manually-merged
 pull_push
+close
+reopen
+merge_pull
 pull_scheduled_merge
 none
 new

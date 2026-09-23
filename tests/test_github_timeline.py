@@ -198,6 +198,19 @@ class ReviewRequestProjectionTests(unittest.TestCase):
             [("forgejo-fairy[bot]", "michaelni", False),
              ("forgejo-fairy[bot]", "michaelni", True)])
 
+    def test_the_close_folds_into_the_forgejo_event_name(self) -> None:
+        """The same capture ends with the app closing the PR
+        (``closed`` with ``actor``)."""
+        got = _github("testrepo_review_request_timeline.json")
+        self.assertEqual(
+            [(e["type"], e["user"]["login"], e["created_at"])
+             for e in got if e["type"] == forge_gcli.CLOSE_EVENT],
+            [("close", "forgejo-fairy[bot]", "2026-08-17T01:39:19Z")])
+        self.assertEqual(
+            [(i["author"], i["state"])
+             for i in fairy.state_events_from_timeline(got)],
+            [("forgejo-fairy[bot]", "closed")])
+
     def test_a_team_request_projects_to_no_assignee(self) -> None:
         got = _timeline("github", [
             {"event": "review_requested", "id": 3,

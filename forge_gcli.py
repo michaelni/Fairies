@@ -113,6 +113,9 @@ __all__ = [
     "KIND_PR",
     "PUSH_EVENT",
     "REVIEW_REQUEST_EVENT",
+    "CLOSE_EVENT",
+    "REOPEN_EVENT",
+    "MERGE_EVENT",
     "add_forge_repo_args",
     "auto_merge_state",
     "apply_issue_label_changes",
@@ -908,6 +911,9 @@ PUSH_EVENT = "pull_push"
 AUTO_MERGE_SCHEDULE_EVENT = "pull_scheduled_merge"
 AUTO_MERGE_CANCEL_EVENT = "pull_cancel_scheduled_merge"
 REVIEW_REQUEST_EVENT = "review_request"
+CLOSE_EVENT = "close"
+REOPEN_EVENT = "reopen"
+MERGE_EVENT = "merge_pull"
 
 
 _AUTO_MERGE_EVENTS = frozenset({AUTO_MERGE_SCHEDULE_EVENT, AUTO_MERGE_CANCEL_EVENT})
@@ -999,6 +1005,9 @@ _GITHUB_COMMIT_EVENT = "committed"
 # michaelni/testrepo #2, where the marker's ``commit_id`` was the same
 # sha as the single preceding ``committed`` entry.
 _GITHUB_FORCE_PUSH_EVENT = "head_ref_force_pushed"
+# GitHub's state changes, https://docs.github.com/en/rest/issues/timeline
+_GITHUB_STATE_EVENTS = {"closed": CLOSE_EVENT, "reopened": REOPEN_EVENT,
+                        "merged": MERGE_EVENT}
 
 
 def _github_commit_author(event: dict) -> dict | None:
@@ -1082,7 +1091,8 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
                         "assignee": norm_user(event.get("requested_reviewer")),
                         "removed_assignee": kind == "review_request_removed"})
             continue
-        out.append(_project_github_event(event))
+        out.append({**_project_github_event(event),
+                    "type": _GITHUB_STATE_EVENTS.get(kind, kind)})
     flush()
     return out
 

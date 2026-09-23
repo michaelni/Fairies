@@ -1492,6 +1492,8 @@ class UILoop:
                     what = (f"withdrew the review request for {c.get('reviewer')}"
                             if c.get("removed")
                             else f"requested a review from {c.get('reviewer')}")
+                elif c.get("kind") == "state":
+                    what = str(c.get("state"))
                 else:
                     what = " ".join(str(c[k]) for k in ("kind", "state") if c.get(k))
                     if c.get("path"):

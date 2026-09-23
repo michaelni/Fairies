@@ -105,7 +105,10 @@ import forge_gcli
 from forge_gcli import (
     AUTO_MERGE_CANCEL_EVENT,
     AUTO_MERGE_SCHEDULE_EVENT,
+    CLOSE_EVENT,
+    MERGE_EVENT,
     PUSH_EVENT,
+    REOPEN_EVENT,
     add_forge_repo_args,
     apply_issue_label_changes,
     build_repo_path,
@@ -1655,6 +1658,22 @@ def review_request_events_from_timeline(
     return items
 
 
+STATE_EVENTS = {CLOSE_EVENT: "closed", REOPEN_EVENT: "reopened",
+                MERGE_EVENT: "merged"}
+
+
+def state_events_from_timeline(
+        timeline: list[ApiObject]) -> list[DiscussionItem]:
+    """The close, reopen and merge timeline entries as ``kind="state"``
+    discussion items: who moved the item to ``state`` and when."""
+    return [{
+        "kind": "state",
+        "author": _timeline_name(entry.get("user")),
+        "state": STATE_EVENTS[entry["type"]],
+        "created_at": entry.get("created_at"),
+    } for entry in timeline if entry.get("type") in STATE_EVENTS]
+
+
 class ReviewState(NamedTuple):
     state: str
     when: datetime | None
@@ -1986,9 +2005,10 @@ def build_llm_discussion(
     push events into a single chronologically-sorted list for the LLM.
 
     ``timeline`` is the raw ``/issues/{n}/timeline`` payload; its
-    ``pull_push`` and ``review_request`` entries are consumed (see
-    ``push_events_from_timeline`` /
-    ``review_request_events_from_timeline``).
+    ``pull_push``, ``review_request`` and state-change entries are
+    consumed (see ``push_events_from_timeline`` /
+    ``review_request_events_from_timeline`` /
+    ``state_events_from_timeline``).
     Passing ``None`` (or omitting it) yields a comments-only discussion.
     The push items carry ``kind="push"`` plus ``head_sha`` /
     ``is_force_push`` so the triage LLM can tell unambiguously that
@@ -2002,6 +2022,7 @@ def build_llm_discussion(
     if timeline:
         items.extend(push_events_from_timeline(timeline))
         items.extend(review_request_events_from_timeline(timeline))
+        items.extend(state_events_from_timeline(timeline))
 
     for comment in comments:
         body = comment.get("body")

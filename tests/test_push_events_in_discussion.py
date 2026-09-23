@@ -273,5 +273,28 @@ class ReviewRequestEventsTests(unittest.TestCase):
                          [("alice", "APPROVED", "")])
 
 
+class StateEventsTests(unittest.TestCase):
+    """The close, reopen and merge_pull timeline entries (real capture:
+    FFmpeg #22268, closed, reopened and finally merged by michaelni)
+    reach the discussion as state items, in that order."""
+
+    def test_pr_22268_yields_its_three_state_changes(self) -> None:
+        timeline = _load_timeline("ffmpeg_pr_22268_state_timeline.json")
+        self.assertEqual(fairy.state_events_from_timeline(timeline), [
+            {"kind": "state", "author": "michaelni", "state": "closed",
+             "created_at": "2026-03-03T13:28:58Z"},
+            {"kind": "state", "author": "michaelni", "state": "reopened",
+             "created_at": "2026-05-30T17:40:14Z"},
+            {"kind": "state", "author": "michaelni", "state": "merged",
+             "created_at": "2026-06-12T00:31:34Z"},
+        ])
+
+    def test_the_state_changes_reach_the_built_discussion(self) -> None:
+        timeline = _load_timeline("ffmpeg_pr_22268_state_timeline.json")
+        disc = fairy.build_llm_discussion([], [], [], timeline)
+        self.assertEqual([d["state"] for d in disc if d["kind"] == "state"],
+                         ["closed", "reopened", "merged"])
+
+
 if __name__ == "__main__":
     unittest.main()

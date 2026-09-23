@@ -470,7 +470,7 @@ def generate_llm_prompt(
 """
 
     moderate = f"""* There should be no bugfix patches following a patch with a bug in the same pull request. Patches should be updated to not introduce issues. The exceptions are cherry picks from a public repository to preserve the relation to the source commits, preserving correct attribution/authorship, and tests that are subsequently changed to show the effect of the subsequent patch. Changes can be more or less factored into multiple patches, that's the author's choice.
-* Security fixes should credit the researcher finding them. it is understood that the author of a commit is the finder of the issue in absence of a explicit credit.
+* Security fixes should credit the researcher finding them. It is understood that the author of a commit or referenced ticket is the finder of the issue in absence of a explicit credit.
 * Public API should be reasonably documented.
 * Major missmatch between commit message, documentation and implementation.
 * Commits should not span ABI boundaries, that is feature added to a library and its use outside the library should be seperate commits

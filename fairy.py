@@ -35,7 +35,8 @@ per-side configuration string the agent/worker/fairy-ui all accept.
 Selection rules:
 1. PR is open.
 2. PR is not marked WIP/draft.
-3. PR has no *currently outstanding* request-for-changes review.
+3. PR has no *currently outstanding* request-for-changes review from
+   anyone but the reviewer identity itself.
 4. The PR head commit has CI statuses reported. ERROR/FAILURE jobs do not
    block the LLM pipeline: the failure details and log tails ride along in
    the ``ci_triage`` payload so a full review can analyze the failure.
@@ -2685,8 +2686,12 @@ def prepare_pr(
     # re-used by the blockers / self-approved gates further down (no
     # second pass).
     states = effective_review_states(reviews)
+    # The reviewer identity's own change request is its verdict, not a
+    # blocker: whether the pushes and replies since then warrant a new
+    # review is the triager's call.
     has_blocker = any(
-        rs.state == "CHANGES_REQUESTED" for rs in states.values()
+        rs.state == "CHANGES_REQUESTED"
+        for login, rs in states.items() if login != self_login
     )
     if not has_blocker and pr.get("mergeable"):
         # Stale approvals are excluded: the forge no longer counts them
@@ -2775,7 +2780,7 @@ def prepare_pr(
     if has_blocker:
         blockers = sorted(
             login for login, rs in states.items()
-            if rs.state == "CHANGES_REQUESTED"
+            if rs.state == "CHANGES_REQUESTED" and login != self_login
         )
         return skip(f"outstanding change requests from: {', '.join(blockers)}", last_activity_value=last_activity)
 

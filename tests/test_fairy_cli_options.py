@@ -78,6 +78,10 @@ GREEN_CI = [{"context": "/ build", "state": "success",
 APPROVAL = {"user": {"login": "carol"}, "state": "APPROVED", "stale": False,
             "submitted_at": OLD, "updated_at": OLD}
 
+OLDER = "2026-05-01T00:00:00Z"
+CHANGE_REQUEST = {"user": {"login": "carol"}, "state": "REQUEST_CHANGES",
+                  "stale": False, "submitted_at": OLDER, "updated_at": OLDER}
+
 
 def pr_ns(flags: str = "") -> argparse.Namespace:
     return fairy.parse_args(shlex.split("--owner o --repo r " + flags))
@@ -192,6 +196,26 @@ class NoReviewerCommandTests(PrepareCase):
     def test_the_skip_carries_the_external_approver(self) -> None:
         decision = self.prepare("", statuses=GREEN_CI, reviews=[APPROVAL])
         self.assertEqual(decision.external_approvers, ("carol",))
+
+
+class ChangeRequestGateTests(PrepareCase):
+    """An outstanding change request skips the PR, unless it is the
+    reviewer identity's own: that one is its verdict, and whether the
+    activity since then warrants a new review is the triager's call."""
+
+    def test_someone_elses_change_request_skips_the_pr(self) -> None:
+        decision = self.prepare("", statuses=GREEN_CI, self_login="fairy",
+                                reviews=[CHANGE_REQUEST])
+        self.assertEqual(decision.reason,
+                         "outstanding change requests from: carol")
+
+    def test_the_reviewers_own_change_request_does_not(self) -> None:
+        own = dict(CHANGE_REQUEST, user={"login": "fairy"})
+        decision = self.prepare("", statuses=GREEN_CI, self_login="fairy",
+                                reviews=[own])
+        self.assertEqual(decision.reason,
+                         "matches all rules; CI contexts=1; "
+                         "--llm-review-cmd not set (no approval)")
 
 
 class ApproveMessageTests(unittest.TestCase):

@@ -1074,19 +1074,31 @@ def list_open_prs(args: argparse.Namespace, owner: str | None = None,
     return [pr for pr in data if isinstance(pr, dict)]
 
 
-def scan_closed_cutoff(args: argparse.Namespace) -> datetime | None:
-    """The oldest ``updated_at`` --scan-closed-days still covers, from
-    the simulated clock under --simulate-past; None when the option is
-    off."""
+CLOSED_RESCAN_OVERLAP = timedelta(hours=1)
+
+
+def scan_closed_cutoff(args: argparse.Namespace,
+                       newest_seen: datetime | None = None
+                       ) -> datetime | None:
+    """The oldest ``updated_at`` the closed listing must reach: the
+    --scan-closed-days window, from the simulated clock under
+    --simulate-past, or only CLOSED_RESCAN_OVERLAP before
+    ``newest_seen`` -- the newest closed update already snapshotted --
+    when that is later. None when the option is off."""
     if args.scan_closed_days <= 0:
         return None
     now = getattr(args, "simulate_past", None) or datetime.now(timezone.utc)
-    return now - timedelta(days=args.scan_closed_days)
+    cutoff = now - timedelta(days=args.scan_closed_days)
+    if newest_seen is not None:
+        cutoff = max(cutoff, newest_seen - CLOSED_RESCAN_OVERLAP)
+    return cutoff
 
 
-def list_recently_closed_prs(args: argparse.Namespace) -> list[ApiObject]:
-    """Closed PRs inside the --scan-closed-days window; [] when off."""
-    cutoff = scan_closed_cutoff(args)
+def list_recently_closed_prs(args: argparse.Namespace,
+                             newest_seen: datetime | None = None
+                             ) -> list[ApiObject]:
+    """Closed PRs inside the scan_closed_cutoff window; [] when off."""
+    cutoff = scan_closed_cutoff(args, newest_seen)
     if cutoff is None:
         return []
     return forge_gcli.list_closed_since(args, "pulls", cutoff)

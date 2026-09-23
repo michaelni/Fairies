@@ -185,15 +185,16 @@ def list_open_issues(args: argparse.Namespace) -> list[ApiObject]:
 def list_recently_closed_issues(
     args: argparse.Namespace,
     closed_pr_numbers: set[int] | None = None,
+    newest_seen: datetime | None = None,
 ) -> list[ApiObject]:
-    """Closed real issues inside the --scan-closed-days window; []
+    """Closed real issues inside the scan_closed_cutoff window; []
     when off. Closed PRs surface in the closed ``/issues`` listing the
     same way open ones do in the open listing, and are subtracted by
     number -- a closed PR and its issue twin share their updated_at,
     so the same cutoff bounds both listings. A caller that already
     fetched the closed-PR window passes its numbers as
     ``closed_pr_numbers``; fetched here when omitted."""
-    cutoff = scan_closed_cutoff(args)
+    cutoff = scan_closed_cutoff(args, newest_seen)
     if cutoff is None:
         return []
     data = forge_gcli.list_closed_since(args, "issues", cutoff)

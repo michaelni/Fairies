@@ -647,6 +647,10 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         snapshot_memo = {}
     forced = consume_requests(db)
     closed_pulls: dict[float, list[dict]] = {}
+    # Fixed before either side snapshots: both listings must share the
+    # bound, or the later one would skip what the earlier one listed.
+    newest_seen = max(filter(None, map(iso_to_dt, snapshot_memo.values())),
+                      default=None)
 
     def closed_pulls_for(ns: argparse.Namespace) -> list[dict]:
         """The ns's closed-PR window, fetched once per distinct
@@ -654,7 +658,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         the issue side needs the PR numbers again for subtraction."""
         if ns.scan_closed_days not in closed_pulls:
             closed_pulls[ns.scan_closed_days] = \
-                fairy.list_recently_closed_prs(ns)
+                fairy.list_recently_closed_prs(ns, newest_seen)
         return closed_pulls[ns.scan_closed_days]
 
     def closed_for(ns: argparse.Namespace, kind: str) -> list[dict]:
@@ -666,7 +670,8 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                 return closed_pulls_for(ns)
             return issue_fairy.list_recently_closed_issues(
                 ns, closed_pr_numbers={p["number"]
-                                       for p in closed_pulls_for(ns)})
+                                       for p in closed_pulls_for(ns)},
+                newest_seen=newest_seen)
         except Exception as exc:
             logger.warning("%s: closed listing failed; snapshots not "
                            "refreshed this pass: %s", kind, exc)

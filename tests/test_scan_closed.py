@@ -68,6 +68,16 @@ class WindowTests(unittest.TestCase):
         ns.simulate_past = NOW
         self.assertEqual(fairy.scan_closed_cutoff(ns), NOW - timedelta(days=7))
 
+    def test_cutoff_narrows_to_the_newest_snapshotted_update(self) -> None:
+        ns = fairy.parse_args(["--owner", "o", "--repo", "r",
+                               "--scan-closed-days", "7"])
+        ns.simulate_past = NOW
+        seen = NOW - timedelta(days=1)
+        self.assertEqual(fairy.scan_closed_cutoff(ns, seen),
+                         seen - fairy.CLOSED_RESCAN_OVERLAP)
+        self.assertEqual(fairy.scan_closed_cutoff(ns, NOW - timedelta(days=30)),
+                         NOW - timedelta(days=7))
+
 
 def entry(n: int, updated: str) -> dict:
     return {"number": n, "updated_at": updated}
@@ -225,6 +235,30 @@ class ScanClosedAgentTests(AgentCase):
             agent.scan_pass(self.db, self.ns, issue_ns, now=NOW)
         prs.assert_called_once()
         self.assertEqual(issues.call_args.kwargs["closed_pr_numbers"], {4})
+
+    def test_both_listings_start_at_the_newest_snapshotted_update(self) -> None:
+        issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
+        self.ns.scan_closed_days = issue_ns.scan_closed_days = 7.0
+        memo = {("pr", "4"): "2026-07-25T00:00:00Z",
+                ("issue", "3"): "2026-07-24T00:00:00Z"}
+        with mock.patch.object(fairy, "list_open_prs", return_value=[]), \
+                mock.patch.object(issue_fairy, "list_open_issues",
+                                  return_value=[]), \
+                mock.patch.object(forge_gcli, "self_login",
+                                  return_value="fairy"), \
+                mock.patch.object(agent.gcli_cache, "load_cache",
+                                  return_value=mock.Mock()), \
+                mock.patch.object(agent.gcli_cache, "save_cache"), \
+                mock.patch.object(
+                    fairy, "list_recently_closed_prs",
+                    return_value=[entry(5, "2026-07-26T00:00:00Z")]) as prs, \
+                mock.patch.object(issue_fairy, "list_recently_closed_issues",
+                                  return_value=[]) as issues:
+            agent.scan_pass(self.db, self.ns, issue_ns, now=NOW,
+                            snapshot_memo=memo)
+        newest = datetime(2026, 7, 25, tzinfo=timezone.utc)
+        self.assertEqual(prs.call_args.args[1], newest)
+        self.assertEqual(issues.call_args.kwargs["newest_seen"], newest)
 
     def test_closure_still_cancels_a_scanned_closed_tickets_verdict(self) -> None:
         self.db.push("reviewed", "pr", "2", verdict_ticket(2))

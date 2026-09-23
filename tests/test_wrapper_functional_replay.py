@@ -409,6 +409,17 @@ class VetStageTests(unittest.TestCase):
         self.assertEqual("vetter", role)
         self.assertIn("LLM-GPT-5.4: one issue", texts[-1])
 
+    def test_more_than_one_opened_pull_request_holds_without_the_vetter(self) -> None:
+        branches = tuple({"repo": "example", "branch": f"pr1-{i}", "mode": "push",
+                          "pr": {"title": f"t{i}"}} for i in (1, 2))
+        for extra in ((), ("--vet-model", "openai:gpt-x")):
+            with self.subTest(extra=extra):
+                ticket, seen = self._run(
+                    Review("approve", "", branches=branches, model="openai:gpt-5.4"), *extra)
+                self.assertEqual([], seen)
+                self.assertIs(True, ticket["vetting"]["hold_for_human_inspection"])
+                self.assertIn("opens 2 pull requests", ticket["vetting"]["reason"])
+
     def test_unconfigured_vetter_and_unpostable_skip_verdict_vet_nothing(self) -> None:
         for review, extra in (
                 (Review("approve", "", model="openai:gpt-5.4"), ()),

@@ -2020,7 +2020,13 @@ def main() -> int:
             )
             return EXIT_REVIEW_HALTED
 
-        if args.vet_model and (review.classification != "skip" or review.label_changes):
+        opened_pull_requests = sum(1 for record in review.branches if record.get("pr"))
+        if opened_pull_requests > 1:
+            workset_note(args, "vetting", {
+                "hold_for_human_inspection": True,
+                "reason": f"the verdict opens {opened_pull_requests} pull requests; "
+                          "more than one needs an operator's approval"})
+        elif args.vet_model and (review.classification != "skip" or review.label_changes):
             workset_note(args, "stage", "vet")
             hand_over_branches(list(review.branches))
             vetter = make_reviewer(

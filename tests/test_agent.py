@@ -1129,6 +1129,21 @@ class ItemSnapshotScanTests(SendCase):
                                            "merged": True})
         self.assertEqual(self.db.get("items", "pr", "7")["state"], "merged")
 
+    def test_a_closure_the_timeline_does_not_show_is_warned_about(self) -> None:
+        self.ns.force_review_prs = {7}
+        with self.assertLogs(agent.logger, "WARNING") as logs:
+            self.scan([], fetch=lambda ns, n: {**make_pr(n), "state": "closed"})
+        self.assertIn("the forge says closed but the timeline's last state "
+                      "change is None", logs.output[0])
+
+    def test_a_closure_the_timeline_shows_is_no_warning(self) -> None:
+        self.ns.force_review_prs = {7}
+        self.thread.return_value = ([], [], [], [
+            {"type": "close", "user": {"login": "m"},
+             "created_at": "2026-07-19T10:00:00Z"}])
+        with self.assertNoLogs(agent.logger, "WARNING"):
+            self.scan([], fetch=lambda ns, n: {**make_pr(n), "state": "closed"})
+
     def test_issue_snapshot_records_state_and_labels(self) -> None:
         issue = {"number": 3, "title": "crash", "user": {"login": "u"},
                  "state": "open",

@@ -196,6 +196,15 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                 "state": str(item.get("state") or ""),
                 "labels": labels(item),
             }
+        discussion = fairy.build_llm_discussion(
+            reviews, comments, review_comments, timeline)
+        last_change = next((d["state"] for d in reversed(discussion)
+                            if d["kind"] == "state"), None)
+        if (status["state"] in ("closed", "merged")) \
+                != (last_change in ("closed", "merged")):
+            logger.warning("%s #%s: the forge says %s but the timeline's "
+                           "last state change is %s", kind, token,
+                           status["state"], last_change)
         db.push(filedb.ITEM_STATE, kind, token, {
             "title": str(item.get("title") or ""),
             "author": fairy.get_pr_author(item),
@@ -203,8 +212,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
             "html_url": str(item.get("html_url") or ""),
             "updated_at": item.get("updated_at"),
             **status,
-            "discussion": fairy.build_llm_discussion(
-                reviews, comments, review_comments, timeline),
+            "discussion": discussion,
         })
         return True
     except Exception as exc:

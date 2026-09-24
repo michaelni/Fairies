@@ -33,7 +33,9 @@ last row).
   `awaiting-approver` in: `M` PRs need a human to press Merge, of
   which `N` were approved by fairy (the rest, shown as `merge-ready*`
   in the list, were approved by someone else). A red `PAUSED` appears
-  while `p` holds the daemons stopped.
+  while `p` holds the daemons stopped, a red `HALTED` with the reason
+  while a repo's db root holds a `halted` file (see `--halt-keyword`);
+  remove the file to resume.
 - **☰ list** — the table. Columns: `▶` marks reviewed rows, kind,
   repo (only when sides span several), `#number`, the status letters
   followed by an orange `»` for a review that persists git branches

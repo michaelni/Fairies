@@ -55,6 +55,7 @@ import blessed  # noqa: E402
 import diff_render  # noqa: E402
 import fairy_tui  # noqa: E402
 import filedb  # noqa: E402
+import halt_marker  # noqa: E402
 import tui_core  # noqa: E402
 
 R1, R2 = "o/r", "o/r2"
@@ -1225,6 +1226,14 @@ class PauseTests(DbCase):
             self.assertEqual(sent, [(111, signal.SIGCONT),
                                     (222, signal.SIGCONT)])
             self.assertEqual(ui.paused, [])
+
+    def test_a_halted_side_is_announced_in_the_header(self) -> None:
+        ui = make_ui(self.model)
+        halt_marker.halt(halt_marker.path(self.db2.root),
+                         "carol posted 'STOP' in https://forge/pr/1")
+        self.assertIn(f"HALTED {ui._repo_disp[R2]}: carol posted 'STOP' in "
+                      "https://forge/pr/1",
+                      fairy_tui._plain(ui.stats_lines(120)))
 
     def test_quit_thaws_paused_processes(self) -> None:
         """A frozen daemon never sees the launcher's exit-trap SIGTERM,

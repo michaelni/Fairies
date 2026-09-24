@@ -83,6 +83,7 @@ import db_config
 import diff_render
 import fairy
 import filedb
+import halt_marker
 import git_util
 import tui_core
 import workset
@@ -1273,6 +1274,11 @@ class UILoop:
         ]
         if self.paused:
             header[:0] = [("log_err", "PAUSED   ")]
+        for repo, db in m.sides:
+            halt = halt_marker.reason(halt_marker.path(db.root))
+            if halt is not None:
+                header[:0] = [("log_err", f"HALTED {self._repo_disp[repo]}: "
+                                          f"{halt}   ")]
         sig = (m.revision, width)
         if self._stats_cache is not None and self._stats_cache[0] == sig:
             return [header, []] + self._stats_cache[1]

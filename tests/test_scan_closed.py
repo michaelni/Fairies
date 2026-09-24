@@ -142,6 +142,30 @@ class ListClosedSinceTests(unittest.TestCase):
         self.assertEqual([i["number"] for i in got], [1, 3])
 
 
+class NewestUpdatedAtTests(unittest.TestCase):
+    def test_one_entry_of_any_state_most_recent_first(self) -> None:
+        ns = SimpleNamespace(owner="o", repo="r", forge_type="gitea")
+        with mock.patch.object(forge_gcli, "gcli_api",
+                               return_value=[entry(7, "2026-07-25T00:00:00Z")]) as api:
+            got = forge_gcli.newest_updated_at(ns, "pr")
+        self.assertEqual(got, "2026-07-25T00:00:00Z")
+        path = api.call_args.args[1]
+        self.assertIn("/pulls?", path)
+        self.assertIn("state=all", path)
+        self.assertIn("sort=recentupdate", path)
+        self.assertIn("limit=1", path)
+
+    def test_issues_on_github_and_an_empty_repo(self) -> None:
+        ns = SimpleNamespace(owner="o", repo="r", forge_type="github")
+        with mock.patch.object(forge_gcli, "gcli_api",
+                               return_value=[]) as api:
+            self.assertIsNone(forge_gcli.newest_updated_at(ns, "issue"))
+        path = api.call_args.args[1]
+        self.assertIn("/issues?", path)
+        self.assertIn("per_page=1", path)
+        self.assertIn("direction=desc", path)
+
+
 class ClosedIssueListingTests(unittest.TestCase):
     def test_closed_prs_are_subtracted_from_the_issue_listing(self) -> None:
         ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r",

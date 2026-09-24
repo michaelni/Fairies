@@ -126,6 +126,7 @@ __all__ = [
     "gcli_prefix",
     "issues_listing_takes_type_filter",
     "list_closed_since",
+    "newest_updated_at",
     "list_commit_statuses",
     "pr_merged",
     "list_issue_comments",
@@ -816,6 +817,20 @@ def list_closed_since(args: argparse.Namespace, endpoint: str,
             if updated < cutoff:
                 return out
             out.append(item)
+
+
+def newest_updated_at(args: argparse.Namespace, kind: str) -> str | None:
+    """``updated_at`` of the repo's most recently updated PR (``kind``
+    KIND_PR) or issue, open or closed, as the forge spells it; None
+    when the repo has none. One single-entry listing call."""
+    query = urlencode({"state": "all", **_recent_first(args, 1)})
+    endpoint = "pulls" if kind == KIND_PR else "issues"
+    data = gcli_api(args, build_repo_path(args.owner, args.repo,
+                                          f"/{endpoint}?{query}"))
+    if not isinstance(data, list):
+        raise RuntimeError(
+            f"expected list of {endpoint}, got {type(data).__name__}")
+    return str(data[0]["updated_at"]) if data else None
 
 
 def _list_repo_endpoint(

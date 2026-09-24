@@ -472,6 +472,14 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
              "the others wait in reviewed/ like without --auto-mode.",
     )
     p.add_argument(
+        "--halt-keyword",
+        metavar="WORD",
+        help="Emergency stop: once the scan sees WORD in any item's body or "
+             "discussion, the agent halts (a `halted` file in the db root, "
+             "its text the reason) and nothing is reviewed or posted until "
+             "the operator removes that file.",
+    )
+    p.add_argument(
         "--limit",
         type=int,
         default=0,

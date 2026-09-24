@@ -82,6 +82,14 @@ with the reason for the operator's `Y`, `r` or `s`; only under
 instead, and only there does the scan re-review a changed item whose
 verdict stands.
 
+`--halt-keyword WORD` in a side's options is the emergency stop for
+anyone with a forge account: the moment the scan sees the word in any
+item's body or discussion the agent writes `halted` into the db root,
+naming who posted it where, and agent and workers do nothing further
+-- no review, no post, not even an operator's `y` -- until the
+operator removes that file. Reviews already running finish into
+`reviewed/` and wait there.
+
 The reviewer (`pr_review_wrapper.py`) receives the PR data and returns one
 structured JSON review. Inside it runs a pipeline: an optional cheap triage
 pass (skip / helpful reply / engage; it can also honor the PR author's model

@@ -75,6 +75,7 @@ import db_config
 import fairy
 import filedb
 import forge_gcli
+import halt_marker
 import gcli_cache
 import issue_fairy
 import worker
@@ -95,6 +96,10 @@ MIN_BACKOFF_H = 24.0
 # States the agent never touches during a scan: the item is being
 # worked on or awaits the operator/sender.
 IN_FLIGHT = ("queued", "llm", "outgoing")
+
+
+class Halted(Exception):
+    """The scan sighted --halt-keyword and halted the db."""
 
 
 def backoff_wait_h(prior_backoff_h: float) -> float:
@@ -171,7 +176,8 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     (latest non-stale review per author), for an issue the
     "open"/"closed" state and its labels. A failure costs freshness,
     never the scan of the item; returns whether the snapshot is
-    current."""
+    current. Raises Halted, after halting the db, when the item's
+    body or a discussion entry carries --halt-keyword."""
     try:
         reviews, comments, review_comments, timeline = _fetch_thread(
             ns, kind, item, cache, cache_age)
@@ -204,7 +210,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
             logger.warning("%s #%s: the forge says %s but the timeline's "
                            "last state change is %s", kind, token,
                            status["state"], last_change)
-        db.push(filedb.ITEM_STATE, kind, token, {
+        snapshot = {
             "title": str(item.get("title") or ""),
             "author": fairy.get_pr_author(item),
             "body": str(item.get("body") or ""),
@@ -212,12 +218,22 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
             "updated_at": item.get("updated_at"),
             **status,
             "discussion": discussion,
-        })
-        return True
+        }
+        db.push(filedb.ITEM_STATE, kind, token, snapshot)
     except Exception as exc:
         logger.warning("%s #%s: item snapshot not refreshed: %s",
                        kind, token, exc)
         return False
+    if ns.halt_keyword:
+        for author, body in ((snapshot["author"], snapshot["body"]),
+                             *((d["author"], d["body"])
+                               for d in discussion if "body" in d)):
+            if ns.halt_keyword in body:
+                reason = (f"{author} posted {ns.halt_keyword!r} in "
+                          f"{snapshot['html_url']}")
+                halt_marker.halt(halt_marker.path(db.root), reason)
+                raise Halted(reason)
+    return True
 
 
 def _refresh_activity(db: filedb.Db, state: str, kind: str,
@@ -1232,15 +1248,24 @@ def main() -> int:
         next_full = time.monotonic() + FULL_PASS_S
         return True
 
+    marker = halt_marker.path(db.root)
     while True:
         try:
-            if scan_due():
+            if (halt := halt_marker.reason(marker)) is not None:
+                logger.warning("halted: %s -- remove %s to resume",
+                               halt, marker)
+                next_scan = time.monotonic() + args.loop
+            elif scan_due():
                 one_pass(db, pr_ns, issue_ns, args,
                          snapshot_memo=snapshot_memo)
             elif db.list_state("requests"):
                 requests_pass(db, pr_ns, issue_ns, args)
             else:
                 send_pass(db, sides, dry_run=args.dry_run)
+        except Halted as halt:
+            if not args.loop:
+                raise
+            logger.error("%s", halt)
         except Exception:
             # A transient forge/gcli error must not kill the daemon;
             # one-shot (cron) mode still fails loudly via its exit code.

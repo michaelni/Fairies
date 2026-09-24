@@ -51,6 +51,7 @@ import db_config  # noqa: E402
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 import filedb  # noqa: E402
+import halt_marker  # noqa: E402
 import issue_fairy  # noqa: E402
 
 NOW = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
@@ -1106,6 +1107,25 @@ class ItemSnapshotScanTests(SendCase):
                           for c in snap["discussion"]],
                          [("comment", "carol", "ping")])
         self.assertEqual(self.db.list_state("items"), [("pr", "1")])
+
+    def test_halt_keyword_in_a_comment_halts_before_anything_is_queued(self) -> None:
+        self.ns.halt_keyword = "FAIRY-STOP"
+        self.thread.return_value = ([], [
+            {"user": {"login": "carol"}, "body": "FAIRY-STOP: injected diff",
+             "created_at": "2026-07-19T10:00:00Z"}], [], [])
+        with self.assertRaises(agent.Halted):
+            self.scan([make_pr(1), make_pr(2)])
+        self.assertEqual(halt_marker.reason(halt_marker.path(self.db.root)),
+                         "carol posted 'FAIRY-STOP' in https://forge/pr/1")
+        self.assertEqual(self.db.list_state("queued"), [])
+        self.prepare.assert_not_called()
+
+    def test_halt_keyword_in_the_body_names_the_item_author(self) -> None:
+        self.ns.halt_keyword = "FAIRY-STOP"
+        with self.assertRaises(agent.Halted):
+            self.scan([{**make_pr(1), "body": "please FAIRY-STOP"}])
+        self.assertEqual(halt_marker.reason(halt_marker.path(self.db.root)),
+                         "a posted 'FAIRY-STOP' in https://forge/pr/1")
 
     def test_pr_snapshot_records_forge_status(self) -> None:
         self.thread.return_value = ([

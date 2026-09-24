@@ -42,6 +42,7 @@ capture or build tool needed; the debug JSON already contains both
 ``wrapper_request`` (the stdin object) and ``response`` (the OpenAI
 response), which is all this replay needs.
 """
+import base64
 import io
 import json
 import sys
@@ -368,6 +369,24 @@ class MainPassPromptWiringTests(unittest.TestCase):
         self.assertEqual(["code_review", "design_review"], seen["roles"])
         self.assertEqual(["openai:gpt-5.4", "openai:gpt-5.4"], seen["names"])
         self.assertEqual("combiner", seen["combiner_role"])
+
+
+class UnattendedPostingBlockTests(unittest.TestCase):
+    def test_limits_on_pull_requests_pushes_and_bundle_bytes(self) -> None:
+        push = {"repo": "example", "branch": "b", "mode": "ff"}
+        big = base64.b64encode(b"x" * (256 * 1024 + 1)).decode()
+        for branches, blocked in (
+                ([], None),
+                ([dict(push, pr={"title": "t"})] * 1 + [push] * 2 + [dict(push, mode="delete")] * 5, None),
+                ([dict(push, pr={"title": "t"})] * 2, "2 pull requests"),
+                ([push] * 4, "4 pushed branches"),
+                ([dict(push, bundle=big)], f"{256 * 1024 + 1} bytes of git bundles")):
+            with self.subTest(branches=branches):
+                reason = wrapper.unattended_posting_block(branches)
+                if blocked is None:
+                    self.assertIsNone(reason)
+                else:
+                    self.assertIn(blocked, reason)
 
 
 class VetStageTests(unittest.TestCase):

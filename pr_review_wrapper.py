@@ -65,6 +65,7 @@ Responses API file_search for additional retrieval.
 from __future__ import annotations
 
 import argparse
+import base64
 from dataclasses import replace
 import json
 import logging
@@ -1276,7 +1277,10 @@ def unattended_posting_block(branches: Sequence[JsonObject]) -> str | None:
     """Why the verdict's branch records need an operator whatever the
     vetter says, or None when they may go out unattended."""
     for count, limit, what in (
-            (sum(1 for record in branches if record.get("pr")), 1, "pull requests"),):
+            (sum(1 for record in branches if record.get("pr")), 1, "pull requests"),
+            (sum(1 for record in branches if record.get("mode") != "delete"), 3, "pushed branches"),
+            (sum(len(base64.b64decode(record.get("bundle") or "")) for record in branches),
+             256 * 1024, "bytes of git bundles")):
         if count > limit:
             return f"the verdict has {count} {what}; more than {limit} needs an operator's approval"
     return None

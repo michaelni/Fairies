@@ -1620,6 +1620,7 @@ class LoopTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         db_config.write_config(Path(tmp.name), "o/r", set(),
                                {"owner": "o", "repo": "r"}, None)
+        self.db_root = Path(tmp.name)
         argv = ["agent.py", "--db-root", tmp.name] + shlex.split(flags)
         calls = self.calls = []
 
@@ -1637,11 +1638,16 @@ class LoopTests(unittest.TestCase):
                 mock.patch.object(agent, "setup_logging"), \
                 mock.patch.object(agent, "watch_paths",
                                   return_value=mock.Mock() if watched
-                                  else None), \
+                                  else None) as self.watch, \
                 mock.patch.object(agent, "Event", return_value=wake), \
                 mock.patch.object(sys, "argv", argv):
             self.rc = agent.main()
         return calls
+
+    def test_a_verdict_arriving_in_reviewed_wakes_the_loop(self) -> None:
+        with self.assertRaises(_StopLoop):
+            self.run_main("--loop 0.01", [_StopLoop()])
+        self.assertIn(self.db_root / "reviewed", self.watch.call_args[0][0])
 
     def test_loop_keeps_scanning(self) -> None:
         with self.assertRaises(_StopLoop):

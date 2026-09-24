@@ -1061,7 +1061,8 @@ def make_parser() -> argparse.ArgumentParser:
                         "configurator.py, carries the side options")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
                    help="rescan every N seconds; operator files (requests/, "
-                        "outgoing/) wake the loop instantly via watchdog "
+                        "outgoing/) and a worker's verdict (reviewed/) wake "
+                        "the loop instantly via watchdog "
                         "(default: one pass, cron style)")
     p.add_argument("--drain", type=int, nargs="?", const=1, default=0,
                    metavar="N",
@@ -1194,7 +1195,8 @@ def main() -> int:
     # loop within milliseconds; a wake without a request only needs the
     # send pass, not a full forge scan.
     wake = Event()
-    watched = watch_paths([db.root / "requests", db.root / "outgoing"],
+    watched = watch_paths([db.root / "requests", db.root / "outgoing",
+                           db.root / "reviewed"],
                           wake.set) is not None
     sides = sides_of(pr_ns, issue_ns)
     next_scan = 0.0

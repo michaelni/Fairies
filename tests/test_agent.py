@@ -1613,7 +1613,11 @@ class LoopTests(unittest.TestCase):
     cron sees the failure in the exit code."""
 
     def run_main(self, flags: str, outcomes: list,
-                 wait=None, watched: bool = True) -> list[int]:
+                 wait=None, watched: bool = True,
+                 newest=None) -> list[int]:
+        """``newest`` feeds the forge probe; by default every tick
+        sees a moved forge."""
+        import itertools
         import shlex
         import time
         tmp = tempfile.TemporaryDirectory()
@@ -1640,6 +1644,9 @@ class LoopTests(unittest.TestCase):
                                   return_value=mock.Mock() if watched
                                   else None) as self.watch, \
                 mock.patch.object(agent, "Event", return_value=wake), \
+                mock.patch.object(forge_gcli, "newest_updated_at",
+                                  side_effect=newest or itertools.count()
+                                  ) as self.newest, \
                 mock.patch.object(sys, "argv", argv):
             self.rc = agent.main()
         return calls
@@ -1657,6 +1664,45 @@ class LoopTests(unittest.TestCase):
     def test_without_loop_a_single_pass_returns(self) -> None:
         self.assertEqual(self.run_main("", [None]), [0])
         self.assertEqual(self.rc, 0)
+        self.newest.assert_not_called()
+
+    def test_an_unmoved_forge_costs_a_probe_and_no_pass(self) -> None:
+        import time
+        waits = []
+
+        def wait(timeout=None):
+            waits.append(timeout)
+            if len(waits) == 4:
+                raise _StopLoop()
+            time.sleep(timeout)
+
+        with self.assertRaises(_StopLoop):
+            self.run_main("--loop 0.01", [None], wait=wait,
+                          newest=["same"] * 9)
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(self.newest.call_count, 3)
+        self.assertEqual(self.send_pass.call_count, 3)
+
+    def test_a_full_pass_runs_hourly_without_probing(self) -> None:
+        with mock.patch.object(agent, "FULL_PASS_S", 0.0), \
+                self.assertRaises(_StopLoop):
+            self.run_main("--loop 0.01", [None, None, _StopLoop()],
+                          newest=AssertionError("probed"))
+        self.assertEqual(len(self.calls), 3)
+
+    def test_forge_moved_records_first_then_compares_per_side(self) -> None:
+        sides = {"pr": fairy.parse_args(["--owner", "o", "--repo", "r"]),
+                 "issue": issue_fairy.parse_args(["--owner", "o", "--repo", "r"])}
+        newest: dict = {}
+        with mock.patch.object(forge_gcli, "newest_updated_at",
+                               side_effect=["p1", "i1", "p1", "i1",
+                                            "p1", "i2"]) as probe:
+            self.assertFalse(agent.forge_moved(sides, newest))
+            self.assertFalse(agent.forge_moved(sides, newest))
+            self.assertTrue(agent.forge_moved(sides, newest))
+        self.assertEqual(newest, {"pr": "p1", "issue": "i2"})
+        self.assertEqual([c.args[1] for c in probe.call_args_list],
+                         ["pr", "issue"] * 3)
 
     def test_a_failed_pass_does_not_kill_the_daemon(self) -> None:
         """A transient forge/gcli error costs one interval, not the

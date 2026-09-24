@@ -1060,9 +1060,11 @@ def make_parser() -> argparse.ArgumentParser:
                    help="filedb root; its config.toml, written by "
                         "configurator.py, carries the side options")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
-                   help="rescan every N seconds; operator files (requests/, "
-                        "outgoing/) and a worker's verdict (reviewed/) wake "
-                        "the loop instantly via watchdog "
+                   help="tick every N seconds: one tiny listing per side "
+                        "tells whether the forge moved, a rescan follows "
+                        "when it did and hourly regardless; operator files "
+                        "(requests/, outgoing/) and a worker's verdict "
+                        "(reviewed/) wake the loop instantly via watchdog "
                         "(default: one pass, cron style)")
     p.add_argument("--drain", type=int, nargs="?", const=1, default=0,
                    metavar="N",
@@ -1120,6 +1122,23 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
 
 
 PASS_RETRY_S = 60.0
+FULL_PASS_S = 3600.0
+
+
+def forge_moved(sides: dict[str, argparse.Namespace],
+                newest: dict[str, str | None]) -> bool:
+    """Whether a side's most recently updated item changed since the
+    last call: one single-entry listing per side, the stamps kept in
+    ``newest`` between calls. The first call only records them."""
+    moved = False
+    for kind, ns in sides.items():
+        stamp = forge_gcli.newest_updated_at(ns, kind)
+        if stamp != newest.get(kind, stamp):
+            logger.info("%s: forge moved, newest update %s -> %s",
+                        kind, newest[kind], stamp)
+            moved = True
+        newest[kind] = stamp
+    return moved
 
 
 def _forced_only(ns: argparse.Namespace | None) -> argparse.Namespace | None:
@@ -1199,12 +1218,23 @@ def main() -> int:
                            db.root / "reviewed"],
                           wake.set) is not None
     sides = sides_of(pr_ns, issue_ns)
-    next_scan = 0.0
+    next_scan = next_full = 0.0
     snapshot_memo: dict = {}
+    newest: dict[str, str | None] = {}
+
+    def scan_due() -> bool:
+        nonlocal next_scan, next_full
+        if time.monotonic() < next_scan:
+            return False
+        next_scan = time.monotonic() + args.loop
+        if time.monotonic() < next_full and not forge_moved(sides, newest):
+            return False
+        next_full = time.monotonic() + FULL_PASS_S
+        return True
+
     while True:
         try:
-            if time.monotonic() >= next_scan:
-                next_scan = time.monotonic() + args.loop
+            if scan_due():
                 one_pass(db, pr_ns, issue_ns, args,
                          snapshot_memo=snapshot_memo)
             elif db.list_state("requests"):

@@ -135,6 +135,13 @@ class Item:
     error: str = ""      # why the current file fails to parse
 
 
+def _unacknowledged(item: Item) -> bool:
+    """A verdict the agent posted on its own that the operator has not
+    yet acknowledged with y or s."""
+    return bool(item.state == "posted" and item.data.get("agent_promoted")
+                and not item.data.get("acknowledged_at"))
+
+
 def _repo_short(repo: str) -> str:
     """Display name for an "owner/repo" side label."""
     return repo.rsplit("/", 1)[-1]
@@ -535,7 +542,8 @@ class Model:
             items = [it for it in items if self._relevant(it)]
         elif self.filter_mode != "all":
             allowed = _FILTER_STATES[self.filter_mode]
-            items = [it for it in items if it.state in allowed]
+            items = [it for it in items if it.state in allowed
+                     or self.filter_mode == "review" and _unacknowledged(it)]
         if self.sort_mode != "arrival":
             items.sort(key=_SORT_KEYS[self.sort_mode])
         self._vis_cache = (sig, items, {
@@ -653,6 +661,18 @@ class Model:
                 logger.info("requested %s of %s", "a fresh review" if count == 1
                             else f"{count} sample evaluations", label)
                 self.seen_live.add(key)
+            elif action in ("apply", "apply-force", "skip") \
+                    and _unacknowledged(item):
+                if workset.update_json(
+                        db.path("posted", item.kind, item.number),
+                        lambda d: d.update(acknowledged_at=datetime.now(
+                            timezone.utc).isoformat())) is None:
+                    logger.info("%s changed under the cursor; not acknowledged",
+                                label)
+                    return
+                self.acted.add(key)
+                logger.info("%s acknowledged", label)
+                self._advance_to_reviewed(key)
             elif action in ("apply", "apply-force"):
                 if item.state != "reviewed" or not agent.postable(
                         agent.ticket_decision(item.kind, item.number, item.data)):
@@ -711,10 +731,11 @@ class Model:
     # ---- internals (caller holds ``lock``) ----
 
     def _advance_to_reviewed(self, key: tuple[str, str, int]) -> None:
-        """Jump to the next reviewed row waiting for the operator: the
-        first at/after the cursor, wrapping to the first overall."""
+        """Jump to the next row waiting for the operator, reviewed or an
+        unacknowledged agent post: the first at/after the cursor,
+        wrapping to the first overall."""
         remaining = {(it.repo, it.kind, it.number) for it in self.visible()
-                     if it.state == "reviewed"} - {key}
+                     if it.state == "reviewed" or _unacknowledged(it)} - {key}
         if not remaining:
             return
         keys = [(it.repo, it.kind, it.number) for it in self._sync_cursor()]
@@ -725,7 +746,7 @@ class Model:
 
     def _relevant(self, item: Item) -> bool:
         key = (item.repo, item.kind, item.number)
-        return (item.state not in HIDDEN_SETTLED
+        return (item.state not in HIDDEN_SETTLED or _unacknowledged(item)
                 or key in self.acted or key in self.seen_live)
 
     def _sync_cursor(self) -> list[Item]:
@@ -1416,6 +1437,9 @@ class UILoop:
         for failed in data.get("failed_reviewers") or []:
             head += tui_core.wrap([("log_warn", str(failed))], width,
                                   initial=("log_warn", "reviewer failed: "))
+        if _unacknowledged(item):
+            head.append([("st_reviewed",
+                          "posted by the agent — y or s acknowledges"[:width])])
         if data.get("vetting"):
             vetting = data["vetting"]
             head += tui_core.wrap(

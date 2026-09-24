@@ -222,6 +222,20 @@ class PollTests(DbCase):
         self.assertEqual(self.model.items[(R1, "pr", "5")].state, "skipped")
         self.assertIn((R1, "5"), self.keys())
 
+    def test_an_agent_post_stays_listed_until_acknowledged(self) -> None:
+        self.db.push("posted", "pr", "5", verdict(5, agent_promoted=True))
+        self.model.poll()
+        self.assertIn((R1, "5"), self.keys())
+        with self.model.lock:
+            self.model.filter_mode = "review"
+        self.assertIn((R1, "5"), self.keys())
+        self.model.act("apply")
+        self.assertTrue(self.db.get("posted", "pr", "5")["acknowledged_at"])
+        self.assertIn((R1, "5"), self.keys())
+        self.model = fairy_tui.Model([(R1, self.db), (R2, self.db2)])
+        self.model.poll()
+        self.assertEqual(self.keys(), [])
+
 
 class DirMtimeGateTests(DbCase):
     """Unchanged state dirs are not re-listed: every filedb write lands
@@ -407,6 +421,16 @@ class ActTests(DbCase):
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", "1"))
         self.model.act("apply")
+        with self.model.lock:
+            self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
+
+    def test_s_acknowledges_an_agent_post_and_advances(self) -> None:
+        self.db.push("posted", "pr", "1", verdict(1, agent_promoted=True))
+        self.db.push("posted", "pr", "2", verdict(2, agent_promoted=True))
+        self.model.poll()
+        self.model.act("skip")
+        self.assertEqual(self.db.find("pr", "1"), "posted")
+        self.assertTrue(self.db.get("posted", "pr", "1")["acknowledged_at"])
         with self.model.lock:
             self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
 
@@ -1232,6 +1256,12 @@ class DetailTests(DbCase):
         self.assertIn("persisted body", text)
         self.assertIn("state reviewed", text)
         self.assertIn("comment", text)  # rebuilt decision's action
+
+    def test_an_unacknowledged_agent_post_says_how_to_clear_it(self) -> None:
+        self.db.push("posted", "pr", "5", verdict(5, agent_promoted=True))
+        self.model.poll()
+        self.assertIn("posted by the agent — y or s acknowledges",
+                      self._detail_text())
 
     def test_a_review_request_line_names_requester_and_reviewer(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[

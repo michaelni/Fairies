@@ -120,7 +120,9 @@ Columns 1–3 mirror the issue's `bug`/`regression`/`enhancement`,
 **Lenses** (`a` cycles): `relevant` (default — everything except
 settled rows you never interacted with), `review` (the y-session:
 reviewed plus queued/llm/outgoing on their way in and out), `merge`,
-`ci`, `actionable`, `all`.
+`ci`, `actionable`, `all`. A verdict the agent posted on its own
+(`--auto-mode`, `--vetted-auto-mode`) stays in `relevant` and
+`review` as a `posted` row until you acknowledge it with `y` or `s`.
 
 **Sorts** (`t` cycles): `arrival`, `status` (actionable first, then
 the live pipeline, attention, settled), `repo`, `number`.
@@ -138,7 +140,7 @@ ticket is adopted.
 
 | key | action |
 |-----|--------|
-| `y` | apply: hand the reviewed verdict to the agent's send pass (`reviewed/` → `outgoing/`). The send re-checks that the PR is unchanged since the review; a mismatch returns the ticket with a `send blocked:` note naming when the forge last saw a change, refreshes the thread, and, in manual mode, parks it for you — `r`, `s` or `Y` are the answers. |
+| `y` | apply: hand the reviewed verdict to the agent's send pass (`reviewed/` → `outgoing/`); on a verdict the agent posted on its own, acknowledge it (`s` does the same). The send re-checks that the PR is unchanged since the review; a mismatch returns the ticket with a `send blocked:` note naming when the forge last saw a change, refreshes the thread, and, in manual mode, parks it for you — `r`, `s` or `Y` are the answers. |
 | `Y` | post anyway: like `y` but waives the staleness guard once. For a verdict you have read and judged still valid. |
 | `s` | skip now: one-shot; the next scan reconsiders the item afresh (earned backoff history is kept). |
 | `S` | snooze: like `s` but the item waits out a doubling backoff (min 24h) before it is reconsidered; new PR activity bypasses the wait. |

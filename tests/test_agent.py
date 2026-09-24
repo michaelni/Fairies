@@ -501,17 +501,17 @@ class ReuseTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "queued")
 
-    def test_vetted_auto_mode_requeues_only_a_vetted_stale_verdict(self) -> None:
+    def test_vetted_auto_mode_keeps_a_stale_verdict_for_the_operator(self) -> None:
         self.ns.vetted_auto_mode = True
-        for number, vetting in (("1", {"hold_for_human_inspection": False, "reason": ""}),
-                                ("2", {"hold_for_human_inspection": True, "reason": "rude"})):
+        for number, hold in (("1", False), ("2", True)):
             self.db.push("reviewed", "pr", number, {
                 "review": {"classification": "moderate_issues", "message": "KEEP"},
                 "expected_updated_at": "2026-07-01T00:00:00Z",  # PR changed since
-                "expected_head_ref": "old", "vetting": vetting})
+                "expected_head_ref": "old",
+                "vetting": {"hold_for_human_inspection": hold, "reason": ""}})
         self.scan([make_pr(1), make_pr(2)])
-        self.assertEqual(self.db.find("pr", "1"), "queued")
-        self.assertEqual(self.db.get("reviewed", "pr", "2")["review"]["message"], "KEEP")
+        for number in ("1", "2"):
+            self.assertEqual(self.db.get("reviewed", "pr", number)["review"]["message"], "KEEP")
 
     def test_s_and_x_during_the_slow_prepare_are_not_clobbered(self) -> None:
         # Same race as the y test below, for the decline actions: the
@@ -852,6 +852,20 @@ class SendTests(SendCase):
         self.assertNotIn("llm_at", t)  # next scan re-gates it immediately
         self.assertEqual(t["skip_backoff_h"], 24)  # earned history kept
         self.assertNotIn("agent_promoted", t)
+
+    def test_vetted_auto_mode_blocked_send_parks_until_the_operator_acts(self) -> None:
+        self.ns.vetted_auto_mode = True
+        self.db.push("outgoing", "pr", "1", verdict_ticket(
+            1, agent_promoted=True,
+            vetting={"hold_for_human_inspection": False, "reason": "clean"}))
+        with mock.patch.object(fairy, "submit_decision_action") as submit:
+            self.send(pr_ns=self.ns, changed={"head": {"sha": "h2"}})
+            t = self.db.get("reviewed", "pr", "1")
+            self.assertEqual(t["send_blocked"], "PR head changed")
+            self.assertNotIn("agent_promoted", t)
+            self.send(pr_ns=self.ns)
+        submit.assert_not_called()
+        self.assertEqual(self.db.find("pr", "1"), "reviewed")
 
     def test_guard_failure_after_an_operator_y_parks_in_any_mode(self) -> None:
         self.ns.auto_mode = True

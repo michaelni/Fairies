@@ -46,11 +46,10 @@ tickets whose item left the open listing, and prunes settled tickets.
 A send pass follows each scan: every outgoing/ item is re-read under
 its claim lock, guard-checked against the live forge and posted
 through fairy/issue_fairy's guarded submit seams. A guard failure
-returns the verdict to reviewed/ with a note (an operator's y) or,
-for a verdict the send pass promoted itself -- under --auto-mode every
-actionable reviewed/ verdict, under --vetted-auto-mode those the
-wrapper's vetter passed -- re-gates it via skipped/ so a cron run never
-stalls. --dry-run logs what would be posted and posts nothing.
+returns the verdict to reviewed/ with a note or, under --auto-mode for
+a verdict the send pass promoted itself, re-gates it via skipped/ so a
+cron run never stalls. --dry-run logs what would be posted and posts
+nothing.
 
 What belongs here: the scan pass, the ticket routing policy and the
 send pass.
@@ -439,8 +438,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                         "expected_updated_at": item.get("updated_at"),
                     }, prior)
                 continue
-        if prior == "reviewed" and number not in forced_ns \
-                and not agent_promotes(db, ns, kind, token, prior_data or {}):
+        if prior == "reviewed" and not ns.auto_mode and number not in forced_ns:
             # A reviewed/ verdict in manual mode is the operator's
             # case, changed item or not: requeueing here replaced
             # their verdict with whatever the fresh round produced
@@ -865,7 +863,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
             logger.info("%s #%s posted: %s", kind, number,
                         fairy.manual_action_description(decision))
             return "posted"
-        if ticket.pop("agent_promoted", None):
+        if ticket.pop("agent_promoted", None) and ns.auto_mode:
             # Auto mode must not stall on a stale verdict: without
             # llm_at the skipped/ ticket is re-gated (and, the item
             # having changed, freshly re-reviewed) on the next scan.
@@ -888,9 +886,11 @@ def agent_promotes(db: filedb.Db, ns: argparse.Namespace, kind: str,
     """Whether the send pass, not an operator, sends this reviewed/
     verdict: every base verdict under --auto-mode, under
     --vetted-auto-mode those the wrapper's vetter passed. Never a
-    sample evaluation, and never an item that has any: the operator
-    who asked for several reviews picks the one to post."""
-    if not filedb.is_base(number) or db.evaluations(kind, number):
+    sample evaluation, never an item that has any (the operator who
+    asked for several reviews picks the one to post) and never a
+    verdict a blocked send parked: that waits for Y, r or s."""
+    if not filedb.is_base(number) or db.evaluations(kind, number) \
+            or ticket.get("send_blocked"):
         return False
     vetting = ticket.get("vetting") or {}
     return ns.auto_mode or (

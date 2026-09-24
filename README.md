@@ -73,8 +73,11 @@ options the agent promotes actionable verdicts itself, with
 wait for the human as without either flag. An item with sample
 evaluations (`R`, `2r`..`9r`) is never promoted, in any state of the
 samples: the operator who asked for several reviews picks one. A send the forge refuses
-(the item moved since the review) parks a human-sent verdict in
-`reviewed/` with the reason and re-queues an agent-sent one.
+(the item moved since the review) parks the verdict in `reviewed/`
+with the reason for the operator's `Y`, `r` or `s`; only under
+`--auto-mode` is an agent-sent one re-queued for a fresh review
+instead, and only there does the scan re-review a changed item whose
+verdict stands.
 
 The reviewer (`pr_review_wrapper.py`) receives the PR data and returns one
 structured JSON review. Inside it runs a pipeline: an optional cheap triage

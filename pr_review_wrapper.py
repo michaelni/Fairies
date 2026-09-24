@@ -1272,6 +1272,16 @@ def attach_turn_fallbacks(
     reviewer.fallbacks = tuple(chain)
 
 
+def unattended_posting_block(branches: Sequence[JsonObject]) -> str | None:
+    """Why the verdict's branch records need an operator whatever the
+    vetter says, or None when they may go out unattended."""
+    for count, limit, what in (
+            (sum(1 for record in branches if record.get("pr")), 1, "pull requests"),):
+        if count > limit:
+            return f"the verdict has {count} {what}; more than {limit} needs an operator's approval"
+    return None
+
+
 def emit_review_stdout(
     classification: str,
     message: str,
@@ -2020,12 +2030,10 @@ def main() -> int:
             )
             return EXIT_REVIEW_HALTED
 
-        opened_pull_requests = sum(1 for record in review.branches if record.get("pr"))
-        if opened_pull_requests > 1:
-            workset_note(args, "vetting", {
-                "hold_for_human_inspection": True,
-                "reason": f"the verdict opens {opened_pull_requests} pull requests; "
-                          "more than one needs an operator's approval"})
+        posting_block = unattended_posting_block(review.branches)
+        if posting_block:
+            workset_note(args, "vetting",
+                         {"hold_for_human_inspection": True, "reason": posting_block})
         elif args.vet_model and (review.classification != "skip" or review.label_changes):
             workset_note(args, "stage", "vet")
             hand_over_branches(list(review.branches))

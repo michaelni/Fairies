@@ -418,7 +418,7 @@ class VetStageTests(unittest.TestCase):
                     Review("approve", "", branches=branches, model="openai:gpt-5.4"), *extra)
                 self.assertEqual([], seen)
                 self.assertIs(True, ticket["vetting"]["hold_for_human_inspection"])
-                self.assertIn("opens 2 pull requests", ticket["vetting"]["reason"])
+                self.assertIn("2 pull requests", ticket["vetting"]["reason"])
 
     def test_unconfigured_vetter_and_unpostable_skip_verdict_vet_nothing(self) -> None:
         for review, extra in (

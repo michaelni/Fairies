@@ -769,6 +769,21 @@ def pr_merged(pr: dict) -> bool:
     return bool(pr.get("merged") or pr.get("merged_at"))
 
 
+def _recent_first(args: argparse.Namespace, page_size: int) -> dict:
+    """Query parameters listing ``pulls`` / ``issues`` most recently
+    updated first, ``page_size`` per page. Both the sort and the
+    page-size parameter are forge-switched, because each forge
+    silently ignores the other's spelling: GitHub sorts with
+    ``sort=updated&direction=desc`` and pages with ``per_page``
+    (https://docs.github.com/en/rest/pulls/pulls); Forgejo/Gitea sort
+    with ``sort=recentupdate`` and page with ``limit``, capped by the
+    server's MAX_RESPONSE_ITEMS (50 by default,
+    https://forgejo.org/docs/latest/admin/config-cheat-sheet/)."""
+    if _forge_type(args) == "github":
+        return {"per_page": page_size, "sort": "updated", "direction": "desc"}
+    return {"limit": page_size, "sort": "recentupdate"}
+
+
 def list_closed_since(args: argparse.Namespace, endpoint: str,
                       cutoff: datetime) -> list[dict]:
     """Closed ``pulls`` / ``issues`` entries whose ``updated_at`` is at
@@ -776,21 +791,12 @@ def list_closed_since(args: argparse.Namespace, endpoint: str,
 
     Pages the listing and stops at the first entry past the cutoff --
     the recency sort makes that the end of the window -- so the cost
-    scales with the window, not the repo's closed history. Both the
-    sort and the page-size parameter are forge-switched, because each
-    forge silently ignores the other's spelling: GitHub sorts with
-    ``sort=updated&direction=desc`` and pages with ``per_page``
-    (https://docs.github.com/en/rest/pulls/pulls); Forgejo/Gitea sort
-    with ``sort=recentupdate`` and page with ``limit``, capped by the
-    server's MAX_RESPONSE_ITEMS (50 by default,
-    https://forgejo.org/docs/latest/admin/config-cheat-sheet/). The
-    served page length therefore proves nothing about being on the
-    last page: paging ends only at the cutoff or on an empty page.
-    An entry without a parsable ``updated_at`` is skipped, never
+    scales with the window, not the repo's closed history. The served
+    page length proves nothing about being on the last page (see
+    ``_recent_first``): paging ends only at the cutoff or on an empty
+    page. An entry without a parsable ``updated_at`` is skipped, never
     trusted to end the window."""
-    params = ({"per_page": 100, "sort": "updated", "direction": "desc"}
-              if _forge_type(args) == "github"
-              else {"limit": 50, "sort": "recentupdate"})
+    params = _recent_first(args, 100 if _forge_type(args) == "github" else 50)
     out: list[dict] = []
     for page in count(1):
         query = urlencode({"state": "closed", "page": page, **params})

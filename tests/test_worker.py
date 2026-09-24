@@ -45,6 +45,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import fairy  # noqa: E402
 import filedb  # noqa: E402
+import halt_marker  # noqa: E402
 import worker  # noqa: E402
 import workset  # noqa: E402
 
@@ -197,6 +198,16 @@ class DrainTests(WorkerCase):
         self.assertEqual(done, 2)
         self.assertEqual(self.db.list_state("reviewed"), [("pr", "1"), ("pr", "2")])
         self.assertEqual(self.db.list_state("queued"), [("issue", "3")])
+
+    def test_drain_claims_nothing_while_halted(self) -> None:
+        self.db.push("queued", "pr", "1", queued_ticket(1))
+        halt_marker.halt(halt_marker.path(self.db.root),
+                         "carol posted 'STOP' in https://forge/pr/2")
+        with mock.patch.object(fairy, "safe_apply_llm_review_to_prepared",
+                               side_effect=lambda ns, p: decision(p.number)):
+            done = worker.drain(self.db, {"pr": self.ns})
+        self.assertEqual(done, 0)
+        self.assertEqual(self.db.list_state("queued"), [("pr", "1")])
 
     def test_parallel_drain_reviews_concurrently_with_isolated_ns(self) -> None:
         # Three tickets, three threads: each review must see its OWN

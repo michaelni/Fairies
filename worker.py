@@ -61,6 +61,7 @@ from pathlib import Path
 import db_config
 import fairy
 import filedb
+import halt_marker
 import forge_gcli
 import issue_fairy
 import workset
@@ -206,6 +207,7 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
     processes compose freely; per-provider rate limits stay with
     concurrency.py inside the wrapper."""
     slots = max(1, int(parallel or 1))
+    marker = halt_marker.path(db.root)
     done = 0
     in_flight: set = set()
     own_watch = None
@@ -222,8 +224,13 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
                     if fut.result():
                         done += 1
                 claimed = False
+                queued = db.list_state("queued")
+                if (halt := halt_marker.reason(marker)) is not None:
+                    logger.warning("halted: %s -- %d queued tickets wait",
+                                   halt, len(queued))
+                    queued = []
                 for kind, number in sorted(
-                        db.list_state("queued"),
+                        queued,
                         key=lambda kn: not (db.get("queued", *kn)
                                             or {}).get("forced")):
                     if len(in_flight) >= slots:

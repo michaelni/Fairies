@@ -102,8 +102,7 @@ work -> finish), reaping dead workers' claims, and retention pruning.
 What does NOT belong: ticket schemas and validation (workset), gates,
 forge access, review logic, any policy about which state an item
 should be in next (fairy), and per-key duplicated functionality --
-a new key kind reshapes the shared API where that helps; it never
-gets parallel functions of its own.
+; it never gets parallel functions of its own.
 """
 
 from __future__ import annotations

@@ -64,7 +64,7 @@ if "anthropic" not in sys.modules:
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
                             ProviderContentFlagged, ProviderTurnFailed,
-                            Z_AI_ANTHROPIC_URL, review_with_turn_retries)
+                            review_with_turn_retries)
 from podman_host import ContainerInfraError, ContainerShellError  # noqa: E402
 import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
@@ -163,7 +163,7 @@ class MakeReviewerTests(unittest.TestCase):
         r = review_pipeline.make_reviewer("zai:glm-4.6", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
         self.assertEqual("zai:glm-4.6", r.name)
-        self.assertEqual(Z_AI_ANTHROPIC_URL, r.base_url)
+        self.assertEqual("https://api.z.ai/api/anthropic", r.base_url)
         self.assertEqual("ZAI_API_KEY", r.api_key_env)
 
     def test_anthropic_provider(self) -> None:

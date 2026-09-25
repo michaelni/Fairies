@@ -48,9 +48,9 @@ from typing import Callable
 
 from llm_output_hacks import hide_scope_block
 from llm_review_api import (
+    ANTHROPIC_ENDPOINTS,
     TURN_FAILED_COMBINER_ATTEMPTS,
     TURN_FAILED_REVIEWER_ATTEMPTS,
-    Z_AI_ANTHROPIC_URL,
     BadModelOutput,
     Review,
     ReviewContext,
@@ -156,7 +156,7 @@ def make_reviewer(
         raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
     codex_home = options.pop("codex-home", None) if provider == "codex" else None
     api_key_env = (options.pop("api-key-env", None)
-                   if provider in ("anthropic", "zai") else None)
+                   if provider in ANTHROPIC_ENDPOINTS else None)
     if options:
         raise SystemExit(
             f"--model {spec!r}: unsupported option(s): {', '.join(sorted(options))}"
@@ -168,18 +168,17 @@ def make_reviewer(
             max_output_tokens=max_output_tokens, service_tier=service_tier,
             verbosity=verbosity,
         )
-    if provider in ("anthropic", "zai"):
+    if provider in ANTHROPIC_ENDPOINTS:
         from anthropic_reviewer import AnthropicReviewer
 
-        base_url = Z_AI_ANTHROPIC_URL if provider == "zai" else None
+        base_url, default_api_key_env = ANTHROPIC_ENDPOINTS[provider]
         try:
             return AnthropicReviewer(
                 model,
                 name=f"{provider}:{model}" + (f"+{api_key_env}" if api_key_env else ""),
                 role=role,
                 base_url=base_url,
-                api_key_env=api_key_env or (
-                    "ZAI_API_KEY" if provider == "zai" else "ANTHROPIC_API_KEY"),
+                api_key_env=api_key_env or default_api_key_env,
                 max_tool_rounds=args.podman_max_tool_rounds,
                 exec_timeout_s=args.podman_exec_timeout,
                 effort=effort,

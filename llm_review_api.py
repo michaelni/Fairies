@@ -61,6 +61,7 @@ from common import JsonObject
 from podman_host import ContainerInfraError, ContainerShellSession, ShellHostSpec
 
 __all__ = [
+    "ANTHROPIC_ENDPOINTS",
     "BRANCH_NAME_RE",
     "BRANCH_TARGET_RE",
     "CLASSIFICATIONS",
@@ -80,7 +81,6 @@ __all__ = [
     "REVIEW_SCHEMA",
     "UNGRADED_REVIEW_SCHEMA",
     "VET_SCHEMA",
-    "Z_AI_ANTHROPIC_URL",
     "BadModelOutput",
     "BranchCollectionFailed",
     "ProviderContentFlagged",
@@ -164,9 +164,12 @@ TRIAGE_REQUESTABLE_EFFORTS = ("medium", "high", "xhigh")
 # and the ``requested_verbosity`` values a user may ask the triager for.
 VERBOSITY_LEVELS = ("low", "medium", "high")
 
-# z.ai's Anthropic-compatible Messages endpoint. GLM is reached by pointing
-# the Anthropic reviewer at this base URL with a z.ai key.
-Z_AI_ANTHROPIC_URL = "https://api.z.ai/api/anthropic"
+# Anthropic Messages-API backends by ``provider:`` prefix: base URL
+# (``None`` is Anthropic itself) and the API key variable.
+ANTHROPIC_ENDPOINTS = {
+    "anthropic": (None, "ANTHROPIC_API_KEY"),
+    "zai":       ("https://api.z.ai/api/anthropic", "ZAI_API_KEY"),
+}
 
 
 REVIEW_SCHEMA = {

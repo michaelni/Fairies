@@ -55,6 +55,8 @@ class ModelLabelTests(unittest.TestCase):
     def test_vendor_prefix_stripped_and_uppercased(self) -> None:
         self.assertEqual("GLM-5.3", llm_prompt.model_label("zai:glm-5.3"))
         self.assertEqual("GPT-5.4", llm_prompt.model_label("gpt-5.4"))
+        self.assertEqual("SPACE-BUNNY-ALPHA",
+                         llm_prompt.model_label("openrouter:stealth/space-bunny-alpha"))
         self.assertEqual("UNKNOWN", llm_prompt.model_label(""))
 
     def test_account_suffix_stays_out_of_the_label(self) -> None:

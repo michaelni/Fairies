@@ -259,8 +259,10 @@ unit that reloads it on boot.
 `--model` is the main pass; add more reviewers with
 `--extra-model PROVIDER:MODEL` (repeatable) and merge with
 `--combine-model PROVIDER:MODEL` (required once there is more than one
-reviewer). Provider prefixes: `openai:`, `anthropic:`,
-`zai:`, `codex:`. Each reviewer gets its own isolated container shell; the
+reviewer). Provider prefixes: `openai:`, `anthropic:`, `zai:`,
+`openrouter:` (any OpenRouter model id, e.g.
+`openrouter:stealth/space-bunny-alpha`, via `OPENROUTER_API_KEY`),
+`codex:`. Each reviewer gets its own isolated container shell; the
 model reviewers run concurrently (`--concurrency PROVIDER:COUNT` caps how
 many calls one provider gets at a time, across every fairy process on the
 machine). A local-GPU backend is TODO -- PRs very welcome.

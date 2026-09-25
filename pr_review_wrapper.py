@@ -29,7 +29,7 @@
  */
 
 Review a pull request with one or more LLM reviewers (OpenAI, Anthropic,
-z.ai GLM) and an optional combine stage.
+z.ai GLM, OpenRouter) and an optional combine stage.
 
 This wrapper is meant to be used as the `--llm-review-cmd` helper described
 for the PR auto-approval script. It reads one JSON object from stdin and prints

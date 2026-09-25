@@ -115,14 +115,15 @@ def make_reviewer(
     Options select a credential other than the deployment default, so
     one spec can name e.g. the same codex model on a different login:
     ``codex-home=DIR`` (codex) overrides --codex-home, ``api-key-env=VAR``
-    (anthropic/zai) overrides the provider's key variable. A reviewer
+    (anthropic/zai/openrouter) overrides the provider's key variable. A reviewer
     built with an option carries a ``+`` name suffix so logs tell the
     credentials apart.
 
     ``openai:<m>`` -> OpenAIReviewer reusing the shared
     OpenAI resources (``resources`` must not be None for this provider).
-    ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` -> AnthropicReviewer
-    pointed at z.ai's Anthropic endpoint (GLM). ``codex:<m>`` ->
+    ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` / ``openrouter:<m>``
+    -> AnthropicReviewer pointed at that vendor's Anthropic-compatible
+    endpoint (``ANTHROPIC_ENDPOINTS``). ``codex:<m>`` ->
     CodexReviewer driving the pinned codex CLI. Provider modules (and
     their SDKs) are imported only when actually requested.
 
@@ -150,7 +151,7 @@ def make_reviewer(
     provider, sep, model = spec_body.partition(":")
     if not sep:
         raise SystemExit(
-            f"--model {spec!r}: missing provider prefix (use openai:/anthropic:/zai:/codex:)"
+            f"--model {spec!r}: missing provider prefix (use openai:/anthropic:/zai:/openrouter:/codex:)"
         )
     if not model:
         raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
@@ -223,7 +224,7 @@ def make_reviewer(
             )
         except ValueError as exc:  # invalid @effort suffix
             raise SystemExit(f"--model {spec!r}: {exc}")
-    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai/codex)")
+    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai/openrouter/codex)")
 
 
 def run_triage(triager: Reviewer, ctx: ReviewContext) -> dict[str, object] | None:

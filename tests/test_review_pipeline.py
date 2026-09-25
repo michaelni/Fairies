@@ -166,6 +166,14 @@ class MakeReviewerTests(unittest.TestCase):
         self.assertEqual("https://api.z.ai/api/anthropic", r.base_url)
         self.assertEqual("ZAI_API_KEY", r.api_key_env)
 
+    def test_openrouter_uses_anthropic_endpoint(self) -> None:
+        r = review_pipeline.make_reviewer("openrouter:stealth/space-bunny-alpha", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+        self.assertIsInstance(r, AnthropicReviewer)
+        self.assertEqual("openrouter:stealth/space-bunny-alpha", r.name)
+        self.assertEqual("stealth/space-bunny-alpha", r.model)
+        self.assertEqual("https://openrouter.ai/api", r.base_url)
+        self.assertEqual("OPENROUTER_API_KEY", r.api_key_env)
+
     def test_anthropic_provider(self) -> None:
         r = review_pipeline.make_reviewer("anthropic:claude-opus-4", args=_args(), resources=None, role=COMBINER_ROLE, verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)

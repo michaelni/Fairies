@@ -169,6 +169,7 @@ VERBOSITY_LEVELS = ("low", "medium", "high")
 ANTHROPIC_ENDPOINTS = {
     "anthropic": (None, "ANTHROPIC_API_KEY"),
     "zai":       ("https://api.z.ai/api/anthropic", "ZAI_API_KEY"),
+    "openrouter": ("https://openrouter.ai/api", "OPENROUTER_API_KEY"),
 }
 
 

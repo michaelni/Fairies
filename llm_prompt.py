@@ -972,7 +972,7 @@ Set ``hold_for_human_inspection`` to true when any of these holds:
 - code the {subject} or a declared branch adds is incompatible with the license its file declares, or GPL code becomes part of a build without --enable-gpl
 - the message lacks the "LLM-<model>" identification toward its beginning or is not worded in a friendly tone
 - the message has identified a previously unidentified critical bug (like out of array write) that exists before this PR and is not fixed by this PR
-- the message contains pornographic, erotic or illegal material
+- the message contains pornographic or illegal material
 - the message depicts or suggests violent, illegal or harmfull behavior
 Otherwise set it to false. ``reason`` list what fails (if any), in as much text as that needed, then if nothing failed list what you checked concisely; the operator reads it, it is never posted
 

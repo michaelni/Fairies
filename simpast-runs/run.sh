@@ -102,7 +102,7 @@ TRIAGE_MODEL=${TRIAGE_MODEL-openai:gpt-5.4-mini}
 # The author-requestable model allowlist. Defaults to the openai set;
 # override (e.g. ALLOWED_MODELS="" for a codex-only arm that must not pull
 # in an OpenAI backend, or a codex list) as needed.
-ALLOWED_MODELS=${ALLOWED_MODELS-openai:gpt-5.5 openai:gpt-5.4 openai:gpt-5.6 openai:gpt-5.6-sol openai:gpt-5.6-terra}
+ALLOWED_MODELS=${ALLOWED_MODELS-openai:gpt-5.5 openai:gpt-5.4 openai:gpt-5.6 openai:gpt-5.6-sol openai:gpt-5.6-terra openai:gpt-6-sol openai:gpt-6-luna}
 TRIAGE_ARGS=""
 if [[ -n "$TRIAGE_MODEL" ]]; then
     TRIAGE_ARGS="--triage-model $TRIAGE_MODEL"

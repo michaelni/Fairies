@@ -177,7 +177,8 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     "open"/"closed" state and its labels. A failure costs freshness,
     never the scan of the item; returns whether the snapshot is
     current. Raises Halted, after halting the db, when the item's
-    body or a discussion entry carries --halt-keyword."""
+    body, a comment, a review or a review comment carries
+    --halt-keyword; the reason names the poster and links the post."""
     try:
         reviews, comments, review_comments, timeline = _fetch_thread(
             ns, kind, item, cache, cache_age)
@@ -225,12 +226,11 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                        kind, token, exc)
         return False
     if ns.halt_keyword:
-        for author, body in ((snapshot["author"], snapshot["body"]),
-                             *((d["author"], d["body"])
-                               for d in discussion if "body" in d)):
-            if ns.halt_keyword in body:
-                reason = (f"{author} posted {ns.halt_keyword!r} in "
-                          f"{snapshot['html_url']}")
+        for post in (item, *comments, *reviews, *review_comments):
+            if ns.halt_keyword in str(post.get("body") or ""):
+                reason = (f"{fairy.get_pr_author(post)} posted "
+                          f"{ns.halt_keyword!r} in "
+                          f"{post.get('html_url') or snapshot['html_url']}")
                 halt_marker.halt(halt_marker.path(db.root, ns.halt_file), reason)
                 raise Halted(reason)
     return True

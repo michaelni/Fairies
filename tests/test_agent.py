@@ -1125,11 +1125,13 @@ class ItemSnapshotScanTests(SendCase):
         self.ns.halt_keyword = "FAIRY-STOP"
         self.thread.return_value = ([], [
             {"user": {"login": "carol"}, "body": "FAIRY-STOP: injected diff",
-             "created_at": "2026-07-19T10:00:00Z"}], [], [])
+             "created_at": "2026-07-19T10:00:00Z",
+             "html_url": "https://forge/pr/1#issuecomment-7"}], [], [])
         with self.assertRaises(agent.Halted):
             self.scan([make_pr(1), make_pr(2)])
         self.assertEqual(halt_marker.reason(halt_marker.path(self.db.root)),
-                         "carol posted 'FAIRY-STOP' in https://forge/pr/1")
+                         "carol posted 'FAIRY-STOP' in "
+                         "https://forge/pr/1#issuecomment-7")
         self.assertEqual(self.db.list_state("queued"), [])
         self.prepare.assert_not_called()
 

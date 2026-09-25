@@ -1502,6 +1502,26 @@ class DetailTests(DbCase):
         self.assertLess(text.index("sampled for the review"),
                         text.index("rebased now"))
 
+    def test_the_forges_copy_of_a_posted_verdict_is_not_shown_twice(self) -> None:
+        """The scan after a post mirrors fairy's own review into the
+        snapshot's thread, where it would render right beside the
+        ticket's review entry (production: FFmpeg #24509)."""
+        self.model.filter_mode = "all"
+        self.db.push("posted", "pr", "5", verdict(
+            5, msg="the verdict", posted_at="2026-07-21T00:00:01+00:00"))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "",
+            "updated_at": "2026-07-21T00:00:00Z", "discussion": [
+                {"kind": "comment", "author": "carol",
+                 "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"},
+                {"kind": "review", "author": "fairy", "state": "APPROVED",
+                 "submitted_at": "2026-07-21T00:00:00Z", "body": "the verdict"}]})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertEqual(text.count("the verdict"), 1)
+        self.assertIn("discussion (1)", text)
+
     def test_separator_trails_a_thread_without_new_activity(self) -> None:
         old = [{"kind": "comment", "author": "carol",
                 "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"},

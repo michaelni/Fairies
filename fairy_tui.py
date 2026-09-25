@@ -1484,6 +1484,11 @@ class UILoop:
         head.append([])
         tail: list[tui_core.StyledLine] = []
         disc = shown.get("discussion") or []
+        # the forge's copy of a posted verdict reaches the thread with
+        # the live snapshot; the review entry below is its rendering
+        if item.state == "posted" and review.get("message"):
+            disc = [c for c in disc if not isinstance(c, dict)
+                    or c.get("body") != review["message"]]
         body = shown.get("body") or data.get("body")
         if body:
             disc = [{"kind": "description", "author": author,

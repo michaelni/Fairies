@@ -231,7 +231,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
             if ns.halt_keyword in body:
                 reason = (f"{author} posted {ns.halt_keyword!r} in "
                           f"{snapshot['html_url']}")
-                halt_marker.halt(halt_marker.path(db.root), reason)
+                halt_marker.halt(halt_marker.path(db.root, ns.halt_file), reason)
                 raise Halted(reason)
     return True
 
@@ -1248,7 +1248,7 @@ def main() -> int:
         next_full = time.monotonic() + FULL_PASS_S
         return True
 
-    marker = halt_marker.path(db.root)
+    marker = halt_marker.path(db.root, lead.halt_file)
     while True:
         try:
             if (halt := halt_marker.reason(marker)) is not None:

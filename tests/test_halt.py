@@ -48,6 +48,8 @@ class HaltMarkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             marker = halt_marker.path(Path(tmp))
             self.assertEqual(marker, Path(tmp) / "halted")
+            self.assertEqual(halt_marker.path(Path(tmp), Path("shared")),
+                             Path("shared"))
             self.assertIsNone(halt_marker.reason(marker))
             halt_marker.halt(marker, "carol posted 'STOP' in https://forge/pr/1")
             self.assertEqual(halt_marker.reason(marker),

@@ -42,8 +42,9 @@ from pathlib import Path
 __all__ = ["path", "halt", "reason"]
 
 
-def path(db_root: Path) -> Path:
-    return Path(db_root) / "halted"
+def path(db_root: Path, configured: Path | None = None) -> Path:
+    """--halt-file when configured, else ``halted`` in the db root."""
+    return Path(configured) if configured else Path(db_root) / "halted"
 
 
 def halt(marker: Path, reason: str) -> None:

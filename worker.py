@@ -207,7 +207,7 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
     processes compose freely; per-provider rate limits stay with
     concurrency.py inside the wrapper."""
     slots = max(1, int(parallel or 1))
-    marker = halt_marker.path(db.root)
+    marker = halt_marker.path(db.root, next(iter(sides.values())).halt_file)
     done = 0
     in_flight: set = set()
     own_watch = None

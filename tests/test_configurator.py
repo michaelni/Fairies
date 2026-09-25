@@ -76,6 +76,13 @@ class ValidationTests(unittest.TestCase):
         fairy.validate_sides(
             self.pr(base + "--patch-pr-ref-template fforge/pr/{number}"), None)
 
+    def test_halt_file_must_agree_across_sides(self) -> None:
+        issue = issue_fairy.parse_args(
+            ["--owner", "o", "--repo", "r", "--halt-file", "shared"])
+        with self.assertRaises(SystemExit):
+            fairy.validate_sides(self.pr("--halt-file other"), issue)
+        fairy.validate_sides(self.pr("--halt-file shared"), issue)
+
     def test_forced_only_requires_a_force_review(self) -> None:
         with self.assertRaises(SystemExit):
             fairy.validate_sides(self.pr("--forced-only"), None)

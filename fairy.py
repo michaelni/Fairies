@@ -392,6 +392,14 @@ def add_side_identity_args(p: argparse.ArgumentParser) -> None:
              "tails it into its logs pane (level-tagged line format)",
     )
     p.add_argument(
+        "--halt-file",
+        type=Path,
+        metavar="PATH",
+        help="the file whose presence halts agent and workers; one path "
+             "in every repository's config halts them all "
+             "(default: <db-root>/halted)",
+    )
+    p.add_argument(
         "--verbose",
         type=int,
         choices=(0, 1, 2),
@@ -776,6 +784,8 @@ def validate_worker_sides(pr_ns: argparse.Namespace | None,
     configurator and the agent run validate_sides, the worker this."""
     if pr_ns and pr_ns.llm_review_cmd and pr_ns.patch_repo is None:
         _config_error("--llm-review-cmd requires --patch-repo PATH")
+    if pr_ns and issue_ns and pr_ns.halt_file != issue_ns.halt_file:
+        _config_error("--halt-file must be the same for both sides")
     for ns in (pr_ns, issue_ns):
         if ns is not None and getattr(ns, "simulate_past", None) is not None \
                 and "{number}" not in (getattr(ns, "patch_pr_ref_template", None) or ""):

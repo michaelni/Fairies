@@ -570,12 +570,13 @@ class SideBuildTests(unittest.TestCase):
              "--db-root", str(x),
              "--tail", str(self.base / "nosuch" / ".." / "x.log"),
              "--tail", "extra.log"])
-        sides, tails, patch_repos = fairy_tui.build_sides(args)
+        sides, tails, patch_repos, halt_markers = fairy_tui.build_sides(args)
         self.assertEqual([label for label, _ in sides], ["a/x", "a/y"])
         self.assertEqual([db.root for _, db in sides], [x, y])
         self.assertEqual(tails, [self.base / "x.log", self.base / "y.log",
                                  Path("extra.log")])
         self.assertEqual(patch_repos, {})
+        self.assertEqual(halt_markers, {"a/x": x / "halted", "a/y": y / "halted"})
 
     def test_the_pr_sides_patch_repo_is_returned_per_label(self) -> None:
         root = self.base / "a~x"
@@ -583,8 +584,17 @@ class SideBuildTests(unittest.TestCase):
         fairy_tui.db_config.write_config(
             root, "a/x", set(), {"patch-repo": "mirror"}, None)
         args = fairy_tui.parse_args(["--db-root", str(root)])
-        _, _, patch_repos = fairy_tui.build_sides(args)
+        _, _, patch_repos, _ = fairy_tui.build_sides(args)
         self.assertEqual(patch_repos, {"a/x": Path("mirror")})
+
+    def test_the_halt_file_comes_from_either_side(self) -> None:
+        root = self.base / "a~x"
+        root.mkdir()
+        fairy_tui.db_config.write_config(
+            root, "a/x", set(), None, {"halt-file": "shared"})
+        args = fairy_tui.parse_args(["--db-root", str(root)])
+        _, _, _, halt_markers = fairy_tui.build_sides(args)
+        self.assertEqual(halt_markers, {"a/x": Path("shared")})
 
     def test_missing_config_names_a_case_sibling(self) -> None:
         self.root("FFmpeg~web", "FFmpeg/web", set())

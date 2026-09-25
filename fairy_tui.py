@@ -1188,13 +1188,16 @@ def _plain(lines: list) -> str:
 class UILoop:
     def __init__(self, term: blessed.Terminal, model: Model, ring: tui_core.RingBuffer,
                  save_dir: Path, tail: LogTail,
-                 patch_repos: dict[str, Path] | None = None) -> None:
+                 patch_repos: dict[str, Path] | None = None,
+                 halt_markers: dict[str, Path] | None = None) -> None:
         self.term = term
         self.model = model
         self.ring = ring
         self.save_dir = save_dir
         self.tail = tail
         self.patch_repos = patch_repos or {}
+        self.halt_markers = halt_markers or {
+            repo: halt_marker.path(db.root) for repo, db in model.sides}
         self.detail_mode = DETAIL_MODES[0]
         self.logs_mode = LOGS_MODES[0]
         self.branch_diff_mode = BRANCH_DIFF_MODES[0]
@@ -1274,8 +1277,8 @@ class UILoop:
         ]
         if self.paused:
             header[:0] = [("log_err", "PAUSED   ")]
-        for repo, db in m.sides:
-            halt = halt_marker.reason(halt_marker.path(db.root))
+        for repo, _db in m.sides:
+            halt = halt_marker.reason(self.halt_markers[repo])
             if halt is not None:
                 header[:0] = [("log_err", f"HALTED {self._repo_disp[repo]}: "
                                           f"{halt}   ")]
@@ -2583,16 +2586,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def build_sides(
     args: argparse.Namespace,
-) -> tuple[list[tuple[str, filedb.Db]], list[Path], dict[str, Path]]:
+) -> tuple[list[tuple[str, filedb.Db]], list[Path], dict[str, Path],
+           dict[str, Path]]:
     """One (repo label, filedb) side per distinct --db-root; each root's
     config.toml, written by configurator.py, names the repo, the log
-    files the logs pane tails without separate --tail flags, and the
+    files the logs pane tails without separate --tail flags, the
     [pr] patch-repo mirror the ``m`` diff views read (label-keyed in
     the returned dict; the path is relative to the agent's cwd, so the
-    TUI must run from the same directory)."""
+    TUI must run from the same directory) and the side's --halt-file
+    (label-keyed too, resolved to the marker's path)."""
     sides: list[tuple[str, filedb.Db]] = []
     tails: list[Path] = []
     patch_repos: dict[str, Path] = {}
+    halt_markers: dict[str, Path] = {}
     seen: set[Path] = set()
 
     def add_tail(path: Path) -> None:
@@ -2609,15 +2615,17 @@ def build_sides(
         sides.append((cfg["label"], filedb.Db(root)))
         if (cfg.get("pr") or {}).get("patch-repo"):
             patch_repos[cfg["label"]] = Path(cfg["pr"]["patch-repo"])
+        halt_markers[cfg["label"]] = halt_marker.path(
+            root, (cfg.get("pr") or cfg.get("issue") or {}).get("halt-file"))
     for t in args.tail or []:
         add_tail(t)
-    return sides, tails, patch_repos
+    return sides, tails, patch_repos, halt_markers
 
 
 def main() -> int:
     args = parse_args()
     ring = tui_core.RingBuffer()
-    sides, tails, patch_repos = build_sides(args)
+    sides, tails, patch_repos, halt_markers = build_sides(args)
     model = Model(sides)
     sink = OutputSink(ring, model.dirty, args.log_file)
     setup_logging(logger, False, db_config.logger,
@@ -2630,7 +2638,7 @@ def main() -> int:
     term = blessed.Terminal(stream=sys.__stdout__)
     faulthandler.enable(file=sys.__stderr__)
     ui = UILoop(term, model, ring, args.save_dir, LogTail(tails, sink),
-                patch_repos)
+                patch_repos, halt_markers)
     # File changes repaint within one 100ms input tick instead of the
     # 1s fallback rescan; without watchdog only the fallback remains.
     watch_paths(

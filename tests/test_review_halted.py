@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -52,7 +53,8 @@ if str(REPO_ROOT) not in sys.path:
 import fairy  # noqa: E402
 import shell_tool  # noqa: E402
 from common import (EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED,  # noqa: E402
-                    EXIT_TURN_FAILED, format_turn_failure)
+                    EXIT_REVIEW_STOPPED_BY_HALT_FILE, EXIT_TURN_FAILED,
+                    format_turn_failure)
 
 
 def _args(attempts: int) -> argparse.Namespace:
@@ -162,6 +164,30 @@ class HaltStopsSiblingReviewersTests(unittest.TestCase):
         # SystemExit so it escapes the codex dispatch loop's except Exception;
         # the status keeps the wrapper's halted exit code intact.
         self.assertEqual(EXIT_REVIEW_HALTED, caught.exception.code)
+
+    def test_halt_file_stops_the_next_shell_call(self) -> None:
+        with tempfile.NamedTemporaryFile() as halt_file, \
+                mock.patch.object(shell_tool, "HALT_FILE", halt_file.name):
+            self.assertTrue(shell_tool.halted_by_file())
+            with self.assertRaises(SystemExit) as caught:
+                shell_tool.exec_shell_call(
+                    None, {"command": "true"}, max_timeout_s=1.0)
+        self.assertEqual(EXIT_REVIEW_STOPPED_BY_HALT_FILE, caught.exception.code)
+        with mock.patch.object(shell_tool, "HALT_FILE", halt_file.name):
+            self.assertFalse(shell_tool.halted_by_file())
+
+    def test_halt_file_exit_becomes_review_cancelled(self) -> None:
+        args = argparse.Namespace(
+            llm_review_cmd="./pr_review_wrapper.py", verbose=0,
+            llm_timeout=10)
+        cp = subprocess.CompletedProcess(
+            [], EXIT_REVIEW_STOPPED_BY_HALT_FILE, stdout="", stderr="")
+        with mock.patch.object(fairy, "run_cmd", return_value=cp):
+            with self.assertRaises(fairy.ReviewCancelled):
+                fairy.invoke_llm_wrapper(
+                    args, {}, number=42,
+                    allowed_classifications=frozenset(),
+                    label_allowlist=[])
 
     def test_not_halted_by_default(self) -> None:
         self.assertFalse(shell_tool.halted())

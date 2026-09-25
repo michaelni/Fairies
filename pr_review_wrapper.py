@@ -724,6 +724,12 @@ def parse_args() -> argparse.Namespace:
              "and reviewer drafts are recorded there as they happen.",
     )
     p.add_argument(
+        "--halt-file",
+        help="Caller's halt file; once it exists the review stops at its "
+             "next model turn or shell command and its containers are "
+             "paused.",
+    )
+    p.add_argument(
         "--openai-timeout-seconds",
         type=float,
         default=DEFAULT_OPENAI_TIMEOUT_SECONDS,
@@ -1375,6 +1381,7 @@ def open_review_container_shell(
 def main() -> int:
     args = parse_args()
     shell_tool.CANCEL_FILE = args.workset_file
+    shell_tool.HALT_FILE = args.halt_file
     debug_dir_specified = any(
         arg == "--debug-response-dir" or arg.startswith("--debug-response-dir=")
         for arg in sys.argv[1:]
@@ -2069,7 +2076,7 @@ def main() -> int:
             container_lease.release(healthy=container_lease_healthy)
         for handle, session in ensemble_shells:
             session.close()
-            if id(session) in poisoned_session_ids:
+            if id(session) in poisoned_session_ids or shell_tool.halted_by_file():
                 podman_host.pause_container(handle)
             else:
                 podman_host.stop_container(handle)

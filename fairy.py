@@ -91,6 +91,7 @@ import gcli_cache
 from common import (
     EXIT_REVIEW_CANCELLED,
     EXIT_REVIEW_HALTED,
+    EXIT_REVIEW_STOPPED_BY_HALT_FILE,
     EXIT_TURN_FAILED,
     parse_turn_failure,
     JsonObject,
@@ -2285,6 +2286,9 @@ def invoke_llm_wrapper(
         ws_path = getattr(args, "workset_file_override", None)
         if ws_path is not None:
             cmd += [f"--workset-file={ws_path}"]
+        halt_file = getattr(args, "halt_file", None)
+        if halt_file is not None:
+            cmd += [f"--halt-file={halt_file}"]
     if getattr(args, "branch_push", None):
         cmd += ["--persist-branches"]
         cmd += [f"--persist-repo={spec.repo}" for spec in args.branch_push]
@@ -2307,6 +2311,8 @@ def invoke_llm_wrapper(
         )
     if cp.returncode == EXIT_REVIEW_CANCELLED:
         raise ReviewCancelled("LLM review cancelled by the operator")
+    if cp.returncode == EXIT_REVIEW_STOPPED_BY_HALT_FILE:
+        raise ReviewCancelled("LLM review stopped by the halt file")
     if cp.returncode == EXIT_TURN_FAILED:
         raise ReviewTurnFailed(
             "LLM review gave up: provider-ended turns exhausted the "

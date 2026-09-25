@@ -48,7 +48,8 @@ import os
 import threading
 from typing import Callable, Sequence
 
-from common import EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED, JsonObject
+from common import (EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED,
+                    EXIT_REVIEW_STOPPED_BY_HALT_FILE, JsonObject)
 from podman_host import ContainerShellSession
 from shell_bridge_client import (  # noqa: F401
     SHELL_TOOL_DESCRIPTION,
@@ -65,6 +66,7 @@ __all__ = [
     "exec_shell_call",
     "halt",
     "halted",
+    "halted_by_file",
     "run_session_commands",
 ]
 
@@ -72,6 +74,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SHELL_TIMEOUT_S = 120.0
 CANCEL_FILE: str | None = None
+HALT_FILE: str | None = None
 _cancel_state = (0, False)
 _halted = False
 
@@ -102,12 +105,19 @@ def cancelled() -> bool:
     return _cancel_state[1]
 
 
+def halted_by_file() -> bool:
+    return HALT_FILE is not None and os.path.exists(HALT_FILE)
+
+
 def abort_if_cancelled() -> None:
     """Exit the wrapper with EXIT_REVIEW_CANCELLED once the operator has
-    flagged the claimed ticket; called before every model turn and
+    flagged the claimed ticket, with EXIT_REVIEW_STOPPED_BY_HALT_FILE
+    once the halt file exists; called before every model turn and
     shell command so a review stops at its next boundary."""
     if cancelled():
         raise SystemExit(EXIT_REVIEW_CANCELLED)
+    if halted_by_file():
+        raise SystemExit(EXIT_REVIEW_STOPPED_BY_HALT_FILE)
 
 
 def exec_shell_call(

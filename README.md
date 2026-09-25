@@ -88,8 +88,10 @@ item's body or discussion the agent writes `halted` into the db root
 (or the file `--halt-file` names; the same path in every repository's
 config halts them all), naming who posted it where, and agent and
 workers do nothing further -- no review, no post, not even an
-operator's `y` -- until the operator removes that file. Reviews
-already running finish into `reviewed/` and wait there.
+operator's `y` -- until the operator removes that file. A review
+already running stops at its next model turn or shell command, its
+containers are paused for inspection, and its ticket returns to
+`queued/` for after the halt is lifted.
 
 The reviewer (`pr_review_wrapper.py`) receives the PR data and returns one
 structured JSON review. Inside it runs a pipeline: an optional cheap triage

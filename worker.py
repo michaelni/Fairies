@@ -133,6 +133,7 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
     prepared = replace(prepared,
                        discussion=fairy.with_operator_notes(prepared.discussion, notes))
     ns.workset_file_override = str(claim.path)
+    ns.halt_file = halt_marker.path(claim.db.root, ns.halt_file)
     try:
         if claim.kind == "pr":
             decision = fairy.safe_apply_llm_review_to_prepared(ns, prepared)
@@ -147,13 +148,16 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
     finally:
         ns.workset_file_override = None
     ticket = claim.read()  # the wrapper noted stage/triage/drafts meanwhile
-    ticket.pop("prepared", None)
     ticket.pop("stage", None)
-    if ticket.pop("cancel", None):
-        state = "cancelled"
+    if halt_marker.reason(ns.halt_file) is not None:
+        state = "queued"
     else:
-        ticket.update(verdict_fields(decision, prepared))
-        state = verdict_state(decision)
+        ticket.pop("prepared", None)
+        if ticket.pop("cancel", None):
+            state = "cancelled"
+        else:
+            ticket.update(verdict_fields(decision, prepared))
+            state = verdict_state(decision)
     claim.finish(state, ticket)
     # workset.update_json's sidecar lock next to the claimed file
     claim.path.with_suffix(".lock").unlink(missing_ok=True)
@@ -171,8 +175,7 @@ def _review_claimed(sides: dict[str, argparse.Namespace],
     # state and the namespace is shared across drain threads
     ns = argparse.Namespace(**vars(sides[kind]))
     try:
-        review_claim(claim, ns)
-        return True
+        return review_claim(claim, ns) != "queued"
     except Exception as exc:
         # Aborting back to queued/ would re-claim the same
         # (sorted-first) ticket on every pass and starve the

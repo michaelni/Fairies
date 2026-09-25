@@ -187,6 +187,23 @@ class OperatorVetoTests(WorkerCase):
         self.assertIsNone(self.db.get("llm", "pr", "5"))
 
 
+    def test_a_halt_during_the_review_returns_the_ticket_to_queued(self) -> None:
+        self.db.push("queued", "pr", "5", queued_ticket(5))
+
+        def llm_with_midway_halt(ns, prepared):
+            self.assertEqual(ns.halt_file, halt_marker.path(self.db.root))
+            halt_marker.halt(ns.halt_file,
+                             "carol posted 'STOP' in https://forge/pr/9")
+            return decision(prepared.number)
+
+        state = self.run_one(5, llm_with_midway_halt)
+        self.assertEqual(state, "queued")
+        t = self.db.get("queued", "pr", "5")
+        self.assertIn("prepared", t)
+        self.assertNotIn("review", t)
+        self.assertIsNone(self.db.get("llm", "pr", "5"))
+
+
 class DrainTests(WorkerCase):
     def test_drain_reviews_every_queued_ticket_of_its_kinds(self) -> None:
         for n in (1, 2):

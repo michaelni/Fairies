@@ -79,6 +79,7 @@ except ModuleNotFoundError:
 import pr_review_wrapper as wrapper
 import openai_reviewer
 from llm_review_api import Review
+from common import EXIT_REVIEW_STOPPED_BY_HALT_FILE
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "wrapper_functional_runs"
@@ -487,6 +488,50 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
 
         session.close.assert_called_once_with()
         self.assertEqual([handle], stopped)
+
+    def test_halt_file_pauses_every_container_of_the_run(self) -> None:
+        request_obj = _fixture_request()
+        paused: list[object] = []
+        stopped: list[object] = []
+        halt_file = tempfile.NamedTemporaryFile()
+        self.addCleanup(halt_file.close)
+
+        def fake_open_review(spec, repo_specs, args, session_commands=()):
+            return mock.Mock(name="handle"), mock.Mock(name="session"), ""
+
+        def fake_review_pr(ctx, reviewers, combiner, **kw):
+            ctx.open_shell("x86_64")
+            wrapper.shell_tool.abort_if_cancelled()
+            raise AssertionError("the halt file was not seen")
+
+        with (
+            mock.patch.object(wrapper, "OpenAI", return_value=mock.Mock()),
+            mock.patch.object(wrapper, "load_api_key", return_value="test-key"),
+            mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
+            mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
+            mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
+            mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
+            mock.patch.object(wrapper, "open_review_container_shell",
+                              side_effect=fake_open_review),
+            mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
+            mock.patch.object(wrapper.podman_host, "pause_container", paused.append),
+            mock.patch.object(wrapper.podman_host, "stop_container", stopped.append),
+            mock.patch.object(wrapper.shell_tool, "HALT_FILE", None),
+            mock.patch.object(
+                wrapper.sys, "argv",
+                ["pr_review_wrapper.py", "--model", "anthropic:claude-opus-4",
+                 "--podman", "--shell-host", "fairy@h", "--no-source-bundle",
+                 "--halt-file", halt_file.name],
+            ),
+            mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(request_obj))),
+            mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                wrapper.main()
+
+        self.assertEqual(EXIT_REVIEW_STOPPED_BY_HALT_FILE, caught.exception.code)
+        self.assertEqual(2, len(paused))
+        self.assertEqual([], stopped)
 
     def test_poisoned_container_paused_not_removed(self) -> None:
         request_obj = _fixture_request()

@@ -70,6 +70,7 @@ EXIT_TURN_FAILED = 5
 # ticket goes to cancelled/ and the remaining --llm-max-attempts are
 # not spent on a verdict nobody wants.
 EXIT_REVIEW_CANCELLED = 6
+EXIT_REVIEW_STOPPED_BY_HALT_FILE = 7
 
 
 def format_turn_failure(exc: BaseException) -> str:

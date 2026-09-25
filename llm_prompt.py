@@ -971,7 +971,10 @@ Set ``hold_for_human_inspection`` to true when any of these holds:
 - the commits of the {subject} or of a declared branch carry wrong authorship, or fairy's own commits lack the ``Assisted-by: Fairy`` trailer
 - code the {subject} or a declared branch adds is incompatible with the license its file declares, or GPL code becomes part of a build without --enable-gpl
 - the message lacks the "LLM-<model>" identification toward its beginning or is not worded in a friendly tone
-Otherwise set it to false. ``reason`` when not holding, explains what you checked and, when holding, what fails, in as much text as that needs; the operator reads it, it is never posted.
+- the message has identified a previously unidentified critical bug (like out of array write) that exists before this PR and is not fixed by this PR
+- the message contains pornographic, erotic or illegal material
+- the message depicts or suggests violent, illegal or harmfull behavior
+Otherwise set it to false. ``reason`` list what fails (if any), in as much text as that needed, then if nothing failed list what you checked concisely; the operator reads it, it is never posted
 
 ''' * vetter}\
 {"## User-requested review tuning\n" * triager}\

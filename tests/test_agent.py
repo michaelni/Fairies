@@ -204,6 +204,19 @@ class TicketRoutingTests(AgentCase):
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "posted")
 
+    def test_an_unacknowledged_agent_post_is_not_rerouted(self) -> None:
+        """The approval the agent posted on its own stays in posted/
+        until y or s; the merge-ready/ row it earns would hide it
+        (production: FFmpeg #20359 an hour after the auto-post)."""
+        self.db.push("posted", "pr", "1", {"agent_promoted": True})
+        self.db.push("posted", "pr", "2", {"agent_promoted": True,
+                                           "acknowledged_at": NOW.isoformat()})
+        self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(
+            pr, "already approved", merge_ready=True, approved_at=NOW)
+        self.scan([make_pr(1), make_pr(2)])
+        self.assertEqual(self.db.find("pr", "1"), "posted")
+        self.assertEqual(self.db.find("pr", "2"), "merge-ready")
+
     def test_gate_skip_refreshes_the_archived_activity_stamp(self) -> None:
         self.db.push("posted", "pr", "1",
                      {"last_activity_iso": "2026-07-17T21:32:47+00:00"})

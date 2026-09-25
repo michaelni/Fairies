@@ -472,6 +472,14 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 if prior != "skipped" or (prior_data or {}).get("llm_at"):
                     _refresh_activity(db, prior, kind, token, prepared)
                     continue
+            # A verdict the agent posted on its own outranks the
+            # attention rows until the operator's y or s: rerouted to
+            # merge-ready/ it would vanish among them before anyone
+            # read it.
+            if prior == "posted" and (prior_data or {}).get("agent_promoted") \
+                    and not prior_data.get("acknowledged_at"):
+                _refresh_activity(db, prior, kind, token, prepared)
+                continue
             ticket = gate_ticket(prepared, item)
             if state == "error":
                 if prior in ("posted", "cancelled", "reviewed"):

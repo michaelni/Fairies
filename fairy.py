@@ -1415,6 +1415,25 @@ def extract_contexts_with_state(
     )
 
 
+def _contexts_needing_a_human(
+    number: int, statuses: list[ApiObject],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The (cancelled, blocked) contexts of ``statuses``, logged under PR ``number``."""
+    cancelled_ctxs = extract_contexts_with_state(statuses, "CANCELLED")
+    blocked_ctxs = extract_contexts_with_state(statuses, "BLOCKED")
+    if cancelled_ctxs or blocked_ctxs:
+        logger.debug(
+            "PR #%d: %d cancelled, %d blocked CI context(s) recorded for "
+            "end-of-run manual-action summary; cancelled=%s blocked=%s",
+            number,
+            len(cancelled_ctxs),
+            len(blocked_ctxs),
+            ", ".join(cancelled_ctxs) or "-",
+            ", ".join(blocked_ctxs) or "-",
+        )
+    return cancelled_ctxs, blocked_ctxs
+
+
 def absolutize_target_url(url: str, base_url: str) -> str:
     """Resolve a Forgejo status ``target_url`` to a fully-qualified URL.
 
@@ -2909,19 +2928,7 @@ def prepare_pr(
             fd = build_ci_failure_details(
                 raw_for_ci, base_url=pr.get("html_url") or ""
             )
-            cancelled_ctxs = extract_contexts_with_state(raw_for_ci, "CANCELLED")
-            blocked_ctxs = extract_contexts_with_state(raw_for_ci, "BLOCKED")
-            if cancelled_ctxs or blocked_ctxs:
-                logger.debug(
-                    "PR #%d: %d cancelled, %d blocked CI context(s) recorded "
-                    "for end-of-run manual-action summary; cancelled=%s "
-                    "blocked=%s",
-                    number,
-                    len(cancelled_ctxs),
-                    len(blocked_ctxs),
-                    ", ".join(cancelled_ctxs) or "-",
-                    ", ".join(blocked_ctxs) or "-",
-                )
+            cancelled_ctxs, blocked_ctxs = _contexts_needing_a_human(number, raw_for_ci)
             if fd:
                 attach_ci_failure_logs(args, fd)
                 ci_triage_payload = build_ci_triage_payload(head_ref_for_ci, fd)
@@ -3023,18 +3030,7 @@ def prepare_pr(
     # hidden from the LLM CI-triage payload below (see
     # ``CI_TRIAGE_NAG_STATES``) so the model is not prompted to nag
     # about something that just needs the UI Rerun button.
-    cancelled_ctxs = extract_contexts_with_state(raw_status_list, "CANCELLED")
-    blocked_ctxs = extract_contexts_with_state(raw_status_list, "BLOCKED")
-    if cancelled_ctxs or blocked_ctxs:
-        logger.debug(
-            "PR #%d: %d cancelled, %d blocked CI context(s) recorded for "
-            "end-of-run manual-action summary; cancelled=%s blocked=%s",
-            number,
-            len(cancelled_ctxs),
-            len(blocked_ctxs),
-            ", ".join(cancelled_ctxs) or "-",
-            ", ".join(blocked_ctxs) or "-",
-        )
+    cancelled_ctxs, blocked_ctxs = _contexts_needing_a_human(number, raw_status_list)
 
     last_self_nonapproval = get_last_self_nonapproval_activity(reviews, comments, review_comments, self_login)
     if last_self_nonapproval is not None and last_activity <= last_self_nonapproval:

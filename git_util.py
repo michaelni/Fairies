@@ -188,6 +188,16 @@ def git_range_diff(repo_root: Path, old_sha: str, new_sha: str) -> bytes:
                        f"{old_sha}...{new_sha}")
 
 
+def git_forge_remote(repo_root: Path) -> str:
+    """The first of FORGE_REMOTES ``repo_root`` has; RuntimeError when
+    it has none."""
+    remotes = _git_stdout(repo_root, "remote").decode().split()
+    for remote in FORGE_REMOTES:
+        if remote in remotes:
+            return remote
+    raise RuntimeError(f"{repo_root} has none of the remotes {FORGE_REMOTES}")
+
+
 def git_fetch(repo_root: Path, *args: str,
               timeout_s: float | None = None) -> None:
     """``git fetch <args>``, a remote name or ``--all``; RuntimeError on

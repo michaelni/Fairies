@@ -34,6 +34,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -51,6 +52,7 @@ import db_config  # noqa: E402
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 import filedb  # noqa: E402
+import git_util  # noqa: E402
 import halt_marker  # noqa: E402
 import issue_fairy  # noqa: E402
 
@@ -1269,6 +1271,83 @@ class ItemSnapshotScanTests(SendCase):
         self.scan([], fetch=lambda ns, n: dict(make_pr(n), state="closed",
                                                merged=True))
         self.assertEqual(self.db.get("items", "pr", "9")["state"], "merged")
+
+
+class PatchRepoFetchTests(AgentCase):
+    """Production, 2026-09-24: PR #24625 was pushed three minutes before
+    a scan. The snapshot named the new head while the mirror's
+    fforge/pr/24625 still pointed at the previous push, and every
+    reader of the snapshot failed on the unfetched sha."""
+    HEAD = "2050184c671890785eca4fbcb00b19a60114a429"
+    PREVIOUS = "001dc33e553f7ec25c706fd3a11fba8855140c23"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ns.patch_repo = Path("mirror")
+        self.fetch = self.patched(git_util, "git_fetch")
+        self.patched(git_util, "git_forge_remote", return_value="fforge")
+        self.ref = self.patched(git_util, "git_resolve_first",
+                                return_value=self.PREVIOUS)
+
+    def patched(self, module, name: str, **kw) -> mock.Mock:
+        patcher = mock.patch.object(module, name, **kw)
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
+    def snapshot(self) -> dict:
+        pr = dict(make_pr(24625), head={"sha": self.HEAD, "ref": "h261"})
+        agent._put_snapshot(self.db, self.ns, "pr", "24625", pr, None,
+                            timedelta(hours=1))
+        return self.db.get("items", "pr", "24625")
+
+    def test_a_ref_behind_the_forge_head_fetches_the_forge_remote(self) -> None:
+        """The forge remote alone, with a timeout: --all would reach
+        remotes the agent holds no keys for, and a stalled transfer
+        would hold the single-threaded loop."""
+        self.assertEqual(self.snapshot()["head_sha"], self.HEAD)
+        self.fetch.assert_called_once_with(Path("mirror"), "fforge",
+                                           timeout_s=120.0)
+
+    def test_the_scan_listing_path_fetches_before_queueing(self) -> None:
+        """Reviews are queued from the open-PR listing, which never
+        passes ingest_item; the fetch must sit on that path."""
+        self.scan([dict(make_pr(24625), head={"sha": self.HEAD, "ref": "h261"})])
+        self.fetch.assert_called_once_with(Path("mirror"), "fforge",
+                                           timeout_s=120.0)
+        self.assertEqual(self.db.get("items", "pr", "24625")["head_sha"],
+                         self.HEAD)
+
+    def test_a_ref_at_the_forge_head_does_not_fetch(self) -> None:
+        self.ref.return_value = self.HEAD
+        self.snapshot()
+        self.fetch.assert_not_called()
+
+    def test_simulate_past_never_fetches_into_the_prepped_mirror(self) -> None:
+        self.ns.simulate_past = NOW
+        self.snapshot()
+        self.fetch.assert_not_called()
+
+    def test_a_failed_fetch_still_writes_the_snapshot(self) -> None:
+        self.fetch.side_effect = RuntimeError(
+            "git fetch fforge in mirror failed: Could not resolve host")
+        with self.assertLogs(agent.logger, "WARNING") as logs:
+            self.assertEqual(self.snapshot()["head_sha"], self.HEAD)
+        self.assertIn("Could not resolve host", logs.output[0])
+
+    def test_a_timed_out_fetch_still_writes_the_snapshot(self) -> None:
+        self.fetch.side_effect = subprocess.TimeoutExpired("git", 120.0)
+        with self.assertLogs(agent.logger, "WARNING"):
+            self.assertEqual(self.snapshot()["head_sha"], self.HEAD)
+
+    def test_a_fetch_that_brings_no_head_still_writes_the_snapshot(self) -> None:
+        """Nothing guarantees the fetch: the forge can report a head its
+        git backend does not serve yet. The snapshot names it anyway,
+        the log shows where the ref stayed, and the next scan checks
+        again."""
+        with self.assertLogs(agent.logger, "INFO") as logs:
+            self.assertEqual(self.snapshot()["head_sha"], self.HEAD)
+        self.fetch.assert_called_once()
+        self.assertIn(f"is now {self.PREVIOUS[:12]}", logs.output[-1])
 
 
 class DiscussionWiringTests(unittest.TestCase):

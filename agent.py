@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import subprocess
 import sys
 import time
 from threading import Event
@@ -77,6 +78,7 @@ import filedb
 import forge_gcli
 import halt_marker
 import gcli_cache
+import git_util
 import issue_fairy
 import worker
 import workset
@@ -167,6 +169,35 @@ def _fetch_thread(ns: argparse.Namespace, kind: str, item: dict, cache,
     return [], comments, [], timeline
 
 
+def _fetch_pr_head(ns: argparse.Namespace, number: int,
+                   head_sha: str | None) -> None:
+    """Try one fetch of the forge remote of --patch-repo when its
+    ``<remote>/pr/<n>`` ref is not at ``head_sha``, the head the forge
+    reports. The fetch can fail or come back without the head; either
+    is logged, the snapshot is written regardless, and the ref is
+    checked again on the next scan. Not under --simulate-past, whose
+    mirror carries operator-pinned refs."""
+    repo = ns.patch_repo
+    if repo is None or ns.simulate_past or head_sha is None:
+        return
+    refs = [f"{remote}/pr/{number}" for remote in git_util.FORGE_REMOTES]
+    if git_util.git_resolve_first(repo, refs) == head_sha:
+        return
+    started = time.monotonic()
+    try:
+        remote = git_util.git_forge_remote(repo)
+        logger.info("pr #%s: head %s is not at %s/pr/%s: git -C %s fetch %s",
+                    number, head_sha[:12], remote, number, repo, remote)
+        git_util.git_fetch(repo, remote, timeout_s=120.0)
+    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        logger.warning("pr #%s: head %s not fetched: %s", number,
+                       head_sha[:12], exc)
+        return
+    logger.info("pr #%s: fetched %s in %.1fs; %s/pr/%s is now %s", number,
+                remote, time.monotonic() - started, remote, number,
+                (git_util.git_resolve_first(repo, refs) or "absent")[:12])
+
+
 def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                   token: filedb.TicketId, item: dict, cache,
                   cache_age: timedelta) -> bool:
@@ -183,6 +214,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
         reviews, comments, review_comments, timeline = _fetch_thread(
             ns, kind, item, cache, cache_age)
         if kind == "pr":
+            _fetch_pr_head(ns, item["number"], fairy.get_pr_head_sha(item))
             live = [s for s in
                     fairy.effective_review_states(reviews).values()
                     if not s.stale]

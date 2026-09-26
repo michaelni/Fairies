@@ -61,7 +61,7 @@ class HygieneTests(DbCase):
         data = self.db.get(state, kind, number)
         data["state_changed_at"] = (
             datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-        self.db._write(self.db.path(state, kind, number), data)
+        self.db.write(self.db.path(state, kind, number), data)
 
     def cutoff(self) -> datetime:
         return datetime.now(timezone.utc) - timedelta(days=14)
@@ -241,7 +241,7 @@ class LeaseSplitTests(DbCase):
         data = self.db.get("posted", "pr", "5")
         data["state_changed_at"] = (
             datetime.now(timezone.utc) - timedelta(days=99)).isoformat()
-        self.db._write(self.db.path("posted", "pr", "5"), data)
+        self.db.write(self.db.path("posted", "pr", "5"), data)
         self.db.push("queued", "pr", "5", {})
         claim = self.db.claim("queued", "llm", "pr", "5")
         try:
@@ -472,7 +472,7 @@ class PruneTests(DbCase):
         for kind, num, state in (("pr", "1", "posted"), ("pr", "3", "skipped")):
             data = self.db.get(state, kind, num)
             data["state_changed_at"] = old
-            self.db._write(self.db.path(state, kind, num), data)
+            self.db.write(self.db.path(state, kind, num), data)
         cutoff = datetime.now(timezone.utc) - timedelta(days=14)
         self.assertEqual(self.db.prune("posted", cutoff), 1)
         # pr-3 is old but kept: its skip verdict is backoff memory

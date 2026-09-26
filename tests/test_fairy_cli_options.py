@@ -287,7 +287,7 @@ class WorksetRetentionDaysTests(ScanCase):
         data = self.db.get("posted", "pr", "99")
         data["state_changed_at"] = (
             NOW - timedelta(days=age_days)).isoformat()
-        self.db._write(self.db.path("posted", "pr", "99"), data)
+        self.db.write(self.db.path("posted", "pr", "99"), data)
         self.scan(pr_ns(flags), [])
         return self.db.get("posted", "pr", "99") is not None
 

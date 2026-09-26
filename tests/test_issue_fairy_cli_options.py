@@ -231,7 +231,7 @@ class IssueWorksetRetentionDaysTests(IssueScanCase):
         self.db.push("posted", "issue", "99", {"title": "long closed"})
         data = self.db.get("posted", "issue", "99")
         data["state_changed_at"] = (NOW - timedelta(days=age_days)).isoformat()
-        self.db._write(self.db.path("posted", "issue", "99"), data)
+        self.db.write(self.db.path("posted", "issue", "99"), data)
         self.scan(issue_ns(flags), [])
         return self.db.get("posted", "issue", "99") is not None
 

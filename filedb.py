@@ -196,7 +196,7 @@ class Claim:
 
     def write(self, data: dict) -> None:
         """Update the claimed file in place (atomic replace, same dir)."""
-        self.db._write(self.path, data)
+        self.db.write(self.path, data)
 
     def finish(self, dst_state: str, data: dict) -> Path:
         """Write ``data`` into ``dst_state``, drop the claimed file and
@@ -240,8 +240,8 @@ class Db:
             raise ValueError(f"unknown state {state!r}")
         return self.root / state / _name(kind, number)
 
-    def _load(self, path: Path) -> dict | None:
-        """The decoded ticket at ``path``; ``path`` need not exist.
+    def read(self, path: Path) -> dict | None:
+        """The decoded JSON document at ``path``; ``path`` need not exist.
 
         None when the file is absent, unreadable or not valid JSON:
         none of those raise, and everything but absence is logged.
@@ -254,7 +254,8 @@ class Db:
             logger.error("unreadable %s: %s", path, exc)
             return None
 
-    def _write(self, dst: Path, data: dict) -> Path:
+    def write(self, dst: Path, data: dict) -> Path:
+        """Atomically write ``data`` as JSON to ``dst`` under the root."""
         fd, tmp = tempfile.mkstemp(dir=self.root / _TMP, suffix=".json")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -273,15 +274,15 @@ class Db:
     def _write_state(self, state: str, kind: str, number: TicketId, data: dict) -> Path:
         dst = self.path(state, kind, number)
         stripped = {k: v for k, v in data.items() if k != "state_changed_at"}
-        current = self._load(dst)
+        current = self.read(dst)
         if current is not None and stripped == {
                 k: v for k, v in current.items() if k != "state_changed_at"}:
             # identical content: no write -- no fsync churn, no dir-mtime
             # bump (viewers key cheap polls on it), and state_changed_at
             # keeps meaning "when did this actually change"
             return dst
-        return self._write(dst, {**stripped, "state_changed_at":
-                                 datetime.now(timezone.utc).isoformat()})
+        return self.write(dst, {**stripped, "state_changed_at":
+                                datetime.now(timezone.utc).isoformat()})
 
     @contextmanager
     def lock(self, kind: str, number: TicketId):
@@ -335,7 +336,7 @@ class Db:
         transition lock and return it; ``mutate`` gets {} when there is
         none yet. Waits like push: for another write, never a review."""
         with self.lock(kind, number):
-            data = self._load(self.path(state, kind, number)) or {}
+            data = self.read(self.path(state, kind, number)) or {}
             mutate(data)
             self._write_state(state, kind, number, data)
             return data
@@ -343,7 +344,7 @@ class Db:
     def get(self, state: str, kind: str, number: TicketId) -> dict | None:
         """The item's ticket in ``state``; None when it is not there or
         cannot be read."""
-        return self._load(self.path(state, kind, number))
+        return self.read(self.path(state, kind, number))
 
     def replace(self, state: str, kind: str, number: TicketId, data: dict,
                 *, expect: str | None) -> bool:
@@ -372,7 +373,7 @@ class Db:
             if state != "requests" and self._leased(kind, number):
                 return None
             path = self.path(state, kind, number)
-            data = self._load(path)
+            data = self.read(path)
             # a torn command file carries no recoverable intent:
             # consuming it beats wedging every pass on it
             path.unlink(missing_ok=True)
@@ -386,7 +387,7 @@ class Db:
         ``dst_state == src_state`` updates the content in place."""
         with self.lock(kind, number):
             src = self.path(src_state, kind, number)
-            data = None if self._leased(kind, number) else self._load(src)
+            data = None if self._leased(kind, number) else self.read(src)
             if data is None:
                 return False
             if mutate is not None:

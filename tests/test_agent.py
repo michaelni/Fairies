@@ -110,7 +110,7 @@ class AgentCase(unittest.TestCase):
         for field in ("llm_at", "snoozed_at"):
             if data.get(field):  # the backoff window is measured from these
                 data[field] = data["state_changed_at"]
-        self.db._write(self.db.path(state, kind, number), data)
+        self.db.write(self.db.path(state, kind, number), data)
 
 
 class TicketRoutingTests(AgentCase):
@@ -390,7 +390,7 @@ class BackoffTests(AgentCase):
         self.db.push("skipped", "pr", "1", llm_skip(0, updated="old"))
         data = self.db.get("skipped", "pr", "1")
         data["llm_at"] = (NOW - timedelta(hours=25)).isoformat()
-        self.db._write(self.db.path("skipped", "pr", "1"), data)  # freshly refreshed, old LLM run
+        self.db.write(self.db.path("skipped", "pr", "1"), data)  # freshly refreshed, old LLM run
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "queued")
 

@@ -241,7 +241,7 @@ class RingBuffer:
     """Bounded scrollback of ``(tag, line)`` pairs shared between
     appender threads and a painter; the caller-chosen tag (e.g. a log
     level) lets the painter style lines. ``revision`` bumps on every
-    append for cheap dirty checks."""
+    change for cheap dirty checks."""
 
     def __init__(self, maxlen: int = 50_000) -> None:
         self._lines: deque[tuple[object, str]] = deque(maxlen=maxlen)
@@ -254,6 +254,11 @@ class RingBuffer:
     def append(self, line: str, tag: object = None) -> None:
         with self._lock:
             self._lines.append((tag, line))
+            self.revision += 1
+
+    def clear(self) -> None:
+        with self._lock:
+            self._lines.clear()
             self.revision += 1
 
     def view(self, offset_from_end: int, count: int) -> list[tuple[object, str]]:

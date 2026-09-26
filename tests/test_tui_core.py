@@ -113,6 +113,12 @@ class RingBufferTests(unittest.TestCase):
         self.assertEqual(rb.view(100, 3), [])
         self.assertEqual(rb.all_text(), "l3\nl4\nl5\nl6\nl7")
 
+    def test_clear_empties_and_counts_as_a_change(self) -> None:
+        rb = RingBuffer()
+        rb.append("l0")
+        rb.clear()
+        self.assertEqual((len(rb), rb.view(0, 5), rb.revision), (0, [], 2))
+
 
 class SanitizeTests(unittest.TestCase):
     def test_strips_escape_and_control_characters(self) -> None:

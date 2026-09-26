@@ -434,6 +434,18 @@ class StartStopContainerTests(unittest.TestCase):
             lc.stop_container(handle)
         self.assertEqual(_ssh("podman rm -f cidcidcid"), run.call_args.args[0])
 
+    def test_a_container_that_cannot_be_paused_is_removed(self) -> None:
+        handle = lc.ContainerHandle(container_id="cid1", image="x",
+                                    network=None, host=HOST)
+        with mock.patch.object(lc.subprocess, "run") as run:
+            run.side_effect = [
+                _completed(125, stderr=b"Error: OCI runtime error: crun: freeze"),
+                _completed(0),
+            ]
+            lc.pause_container(handle)
+        self.assertEqual([_ssh("podman pause cid1"), _ssh("podman rm -f cid1")],
+                         [c.args[0] for c in run.call_args_list])
+
 
 class CopyAndOpenShellTests(unittest.TestCase):
     def test_copy_into_container_mkdirs_then_streams_tar(self) -> None:

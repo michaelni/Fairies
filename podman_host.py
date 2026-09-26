@@ -798,17 +798,18 @@ def pause_container(handle: ContainerHandle) -> None:
 
     Unlike :func:`stop_container` this leaves the container on the host --
     frozen, not removed -- so a review container suspected of tampering
-    (see the codex poison path) can be inspected later. Best-effort:
-    logs and returns on failure. The operator must ``podman rm -f`` it by
-    hand once done, since nothing else will reclaim it.
+    (see the codex poison path) can be inspected later. A container that
+    cannot be paused is removed instead. The operator must ``podman rm -f``
+    a paused one by hand once done, since nothing else will reclaim it.
     """
     logger.debug("pausing container id=%s", handle.container_id[:12])
     cp = _podman(handle.host, "pause", handle.container_id, timeout_s=60.0)
     if cp.returncode != 0:
         logger.warning(
-            "podman pause id=%s failed: %s",
+            "podman pause id=%s failed: %s; removing it instead",
             handle.container_id[:12], cp.stderr_text,
         )
+        stop_container(handle)
         return
     logger.warning(
         "container PAUSED for forensics id=%s host=%s; inspect it, then "

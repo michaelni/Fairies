@@ -115,6 +115,22 @@ class VerdictRoutingTests(WorkerCase):
         t = self.db.get("reviewed", "pr", "5")
         self.assertEqual(t["auto_merge"], "merge")
 
+    def test_ci_waiting_for_a_human_survives_into_the_verdict(self) -> None:
+        """FFmpeg #24731 was reviewed on request while the forge held its
+        CI for a maintainer's release."""
+        blocked = ["Lint / Pre-Commit (pull_request)",
+                   "Test / Fate (linux-amd64, static, 32 bit) (pull_request)"]
+        ticket = queued_ticket(5)
+        ticket["prepared"]["blocked_ci_contexts"] = blocked
+        self.db.push("queued", "pr", "5", ticket)
+        claim = self.db.claim("queued", "llm", "pr", "5")
+        with mock.patch.object(fairy, "apply_llm_review_to_prepared",
+                               return_value=decision(5, action="approve")):
+            worker.review_claim(claim, self.ns)
+        t = self.db.get("reviewed", "pr", "5")
+        self.assertEqual(t["blocked_ci_contexts"], blocked)
+        self.assertEqual(t["cancelled_ci_contexts"], [])
+
     def test_the_discussion_survives_into_the_verdict(self) -> None:
         disc = [{"kind": "comment", "author": "carol",
                  "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"}]

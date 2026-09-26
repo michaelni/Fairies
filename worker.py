@@ -106,6 +106,8 @@ def verdict_fields(decision: fairy.Decision, prepared) -> dict:
         "action": decision.action,
         "reason": decision.reason,
         "auto_merge": decision.auto_merge,
+        "cancelled_ci_contexts": list(decision.cancelled_ci_contexts),
+        "blocked_ci_contexts": list(decision.blocked_ci_contexts),
         "expected_updated_at": item.get("updated_at"),
         "expected_head_ref": (fairy.get_pr_head_ref(item)
                               if getattr(prepared, "pr", None) is not None else None),

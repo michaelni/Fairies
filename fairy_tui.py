@@ -137,10 +137,16 @@ class Item:
 
 
 def _unacknowledged(item: Item) -> bool:
-    """A verdict the agent posted on its own that the operator has not
-    yet acknowledged with y or s."""
-    return bool(item.state == "posted" and item.data.get("agent_promoted")
-                and not item.data.get("acknowledged_at"))
+    """A verdict the agent settled on its own -- posted by itself or
+    skipped on the LLM's word -- that the operator has not yet
+    acknowledged with y or s."""
+    data = item.data
+    settled_by_agent = {
+        "posted": data.get("agent_promoted"),
+        "skipped": data.get("llm_at") and not data.get("snoozed_at"),
+    }
+    return bool(settled_by_agent.get(item.state)
+                and not data.get("acknowledged_at"))
 
 
 def _repo_short(repo: str) -> str:
@@ -667,7 +673,7 @@ class Model:
             elif action in ("apply", "apply-force", "skip") \
                     and _unacknowledged(item):
                 if workset.update_json(
-                        db.path("posted", item.kind, item.number),
+                        db.path(item.state, item.kind, item.number),
                         lambda d: d.update(acknowledged_at=datetime.now(
                             timezone.utc).isoformat())) is None:
                     logger.info("%s changed under the cursor; not acknowledged",
@@ -1449,8 +1455,8 @@ class UILoop:
             head += tui_core.wrap([("log_warn", str(failed))], width,
                                   initial=("log_warn", "reviewer failed: "))
         if _unacknowledged(item):
-            head.append([("st_reviewed",
-                          "posted by the agent — y or s acknowledges"[:width])])
+            head.append([("st_reviewed", (
+                f"{item.state} by the agent — y or s acknowledges")[:width])])
         if data.get("vetting"):
             vetting = data["vetting"]
             head += tui_core.wrap(

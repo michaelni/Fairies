@@ -201,7 +201,8 @@ class PollTests(DbCase):
         self.assertEqual(self.model.items[(R1, "pr", "5")].state, "posted")
 
     def test_relevant_filter_hides_only_unseen_settled_rows(self) -> None:
-        self.db.push("skipped", "pr", "1", verdict(1, "skip"))   # old backlog
+        self.db.push("skipped", "pr", "1", verdict(
+            1, "skip", acknowledged_at="2026-07-21T00:00:00+00:00"))  # old backlog
         self.db.push("posted", "pr", "2", verdict(2))            # old backlog
         self.db.push("ci-blocked", "pr", "3", verdict(3))        # attention
         self.db.push("reviewed", "pr", "4", verdict(4))
@@ -234,6 +235,25 @@ class PollTests(DbCase):
         self.assertTrue(self.db.get("posted", "pr", "5")["acknowledged_at"])
         self.assertIn((R1, "5"), self.keys())
         self.model = fairy_tui.Model([(R1, self.db), (R2, self.db2)])
+        self.model.poll()
+        self.assertEqual(self.keys(), [])
+
+    def test_an_llm_skip_stays_listed_until_acknowledged(self) -> None:
+        self.db.push("skipped", "pr", "5", verdict(5, "skip", reason="LLM skip: quiet"))
+        self.model.poll()
+        self.assertIn((R1, "5"), self.keys())
+        self.model.act("skip")
+        self.assertTrue(self.db.get("skipped", "pr", "5")["acknowledged_at"])
+        self.model = fairy_tui.Model([(R1, self.db), (R2, self.db2)])
+        self.model.poll()
+        self.assertEqual(self.keys(), [])
+
+    def test_operator_skips_and_snoozes_need_no_acknowledgement(self) -> None:
+        operator_skip = verdict(5, reason="operator skip")
+        del operator_skip["llm_at"]
+        self.db.push("skipped", "pr", "5", operator_skip)
+        self.db.push("skipped", "pr", "6", verdict(
+            6, reason="operator snooze", snoozed_at="2026-07-21T00:00:00+00:00"))
         self.model.poll()
         self.assertEqual(self.keys(), [])
 
@@ -2202,9 +2222,11 @@ class FilterToggleTests(DbCase):
             self.assertEqual([n for _, n in self.keys()], expect[mode], mode)
 
     def test_cursor_follows_selection_across_the_a_lens_cycle(self) -> None:
-        self.db.push("skipped", "pr", "1", verdict(1, "skip"))
+        self.db.push("skipped", "pr", "1", verdict(
+            1, "skip", acknowledged_at="2026-07-21T00:00:00+00:00"))
         self.db.push("reviewed", "pr", "2", verdict(2))
-        self.db.push("skipped", "pr", "3", verdict(3, "skip"))
+        self.db.push("skipped", "pr", "3", verdict(
+            3, "skip", acknowledged_at="2026-07-21T00:00:00+00:00"))
         self.model.poll()
         self.model.filter_mode = "all"
         ui = make_ui(self.model)
@@ -2224,9 +2246,11 @@ class FilterToggleTests(DbCase):
         row. A lens that hides the key shows NO cursor, actions refuse,
         and the key survives to be highlighted again -- never a
         neighbour."""
-        self.db.push("skipped", "pr", "1", verdict(1, "skip"))
+        self.db.push("skipped", "pr", "1", verdict(
+            1, "skip", acknowledged_at="2026-07-21T00:00:00+00:00"))
         self.db.push("reviewed", "pr", "2", verdict(2))
-        self.db.push("skipped", "pr", "3", verdict(3, "skip"))
+        self.db.push("skipped", "pr", "3", verdict(
+            3, "skip", acknowledged_at="2026-07-21T00:00:00+00:00"))
         self.model.poll()
         self.model.filter_mode = "all"
         ui = make_ui(self.model)
@@ -2244,7 +2268,8 @@ class FilterToggleTests(DbCase):
             self.assertEqual(self.model._cursor_key(), (R1, "pr", "3"))
 
     def test_arrow_summons_a_hidden_cursor_at_its_old_spot(self) -> None:
-        self.db.push("skipped", "pr", "1", verdict(1, "skip"))
+        self.db.push("skipped", "pr", "1", verdict(
+            1, "skip", acknowledged_at="2026-07-21T00:00:00+00:00"))
         self.db.push("reviewed", "pr", "2", verdict(2))
         self.model.poll()
         self.model.filter_mode = "all"

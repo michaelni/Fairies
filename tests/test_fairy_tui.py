@@ -248,6 +248,21 @@ class PollTests(DbCase):
         self.model.poll()
         self.assertEqual(self.keys(), [])
 
+    def test_an_error_stays_listed_until_acknowledged(self) -> None:
+        self.db.push("error", "pr", "5", {"error": "boom"})
+        self.model.poll()
+        with self.model.lock:
+            self.model.filter_mode = "review"
+        self.assertIn((R1, "5"), self.keys())
+        self.model.act("skip")
+        self.assertTrue(self.db.get("error", "pr", "5")["acknowledged_at"])
+        self.model = fairy_tui.Model([(R1, self.db), (R2, self.db2)])
+        self.model.poll()
+        self.assertEqual(self.keys(), [])
+        with self.model.lock:
+            self.model.filter_mode = "actionable"
+        self.assertIn((R1, "5"), self.keys())
+
     def test_operator_skips_and_snoozes_need_no_acknowledgement(self) -> None:
         operator_skip = verdict(5, reason="operator skip")
         del operator_skip["llm_at"]

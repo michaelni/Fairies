@@ -137,13 +137,14 @@ class Item:
 
 
 def _unacknowledged(item: Item) -> bool:
-    """A verdict the agent settled on its own -- posted by itself or
-    skipped on the LLM's word -- that the operator has not yet
-    acknowledged with y or s."""
+    """A ticket the agent settled on its own -- a verdict posted by
+    itself, a skip on the LLM's word or a failure -- that the operator
+    has not yet acknowledged with y or s."""
     data = item.data
     settled_by_agent = {
         "posted": data.get("agent_promoted"),
         "skipped": data.get("llm_at") and not data.get("snoozed_at"),
+        "error": data.get("error"),
     }
     return bool(settled_by_agent.get(item.state)
                 and not data.get("acknowledged_at"))
@@ -755,7 +756,8 @@ class Model:
 
     def _relevant(self, item: Item) -> bool:
         key = (item.repo, item.kind, item.number)
-        return (item.state not in HIDDEN_SETTLED or _unacknowledged(item)
+        return (item.state not in (*HIDDEN_SETTLED, "error")
+                or _unacknowledged(item)
                 or key in self.acted or key in self.seen_live)
 
     def _sync_cursor(self) -> list[Item]:
@@ -1456,7 +1458,8 @@ class UILoop:
                                   initial=("log_warn", "reviewer failed: "))
         if _unacknowledged(item):
             head.append([("st_reviewed", (
-                f"{item.state} by the agent — y or s acknowledges")[:width])])
+                ("failed" if item.state == "error" else item.state)
+                + " by the agent — y or s acknowledges")[:width])])
         if data.get("vetting"):
             vetting = data["vetting"]
             head += tui_core.wrap(

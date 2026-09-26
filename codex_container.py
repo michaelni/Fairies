@@ -63,6 +63,7 @@ from podman_host import (
     ContainerShellSession,
     RemoteHost,
     copy_into_container,
+    run_on_remote_host,
     start_ephemeral_container,
     stop_container,
 )
@@ -83,8 +84,9 @@ class CodexContainer:
 
     Thin lifecycle wrapper over podman_host: ``start`` launches it,
     ``put_file`` / ``put_text`` copy inputs in, ``run`` execs a command
-    with the prompt on stdin, ``read_file`` retrieves an output file, and
-    ``stop`` removes it. ``--rm`` means a crash cannot leak the container.
+    with the prompt on stdin, ``kill_run`` interrupts it from another
+    thread, ``read_file`` retrieves an output file, and ``stop`` removes
+    it. ``--rm`` means a crash cannot leak the container.
     """
 
     def __init__(
@@ -102,6 +104,8 @@ class CodexContainer:
         self.cpus = cpus
         self.network = network
         self.handle: ContainerHandle | None = None
+        self._lock = threading.Lock()
+        self._running = False
 
     def start(self) -> "CodexContainer":
         self.handle = start_ephemeral_container(
@@ -176,16 +180,46 @@ class CodexContainer:
         untrusted, and a strict decode would turn hostile bytes on
         stdout/stderr into a raised UnicodeDecodeError.
         """
-        return subprocess.run(
-            self.exec_argv(argv, interactive=True, env=env),
-            input=input_text, capture_output=True, text=True, errors="replace",
-            timeout=timeout_s,
-        )
+        with self._lock:
+            self._running = True
+        try:
+            return subprocess.run(
+                self.exec_argv(argv, interactive=True, env=env),
+                input=input_text, capture_output=True, text=True, errors="replace",
+                timeout=timeout_s,
+            )
+        finally:
+            with self._lock:
+                self._running = False
+
+    def kill_run(self) -> None:
+        """SIGKILL every process but PID 1 while ``run`` is in progress, so
+        it returns with the container still up for the read-backs.
+
+        Outside a ``run`` this does nothing, so it cannot hit a read-back.
+        ``kill -1`` exits 1 once only PID 1 is left (ESRCH,
+        https://man7.org/linux/man-pages/man2/kill.2.html); any other
+        failure removes the container instead.
+        """
+        with self._lock:
+            if not self._running:
+                return
+            try:
+                rc = run_on_remote_host(
+                    self.host, "podman", "exec", self._cid(),
+                    "sh", "-c", "kill -KILL -1", timeout_s=60.0).returncode
+            except subprocess.TimeoutExpired:
+                rc = None
+        if rc not in (0, 1):
+            logger.warning("killing the codex run failed (rc=%s); removing "
+                           "its container", rc)
+            self.stop()
 
     def stop(self) -> None:
-        if self.handle is not None:
-            stop_container(self.handle)
-            self.handle = None
+        with self._lock:
+            handle, self.handle = self.handle, None
+        if handle is not None:
+            stop_container(handle)
 
 
 MAX_AUTH_BYTES = 256 * 1024
@@ -313,8 +347,8 @@ class CodexShellRelay:
                            shells=self._shells)
         except SystemExit:
             logger.warning("run stopped (operator cancel or halted review); "
-                           "stopping the codex container")
-            self.container.stop()
+                           "killing codex")
+            self.container.kill_run()
         except ValueError as exc:
             # The relay's pipes raise this once stop() closed them: a shell
             # call outlived codex and its response has nowhere to go.

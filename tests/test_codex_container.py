@@ -91,6 +91,54 @@ class ExecArgvTests(unittest.TestCase):
             c.exec_argv(["codex"])
 
 
+class KillRunTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.container = CodexContainer(image="img", host=HOST)
+        self.container.handle = podman_host.ContainerHandle(
+            container_id="cid", image="img", network=None, host=HOST)
+
+    def _kill_during_run(self, **kill_effect) -> tuple[mock.Mock, mock.Mock]:
+        with mock.patch.object(codex_container, "run_on_remote_host",
+                               **kill_effect) as kill, \
+                mock.patch.object(codex_container, "stop_container") as stop, \
+                mock.patch.object(codex_container.subprocess, "run",
+                                  side_effect=lambda *a, **kw:
+                                  self.container.kill_run()):
+            self.container.run(["codex"])
+        return kill, stop
+
+    def test_kill_during_a_run_spares_pid_1_and_the_container(self) -> None:
+        for rc in (0, 1):
+            with self.subTest(rc=rc):
+                kill, stop = self._kill_during_run(
+                    return_value=mock.Mock(returncode=rc))
+                kill.assert_called_once_with(
+                    HOST, "podman", "exec", "cid", "sh", "-c", "kill -KILL -1",
+                    timeout_s=60.0)
+                stop.assert_not_called()
+
+    def test_failed_kill_removes_the_container(self) -> None:
+        for effect in (
+                {"return_value": mock.Mock(returncode=125)},
+                {"side_effect": codex_container.subprocess.TimeoutExpired(
+                    "ssh", 60.0)}):
+            with self.subTest(effect=effect):
+                self.setUp()
+                _, stop = self._kill_during_run(**effect)
+                stop.assert_called_once()
+
+    def test_no_kill_outside_a_run(self) -> None:
+        with mock.patch.object(codex_container, "run_on_remote_host") as kill:
+            self.container.kill_run()
+        kill.assert_not_called()
+
+    def test_stop_removes_the_container_once(self) -> None:
+        with mock.patch.object(codex_container, "stop_container") as stop:
+            self.container.stop()
+            self.container.stop()
+        stop.assert_called_once()
+
+
 class _FakeProc:
     def __init__(self, stderr_bytes: bytes):
         self.stderr = io.BytesIO(stderr_bytes)
@@ -164,17 +212,19 @@ class RelayCancelTests(unittest.TestCase):
             relay._serve()
         return container
 
-    def test_cancel_at_a_shell_call_stops_the_codex_container(self) -> None:
-        self._serve(SystemExit).stop.assert_called_once()
+    def test_cancel_at_a_shell_call_kills_codex_and_keeps_the_container(self) -> None:
+        container = self._serve(SystemExit)
+        container.kill_run.assert_called_once()
+        container.stop.assert_not_called()
 
     def test_normal_eof_stops_nothing(self) -> None:
-        self._serve(None).stop.assert_not_called()
+        self._serve(None).kill_run.assert_not_called()
 
     def test_closed_relay_pipe_neither_raises_nor_stops(self) -> None:
         """A shell call that outlives codex writes its response to the
         stopped relay's closed stdin; the dispatch thread must end quietly
         instead of dying with the traceback seen in production 2026-08-14."""
-        self._serve(ValueError("write to closed file")).stop.assert_not_called()
+        self._serve(ValueError("write to closed file")).kill_run.assert_not_called()
 
 
 if __name__ == "__main__":

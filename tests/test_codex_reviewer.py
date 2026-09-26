@@ -126,6 +126,8 @@ class _FakeCodexContainer:
         return self._run_result
 
     def read_file(self, path, **kw):
+        if self.stopped:
+            raise RuntimeError("codex container not started")
         self.read_file_calls.append((path, kw))
         if path.endswith("auth.json"):
             if self._refreshed_auth is not None:
@@ -482,6 +484,17 @@ class CodexReviewerRunTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 self._run(last_message=None, ctx=ctx)
         self.assertFalse(poisoned)
+
+    def test_cancel_killed_run_persists_refreshed_auth(self) -> None:
+        home = _codex_home_ready()
+        rotated = '{"tokens": {"refresh_token": "rotated"}}'
+        with mock.patch.object(codex_reviewer.shell_tool, "cancelled",
+                               return_value=True), \
+                self.assertRaises(SystemExit):
+            self._run(reviewer=self._reviewer(codex_home=home), returncode=-9,
+                      last_message=None, refreshed_auth=rotated)
+        self.assertEqual(
+            rotated, Path(home, "auth.json").read_text(encoding="utf-8"))
 
     def test_non_json_final_message_is_bad_model_output(self) -> None:
         with self.assertRaises(BadModelOutput):

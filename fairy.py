@@ -1301,25 +1301,6 @@ def normalize_status_state(state: str | None) -> str | None:
     return mapping.get(s, s)
 
 
-# Forgejo Actions reports cancelled jobs through the legacy
-# commit-status API as ``status="failure"`` with
-# ``description="Has been cancelled"`` -- the legacy API has no
-# ``cancelled`` state value, so the cancellation signal has to be
-# recovered from the description text. Behavior first observed on
-# Forgejo 15.0.0+gitea-1.22.0 against
-# ``GET /repos/.../commits/<sha>/statuses`` (sample row:
-# ``{"status":"failure","description":"Has been cancelled",...}``)
-# and expected to be stable across Forgejo releases since it
-# follows from the legacy commit-status API not having a
-# ``cancelled`` enum value at all.
-#
-# The pattern matches both spellings (``cancelled`` and ``canceled``)
-# at word boundaries, case-insensitively. ``cancellation`` and the
-# like are deliberately NOT matched -- a description such as
-# "Cancellation tests passed" must not trip this and reclassify a
-# real failure as a cancellation.
-_CANCELLED_DESCRIPTION_RE = re.compile(r"\bcancell?ed\b", re.IGNORECASE)
-
 # Forgejo Actions also surfaces jobs that are gated on something the
 # bot cannot fix (manual approval, required-environment review,
 # branch-protection condition, ...) through the legacy
@@ -1343,23 +1324,22 @@ def row_effective_state(row: ApiObject) -> str | None:
     """Canonical state of a single commit-status row.
 
     Wraps ``normalize_status_state`` on the row's ``state`` and adds
-    two description-based overrides for Forgejo Actions:
+    one description-based override for Forgejo Actions: ``PENDING``
+    rows whose description matches ``_BLOCKED_DESCRIPTION_RE`` are
+    reclassified as ``BLOCKED``.
 
-    - ``FAILURE`` / ``ERROR`` rows whose description matches
-      ``_CANCELLED_DESCRIPTION_RE`` are reclassified as ``CANCELLED``.
-    - ``PENDING`` rows whose description matches
-      ``_BLOCKED_DESCRIPTION_RE`` are reclassified as ``BLOCKED``.
+    A Forgejo failure row described as "Has been cancelled" stays a
+    ``FAILURE``: the runner reports a job that exceeded its maximum
+    run time with the same words, and a timeout is a failure the
+    review must see.
 
-    This is the only place that knows about either Forgejo Actions
+    This is the only place that knows about the Forgejo Actions
     shape; downstream helpers that need to ask "is this row
-    cancelled / blocked / failing / pending" should call this rather
-    than ``normalize_status_state`` directly.
+    blocked / failing / pending" should call this rather than
+    ``normalize_status_state`` directly.
     """
     state = normalize_status_state(row.get("state"))
-    description = row.get("description") or ""
-    if state in ("FAILURE", "ERROR") and _CANCELLED_DESCRIPTION_RE.search(description):
-        return "CANCELLED"
-    if state == "PENDING" and _BLOCKED_DESCRIPTION_RE.search(description):
+    if state == "PENDING" and _BLOCKED_DESCRIPTION_RE.search(row.get("description") or ""):
         return "BLOCKED"
     return state
 

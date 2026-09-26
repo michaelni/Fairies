@@ -212,7 +212,7 @@ class ForgejoRowsAreUnaffectedTests(unittest.TestCase):
             "updated_at": "2026-04-26T20:00:00Z",
         }]])
         self.assertEqual(rows[0]["state"], "failure")
-        self.assertEqual(fairy.row_effective_state(rows[0]), "CANCELLED")
+        self.assertEqual(fairy.row_effective_state(rows[0]), "FAILURE")
 
 
 if __name__ == "__main__":

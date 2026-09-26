@@ -46,19 +46,13 @@ taught to drive the retry directly; until then:
     summary can list them for an admin operator to walk through and
     click the Rerun button in the UI.
 
-Detection has two paths because forges disagree on how cancellations
-surface in the legacy commit-status API:
-
-- **State-based (GitLab and any future Forgejo version):** the row's
-  ``state`` field is literally ``cancelled`` (or ``canceled``,
-  GitLab/GitHub spelling). ``normalize_status_state`` collapses both
-  spellings to the canonical ``CANCELLED``.
-
-- **Description-based (Forgejo Actions):** the row's ``state`` field
-  is ``failure`` and the cancellation hint lives in the description,
-  e.g. ``"Has been cancelled"``. ``row_effective_state`` recovers
-  this signal by reclassifying ``FAILURE``/``ERROR`` rows whose
-  description matches a cancellation marker.
+A cancellation counts only when the row's ``state`` field is
+literally ``cancelled`` (or ``canceled``, GitLab/GitHub spelling);
+``normalize_status_state`` collapses both spellings to the canonical
+``CANCELLED``. Forgejo Actions has no such state: it reports a
+cancelled job as ``failure`` described "Has been cancelled", and uses
+the same words for a job the runner killed for exceeding its maximum
+run time, so those rows stay failures and reach the review.
 
 These tests pin the behavior at the smallest unit possible.
 ``row_effective_state`` is the single funnel; downstream helpers
@@ -140,18 +134,17 @@ class RowEffectiveStateTests(unittest.TestCase):
             "CANCELLED",
         )
 
-    def test_forgejo_actions_failure_with_cancelled_description(self) -> None:
-        # Real-world Forgejo Actions shape captured from
-        # ``GET /repos/.../commits/<sha>/statuses``: cancellations
-        # surface as ``status="failure"`` with this exact
-        # description. The new code must reclassify them.
+    def test_forgejo_actions_cancelled_description_stays_failure(self) -> None:
+        # Production FFmpeg #24056 and #24354: the Wine FATE job killed
+        # by the runner for exceeding its maximum run time reports
+        # exactly this row, and sat unreviewed as "needs a rerun click".
         self.assertEqual(
             fairy.row_effective_state(_row(
                 context="/ lint (pull_request)",
                 state="failure",
                 description="Has been cancelled",
             )),
-            "CANCELLED",
+            "FAILURE",
         )
 
     def test_real_failure_with_unrelated_description_stays_failure(self) -> None:
@@ -160,18 +153,6 @@ class RowEffectiveStateTests(unittest.TestCase):
                 context="/ unit_tests",
                 state="failure",
                 description="Tests failed in 2m13s",
-            )),
-            "FAILURE",
-        )
-
-    def test_cancellation_word_does_not_match_word_with_extra_letters(self) -> None:
-        # Word-boundary anchor: a description such as "Cancellation
-        # tests passing" must not be reclassified as cancelled.
-        self.assertEqual(
-            fairy.row_effective_state(_row(
-                context="/ unit_tests",
-                state="failure",
-                description="Cancellation tests passing",
             )),
             "FAILURE",
         )
@@ -186,7 +167,7 @@ class RowEffectiveStateTests(unittest.TestCase):
             "description": "Has been cancelled",
         })
         self.assertEqual(
-            fairy.row_effective_state(row), "CANCELLED",
+            fairy.row_effective_state(row), "FAILURE",
         )
 
     def test_pending_with_blocked_by_required_conditions_is_blocked(self) -> None:
@@ -240,8 +221,7 @@ class BuildCiFailureDetailsExcludesCancelledTests(unittest.TestCase):
         out = fairy.build_ci_failure_details(statuses)
         self.assertEqual([d["context"] for d in out], ["real-failure"])
 
-    def test_description_based_cancelled_is_excluded(self) -> None:
-        # Forgejo-Actions-style state="failure" + description match.
+    def test_forgejo_cancelled_description_is_a_failure(self) -> None:
         statuses = [
             _row(
                 context="cancelled-job",
@@ -252,44 +232,18 @@ class BuildCiFailureDetailsExcludesCancelledTests(unittest.TestCase):
                  description="Tests failed"),
         ]
         out = fairy.build_ci_failure_details(statuses)
-        self.assertEqual([d["context"] for d in out], ["real-failure"])
+        self.assertEqual(sorted(d["context"] for d in out),
+                         ["cancelled-job", "real-failure"])
 
     def test_only_cancelled_yields_empty_failure_details_state_path(self) -> None:
         statuses = [_row(context="cancelled-job", state="cancelled")]
         self.assertEqual(fairy.build_ci_failure_details(statuses), [])
-
-    def test_only_cancelled_yields_empty_failure_details_description_path(self) -> None:
-        statuses = [
-            _row(
-                context="cancelled-job",
-                state="failure",
-                description="Has been cancelled",
-            )
-        ]
-        self.assertEqual(fairy.build_ci_failure_details(statuses), [])
-
 
 class ExtractCancelledContextsTests(unittest.TestCase):
     def test_state_based_only_cancelled_returned(self) -> None:
         statuses = [
             _row(context="real-failure", state="failure"),
             _row(context="cancelled-job", state="cancelled"),
-            _row(context="green-job", state="success"),
-        ]
-        self.assertEqual(
-            fairy.extract_contexts_with_state(statuses, "CANCELLED"),
-            ("cancelled-job",),
-        )
-
-    def test_description_based_cancelled_is_picked_up(self) -> None:
-        statuses = [
-            _row(context="real-failure", state="failure",
-                 description="Tests failed"),
-            _row(
-                context="cancelled-job",
-                state="failure",
-                description="Has been cancelled",
-            ),
             _row(context="green-job", state="success"),
         ]
         self.assertEqual(
@@ -446,18 +400,11 @@ class ForgejoActionsRealStatusPayloadTests(unittest.TestCase):
     The status rows below are an anonymized but otherwise verbatim
     copy of the response from
     ``GET /repos/<owner>/<repo>/commits/<head>/statuses`` for a PR
-    whose CI was cancelled. Before this fix the bot saw 4 ``failure``
-    rows and fed them to the LLM as failures (which then produced a
-    "heads-up: cancelled CI jobs" comment). The end-of-run summary
-    listed nothing because no row was ``state=cancelled``.
-
-    After the fix:
-    - ``effective_commit_statuses`` reports 4 contexts as
-      ``CANCELLED`` and 1 (``/ pr_labeler``) as ``SUCCESS``.
-    - ``build_ci_failure_details`` returns ``[]`` (cancelled rows
-      are not nag-worthy and the success row is fine).
-    - ``extract_contexts_with_state(.., "CANCELLED")`` returns the
-      4 cancelled context names.
+    whose CI was cancelled. Forgejo reports the cancellations as
+    ``failure`` rows, and they stay failures: the four contexts reach
+    ``build_ci_failure_details``, nothing counts as ``CANCELLED`` or
+    ``BLOCKED``, and the older blocked rows are superseded by the
+    latest row per context.
     """
 
     WIRE = [
@@ -524,51 +471,30 @@ class ForgejoActionsRealStatusPayloadTests(unittest.TestCase):
     ]
     SAMPLE = [forge_gcli._project_status_row(r) for r in WIRE]
 
-    def test_effective_commit_statuses_classifies_cancellations_correctly(self) -> None:
+    CANCELLED_JOBS = (
+        "/ compile_only (img:latest) (pull_request)",
+        "/ lint (pull_request)",
+        "/ run_fate (linux-aarch64) (pull_request)",
+        "/ run_fate (linux-amd64) (pull_request)",
+    )
+
+    def test_effective_commit_statuses_keeps_the_latest_row_per_context(self) -> None:
         eff = fairy.effective_commit_statuses(self.SAMPLE)
-        # Five contexts in total (one per unique context string).
         self.assertEqual(len(eff), 5)
-        cancelled = sorted(c for c, (s, _) in eff.items() if s == "CANCELLED")
+        failures = sorted(c for c, (s, _) in eff.items() if s == "FAILURE")
         successes = sorted(c for c, (s, _) in eff.items() if s == "SUCCESS")
-        self.assertEqual(
-            cancelled,
-            [
-                "/ compile_only (img:latest) (pull_request)",
-                "/ lint (pull_request)",
-                "/ run_fate (linux-aarch64) (pull_request)",
-                "/ run_fate (linux-amd64) (pull_request)",
-            ],
-        )
+        self.assertEqual(failures, list(self.CANCELLED_JOBS))
         self.assertEqual(successes, ["/ pr_labeler (pull_request_target)"])
 
-    def test_build_ci_failure_details_returns_empty(self) -> None:
-        # All 4 "failure" rows are cancellations and the only real
-        # success row is success: nothing nag-worthy remains.
-        self.assertEqual(
-            fairy.build_ci_failure_details(self.SAMPLE), []
-        )
+    def test_build_ci_failure_details_returns_the_cancelled_jobs(self) -> None:
+        details = fairy.build_ci_failure_details(self.SAMPLE)
+        self.assertEqual(sorted(d["context"] for d in details),
+                         list(self.CANCELLED_JOBS))
 
-    def test_cancelled_extraction_returns_all_four(self) -> None:
-        self.assertEqual(
-            fairy.extract_contexts_with_state(self.SAMPLE, "CANCELLED"),
-            (
-                "/ compile_only (img:latest) (pull_request)",
-                "/ lint (pull_request)",
-                "/ run_fate (linux-aarch64) (pull_request)",
-                "/ run_fate (linux-amd64) (pull_request)",
-            ),
-        )
-
-    def test_blocked_extraction_returns_empty(self) -> None:
-        # In this fixture the older "Blocked by required conditions"
-        # rows are superseded by the newer "Has been cancelled"
-        # failure rows, so the LATEST per context is CANCELLED, not
-        # BLOCKED. The blocked-state filter must therefore return
-        # nothing -- otherwise a context would be double-counted in
-        # both the cancelled and blocked end-of-run summary lists.
-        self.assertEqual(
-            fairy.extract_contexts_with_state(self.SAMPLE, "BLOCKED"), ()
-        )
+    def test_nothing_needs_a_human(self) -> None:
+        for state in ("CANCELLED", "BLOCKED"):
+            self.assertEqual(
+                fairy.extract_contexts_with_state(self.SAMPLE, state), ())
 
 
 class ForgejoActionsBlockedJobsPayloadTests(unittest.TestCase):

@@ -123,10 +123,12 @@ def git_merge_tree(repo_root: Path, sha_a: str, sha_b: str) -> str | None:
     return cp.stdout.splitlines()[0].strip()
 
 
-def _git_stdout(repo_root: Path, *args: str) -> bytes:
-    """stdout of ``git <args>`` in ``repo_root``; RuntimeError on failure."""
+def _git_stdout(repo_root: Path, *args: str,
+                timeout_s: float | None = None) -> bytes:
+    """stdout of ``git <args>`` in ``repo_root``; RuntimeError on failure,
+    TimeoutExpired past ``timeout_s``."""
     cp = subprocess.run(["git", "-C", str(repo_root), *args],
-                        capture_output=True, check=False)
+                        capture_output=True, check=False, timeout=timeout_s)
     if cp.returncode != 0:
         raise RuntimeError(
             f"git {' '.join(args)} in {repo_root} failed: "
@@ -186,18 +188,11 @@ def git_range_diff(repo_root: Path, old_sha: str, new_sha: str) -> bytes:
                        f"{old_sha}...{new_sha}")
 
 
-def git_fetch_all(repo_root: Path) -> None:
-    """``git fetch --all`` -- the same refresh fairy_fetch_git.sh runs
-    on its schedule; a failed fetch raises rather than reading as
-    success."""
-    cp = subprocess.run(
-        ["git", "-C", str(repo_root), "fetch", "--all", "--quiet"],
-        check=False, text=True, capture_output=True,
-    )
-    if cp.returncode != 0:
-        raise RuntimeError(
-            f"git fetch --all in {repo_root} failed: {cp.stderr.strip()}"
-        )
+def git_fetch(repo_root: Path, *args: str,
+              timeout_s: float | None = None) -> None:
+    """``git fetch <args>``, a remote name or ``--all``; RuntimeError on
+    failure, TimeoutExpired past ``timeout_s``."""
+    _git_stdout(repo_root, "fetch", "--quiet", *args, timeout_s=timeout_s)
 
 
 def git_remote_default_branch(repo_root: Path, remote_url: str,

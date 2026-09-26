@@ -2204,7 +2204,7 @@ def fetch_patch_for_llm(
     try:
         data = git_util.git_format_patch_series(args.patch_repo, base_sha, head_sha)
     except RuntimeError:
-        git_util.git_fetch_all(args.patch_repo)
+        git_util.git_fetch(args.patch_repo, "--all")
         data = git_util.git_format_patch_series(args.patch_repo, base_sha, head_sha)
     truncated = len(data) > max_bytes
     if truncated:

@@ -231,7 +231,7 @@ class ConstantsTests(unittest.TestCase):
     def test_schema_version_pinned(self) -> None:
         # Pinned so a bump is deliberate: mismatched version on disk
         # -> empty cache -> stable-fetch loop refills.
-        self.assertEqual(SCHEMA_VERSION, 4)
+        self.assertEqual(SCHEMA_VERSION, 5)
 
     def test_edit_prone_is_the_trio(self) -> None:
         # Adding here forces TTL refetches on data that doesn't need

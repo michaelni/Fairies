@@ -507,7 +507,7 @@ class CodexReviewer(Reviewer):
                         auth_local.replace(invalidated)
                     except FileNotFoundError:
                         pass  # a parallel pass already set it aside
-                    logger.error(
+                    logger.critical(
                         "codex: credentials rejected; %s set aside as %s so "
                         "no further logins are attempted until a human runs "
                         "`codex login`", auth_local, invalidated.name)

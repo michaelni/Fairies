@@ -433,7 +433,8 @@ class CodexReviewerRunTests(unittest.TestCase):
 
     def test_auth_failure_sets_auth_json_aside(self) -> None:
         home = _codex_home_ready()
-        with self.assertRaises(CodexAuthFailed):
+        with self.assertRaises(CodexAuthFailed), \
+                self.assertLogs(codex_reviewer.logger, "CRITICAL"):
             self._run(reviewer=self._reviewer(codex_home=home),
                       jsonl=self._DEAD_REFRESH_TOKEN_EVENT,
                       last_message=None, returncode=1)

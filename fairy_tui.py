@@ -1541,6 +1541,8 @@ class UILoop:
                     what = (f"withdrew the review request for {c.get('reviewer')}"
                             if c.get("removed")
                             else f"requested a review from {c.get('reviewer')}")
+                elif c.get("kind") == "cross_reference":
+                    what = f"mentioned this from #{c.get('number')} {c.get('title')}"
                 elif c.get("kind") == "state":
                     what = str(c.get("state"))
                 else:

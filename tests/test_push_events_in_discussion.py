@@ -312,6 +312,17 @@ class CommentRefProjectionTests(unittest.TestCase):
               {"number": 24049, "title": "woca wutina"})])
         self.assertNotIn("ref_issue", timeline[0])
 
+    def test_the_mentions_reach_the_built_discussion(self) -> None:
+        timeline = _load_timeline("ffmpeg_pr_24702_comment_ref_timeline.json")
+        disc = fairy.build_llm_discussion([], [], [], timeline)
+        self.assertEqual(
+            [(d["author"], d["number"], d["title"]) for d in disc
+             if d["kind"] == "cross_reference"],
+            [("dowu", 24049, "tivi"), ("Forgejo_Fairy", 24049, "woca wutina")])
+        self.assertEqual([d["kind"] for d in disc],
+                         ["push", "review_request", "cross_reference",
+                          "cross_reference"])
+
 
 if __name__ == "__main__":
     unittest.main()

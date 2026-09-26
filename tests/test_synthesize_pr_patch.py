@@ -122,6 +122,28 @@ class SynthesizePRPatchTests(unittest.TestCase):
         self.assertIn(f"From {new_head}", text)
         self.assertFalse(truncated)
 
+    def test_the_retry_fetch_reaches_every_remote_of_the_patch_repo(self) -> None:
+        """The retry runs git fetch --all: a branch someone else pushed
+        to fairy's own fork is seen by the same fetch, so a later
+        branch publish starts from the fork's real state."""
+        mirror = Path(self._tmp.name) / "mirror"
+        _git(Path(self._tmp.name), "clone", "--quiet",
+             str(self.repo), str(mirror))
+        fork = Path(self._tmp.name) / "fork"
+        _git(Path(self._tmp.name), "clone", "--quiet", "--bare",
+             str(self.repo), str(fork))
+        _git(mirror, "remote", "add", "fairy", str(fork))
+        _git(self.repo, "push", "--quiet", str(fork),
+             f"{self.head_sha}:refs/heads/fairy/by-someone-else")
+        (self.repo / "f.c").write_text("int f(void){return 3;}\n")
+        _git(self.repo, "commit", "-am", "pushed after fetch", "--quiet")
+        new_head = _git(self.repo, "rev-parse", "HEAD").strip()
+        fairy.fetch_patch_for_llm(SimpleNamespace(patch_repo=mirror),
+                                  self.head_sha, new_head, 10_000)
+        self.assertEqual(
+            _git(mirror, "rev-parse", "fairy/fairy/by-someone-else").strip(),
+            self.head_sha)
+
     def test_fetch_patch_for_llm_truncates_and_flags(self) -> None:
         args = SimpleNamespace(patch_repo=self.repo)
         text, truncated = fairy.fetch_patch_for_llm(

@@ -30,6 +30,8 @@
 CodexContainer: ``podman exec`` argv construction over RemoteHost ssh."""
 
 import io
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -40,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import podman_host
 import codex_container
 from codex_container import CodexContainer, CodexShellRelay
+from test_podman_host import ContainerStateHarness
 
 HOST = podman_host.RemoteHost("fairy@box", identity="/id")
 
@@ -101,9 +104,9 @@ class KillRunTests(unittest.TestCase):
         with mock.patch.object(codex_container, "run_on_remote_host",
                                **kill_effect) as kill, \
                 mock.patch.object(codex_container, "stop_container") as stop, \
-                mock.patch.object(codex_container.subprocess, "run",
-                                  side_effect=lambda *a, **kw:
-                                  self.container.kill_run()):
+                mock.patch.object(codex_container.subprocess, "Popen",
+                                  return_value=_FakeProc(
+                                      b"", on_communicate=self.container.kill_run)):
             self.container.run(["codex"])
         return kill, stop
 
@@ -139,18 +142,47 @@ class KillRunTests(unittest.TestCase):
         stop.assert_called_once()
 
 
+class RunTests(ContainerStateHarness, unittest.TestCase):
+    def test_pausing_the_container_ends_a_codex_that_never_returns(self) -> None:
+        self.record_podman()
+        c = CodexContainer(image="img", host=HOST)
+        codex = [sys.executable, "-c", "import time; time.sleep(60)"]
+        with mock.patch.object(c, "exec_argv", return_value=codex):
+            c.start()
+            pause = threading.Timer(0.5, podman_host.pause_container, [c.handle])
+            pause.start()
+            started = time.monotonic()
+            proc = c.run(["codex", "exec"], input_text="prompt")
+            pause.join()
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertNotEqual(0, proc.returncode)
+
+
 class _FakeProc:
-    def __init__(self, stderr_bytes: bytes):
+    def __init__(self, stderr_bytes: bytes, on_communicate=lambda: None):
         self.stderr = io.BytesIO(stderr_bytes)
         self.stdin = io.BytesIO()
         self.stdout = io.BytesIO()
         self.killed = False
+        self.args = []
+        self.returncode = None
+        self._on_communicate = on_communicate
 
     def kill(self):
         self.killed = True
 
     def wait(self, timeout=None):
         return 0
+
+    def communicate(self, input=None, timeout=None):
+        self._on_communicate()
+        return "", ""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
 
 
 class RelayReadinessTests(unittest.TestCase):

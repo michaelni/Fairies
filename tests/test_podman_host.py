@@ -384,7 +384,34 @@ class ImageLabelTests(unittest.TestCase):
             self.assertIsNone(lc.image_label("fairy:latest", "k", host=HOST))
 
 
-class StartStopContainerTests(unittest.TestCase):
+class ContainerStateHarness:
+    """Gives each test its own copy of podman_host's process-wide record
+    of the containers it started."""
+
+    def setUp(self) -> None:
+        for name, value in (("_running", {}), ("_paused", set())):
+            patcher = mock.patch.object(lc, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def record_podman(self) -> list[tuple[str, ...]]:
+        """Stand in for ``ssh host podman ...``: record each call's arguments
+        and hand out cid1, cid2, ... to ``run``; returns the record."""
+        started = iter(range(1, 100))
+        calls: list[tuple[str, ...]] = []
+
+        def fake_podman(host, *args, timeout_s=60.0):
+            calls.append(args)
+            cid = f"cid{next(started)}\n" if args[0] == "run" else ""
+            return lc._CmdResult(returncode=0, stdout=cid.encode(), stderr=b"")
+
+        patcher = mock.patch.object(lc, "_podman", side_effect=fake_podman)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return calls
+
+
+class StartStopContainerTests(ContainerStateHarness, unittest.TestCase):
     def test_start_passes_resource_limits_and_returns_handle(self) -> None:
         with mock.patch.object(lc.subprocess, "run") as run:
             run.return_value = _completed(0, stdout=b"deadbeef0123\n")
@@ -447,6 +474,28 @@ class StartStopContainerTests(unittest.TestCase):
                          [c.args[0] for c in run.call_args_list])
 
 
+class PauseContainerTests(ContainerStateHarness, unittest.TestCase):
+    def _channel(self, handle) -> subprocess.Popen:
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(proc.kill)
+        return lc.track_exec_channel(handle, proc)
+
+    def test_pause_kills_the_exec_channels_and_stop_keeps_the_container(self) -> None:
+        podman_calls = self.record_podman()
+        handle = lc.start_ephemeral_container(image="i", host=HOST)
+        channel = self._channel(handle)
+        lc.pause_container(handle)
+        lc.stop_container(handle)
+        self.assertIsNotNone(channel.wait(timeout=5))
+        self.assertEqual(("pause", "cid1"), podman_calls[-1])
+
+    def test_a_channel_opened_after_the_pause_is_killed(self) -> None:
+        self.record_podman()
+        handle = lc.start_ephemeral_container(image="i", host=HOST)
+        lc.pause_container(handle)
+        self.assertIsNotNone(self._channel(handle).wait(timeout=5))
+
+
 class CopyAndOpenShellTests(unittest.TestCase):
     def test_copy_into_container_mkdirs_then_streams_tar(self) -> None:
         handle = lc.ContainerHandle(container_id="cid", image="i", network=None, host=HOST)
@@ -504,6 +553,8 @@ class CopyAndOpenShellTests(unittest.TestCase):
         captured: dict = {}
 
         class _FakeSession:
+            _proc = None
+
             def __init__(self, argv, **kw):
                 captured["argv"] = argv
                 captured["kw"] = kw

@@ -626,6 +626,10 @@ CONTAINER_CPUS = "8"
 # constraining real builds/fuzzing.
 CONTAINER_PIDS_LIMIT = 4096
 
+_state_lock = threading.Lock()
+_running: dict[str, tuple[ContainerHandle, list[subprocess.Popen]]] = {}
+_paused: set[str] = set()
+
 
 @dataclass(frozen=True)
 class ShellHostSpec:
@@ -742,9 +746,12 @@ def start_ephemeral_container(
         "ephemeral container started id=%s image=%s network=%s",
         container_id[:12], image, network,
     )
-    return ContainerHandle(
+    handle = ContainerHandle(
         container_id=container_id, image=image, network=network, host=host,
     )
+    with _state_lock:
+        _running[container_id] = (handle, [])
+    return handle
 
 
 def reap_stale_containers(
@@ -793,22 +800,48 @@ def reap_stale_containers(
     return removed
 
 
+def track_exec_channel(handle: ContainerHandle,
+                       proc: subprocess.Popen) -> subprocess.Popen:
+    """Register ``proc``, a ``podman exec`` into ``handle``'s container, to
+    be killed when the container is paused; returns ``proc``."""
+    with _state_lock:
+        if handle.container_id in _running:
+            _running[handle.container_id][1].append(proc)
+            return proc
+        paused = handle.container_id in _paused
+    if paused:
+        proc.kill()
+    return proc
+
+
 def pause_container(handle: ContainerHandle) -> None:
-    """``podman pause`` the container, preserving it for forensics.
+    """``podman pause`` the container, preserving it for forensics, and kill
+    this process's exec channels into it so the calls blocked on them fail.
 
     Unlike :func:`stop_container` this leaves the container on the host --
     frozen, not removed -- so a review container suspected of tampering
     (see the codex poison path) can be inspected later. A container that
     cannot be paused is removed instead. The operator must ``podman rm -f``
-    a paused one by hand once done, since nothing else will reclaim it.
+    a paused one by hand once done, since nothing else will reclaim it;
+    a later stop_container leaves it in place.
     """
-    logger.debug("pausing container id=%s", handle.container_id[:12])
+    with _state_lock:
+        if handle.container_id in _paused:
+            return
+        _paused.add(handle.container_id)
+        _, channels = _running.pop(handle.container_id, (None, []))
+    logger.debug("pausing container id=%s exec_channels=%d",
+                 handle.container_id[:12], len(channels))
     cp = _podman(handle.host, "pause", handle.container_id, timeout_s=60.0)
+    for proc in channels:
+        proc.kill()
     if cp.returncode != 0:
         logger.warning(
             "podman pause id=%s failed: %s; removing it instead",
             handle.container_id[:12], cp.stderr_text,
         )
+        with _state_lock:
+            _paused.discard(handle.container_id)
         stop_container(handle)
         return
     logger.warning(
@@ -819,11 +852,16 @@ def pause_container(handle: ContainerHandle) -> None:
 
 
 def stop_container(handle: ContainerHandle) -> None:
-    """Forcibly remove the container.
+    """Forcibly remove the container, unless it was paused.
 
     Safe to call multiple times -- if the container is already gone
     (e.g. ``--rm`` cleanup raced us) we log a warning and return.
     """
+    with _state_lock:
+        if handle.container_id in _paused:
+            logger.info("container id=%s stays paused", handle.container_id[:12])
+            return
+        _running.pop(handle.container_id, None)
     logger.debug("stopping container id=%s", handle.container_id[:12])
     cp = _podman(handle.host, "rm", "-f", handle.container_id, timeout_s=60.0)
     if cp.returncode != 0:
@@ -906,4 +944,6 @@ def open_container_shell(
     argv = handle.host.argv([
         "podman", "exec", "-i", handle.container_id, "python3", agent_remote_path,
     ])
-    return ContainerShellSession(argv, max_output_bytes=max_output_bytes).start()
+    session = ContainerShellSession(argv, max_output_bytes=max_output_bytes).start()
+    track_exec_channel(handle, session._proc)
+    return session

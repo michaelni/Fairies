@@ -66,6 +66,7 @@ from podman_host import (
     run_on_remote_host,
     start_ephemeral_container,
     stop_container,
+    track_exec_channel,
 )
 from shell_socket import serve_dispatch
 
@@ -183,14 +184,20 @@ class CodexContainer:
         with self._lock:
             self._running = True
         try:
-            return subprocess.run(
+            with track_exec_channel(self.handle, subprocess.Popen(
                 self.exec_argv(argv, interactive=True, env=env),
-                input=input_text, capture_output=True, text=True, errors="replace",
-                timeout=timeout_s,
-            )
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, errors="replace",
+            )) as proc:
+                try:
+                    stdout, stderr = proc.communicate(input_text, timeout=timeout_s)
+                except BaseException:
+                    proc.kill()
+                    raise
         finally:
             with self._lock:
                 self._running = False
+        return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
     def kill_run(self) -> None:
         """SIGKILL every process but PID 1 while ``run`` is in progress, so
@@ -316,10 +323,10 @@ class CodexShellRelay:
             interactive=True,
         )
         logger.info("codex relay start socket=%s", self.socket_path)
-        self._proc = subprocess.Popen(
+        self._proc = track_exec_channel(self.container.handle, subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-        )
+        ))
         # relay.py prints RELAY-READY on stderr once its socket is bound;
         # codex must not start before that, or the bridge races an unbound socket.
         threading.Thread(

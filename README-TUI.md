@@ -35,7 +35,9 @@ last row).
   in the list, were approved by someone else). A red `PAUSED` appears
   while `p` holds the daemons stopped, a red `HALTED` with the reason
   while a repo's `halted` file exists (see `--halt-keyword`, `--halt-file`);
-  remove the file to resume.
+  remove the file to resume. The last ten log lines at CRITICAL level,
+  failures that need a human such as codex rejecting its login, are
+  listed in red under the header until `c` clears them.
 - **☰ list** — the table. Columns: `▶` marks reviewed rows, kind,
   repo (only when sides span several), `#number`, the status letters
   followed by an orange `»` for a review that persists git branches
@@ -157,6 +159,7 @@ ticket is adopted.
 | `d` | cycle the logs pane the same way: logs → patches → merge diff of the cursor PR. |
 | `b` | toggle the message pane's branch previews between the commits a persisted branch would publish and, for a force push, the range-diff against the published tip. |
 | `p` | pause: SIGSTOP every agent/worker the launcher started, with their whole subprocess trees; `p` again resumes. Remote containers keep computing — only local processing freezes. Quitting while paused thaws first. |
+| `c` | clear the alerts listed under the stats header. |
 | `[` / `]` | previous / next patch of the diff on screen — its files, for a merge diff, which has no commits. Acts on the focused pane, or on a diff pane while the focus is elsewhere; `3]` skips three. |
 | `{` / `}` | the same, by hunk. |
 | `a` / `t` | cycle lens / sort. |

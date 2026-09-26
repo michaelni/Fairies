@@ -2630,6 +2630,22 @@ class StatsWrapTests(DbCase):
         self.assertIn("merge-ready*", approver_row)
         self.assertNotIn("awaiting-approver", approver_row)
 
+    def test_a_critical_line_stays_under_the_header_until_c(self) -> None:
+        ui = make_ui(self.model)
+        ui.tail.sink.line("ffmpeg: 2026-09-27T01:08:26 E [wrapper pr=#1] "
+                          "reviewer zai:glm-5.3 failed", logging.ERROR)
+        ui.tail.sink.line(
+            "ffmpeg: 2026-09-27T01:08:27 C [wrapper issue=#2] codex: "
+            "credentials rejected; /tmp/codex/auth.json set aside as "
+            "auth.json.invalid so no further logins are attempted until a "
+            "human runs `codex login`", logging.CRITICAL)
+        stats = " ".join(fairy_tui._plain(ui.stats_lines(40)).split())
+        self.assertIn("credentials rejected;", stats)
+        self.assertIn("until a human runs `codex login` c clears", stats)
+        self.assertNotIn("zai", stats)
+        ui.dispatch(Key("c"))
+        self.assertNotIn("codex", fairy_tui._plain(ui.stats_lines(40)))
+
 
 class PaintSmokeTests(DbCase):
     def test_paint_one_frame_headless(self) -> None:

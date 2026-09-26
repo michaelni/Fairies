@@ -808,11 +808,13 @@ class Model:
         self._sync_cursor()
 
 class OutputSink:
-    """Fan-in for every captured line: the debug-pane ring buffer, an
-    optional tee file, and the painter's dirty event."""
+    """Fan-in for every captured line: the debug-pane ring buffer, the
+    CRITICAL lines as operator alerts, an optional tee file, and the
+    painter's dirty event."""
 
     def __init__(self, ring: tui_core.RingBuffer, dirty: Event, path: Path | None) -> None:
         self.ring = ring
+        self.alerts = tui_core.RingBuffer(MAX_ALERTS)
         self.dirty = dirty
         self._lock = Lock()
         self._fh = open(path, "a", encoding="utf-8") if path else None
@@ -820,6 +822,8 @@ class OutputSink:
     def line(self, text: str, level: int | None = None) -> None:
         for ln in text.splitlines() or [""]:
             self.ring.append(ln, level)
+            if level == logging.CRITICAL:
+                self.alerts.append(ln)
             if self._fh is not None:
                 with self._lock:
                     self._fh.write(ln + "\n")
@@ -976,6 +980,7 @@ def captured_output(sink: OutputSink):
 
 MIN_TEXT_W = 8       # narrowest width a pane renders text at
 EXPORT_FULL_W = 200  # E: full exports reflow at this fixed width
+MAX_ALERTS = 10
 PANES = {"tl": "stats", "tr": "list", "bl": "logs", "br": "message"}
 PANE_GLYPHS = {"tl": "Σ", "tr": "☰", "bl": "≣", "br": "¶"}
 FOCUS_ORDER = ("tl", "tr", "bl", "br")
@@ -1275,8 +1280,8 @@ class UILoop:
         """Full-width header, then one block per repo tiled into as many
         columns as ``width`` fits. The counts are simply the number of
         files per state directory. The per-repo blocks are cached
-        against (model revision, width); only the ticking header is
-        rebuilt per paint."""
+        against (model revision, width); only the ticking header and
+        the alerts below it are rebuilt per paint."""
         m = self.model
         actionable = m.reviewed_count()
         header: tui_core.StyledLine = [
@@ -1292,9 +1297,13 @@ class UILoop:
             if halt is not None:
                 header[:0] = [("log_err", f"HALTED {self._repo_disp[repo]}: "
                                           f"{halt}   ")]
+        alerts = [row for _, alert in self.tail.sink.alerts.view(0, MAX_ALERTS)
+                  for row in tui_core.wrap([("log_err", alert)], width)]
+        if alerts:
+            alerts.append([("label", "c clears the alerts above")])
         sig = (m.revision, width)
         if self._stats_cache is not None and self._stats_cache[0] == sig:
-            return [header, []] + self._stats_cache[1]
+            return [header, *alerts, []] + self._stats_cache[1]
         blocks: list[list[tui_core.StyledLine]] = []
         for repo, agg in m.side_stats().items():
             kinds = agg["kinds"]
@@ -1343,7 +1352,7 @@ class UILoop:
                     ", ".join(f"{k}={v}" for k, v in sorted(agg["acts"].items())))])
             blocks.append(block)
         self._stats_cache = (sig, tui_core.tile_blocks(blocks, width))
-        return [header, []] + self._stats_cache[1]
+        return [header, *alerts, []] + self._stats_cache[1]
 
     def _llm_col(self, it: Item) -> str:
         if it.state == "llm":
@@ -2343,6 +2352,9 @@ class UILoop:
             self.follow_cursor = True
         elif ks == "p":
             self.toggle_pause()
+        elif ks == "c":
+            self.tail.sink.alerts.clear()
+            logger.info("alerts cleared")
         elif ks == "/":
             self.search_mode = True
             self.search_buf = ""

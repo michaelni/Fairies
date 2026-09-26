@@ -296,5 +296,22 @@ class StateEventsTests(unittest.TestCase):
                          ["closed", "reopened", "merged"])
 
 
+class CommentRefProjectionTests(unittest.TestCase):
+    """A comment_ref entry (real capture: FFmpeg #24702, mentioned twice
+    from #24049, the second time by the fairy's own review there) keeps
+    the mentioning item's number and title."""
+
+    def test_pr_24702_names_the_mentioning_pull_request(self) -> None:
+        timeline = _load_timeline("ffmpeg_pr_24702_comment_ref_timeline.json")
+        self.assertEqual(
+            [(e["user"]["login"], e["created_at"], e["ref_issue"])
+             for e in timeline if e["type"] == forge_gcli.COMMENT_REF_EVENT],
+            [("dowu", "2026-09-26T01:41:39Z",
+              {"number": 24049, "title": "tivi"}),
+             ("Forgejo_Fairy", "2026-09-26T13:17:33Z",
+              {"number": 24049, "title": "woca wutina"})])
+        self.assertNotIn("ref_issue", timeline[0])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -113,6 +113,7 @@ __all__ = [
     "KIND_PR",
     "PUSH_EVENT",
     "REVIEW_REQUEST_EVENT",
+    "COMMENT_REF_EVENT",
     "CLOSE_EVENT",
     "REOPEN_EVENT",
     "MERGE_EVENT",
@@ -932,6 +933,7 @@ PUSH_EVENT = "pull_push"
 AUTO_MERGE_SCHEDULE_EVENT = "pull_scheduled_merge"
 AUTO_MERGE_CANCEL_EVENT = "pull_cancel_scheduled_merge"
 REVIEW_REQUEST_EVENT = "review_request"
+COMMENT_REF_EVENT = "comment_ref"
 CLOSE_EVENT = "close"
 REOPEN_EVENT = "reopen"
 MERGE_EVENT = "merge_pull"
@@ -997,7 +999,9 @@ def project_timeline_event(event: dict) -> dict:
     A ``review_request`` entry additionally carries ``assignee`` (the
     requested reviewer) and ``removed_assignee`` (True when the request
     was withdrawn) -- Forgejo/Gitea put the requester under ``user``
-    and the requestee under ``assignee`` (captured on FFmpeg #23197)."""
+    and the requestee under ``assignee`` (captured on FFmpeg #23197).
+    A ``comment_ref`` entry carries ``ref_issue``, the number and title
+    of the issue or pull request whose text mentioned this one."""
     projected = {
         "type": event.get("type"),
         "id": event.get("id"),
@@ -1010,7 +1014,13 @@ def project_timeline_event(event: dict) -> dict:
     elif projected["type"] == REVIEW_REQUEST_EVENT:
         projected["assignee"] = norm_user(event.get("assignee"))
         projected["removed_assignee"] = bool(event.get("removed_assignee"))
+    elif projected["type"] == COMMENT_REF_EVENT:
+        projected["ref_issue"] = _referenced_item(event["ref_issue"])
     return projected
+
+
+def _referenced_item(item: dict) -> dict:
+    return {key: item.get(key) for key in ("number", "title")}
 
 
 # GitHub spells the entry kind ``event`` where Forgejo says ``type``,
@@ -1078,7 +1088,10 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
     requestee under ``requested_reviewer`` (``requested_team`` for a
     team, which projects to no assignee) --
     https://docs.github.com/en/rest/issues/timeline; folded into the
-    Forgejo ``review_request`` shape.
+    Forgejo ``review_request`` shape. A mention from another issue or
+    pull request is the event ``cross-referenced`` with the mentioning
+    item under ``source.issue`` (same document); folded into the
+    Forgejo ``comment_ref`` shape.
     """
     out: list[dict] = []
     run: list[dict] = []
@@ -1111,6 +1124,10 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
                         "type": REVIEW_REQUEST_EVENT,
                         "assignee": norm_user(event.get("requested_reviewer")),
                         "removed_assignee": kind == "review_request_removed"})
+            continue
+        if kind == "cross-referenced":
+            out.append({**_project_github_event(event), "type": COMMENT_REF_EVENT,
+                        "ref_issue": _referenced_item(event["source"]["issue"])})
             continue
         out.append({**_project_github_event(event),
                     "type": _GITHUB_STATE_EVENTS.get(kind, kind)})

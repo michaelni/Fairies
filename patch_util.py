@@ -51,6 +51,7 @@ __all__ = [
 
 
 _DIFF_GIT_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$", re.MULTILINE)
+_DELETED_FILE_RE = re.compile(r"(?m)^deleted file mode \d+$")
 
 
 def _split_patch_into_diff_blocks(patch: str) -> list[str]:
@@ -199,32 +200,23 @@ def extract_submodule_paths_from_patch(patch: str) -> set[str]:
 
 
 def extract_changed_paths_from_patch(patch: str) -> list[str]:
+    """Paths of the files the patch leaves in the tree, in patch order.
+
+    Deleted files and submodule gitlinks are left out: neither has
+    content at the PR head for the source bundle to load.
+    """
     paths: list[str] = []
-    seen: set[str] = set()
     submodule_paths = extract_submodule_paths_from_patch(patch)
-
-    patterns = [
-        re.compile(r"^\+\+\+ b/(.+)$", re.MULTILINE),
-        _DIFF_GIT_HEADER_RE,
-    ]
-
-    for match in patterns[0].finditer(patch):
-        path = match.group(1).strip()
-        if path == "/dev/null" or path in submodule_paths:
+    for block in _split_patch_into_diff_blocks(patch):
+        header = _DIFF_GIT_HEADER_RE.search(block)
+        if header is None:
             continue
-        if path not in seen:
-            seen.add(path)
-            paths.append(path)
-
-    for match in patterns[1].finditer(patch):
-        old_path, new_path = match.group(1).strip(), match.group(2).strip()
-        candidate = new_path if new_path != "/dev/null" else old_path
-        if candidate == "/dev/null" or candidate in submodule_paths:
+        path = header.group(2).strip()
+        if path in paths or path in submodule_paths:
             continue
-        if candidate not in seen:
-            seen.add(candidate)
-            paths.append(candidate)
-
+        if _DELETED_FILE_RE.search(_diff_block_own_body(block)):
+            continue
+        paths.append(path)
     return paths
 
 

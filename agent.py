@@ -296,19 +296,11 @@ def _route(db: filedb.Db, kind: str, number: filedb.TicketId, state: str,
 def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
               now: datetime, cache, self_login,
               forced: set[filedb.TicketId],
-              closed_items: list[dict] | tuple = (),
-              snapshot_memo: dict[tuple[str, filedb.TicketId],
-                                  str | None] | None = None,
               serve_operator: Callable[[], None] = lambda: None,
               ) -> set[tuple[str, int]]:
     """One gate pass over the side's open items; returns the open set.
-    ``closed_items`` (the --scan-closed-days window, caller-fetched)
-    are snapshotted and nothing else; ``snapshot_memo`` remembers each
-    one's snapshotted updated_at across passes so unchanged items cost
-    no rebuild; ``serve_operator`` runs before every item, so a y or r
-    pressed during the pass is answered without waiting for its end."""
-    if snapshot_memo is None:
-        snapshot_memo = {}
+    ``serve_operator`` runs before every item, so a y or r pressed
+    during the pass is answered without waiting for its end."""
     if kind == "pr":
         fetch_one, list_open, forced_ns = fairy.get_pr, fairy.list_open_prs, \
             ns.force_review_prs
@@ -372,23 +364,38 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
                     serve_operator=serve_operator)
     finally:
         forced_ns -= added_forced
+    return open_set
+
+
+def snapshot_closed(db: filedb.Db, ns: argparse.Namespace, kind: str,
+                    closed_items: list[dict], cache,
+                    serve_operator: Callable[[], None]) -> datetime | None:
+    """Refresh the listed closed items' snapshots, skipping those whose
+    stored snapshot already carries the listed updated_at. Returns the
+    stamp the next closed listing must reach: the newest listed one, or
+    the oldest one whose snapshot failed, so that it is listed again;
+    None when nothing was listed."""
     # --scan-closed-days: snapshot-only visibility. Deliberately
-    # NOT fed to the gates and NOT part of the returned set: a
-    # closed ticket must never become a review candidate by mere
-    # listing, and closure cancels/pruning must proceed as if the
-    # option were off. The infinite cache age skips the edit-catching
-    # discussion TTL for these items only, and the memo skips the
-    # whole rebuild while an item's updated_at stands still.
+    # NOT fed to the gates and NOT part of the open set: a closed
+    # ticket must never become a review candidate by mere listing,
+    # and closure cancels/pruning must proceed as if the option were
+    # off. The infinite cache age skips the edit-catching discussion
+    # TTL for these items only.
+    complete = failed = None
     for item in closed_items:
         serve_operator()
         token = str(item.get("number"))
-        if not token.isdigit():
+        stamp = iso_to_dt(item.get("updated_at"))
+        if not token.isdigit() or stamp is None:
             continue
-        if snapshot_memo.get((kind, token)) == item.get("updated_at"):
-            continue
-        if _put_snapshot(db, ns, kind, token, item, cache, timedelta.max):
-            snapshot_memo[(kind, token)] = item.get("updated_at")
-    return open_set
+        stored = db.get(filedb.ITEM_STATE, kind, token)
+        if (stored and stored.get("updated_at") == item.get("updated_at")) \
+                or _put_snapshot(db, ns, kind, token, item, cache,
+                                 timedelta.max):
+            complete = max(complete or stamp, stamp)
+        else:
+            failed = min(failed or stamp, stamp)
+    return failed or complete
 
 
 def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
@@ -694,17 +701,12 @@ def sides_of(pr_ns: argparse.Namespace | None,
 def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
               issue_ns: argparse.Namespace | None,
               now: datetime | None = None,
-              snapshot_memo: dict | None = None,
               dry_run: bool = False) -> None:
     now = now or datetime.now(timezone.utc)
-    if snapshot_memo is None:
-        snapshot_memo = {}
     forced = consume_requests(db)
     closed_pulls: dict[float, list[dict]] = {}
-    # Fixed before either side snapshots: both listings must share the
-    # bound, or the later one would skip what the earlier one listed.
-    newest_seen = max(filter(None, map(iso_to_dt, snapshot_memo.values())),
-                      default=None)
+    reach_doc = db.root / "closed-scan.json"
+    newest_seen = iso_to_dt((db.read(reach_doc) or {}).get("reach"))
 
     def closed_pulls_for(ns: argparse.Namespace) -> list[dict]:
         """The ns's closed-PR window, fetched once per distinct
@@ -715,10 +717,11 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                 fairy.list_recently_closed_prs(ns, newest_seen)
         return closed_pulls[ns.scan_closed_days]
 
-    def closed_for(ns: argparse.Namespace, kind: str) -> list[dict]:
-        """The side's closed-window items; a listing failure costs this
-        pass's snapshot freshness, never the scan (the per-item
-        _put_snapshot guard's contract, extended to the fetch)."""
+    def closed_for(ns: argparse.Namespace, kind: str) -> list[dict] | None:
+        """The side's closed-window items; a listing failure (None)
+        costs this pass's snapshot freshness, never the scan (the
+        per-item _put_snapshot guard's contract, extended to the
+        fetch)."""
         try:
             if kind == "pr":
                 return closed_pulls_for(ns)
@@ -729,7 +732,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
         except Exception as exc:
             logger.warning("%s: closed listing failed; snapshots not "
                            "refreshed this pass: %s", kind, exc)
-            return []
+            return None
     open_set: set[tuple[str, int]] = set()
     kinds: set[str] = set()
     # A --forced-only side's open_set is just the named items, not the
@@ -739,6 +742,8 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     sides = sides_of(pr_ns, issue_ns)
     served: dict[str, set[filedb.TicketId]] = {kind: set() for kind in sides}
     logins: dict[str, str | None] = {}
+    reach: list[datetime] = []
+    listing_failed = False
 
     def login(kind: str) -> str | None:
         if kind not in logins:
@@ -774,10 +779,19 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
             open_set |= scan_side(
                 db, ns, kind, now=now, cache=caches[kind],
                 self_login=login(kind), forced=pending,
-                closed_items=() if ns.forced_only else closed_for(ns, kind),
-                snapshot_memo=snapshot_memo, serve_operator=serve_operator)
+                serve_operator=serve_operator)
+            if ns.forced_only:
+                continue
+            closed = closed_for(ns, kind)
+            if closed is None:
+                listing_failed = True
+            elif (reached := snapshot_closed(db, ns, kind, closed,
+                                             caches[kind], serve_operator)):
+                reach.append(reached)
         finish_requests(db, forced, kinds)
         cancel_closed(db, open_set, full_kinds, sides, caches)
+    if reach and not listing_failed:
+        db.write(reach_doc, {"reach": min(reach).isoformat()})
     for kind, number in db.reap():
         logger.warning("%s #%s re-queued: its worker died", kind, number)
     # A crash between a transition's dst-write and src-unlink leaves the
@@ -1159,13 +1173,11 @@ def warn_simulate_past_limitations(ignore_after: datetime) -> None:
 
 def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
              issue_ns: argparse.Namespace | None,
-             args: argparse.Namespace,
-             snapshot_memo: dict | None = None) -> None:
+             args: argparse.Namespace) -> None:
     sides = sides_of(pr_ns, issue_ns)
 
     def review_cycle() -> None:
-        scan_pass(db, pr_ns, issue_ns, snapshot_memo=snapshot_memo,
-                  dry_run=args.dry_run)
+        scan_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
         if args.drain:
             worker.drain(db, sides, parallel=args.drain)
 
@@ -1275,7 +1287,6 @@ def main() -> int:
                           wake.set) is not None
     sides = sides_of(pr_ns, issue_ns)
     next_scan = next_full = 0.0
-    snapshot_memo: dict = {}
     newest: dict[str, str | None] = {}
 
     def scan_due() -> bool:
@@ -1297,8 +1308,7 @@ def main() -> int:
                                halt, marker)
                 next_scan = time.monotonic() + args.loop
             elif scan_due():
-                one_pass(db, pr_ns, issue_ns, args,
-                         snapshot_memo=snapshot_memo)
+                one_pass(db, pr_ns, issue_ns, args)
             elif db.list_state("requests"):
                 requests_pass(db, pr_ns, issue_ns, args)
             else:

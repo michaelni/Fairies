@@ -1102,8 +1102,9 @@ def scan_closed_cutoff(args: argparse.Namespace,
     """The oldest ``updated_at`` the closed listing must reach: the
     --scan-closed-days window, from the simulated clock under
     --simulate-past, or only CLOSED_RESCAN_OVERLAP before
-    ``newest_seen`` -- the newest closed update already snapshotted --
-    when that is later. None when the option is off."""
+    ``newest_seen`` -- the stamp the stored closed snapshots are
+    complete up to -- when that is later. None when the option is
+    off."""
     if args.scan_closed_days <= 0:
         return None
     now = getattr(args, "simulate_past", None) or datetime.now(timezone.utc)

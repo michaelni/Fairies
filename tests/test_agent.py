@@ -91,8 +91,7 @@ class AgentCase(unittest.TestCase):
         self.thread = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def scan(self, prs: list[dict], fetch=None,
-             snapshot_memo: dict | None = None) -> None:
+    def scan(self, prs: list[dict], fetch=None) -> None:
         with mock.patch.object(fairy, "list_open_prs", return_value=prs), \
                 mock.patch.object(fairy, "get_pr",
                                   side_effect=fetch or (lambda ns, n: make_pr(n))), \
@@ -101,8 +100,7 @@ class AgentCase(unittest.TestCase):
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):
-            agent.scan_pass(self.db, self.ns, None, now=NOW,
-                            snapshot_memo=snapshot_memo)
+            agent.scan_pass(self.db, self.ns, None, now=NOW)
 
     def age(self, state: str, kind: str, number: int, hours: float) -> None:
         data = self.db.get(state, kind, number)
@@ -1243,12 +1241,9 @@ class ItemSnapshotScanTests(SendCase):
         a restart snapshotted 1400 closed PRs waited for that loop's
         end."""
         served = mock.Mock()
-        with mock.patch.object(fairy, "list_open_prs", return_value=[]):
-            agent.scan_side(self.db, self.ns, "pr", now=NOW, cache=mock.Mock(),
-                            self_login="fairy", forced=set(),
-                            closed_items=[dict(make_pr(n), state="closed")
-                                          for n in (1, 2)],
-                            serve_operator=served)
+        agent.snapshot_closed(self.db, self.ns, "pr",
+                              [dict(make_pr(n), state="closed") for n in (1, 2)],
+                              mock.Mock(), served)
         self.assertEqual(served.call_count, 2)
 
     def test_blocked_send_refreshes_the_snapshot(self) -> None:

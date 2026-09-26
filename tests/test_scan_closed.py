@@ -184,11 +184,11 @@ class ScanClosedAgentTests(AgentCase):
     closure lifecycle behave exactly as if the option were off."""
 
     def scan_with_closed(self, closed: list[dict], prs: list[dict],
-                         fetch=None, memo: dict | None = None) -> None:
+                         fetch=None) -> None:
         self.ns.scan_closed_days = 7.0
         with mock.patch.object(fairy, "list_recently_closed_prs",
                                return_value=closed):
-            self.scan(prs, fetch=fetch, snapshot_memo=memo)
+            self.scan(prs, fetch=fetch)
 
     def test_closed_items_snapshot_but_never_reach_the_gates(self) -> None:
         closed = {**make_pr(2), "state": "closed", "merged": True}
@@ -226,19 +226,15 @@ class ScanClosedAgentTests(AgentCase):
         self.assertEqual(self.db.find("pr", "1"), "queued")
 
     def test_unchanged_closed_items_skip_the_snapshot_rebuild(self) -> None:
+        """The stored snapshot's updated_at is the memory, so the skip
+        survives a restart."""
         closed = {**make_pr(2), "state": "closed", "merged": True}
-        memo: dict = {}
-        with mock.patch.object(agent, "_put_snapshot",
-                               return_value=True) as snap:
-            self.scan_with_closed([closed], [], memo=memo)
-            self.scan_with_closed([closed], [], memo=memo)
-            self.assertEqual(
-                sum(1 for c in snap.call_args_list if c.args[3] == "2"), 1)
-            self.scan_with_closed(
-                [dict(closed, updated_at="2026-07-21T00:00:00Z")], [],
-                memo=memo)
-            self.assertEqual(
-                sum(1 for c in snap.call_args_list if c.args[3] == "2"), 2)
+        self.scan_with_closed([closed], [])
+        self.scan_with_closed([closed], [])
+        self.assertEqual(self.thread.call_count, 1)
+        self.scan_with_closed(
+            [dict(closed, updated_at="2026-07-21T00:00:00Z")], [])
+        self.assertEqual(self.thread.call_count, 2)
 
     def test_closed_pulls_fetched_once_for_both_sides(self) -> None:
         issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
@@ -260,11 +256,15 @@ class ScanClosedAgentTests(AgentCase):
         prs.assert_called_once()
         self.assertEqual(issues.call_args.kwargs["closed_pr_numbers"], {4})
 
-    def test_both_listings_start_at_the_newest_snapshotted_update(self) -> None:
+    def test_both_listings_start_at_the_recorded_reach(self) -> None:
+        """A snapshot written outside the listing -- a forced fetch of
+        a closed item -- must not move the bound: only the listing
+        knows what it covered."""
         issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.ns.scan_closed_days = issue_ns.scan_closed_days = 7.0
-        memo = {("pr", "4"): "2026-07-25T00:00:00Z",
-                ("issue", "3"): "2026-07-24T00:00:00Z"}
+        self.db.write(self.db.root / "closed-scan.json", {"reach": "2026-07-25T00:00:00Z"})
+        self.db.push("items", "pr", "9",
+                     {"state": "merged", "updated_at": "2026-07-28T00:00:00Z"})
         with mock.patch.object(fairy, "list_open_prs", return_value=[]), \
                 mock.patch.object(issue_fairy, "list_open_issues",
                                   return_value=[]), \
@@ -278,11 +278,35 @@ class ScanClosedAgentTests(AgentCase):
                     return_value=[entry(5, "2026-07-26T00:00:00Z")]) as prs, \
                 mock.patch.object(issue_fairy, "list_recently_closed_issues",
                                   return_value=[]) as issues:
-            agent.scan_pass(self.db, self.ns, issue_ns, now=NOW,
-                            snapshot_memo=memo)
+            agent.scan_pass(self.db, self.ns, issue_ns, now=NOW)
         newest = datetime(2026, 7, 25, tzinfo=timezone.utc)
         self.assertEqual(prs.call_args.args[1], newest)
         self.assertEqual(issues.call_args.kwargs["newest_seen"], newest)
+
+    def reach(self) -> str | None:
+        return (self.db.read(self.db.root / "closed-scan.json") or {}).get("reach")
+
+    def test_the_listing_records_how_far_it_reached(self) -> None:
+        self.scan_with_closed([entry(2, "2026-07-25T00:00:00Z"),
+                               entry(3, "2026-07-23T00:00:00Z")], [])
+        self.assertEqual(self.reach(), "2026-07-25T00:00:00+00:00")
+
+    def test_a_failed_snapshot_caps_the_reach_so_it_is_listed_again(self) -> None:
+        with mock.patch.object(agent, "_put_snapshot",
+                               side_effect=lambda db, ns, kind, token, *a:
+                               token != "3"):
+            self.scan_with_closed([entry(2, "2026-07-25T00:00:00Z"),
+                                   entry(3, "2026-07-23T00:00:00Z"),
+                                   entry(4, "2026-07-22T00:00:00Z")], [])
+        self.assertEqual(self.reach(), "2026-07-23T00:00:00+00:00")
+
+    def test_a_failed_listing_leaves_the_reach_alone(self) -> None:
+        self.db.write(self.db.root / "closed-scan.json", {"reach": "2026-07-20T00:00:00Z"})
+        self.ns.scan_closed_days = 7.0
+        with mock.patch.object(fairy, "list_recently_closed_prs",
+                               side_effect=RuntimeError("502")):
+            self.scan([])
+        self.assertEqual(self.reach(), "2026-07-20T00:00:00Z")
 
     def test_closure_still_cancels_a_scanned_closed_tickets_verdict(self) -> None:
         self.db.push("reviewed", "pr", "2", verdict_ticket(2))

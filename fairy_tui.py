@@ -1719,7 +1719,7 @@ class UILoop:
                             exc: Exception) -> list[tui_core.StyledLine]:
         """The failure as error lines for the pane; logged when it is
         new for the key, since the retry every few seconds repeats it
-        until the operator fetches what is missing."""
+        until the agent's next scan fetches what is missing."""
         if self._diff_failures.get(cache_key) != str(exc):
             self._diff_failures[cache_key] = str(exc)
             logger.error("%s", exc)
@@ -1734,7 +1734,7 @@ class UILoop:
         message and logs panes each keep an entry, so the cache holds
         a few). A git failure is cached only briefly: it usually means
         the head is not fetched yet, and the view must recover once
-        the operator fetches the mirror."""
+        the agent's next scan fetches the mirror."""
         base_sha = (snapshot or {}).get("base_sha")
         head_sha = (snapshot or {}).get("head_sha")
         cache_key = (item.repo, item.number, mode, base_sha, head_sha)
@@ -1770,8 +1770,6 @@ class UILoop:
             except RuntimeError as exc:
                 retry_at = time.monotonic() + 5
                 body = self._diff_failure_lines(cache_key, exc)
-                body.append([("label", "if the head is not fetched yet: "
-                                       f"git -C {repo} fetch --all")])
         return self._diff_cache_put(
             cache_key, tui_core.Chain([caption, []], body, tail), retry_at)
 

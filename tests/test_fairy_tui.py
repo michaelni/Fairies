@@ -1750,7 +1750,7 @@ class DiffViewTests(DbCase):
         self.assertIn("send blocked:", text)
         self.assertIn("(empty diff)", text)
 
-    def test_a_failed_git_call_shows_the_error_and_a_fetch_hint(self) -> None:
+    def test_a_failed_git_call_shows_the_error(self) -> None:
         self.push_pr()
         ui = make_ui(self.model)
         ui.patch_repos = {R1: Path("mirror")}
@@ -1760,9 +1760,8 @@ class DiffViewTests(DbCase):
                 side_effect=RuntimeError("git log b1..h5 failed")):
             text = self.detail_text(ui)
         self.assertIn("git log b1..h5 failed", text)
-        self.assertIn("fetch", text)
 
-    def test_a_git_failure_is_retried_once_the_operator_can_have_fetched(
+    def test_a_git_failure_is_retried_once_the_agent_can_have_fetched(
             self) -> None:
         self.push_pr()
         ui = make_ui(self.model)

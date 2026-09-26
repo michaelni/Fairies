@@ -55,8 +55,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import agent  # noqa: E402
 import gcli_cache  # noqa: E402
 import fairy  # noqa: E402
+import forge_gcli  # noqa: E402
 
 SELF = "Forgejo_Fairy"
 
@@ -128,11 +130,11 @@ class StaleApprovalRereviewTests(unittest.TestCase):
         )
 
     def test_stale_approval_is_reconsidered(self) -> None:
-        # The CI-status fetch lies just past the already-approved gate;
+        # The min-age lookup lies just past the already-approved gate;
         # reaching it proves the stale approval no longer skips the PR.
         with patch.object(
-            fairy, "list_commit_statuses", side_effect=_PastGate(),
-        ):
+            fairy, "effective_min_age_days", side_effect=_PastGate(),
+        ), patch.object(fairy, "list_commit_statuses", return_value=[]):
             with self.assertRaises(_PastGate):
                 _call(REVIEW)
 
@@ -140,10 +142,60 @@ class StaleApprovalRereviewTests(unittest.TestCase):
         # Same review before the force-pushes (stale not yet set).
         with patch.object(
             fairy, "get_auto_merge_info", return_value="-",
-        ):
+        ), patch.object(fairy, "list_commit_statuses", return_value=[]):
             decision = _call({**REVIEW, "stale": False})
         self.assertEqual(decision.action, "skip")
         self.assertEqual(decision.reason, f"already approved by {SELF}")
+
+
+class ApprovedPrCiTests(unittest.TestCase):
+    """An approved PR whose CI waits for a human is not merge-ready.
+
+    The rows are status rows of FFmpeg #24731, which fairy approved on
+    request while the forge held its CI for a maintainer's release.
+    """
+
+    LINT = "Lint / Pre-Commit (pull_request)"
+    FATE = "Test / Fate (linux-amd64, static, 32 bit) (pull_request)"
+    PASSED = [
+        {"id": 21, "status": "success", "description": "Successful in 10s",
+         "target_url": "/FFmpeg/FFmpeg/actions/runs/89916/jobs/0",
+         "context": "Autolabel / Labeler (pull_request_target)",
+         "created_at": "2026-09-26T22:46:53Z", "updated_at": "2026-09-26T22:46:53Z"},
+        {"id": 13, "status": "skipped", "description": "Has been skipped",
+         "target_url": "/FFmpeg/FFmpeg/actions/runs/89902/jobs/0",
+         "context": "Backport / PR (pull_request_target)",
+         "created_at": "2026-09-26T21:38:20Z", "updated_at": "2026-09-26T21:38:20Z"},
+    ]
+    HELD = [
+        {"id": 2, "status": "pending", "description": "Blocked by required conditions",
+         "target_url": "/FFmpeg/FFmpeg/actions/runs/89899/jobs/0",
+         "context": LINT,
+         "created_at": "2026-09-26T21:38:12Z", "updated_at": "2026-09-26T21:38:12Z"},
+        {"id": 3, "status": "pending", "description": "Blocked by required conditions",
+         "target_url": "/FFmpeg/FFmpeg/actions/runs/89900/jobs/0",
+         "context": FATE,
+         "created_at": "2026-09-26T21:38:12Z", "updated_at": "2026-09-26T21:38:12Z"},
+    ]
+
+    def decide(self, wire: list[dict]) -> fairy.Decision:
+        with patch.object(
+            fairy, "get_auto_merge_info", return_value="-",
+        ), patch.object(
+            fairy, "list_commit_statuses",
+            return_value=[forge_gcli._project_status_row(r) for r in wire],
+        ):
+            return _call({**REVIEW, "stale": False})
+
+    def test_ci_held_for_a_human_is_ci_blocked(self) -> None:
+        decision = self.decide(self.PASSED + self.HELD)
+        self.assertFalse(decision.merge_ready)
+        self.assertEqual(decision.blocked_ci_contexts, (self.LINT, self.FATE))
+        self.assertEqual(agent.gate_state(decision), "ci-blocked")
+
+    def test_passed_ci_is_merge_ready(self) -> None:
+        decision = self.decide(self.PASSED)
+        self.assertEqual(agent.gate_state(decision), "merge-ready")
 
 
 class StaleExternalApprovalTests(unittest.TestCase):

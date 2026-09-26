@@ -122,8 +122,8 @@ Columns 1–3 mirror the issue's `bug`/`regression`/`enhancement`,
 **Lenses** (`a` cycles): `relevant` (default — everything except
 settled rows you never interacted with), `review` (the y-session:
 reviewed plus queued/llm/outgoing on their way in and out, and
-ci-blocked rows whose CI run waits for you to release it in the forge
-before the review can run), `merge`, `ci`, `actionable`, `all`. A
+ci-blocked rows whose CI run waits for you to release it in the
+forge), `merge`, `ci`, `actionable`, `all`. A
 verdict the agent posted on its own (`--auto-mode`,
 `--vetted-auto-mode`) stays in `relevant` and `review` as a `posted`
 row until you acknowledge it with `y` or `s`.

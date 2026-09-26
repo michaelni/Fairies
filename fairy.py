@@ -256,11 +256,12 @@ class Decision:
     cancelled_ci_contexts: tuple[str, ...] = ()
     blocked_ci_contexts: tuple[str, ...] = ()
     # True iff this PR has already been approved by fairy and is
-    # neither queued for auto-merge nor blocked by conflicts -- i.e.
-    # all fairy can do is wait for a human to click "Merge". The
-    # end-of-run summary lists these as a reminder. ``pr.mergeable``
-    # is implicitly True because the upstream conflicts gate would
-    # otherwise have skipped the PR before we got here.
+    # neither queued for auto-merge, blocked by conflicts nor held by
+    # CI that waits for a human -- i.e. all fairy can do is wait for a
+    # human to click "Merge". The end-of-run summary lists these as a
+    # reminder. ``pr.mergeable`` is implicitly True because the upstream
+    # conflicts gate would otherwise have skipped the PR before we got
+    # here.
     merge_ready: bool = False
     # Non-bot reviewers whose latest review is APPROVED, when no one
     # has CHANGES_REQUESTED outstanding and auto-merge is not queued.
@@ -2969,24 +2970,26 @@ def prepare_pr(
         )
         return skip(f"outstanding change requests from: {', '.join(blockers)}", last_activity_value=last_activity)
 
+    head_ref = get_pr_head_ref(pr)
+    if not head_ref:
+        return skip("cannot determine PR head commit", last_activity_value=last_activity)
+
     if self_login and not args.include_self_approved:
         self_state = states.get(self_login)
         if self_state and self_state.state == "APPROVED" and not self_state.stale:
-            # Bot has already approved this PR. If auto-merge is not
-            # scheduled, surface it in the end-of-run "needs merging"
-            # reminder so an operator can hit the merge button. We do
-            # not re-verify CI is still green -- fairy only approves
-            # green CI, and any subsequent CI flip is already surfaced
-            # by the cancelled/blocked summary on its own next run.
-            #
             # A stale approval (code pushed after it; the forge no longer
             # counts it) deliberately falls through so the PR is
             # reconsidered for review (regression: FFmpeg #20148 sat
             # skipped forever after force-pushes voided the approval).
+            cancelled_ctxs, blocked_ctxs = _contexts_needing_a_human(
+                number, list_commit_statuses(args, head_ref))
             return skip(
                 f"already approved by {self_login}",
                 last_activity_value=last_activity,
-                merge_ready=get_auto_merge() != "merge",
+                cancelled_ci_contexts=cancelled_ctxs,
+                blocked_ci_contexts=blocked_ctxs,
+                merge_ready=not (cancelled_ctxs or blocked_ctxs)
+                and get_auto_merge() != "merge",
                 approved_at=self_state.when,
             )
 
@@ -3018,10 +3021,6 @@ def prepare_pr(
     # pattern would serve stale CI -- and per CONTRIBUTING.md a cache
     # that can lie is worse than no cache. A pure-TTL cache is also
     # off the table for the same reason.
-    head_ref = get_pr_head_ref(pr)
-    if not head_ref:
-        return skip("cannot determine PR head commit", last_activity_value=last_activity)
-
     raw_status_list = list_commit_statuses(args, head_ref)
     # ``CANCELLED`` and ``BLOCKED`` are surfaced separately for the
     # operator-facing summary at end-of-run: Forgejo's HTTP API offers

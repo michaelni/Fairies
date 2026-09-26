@@ -242,8 +242,8 @@ _FILTER_STATES = {
     # queued/llm rows are not reviewable yet, but they are on their way,
     # and a y-approved row stays as outgoing/ until the send: the review
     # lens shows the whole y-session, its near future and its aftermath.
-    # A ci-blocked row is a review that cannot start until the operator
-    # releases the CI run in the forge, so it needs their eye as well
+    # A ci-blocked row waits for the operator to release its CI run in
+    # the forge, so it needs their eye as well
     "review": ("reviewed", INVALID, "llm", "queued", "outgoing", "ci-blocked"),
     "merge": ("merge-ready", "awaiting-approver"),
     "ci": ("ci-blocked",),

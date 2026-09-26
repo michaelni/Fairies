@@ -1283,7 +1283,8 @@ def main() -> int:
         if time.monotonic() < next_scan:
             return False
         next_scan = time.monotonic() + args.loop
-        if time.monotonic() < next_full and not forge_moved(sides, newest):
+        if args.loop and not forge_moved(sides, newest) \
+                and time.monotonic() < next_full:
             return False
         next_full = time.monotonic() + FULL_PASS_S
         return True

@@ -1794,15 +1794,35 @@ class LoopTests(unittest.TestCase):
             self.run_main("--loop 0.01", [None], wait=wait,
                           newest=["same"] * 9)
         self.assertEqual(len(self.calls), 1)
-        self.assertEqual(self.newest.call_count, 3)
+        self.assertEqual(self.newest.call_count, 4)
         self.assertEqual(self.send_pass.call_count, 3)
 
-    def test_a_full_pass_runs_hourly_without_probing(self) -> None:
+    def test_a_full_pass_runs_hourly_on_an_unmoved_forge(self) -> None:
         with mock.patch.object(agent, "FULL_PASS_S", 0.0), \
                 self.assertRaises(_StopLoop):
             self.run_main("--loop 0.01", [None, None, _StopLoop()],
-                          newest=AssertionError("probed"))
+                          newest=["same"] * 9)
         self.assertEqual(len(self.calls), 3)
+
+    def test_a_change_during_the_first_pass_is_rescanned(self) -> None:
+        """The stamps must describe the forge as the first pass listed
+        it: recorded only at the next probe, an update made in between
+        would be part of the baseline and never trigger a rescan."""
+        import time
+        forge = {"stamp": "p1"}
+        waits = []
+
+        def wait(timeout=None):
+            waits.append(timeout)
+            forge["stamp"] = "p2"
+            if len(waits) == 3:
+                raise _StopLoop()
+            time.sleep(timeout)
+
+        with self.assertRaises(_StopLoop):
+            self.run_main("--loop 0.01", [None], wait=wait,
+                          newest=lambda ns, kind: forge["stamp"])
+        self.assertEqual(len(self.calls), 2)
 
     def test_forge_moved_records_first_then_compares_per_side(self) -> None:
         sides = {"pr": fairy.parse_args(["--owner", "o", "--repo", "r"]),

@@ -822,7 +822,7 @@ as "after our last reply" for the purpose of the criteria below.
 
 The prior discussion is a chronological list whose ``kind`` field tells
 you what each item is: ``comment``, ``review``, ``review_comment``,
-``push``, ``review_request`` or ``state``. A ``push`` item is a real push to the
+``push``, ``review_request``, ``cross_reference`` or ``state``. A ``push`` item is a real push to the
 PR head branch (the author or a maintainer landed new commits) and
 carries ``head_sha`` and ``is_force_push``. A ``push`` item whose
 timestamp is newer than our last reply/review means the author has
@@ -830,7 +830,8 @@ pushed new code. A ``review_request`` item records ``author`` asking
 ``reviewer`` for a review (withdrawn when ``removed`` is true) -- a
 request naming the current reviewer identity is a direct invitation.
 A ``state`` item records ``author`` closing, reopening or merging the
-pull request.
+pull request. A ``cross_reference`` item records ``author`` mentioning
+this item from issue or pull request ``number`` (``title``).
 A ``review`` item with an empty body is a bare verdict click; its
 ``state`` still counts.
 

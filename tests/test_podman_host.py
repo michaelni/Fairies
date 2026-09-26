@@ -399,6 +399,7 @@ class StartStopContainerTests(unittest.TestCase):
                       "--memory=2g", "--cpus=1",
                       f"--pids-limit={lc.CONTAINER_PIDS_LIMIT}",
                       "--security-opt=no-new-privileges",
+                      "--stop-timeout=0",
                       "fairy:latest sleep infinity"):
             self.assertIn(token, remote)
         # No `-w`: the image's WORKDIR sets the cwd; podman 4.9.3 rejects

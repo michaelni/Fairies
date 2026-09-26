@@ -688,7 +688,10 @@ def start_ephemeral_container(
     """Start a fresh container that lives only for one review.
 
     The container runs ``sleep infinity`` as PID 1; the LLM's commands
-    are issued through a ``ContainerShellSession``. ``--rm`` ensures the
+    are issued through a ``ContainerShellSession``. PID 1 without a
+    SIGTERM handler never receives podman's stop signal
+    (https://man7.org/linux/man-pages/man7/pid_namespaces.7.html), so
+    ``--stop-timeout=0`` kills it without waiting. ``--rm`` ensures the
     container is removed when stopped (or when the host process dies), so
     leftover state cannot be reused across reviews -- per the "no reuse"
     requirement.
@@ -715,6 +718,7 @@ def start_ephemeral_container(
         # through a setuid binary. Reviews never need this (the image ships
         # no sudo and apt runs as the container's own root).
         "--security-opt=no-new-privileges",
+        "--stop-timeout=0",
         *extra_args,
         image, "sleep", "infinity",
     ]

@@ -256,6 +256,7 @@ class Decision:
     # tuple for all other PRs.
     cancelled_ci_contexts: tuple[str, ...] = ()
     blocked_ci_contexts: tuple[str, ...] = ()
+    ci_pending: bool = False
     # True iff this PR has already been approved by fairy and is
     # neither queued for auto-merge, blocked by conflicts nor held by
     # CI that waits for a human -- i.e. all fairy can do is wait for a
@@ -1351,6 +1352,13 @@ def effective_commit_statuses(statuses: list[ApiObject]) -> dict[str, tuple[str,
         when = first_dt(status, "updated_at", "created_at")
         result[context] = (state, when)
     return result
+
+
+def has_pending_ci(statuses: list[ApiObject]) -> bool:
+    """Whether a context's latest state is PENDING: a job queued or
+    running, whose outcome is still to come."""
+    return any(state == "PENDING"
+               for state, _ in effective_commit_statuses(statuses).values())
 
 
 # Commit contexts whose latest state is one of these enter the
@@ -2733,6 +2741,7 @@ def prepare_pr(
         last_activity_value: datetime | None,
         cancelled_ci_contexts: tuple[str, ...] = (),
         blocked_ci_contexts: tuple[str, ...] = (),
+        ci_pending: bool = False,
         merge_ready: bool = False,
         approved_at: datetime | None = None,
     ) -> Decision:
@@ -2752,6 +2761,7 @@ def prepare_pr(
             last_activity_value,
             cancelled_ci_contexts=cancelled_ci_contexts,
             blocked_ci_contexts=blocked_ci_contexts,
+            ci_pending=ci_pending,
             merge_ready=merge_ready,
             external_approvers=external_approvers,
             approved_at=approved_at,
@@ -2990,13 +3000,14 @@ def prepare_pr(
             # counts it) deliberately falls through so the PR is
             # reconsidered for review (regression: FFmpeg #20148 sat
             # skipped forever after force-pushes voided the approval).
-            cancelled_ctxs, blocked_ctxs = _contexts_needing_a_human(
-                number, list_commit_statuses(args, head_ref))
+            statuses = list_commit_statuses(args, head_ref)
+            cancelled_ctxs, blocked_ctxs = _contexts_needing_a_human(number, statuses)
             return skip(
                 f"already approved by {self_login}",
                 last_activity_value=last_activity,
                 cancelled_ci_contexts=cancelled_ctxs,
                 blocked_ci_contexts=blocked_ctxs,
+                ci_pending=has_pending_ci(statuses),
                 merge_ready=not (cancelled_ctxs or blocked_ctxs)
                 and get_auto_merge() != "merge",
                 approved_at=self_state.when,
@@ -3034,6 +3045,7 @@ def prepare_pr(
     # the one repo-wide listing that does tell when CI moved.
     raw_status_list = list_commit_statuses(args, head_ref)
     cancelled_ctxs, blocked_ctxs = _contexts_needing_a_human(number, raw_status_list)
+    pending = has_pending_ci(raw_status_list)
 
     last_self_nonapproval = get_last_self_nonapproval_activity(reviews, comments, review_comments, self_login)
     if last_self_nonapproval is not None and last_activity <= last_self_nonapproval:
@@ -3042,6 +3054,7 @@ def prepare_pr(
             last_activity_value=last_activity,
             cancelled_ci_contexts=cancelled_ctxs,
             blocked_ci_contexts=blocked_ctxs,
+            ci_pending=pending,
         )
 
     commit_statuses = effective_commit_statuses(raw_status_list)
@@ -3084,6 +3097,7 @@ def prepare_pr(
                 last_activity_value=last_activity,
                 cancelled_ci_contexts=cancelled_ctxs,
                 blocked_ci_contexts=blocked_ctxs,
+                ci_pending=pending,
             )
         if not args.llm_review_cmd:
             # Red CI is reviewable only through the LLM pipeline: with no
@@ -3094,6 +3108,7 @@ def prepare_pr(
                 last_activity_value=last_activity,
                 cancelled_ci_contexts=cancelled_ctxs,
                 blocked_ci_contexts=blocked_ctxs,
+                ci_pending=pending,
             )
         ci_payload = build_ci_triage_payload(
             get_pr_head_ref(pr) or "", failure_details

@@ -129,6 +129,30 @@ class RedCiRoutingTests(PrepareCase):
         self.assertIn("CI red", prepared.base_reason)
 
 
+PENDING_CI = [{"context": "/ build", "state": "pending",
+               "created_at": OLD, "updated_at": OLD}]
+
+
+class PendingCiTests(PrepareCase):
+    """A gate decision says whether the head's CI was still running, so
+    the agent can look again when it finishes instead of hourly."""
+
+    def test_a_running_job_marks_the_skip_pending(self) -> None:
+        decision = self.prepare("", statuses=PENDING_CI)
+        self.assertEqual(decision.reason, "CI not successful: / build")
+        self.assertTrue(decision.ci_pending)
+
+    def test_settled_ci_is_not_pending(self) -> None:
+        self.assertFalse(self.prepare("", statuses=GREEN_CI).ci_pending)
+
+    def test_the_already_approved_gate_reports_pending_too(self) -> None:
+        approval = {**APPROVAL, "user": {"login": "fairy"}}
+        decision = self.prepare("", statuses=PENDING_CI, reviews=[approval],
+                                self_login="fairy")
+        self.assertEqual(decision.reason, "already approved by fairy")
+        self.assertTrue(decision.ci_pending)
+
+
 class MissingCiGateTests(PrepareCase):
     """An empty commit-status list stops only a run without a reviewer
     command; an LLM review proceeds without CI evidence.

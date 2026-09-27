@@ -235,6 +235,12 @@ class TicketRoutingTests(AgentCase):
         self.assertEqual(self.db.get("skipped", "pr", "2")["unacknowledged_post_at"],
                          "2026-07-24T10:00:00+00:00")
 
+    def test_a_gate_ticket_says_whether_ci_was_pending(self) -> None:
+        self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(
+            pr, "CI not successful: build", ci_pending=True)
+        self.scan([make_pr(1)])
+        self.assertTrue(self.db.get("skipped", "pr", "1")["ci_pending"])
+
     def test_gate_skip_refreshes_the_archived_activity_stamp(self) -> None:
         self.db.push("posted", "pr", "1",
                      {"last_activity_iso": "2026-07-17T21:32:47+00:00"})

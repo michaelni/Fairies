@@ -107,6 +107,11 @@ class VetterRoleTests(unittest.TestCase):
 
 
 class VetterPromptTests(unittest.TestCase):
+    def test_the_critical_bug_hold_is_only_for_pull_requests(self) -> None:
+        bullet = "identified a previously unidentified critical bug"
+        self.assertIn(bullet, _prompt("vetter"))
+        self.assertNotIn(bullet, _prompt("issue_vetter"))
+
     def test_reason_self_check_matches_the_reason_instruction(self) -> None:
         for role in ("vetter", "issue_vetter"):
             text = _prompt(role)

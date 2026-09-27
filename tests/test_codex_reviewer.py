@@ -182,6 +182,7 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("--sandbox danger-full-access", joined)
         self.assertIn("features.shell_tool=false", cmd)
         self.assertIn("features.unified_exec=false", cmd)
+        self.assertIn("features.apps=false", cmd)
         self.assertIn("analytics.enabled=false", cmd)
         self.assertIn('web_search="cached"', cmd)
         self.assertIn("--skip-git-repo-check", cmd)

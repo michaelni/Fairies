@@ -182,6 +182,7 @@ def build_codex_exec_command(
         "--model", model,
         "-c", "features.shell_tool=false",
         "-c", "features.unified_exec=false",
+        "-c", "features.apps=false",
         "-c", f'web_search="{web_search}"',
         "-c", "analytics.enabled=false",
     ]

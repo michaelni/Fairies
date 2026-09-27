@@ -1625,6 +1625,8 @@ def main() -> int:
 
     uploaded_file_ids: list[str] = []
     try:
+        for host in {m.host for m in machines} | {s.host for s in [args.codex_host] if s}:
+            podman_host.reap_orphaned_containers(host)
         if args.podman:
             if not repo_roots:
                 raise RuntimeError(

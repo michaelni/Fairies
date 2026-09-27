@@ -476,6 +476,7 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
             mock.patch.object(wrapper, "open_review_container_shell",
                               return_value=(handle, session, "")),
             mock.patch.object(wrapper.podman_host, "stop_container", stopped.append),
+            mock.patch.object(wrapper.podman_host, "reap_orphaned_containers") as reap,
             mock.patch.object(
                 wrapper.sys, "argv",
                 ["pr_review_wrapper.py", "--model", "openai:gpt-5.4",
@@ -489,6 +490,7 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
 
         session.close.assert_called_once_with()
         self.assertEqual([handle], stopped)
+        reap.assert_called_once_with(wrapper.podman_host.RemoteHost("fairy@h"))
 
     @staticmethod
     def _open_review(spec, repo_specs, args, session_commands=()):
@@ -609,6 +611,7 @@ class CodexOnlyNoOpenAIKeyTests(unittest.TestCase):
             mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
             mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
             mock.patch.object(wrapper, "review_pr", side_effect=stub_review),
+            mock.patch.object(wrapper.podman_host, "reap_orphaned_containers") as reap,
             mock.patch.object(
                 wrapper.sys, "argv",
                 ["pr_review_wrapper.py", "--model", "codex:gpt-5",
@@ -625,6 +628,7 @@ class CodexOnlyNoOpenAIKeyTests(unittest.TestCase):
         load_key.assert_not_called()
         openai_ctor.assert_not_called()
         upload.assert_not_called()
+        reap.assert_called_once_with(wrapper.podman_host.RemoteHost("fairy@codexbox"))
 
 
 class CodexHostValidationTests(unittest.TestCase):

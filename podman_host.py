@@ -59,6 +59,7 @@ host, and keeps the podman REST API off the local box entirely.
 from __future__ import annotations
 
 import base64
+import fcntl
 import json
 import logging
 import math
@@ -68,11 +69,12 @@ import shlex
 import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import IO, Sequence
 
-from common import tagged_thread_name
+from common import default_cache_path, tagged_thread_name
 
 logger = logging.getLogger(__name__)
 
@@ -630,6 +632,9 @@ _state_lock = threading.Lock()
 _running: dict[str, tuple[ContainerHandle, list[subprocess.Popen]]] = {}
 _paused: set[str] = set()
 _frozen = False
+_OWNER_LABEL = "fairy.owner"
+_owner_token = uuid.uuid4().hex
+_owner_locks: dict[Path, IO[str]] = {}
 
 
 @dataclass(frozen=True)
@@ -701,9 +706,9 @@ def start_ephemeral_container(
     SIGTERM handler never receives podman's stop signal
     (https://man7.org/linux/man-pages/man7/pid_namespaces.7.html), so
     ``--stop-timeout=0`` kills it without waiting. ``--rm`` ensures the
-    container is removed when stopped (or when the host process dies), so
-    leftover state cannot be reused across reviews -- per the "no reuse"
-    requirement.
+    container is removed when stopped, and :func:`reap_orphaned_containers`
+    removes it should this process end first, so leftover state cannot be
+    reused across reviews -- per the "no reuse" requirement.
 
     ``network`` is the podman network to attach. Pass ``None`` or ``""``
     to omit ``--network`` entirely and use podman's default (rootless
@@ -717,8 +722,10 @@ def start_ephemeral_container(
     even though it exists and ``podman exec -w`` resolves it fine -- so
     the flag would only break startup without buying anything.
     """
+    _hold_owner_lock(host)
     args = [
         "run", "-d", "--rm",
+        f"--label={_OWNER_LABEL}={_owner_token}",
         *([f"--network={network}"] if network else []),
         f"--memory={memory}",
         f"--cpus={cpus}",
@@ -769,6 +776,60 @@ def _reap(host: RemoteHost, container_ids: list[str], what: str) -> bool:
     logger.info("reaped %d %s on %s: %s", len(container_ids), what,
                 host.ssh_dest, container_ids)
     return True
+
+
+def _owner_dir(host: RemoteHost) -> Path:
+    return default_cache_path("container-owners") / f"{host.ssh_dest}_{host.port}"
+
+
+def _hold_owner_lock(host: RemoteHost) -> None:
+    """Mark this process as the live owner of its containers on ``host``
+    until it ends, however it ends: the kernel drops an flock with its
+    holder. The file is locked before it is renamed into view, so a
+    reaper never sees it unlocked while this process lives."""
+    directory = _owner_dir(host)
+    with _state_lock:
+        if directory in _owner_locks:
+            return
+        directory.mkdir(parents=True, exist_ok=True)
+        staging = directory / f".{_owner_token}"
+        lock = open(staging, "w")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        staging.rename(directory / _owner_token)
+        _owner_locks[directory] = lock
+
+
+def reap_orphaned_containers(host: RemoteHost) -> None:
+    """Remove the containers on ``host`` whose owner, a process on this
+    machine, has ended without removing them; paused ones stay for
+    inspection. Containers owned from other machines are left alone."""
+    directory = _owner_dir(host)
+    for owner_file in directory.glob("[!.]*") if directory.is_dir() else ():
+        try:
+            lock = open(owner_file)
+        except FileNotFoundError:
+            continue
+        with lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            listed = _podman(host, "ps", "-a", "--filter",
+                             f"label={_OWNER_LABEL}={owner_file.name}",
+                             "--format", "{{.ID}} {{.State}}")
+            if listed.returncode != 0:
+                logger.warning("reap: listing the containers of %s on %s failed: %s",
+                               owner_file.name, host.ssh_dest, listed.stderr_text)
+                continue
+            orphans = []
+            for line in listed.stdout.decode(errors="replace").splitlines():
+                container_id, _, state = line.partition(" ")
+                if state != "paused":
+                    orphans.append(container_id)
+            if orphans and not _reap(
+                    host, orphans, f"container(s) of ended owner {owner_file.name}"):
+                continue
+            owner_file.unlink(missing_ok=True)
 
 
 def reap_stale_containers(

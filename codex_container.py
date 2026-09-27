@@ -87,7 +87,7 @@ class CodexContainer:
     ``put_file`` / ``put_text`` copy inputs in, ``run`` execs a command
     with the prompt on stdin, ``kill_run`` interrupts it from another
     thread, ``read_file`` retrieves an output file, and ``stop`` removes
-    it. ``--rm`` means a crash cannot leak the container.
+    it. A crash leaves it to ``reap_orphaned_containers``.
     """
 
     def __init__(

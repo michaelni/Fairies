@@ -44,6 +44,7 @@ import io
 import math
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -386,11 +387,15 @@ class ImageLabelTests(unittest.TestCase):
 
 class ContainerStateHarness:
     """Gives each test its own copy of podman_host's process-wide record
-    of the containers it started."""
+    of the containers it started, and its own owner files."""
 
     def setUp(self) -> None:
+        cache = tempfile.TemporaryDirectory()
+        self.addCleanup(cache.cleanup)
+        self.cache_dir = Path(cache.name)
         for name, value in (("_running", {}), ("_paused", set()),
-                            ("_frozen", False)):
+                            ("_frozen", False), ("_owner_locks", {}),
+                            ("default_cache_path", self.cache_dir.joinpath)):
             patcher = mock.patch.object(lc, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -504,6 +509,42 @@ class PauseContainerTests(ContainerStateHarness, unittest.TestCase):
         lc.start_ephemeral_container(image="i", host=HOST)
         self.assertEqual([("pause", "cid1"), ("pause", "cid3")],
                          [call for call in podman_calls if call[0] == "pause"])
+
+
+class OrphanReaperTests(ContainerStateHarness, unittest.TestCase):
+    def _owner_file(self, token: str) -> Path:
+        owners = self.cache_dir / "container-owners" / "fairy@h_None"
+        owners.mkdir(parents=True, exist_ok=True)
+        (owners / token).touch()
+        return owners / token
+
+    def test_start_labels_the_container_with_this_process_as_live_owner(self) -> None:
+        with mock.patch.object(lc.subprocess, "run") as run:
+            run.return_value = _completed(0, stdout=b"cid1\n")
+            lc.start_ephemeral_container(image="i", host=HOST)
+        self.assertIn(f"--label=fairy.owner={lc._owner_token}", run.call_args.args[0][-1])
+        with open(self._owner_file(lc._owner_token)) as owner:
+            with self.assertRaises(BlockingIOError):
+                lc.fcntl.flock(owner, lc.fcntl.LOCK_EX | lc.fcntl.LOCK_NB)
+
+    def test_reap_removes_the_unpaused_containers_of_ended_owners_only(self) -> None:
+        ended = self._owner_file("ended")
+        live = self._owner_file("live")
+        with open(live) as live_lock:
+            lc.fcntl.flock(live_lock, lc.fcntl.LOCK_EX)
+            with mock.patch.object(lc.subprocess, "run") as run:
+                run.side_effect = [
+                    _completed(0, stdout=b"9a08d25162b4 running\n556afeed22c3 paused\n"),
+                    _completed(0),
+                ]
+                lc.reap_orphaned_containers(HOST)
+        self.assertEqual(
+            [_ssh("podman ps -a --filter label=fairy.owner=ended --format "
+                  "'{{.ID}} {{.State}}'"),
+             _ssh("podman rm -f 9a08d25162b4")],
+            [c.args[0] for c in run.call_args_list])
+        self.assertFalse(ended.exists())
+        self.assertTrue(live.exists())
 
 
 class CopyAndOpenShellTests(unittest.TestCase):

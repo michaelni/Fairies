@@ -69,6 +69,7 @@ from threading import Event
 from collections.abc import Callable
 from dataclasses import replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from pathlib import Path
 
 import ci_log
@@ -296,15 +297,17 @@ def _route(db: filedb.Db, kind: str, number: filedb.TicketId, state: str,
 
 
 def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str,
-              items: list[dict], *, now: datetime, cache, self_login,
+              items: list[dict], *, now: datetime, cache,
+              self_login: Callable[[], str | None],
               forced: set[filedb.TicketId], refetch: set[int] = frozenset(),
               serve_operator: Callable[[], None] = lambda: None,
               ) -> set[tuple[str, int]]:
     """One gate pass over ``items``, the side's open listing, plus the
     forced numbers and the ``refetch`` numbers not among them, fetched
-    one by one; returns the open set. ``serve_operator`` runs before
-    every item, so a y or r pressed during the pass is answered
-    without waiting for its end."""
+    one by one; returns the open set. ``self_login`` is asked for the
+    agent's login only when there is something to gate.
+    ``serve_operator`` runs before every item, so a y or r pressed
+    during the pass is answered without waiting for its end."""
     if kind == "pr":
         fetch_one, forced_ns = fairy.get_pr, ns.force_review_prs
         wip_re = fairy.compile_wip_regex(
@@ -353,7 +356,8 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str,
     limit = int(getattr(ns, "limit", 0) or 0)
     try:
         _scan_items(db, ns, kind, items, now=now, cache=cache,
-                    self_login=self_login, forced_ns=forced_ns,
+                    self_login=self_login() if items else None,
+                    forced_ns=forced_ns,
                     wip_re=wip_re if kind == "pr" else None,
                     cache_age=cache_age, limit=limit, evals=evals,
                     template_only=template_only,
@@ -795,7 +799,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                 served[kind] |= late
                 open_set.update(scan_side(
                     db, ns, kind, [], now=now, cache=caches[kind],
-                    self_login=login(kind), forced=late,
+                    self_login=partial(login, kind), forced=late,
                     serve_operator=serve_outgoing))
                 finish_requests(db, {kind: late}, {kind})
         for kind, ns in sides.items():
@@ -807,7 +811,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
             if ns.forced_only:
                 open_set |= scan_side(
                     db, ns, kind, [], now=now, cache=caches[kind],
-                    self_login=login(kind), forced=pending,
+                    self_login=partial(login, kind), forced=pending,
                     serve_operator=serve_operator)
                 continue
             full_side = full or not stamps.get(kind)
@@ -842,7 +846,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                 int(i["number"]) for i in items + closed}
             open_set |= scan_side(
                 db, ns, kind, items, now=now, cache=caches[kind],
-                self_login=login(kind), forced=pending, refetch=refetch,
+                self_login=partial(login, kind), forced=pending, refetch=refetch,
                 serve_operator=serve_operator)
             failed = snapshot_closed(db, ns, kind, closed, caches[kind],
                                      serve_operator) \

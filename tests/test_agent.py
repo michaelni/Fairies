@@ -114,7 +114,8 @@ class AgentCase(unittest.TestCase):
                 mock.patch.object(fairy, "get_pr",
                                   side_effect=fetch or (lambda ns, n: make_pr(n))), \
                 mock.patch.object(fairy, "safe_prepare_pr", self.prepare), \
-                mock.patch.object(forge_gcli, "self_login", return_value="fairy"), \
+                mock.patch.object(forge_gcli, "self_login",
+                                  return_value="fairy") as self.login, \
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):
@@ -1966,6 +1967,7 @@ class IncrementalScanTests(AgentCase):
         self.scan([make_pr(1)], full=False, changed=[dict(make_pr(1), updated_at=self.OLD)])
         self.since.assert_called_once()
         self.prepare.assert_not_called()
+        self.login.assert_not_called()
         self.assertEqual(self.stamps(), {"pr": self.OLD})
 
     def test_an_incremental_pass_gates_only_what_moved(self) -> None:
@@ -2059,6 +2061,13 @@ class IncrementalScanTests(AgentCase):
         self.scan([make_pr(3), make_pr(4)], full=False, probe=self.OLD)
         self.assertEqual([c.args[1]["number"] for c in self.prepare.call_args_list],
                          [3])
+
+    def test_a_configured_forced_number_is_gated_with_the_login(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.ns.force_review_prs = {42}
+        self.scan([], full=False, probe=self.OLD)
+        self.assertEqual(self.prepare.call_args.args[1]["number"], 42)
+        self.assertEqual(self.prepare.call_args.kwargs["self_login"], "fairy")
 
     def test_a_closed_item_with_pending_ci_is_cancelled_not_regated(self) -> None:
         self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})

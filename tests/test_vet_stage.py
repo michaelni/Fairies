@@ -107,6 +107,12 @@ class VetterRoleTests(unittest.TestCase):
 
 
 class VetterPromptTests(unittest.TestCase):
+    def test_reason_self_check_matches_the_reason_instruction(self) -> None:
+        for role in ("vetter", "issue_vetter"):
+            text = _prompt(role)
+            self.assertIn("``reason`` list what fails (if any)", text, role)
+            self.assertIn("does it list what fails, or when nothing fails, what you checked?", text, role)
+
     def test_vetter_judges_and_does_not_write(self) -> None:
         text = _prompt("vetter", persist_branches=True)
         self.assertIn("##Vetting task", text)

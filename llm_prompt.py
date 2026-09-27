@@ -1027,7 +1027,7 @@ Before answering:
 - Check completeness: did you read the whole message, every label change and the commits of every declared branch?
 - Check grounding: does each fault in ``reason`` point at something you saw, not at a guess?
 - Check the decision: when holding, would an operator agree the message must not go out as it is; when not holding, would an operator be comfortable seeing it posted under fairy's name without having read it?
-- Check the reason: can an operator see from it what you checked and act on what fails?
+- Check the reason: does it list what fails, or when nothing fails, what you checked?
 </verification_loop>
 ''' * vetter}\
 

@@ -638,20 +638,10 @@ def ingest_item(db: filedb.Db, ns: argparse.Namespace, kind: str,
     return item
 
 
-def closure_reason(db: filedb.Db, ns: argparse.Namespace, kind: str,
-                   number: filedb.TicketId, cache) -> str | None:
-    """One fetch to name WHY an item left the open listing: "merged" is
-    the success story and must not read as a failure in the UI
-    (production: #23913 showed plain cancelled after the operator
-    merged it). None means the item is in fact still open -- the
-    listing was transiently short -- and must not be cancelled at all.
-    A failed fetch keeps the old revivable "not open"."""
-    try:
-        item = ingest_item(db, ns, kind, number, cache)
-    except Exception as exc:
-        logger.warning("%s #%s left the listing but the fate fetch "
-                       "failed: %s", kind, number, exc)
-        return "not open"
+def closure_reason_of(kind: str, item: dict) -> str | None:
+    """Why the item is not open: "merged" is the success story and must
+    not read as a failure in the UI (production: #23913 showed plain
+    cancelled after the operator merged it). None while it is open."""
     if kind == "pr" and forge_gcli.pr_merged(item):
         return REASON_MERGED
     if item.get("state") == "closed":
@@ -659,25 +649,40 @@ def closure_reason(db: filedb.Db, ns: argparse.Namespace, kind: str,
     return None
 
 
-def cancel_closed(db: filedb.Db, open_set: set[tuple[str, int]],
-                  kinds: set[str], nss: dict[str, argparse.Namespace],
-                  caches: SideCaches) -> None:
+def closure_reason(db: filedb.Db, ns: argparse.Namespace, kind: str,
+                   number: filedb.TicketId, cache) -> str | None:
+    """One fetch to name why an item left the open listing. None means
+    the item is in fact still open -- the listing was transiently
+    short -- and must not be cancelled at all. A failed fetch keeps the
+    old revivable "not open"."""
+    try:
+        item = ingest_item(db, ns, kind, number, cache)
+    except Exception as exc:
+        logger.warning("%s #%s left the listing but the fate fetch "
+                       "failed: %s", kind, number, exc)
+        return "not open"
+    return closure_reason_of(kind, item)
+
+
+def cancel_tickets(db: filedb.Db, kind: str,
+                   closure: Callable[[int], str | None]) -> None:
+    """Cancel the live tickets of ``kind`` whose forge number
+    ``closure`` gives a reason for; None keeps the ticket."""
     # attention tickets too: a merged PR's merge-ready/ci-blocked row
     # would otherwise sit there forever (prune skips non-settled states)
     for state in ("queued", "reviewed", "ci-blocked", "merge-ready",
                   "awaiting-approver"):
-        for kind, number in db.list_state(state):
-            if kind in kinds \
-                    and (kind, filedb.forge_number(number)) not in open_set:
-                reason = closure_reason(db, nss[kind], kind, number,
-                                        caches[kind])
-                if reason is None:
-                    continue
-                # try_move: a claimed item's lock is held for the whole
-                # review and must not stall the pass; retried next scan
-                if db.try_move(state, "cancelled", kind, number,
-                               mutate=lambda d, r=reason: d.update(reason=r)):
-                    logger.info("%s #%s cancelled: %s", kind, number, reason)
+        for k, number in db.list_state(state):
+            if k != kind:
+                continue
+            reason = closure(filedb.forge_number(number))
+            if reason is None:
+                continue
+            # try_move: a claimed item's lock is held for the whole
+            # review and must not stall the pass; retried next scan
+            if db.try_move(state, "cancelled", kind, number,
+                           mutate=lambda d, r=reason: d.update(reason=r)):
+                logger.info("%s #%s cancelled: %s", kind, number, reason)
 
 
 class SideCaches:
@@ -801,7 +806,10 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                                              caches[kind], serve_operator)):
                 reach.append(reached)
         finish_requests(db, forced, kinds)
-        cancel_closed(db, open_set, full_kinds, sides, caches)
+        for kind in full_kinds:
+            cancel_tickets(db, kind, lambda n, kind=kind: None
+                           if (kind, n) in open_set else closure_reason(
+                               db, sides[kind], kind, str(n), caches[kind]))
     if reach and not listing_failed:
         db.write(reach_doc, {"reach": min(reach).isoformat()})
     for kind, number in db.reap():

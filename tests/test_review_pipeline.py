@@ -40,7 +40,6 @@ from __future__ import annotations
 import argparse
 import sys
 import tempfile
-import types
 import unittest
 from pathlib import Path
 
@@ -48,22 +47,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# A fake ``anthropic`` so make_reviewer can build Anthropic/GLM reviewers
-# without the SDK installed.
-if "anthropic" not in sys.modules:
-    fake = types.ModuleType("anthropic")
+from tests import fake_sdks  # noqa: E402
 
-    class _E(Exception):
-        pass
+fake_sdks.install_anthropic()
 
-    fake.Anthropic = object
-    for _name in ("APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError", "OverloadedError"):
-        setattr(fake, _name, type(_name, (_E,), {}))
-    sys.modules["anthropic"] = fake
-
-from tests import fake_genai  # noqa: E402
-
-fake_genai.install()
+fake_sdks.install_genai()
 
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402

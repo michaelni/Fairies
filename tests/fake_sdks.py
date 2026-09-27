@@ -27,9 +27,10 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-A minimal stand-in for the ``google-genai`` SDK so the Gemini reviewer can
-be imported and driven where the package is not installed. ``install()``
-leaves a real installation alone.
+Minimal stand-ins for the provider SDKs so their reviewers can be driven
+without network access. ``install_anthropic`` replaces ``anthropic``
+unless it is already imported; ``install_genai`` stands in only where
+``google-genai`` is not installed.
 """
 
 from __future__ import annotations
@@ -53,7 +54,26 @@ class _Obj:
         return None
 
 
-def install() -> None:
+def install_anthropic() -> None:
+    if "anthropic" in sys.modules:
+        return
+    fake = types.ModuleType("anthropic")
+
+    class _E(Exception):
+        pass
+
+    class APIConnectionError(_E):
+        pass
+
+    fake.Anthropic = object
+    fake.APIConnectionError = APIConnectionError
+    fake.APITimeoutError = type("APITimeoutError", (APIConnectionError,), {})
+    for name in ("RateLimitError", "InternalServerError", "OverloadedError"):
+        setattr(fake, name, type(name, (_E,), {}))
+    sys.modules["anthropic"] = fake
+
+
+def install_genai() -> None:
     try:
         import google.genai  # noqa: F401
         return

@@ -38,7 +38,6 @@ RateLimitError class is a plain Exception we can raise with a ``.body``.
 from __future__ import annotations
 
 import sys
-import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -47,34 +46,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-if "anthropic" not in sys.modules:
-    fake = types.ModuleType("anthropic")
+from tests import fake_sdks  # noqa: E402
 
-    class _E(Exception):
-        pass
-
-    class APIConnectionError(_E):
-        pass
-
-    class APITimeoutError(APIConnectionError):
-        pass
-
-    class RateLimitError(_E):
-        pass
-
-    class InternalServerError(_E):
-        pass
-
-    class OverloadedError(_E):
-        pass
-
-    fake.Anthropic = object
-    fake.APIConnectionError = APIConnectionError
-    fake.APITimeoutError = APITimeoutError
-    fake.RateLimitError = RateLimitError
-    fake.InternalServerError = InternalServerError
-    fake.OverloadedError = OverloadedError
-    sys.modules["anthropic"] = fake
+fake_sdks.install_anthropic()
 
 import anthropic_common  # noqa: E402
 

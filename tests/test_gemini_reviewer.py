@@ -40,9 +40,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tests import fake_genai  # noqa: E402
+from tests import fake_sdks  # noqa: E402
 
-fake_genai.install()
+fake_sdks.install_genai()
 
 import gemini_reviewer  # noqa: E402
 from gemini_reviewer import types  # noqa: E402

@@ -44,14 +44,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import tempfile
 import time
+from functools import partial
 from pathlib import Path
 from typing import TypeAlias
 
-from dotenv import dotenv_values
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -60,6 +59,8 @@ from openai import (
     OpenAI,
     RateLimitError,
 )
+
+import common
 
 # Re-exported for callers that do ``from openai_common import JsonObject``
 # (e.g. pr_review_wrapper, openai_container, openai_vector_store).
@@ -79,18 +80,7 @@ InputContentItem: TypeAlias = dict[str, object]
 ResponseKwargs: TypeAlias = dict[str, object]
 
 
-def load_api_key() -> str | None:
-    """Return the OpenAI API key from the environment, falling back to ``.env``.
-
-    Process environment wins over ``.env`` so operators can override on
-    the command line without editing the file. ``dotenv_values(".env")``
-    is used instead of ``load_dotenv()`` to avoid mutating the live
-    process environment as a side effect of reading the key.
-    """
-    env_key = os.environ.get("OPENAI_API_KEY")
-    if env_key:
-        return env_key
-    return dotenv_values(".env").get("OPENAI_API_KEY")
+load_api_key = partial(common.load_api_key, "OPENAI_API_KEY")
 
 
 DEFAULT_RATE_LIMIT_RETRIES = 30

@@ -47,10 +47,10 @@ import json
 from anthropic import Anthropic
 
 import concurrency
-from common import JsonObject, dump_response_debug_artifacts, load_api_key
+from common import JsonObject, call_with_retry, dump_response_debug_artifacts, load_api_key
 from llm_prompt import REVIEWER_ROLE
 from llm_review_api import ReviewContext, Reviewer, RoleSpec
-from anthropic_common import call_with_anthropic_retry
+import anthropic_common
 from shell_tool import abort_if_cancelled
 from tool_loop import Conversation, ToolCall, review_prompt, review_tools, run_tool_loop
 
@@ -202,10 +202,9 @@ class _Conversation(Conversation):
             request_kwargs["output_config"] = {"effort": reviewer.effort}
         abort_if_cancelled()
         with concurrency.slot(reviewer.name.partition(":")[0]):
-            response = call_with_anthropic_retry(
+            response = call_with_retry(
                 lambda: self.client.messages.create(**request_kwargs),
-                what="messages.create",
-                verbose=reviewer.verbose,
+                retryable=anthropic_common.retryable, what="messages.create",
             )
         if reviewer.debug_dir:
             self.conv_path = dump_response_debug_artifacts(

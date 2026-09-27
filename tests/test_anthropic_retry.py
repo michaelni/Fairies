@@ -27,9 +27,9 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-call_with_anthropic_retry: retry transient 429s/529s, but fail fast on
-z.ai's "insufficient balance" and "usage window exhausted" 429s so a
-dead-for-hours endpoint is not hammered.
+common.call_with_retry with anthropic_common.retryable: retry transient
+429s/529s, but fail fast on z.ai's "insufficient balance" and "usage
+window exhausted" 429s so a dead-for-hours endpoint is not hammered.
 
 The ``anthropic`` SDK is mocked (like the reviewer replay tests) so the
 RateLimitError class is a plain Exception we can raise with a ``.body``.
@@ -51,6 +51,7 @@ from tests import fake_sdks  # noqa: E402
 fake_sdks.install_anthropic()
 
 import anthropic_common  # noqa: E402
+import common  # noqa: E402
 
 # Real bodies observed from z.ai's Anthropic-compatible endpoint; the SDK
 # surfaces both as RateLimitError. 1113 (2026-06): account out of balance.
@@ -116,9 +117,9 @@ class RetryTests(unittest.TestCase):
             calls["n"] += 1
             raise _rate_limit(_ZAI_BALANCE_BODY)
 
-        with mock.patch.object(anthropic_common.time, "sleep") as sleep:
+        with mock.patch.object(common.time, "sleep") as sleep:
             with self.assertRaises(anthropic_common.RateLimitError):
-                anthropic_common.call_with_anthropic_retry(func, what="probe", verbose=False)
+                common.call_with_retry(func, retryable=anthropic_common.retryable, what="probe")
         self.assertEqual(1, calls["n"])
         sleep.assert_not_called()
 
@@ -129,9 +130,9 @@ class RetryTests(unittest.TestCase):
             calls["n"] += 1
             raise _rate_limit(_ZAI_USAGE_WINDOW_BODY)
 
-        with mock.patch.object(anthropic_common.time, "sleep") as sleep:
+        with mock.patch.object(common.time, "sleep") as sleep:
             with self.assertRaises(anthropic_common.RateLimitError):
-                anthropic_common.call_with_anthropic_retry(func, what="probe", verbose=False)
+                common.call_with_retry(func, retryable=anthropic_common.retryable, what="probe")
         self.assertEqual(1, calls["n"])
         sleep.assert_not_called()
 
@@ -144,8 +145,8 @@ class RetryTests(unittest.TestCase):
                 raise _rate_limit(None, "please slow down")
             return "ok"
 
-        with mock.patch.object(anthropic_common.time, "sleep"):
-            result = anthropic_common.call_with_anthropic_retry(func, what="probe", verbose=False)
+        with mock.patch.object(common.time, "sleep"):
+            result = common.call_with_retry(func, retryable=anthropic_common.retryable, what="probe")
         self.assertEqual("ok", result)
         self.assertEqual(3, calls["n"])
 
@@ -160,8 +161,8 @@ class RetryTests(unittest.TestCase):
                 raise exc
             return "ok"
 
-        with mock.patch.object(anthropic_common.time, "sleep"):
-            result = anthropic_common.call_with_anthropic_retry(func, what="probe", verbose=False)
+        with mock.patch.object(common.time, "sleep"):
+            result = common.call_with_retry(func, retryable=anthropic_common.retryable, what="probe")
         self.assertEqual("ok", result)
         self.assertEqual(3, calls["n"])
 

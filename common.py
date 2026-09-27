@@ -41,11 +41,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sys
 import tempfile
-from typing import TypeAlias
+import time
+from collections.abc import Callable
+from typing import TypeAlias, TypeVar
 
 from dotenv import dotenv_values
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 # JSON value type aliases shared by every module that touches gcli or
@@ -96,6 +100,39 @@ def load_api_key(env_var: str) -> str | None:
     if env_key:
         return env_key
     return dotenv_values(".env").get(env_var)
+
+
+def _retry_delay(exc: Exception, attempt: int) -> float:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        try:
+            retry_after = headers.get("retry-after")
+        except Exception:
+            retry_after = None
+        if retry_after is not None:
+            try:
+                return max(0.5, float(retry_after))
+            except (TypeError, ValueError):
+                pass
+    return min(60.0, max(1.0, 2.0 ** attempt))
+
+
+def call_with_retry(func: Callable[[], T], *, retryable: Callable[[Exception], bool],
+                    what: str, attempts: int = 30) -> T:
+    """Return ``func()``, retrying up to ``attempts`` times on exceptions
+    ``retryable`` accepts; ``what`` names the call in logs."""
+    attempt = 0
+    while True:
+        try:
+            return func()
+        except Exception as exc:
+            if attempt >= attempts or not retryable(exc):
+                raise
+            delay = _retry_delay(exc, attempt)
+            logger.debug("%s during %s; retrying in %.3fs", type(exc).__name__, what, delay)
+            time.sleep(delay)
+            attempt += 1
 
 
 def response_to_debug_json(response: object) -> JsonObject:

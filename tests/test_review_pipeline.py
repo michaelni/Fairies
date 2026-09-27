@@ -51,8 +51,6 @@ from tests import fake_sdks  # noqa: E402
 
 fake_sdks.install_anthropic()
 
-fake_sdks.install_genai()
-
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
                             ProviderContentFlagged, ProviderTurnFailed,

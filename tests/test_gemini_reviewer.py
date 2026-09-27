@@ -40,12 +40,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tests import fake_sdks  # noqa: E402
+from unittest import mock  # noqa: E402
 
-fake_sdks.install_genai()
+import httpx  # noqa: E402
 
+import common  # noqa: E402
 import gemini_reviewer  # noqa: E402
-from gemini_reviewer import types  # noqa: E402
 from llm_review_api import ProviderTurnFailed  # noqa: E402
 from tests.test_anthropic_reviewer import _ctx, _FakeShell  # noqa: E402
 
@@ -53,25 +53,23 @@ SUBMIT = {"classification": "minor_issues_approve", "message": "LLM review: one 
           "head_vs_branch_diff_evidence": False}
 
 
-def _reply(*parts: object) -> object:
-    return types.GenerateContentResponse(candidates=[types.Candidate(
-        content=types.Content(role="model", parts=list(parts)), finish_reason="STOP")])
-
-
-def _call(name: str, args: dict, call_id: str) -> object:
-    return types.Part(function_call=types.FunctionCall(name=name, args=args, id=call_id),
-                      thought_signature=b"sig-" + call_id.encode())
+def _reply(*calls: tuple[str, dict, str]) -> dict:
+    return {"candidates": [{"finishReason": "STOP", "content": {"role": "model", "parts": [
+        {"functionCall": {"name": name, "args": args, "id": call_id},
+         "thoughtSignature": "c2ln"} for name, args, call_id in calls]}}]}
 
 
 class _ScriptedClient:
-    def __init__(self, replies: list[object]) -> None:
-        self.replies = list(replies)
-        self.calls: list[dict] = []
-        self.models = self
+    """Answers each POST with the next queued (status, JSON body)."""
 
-    def generate_content(self, **kwargs: object) -> object:
-        self.calls.append(kwargs)
-        return self.replies.pop(0)
+    def __init__(self, replies: list[tuple[int, dict]]) -> None:
+        self.replies = list(replies)
+        self.bodies: list[dict] = []
+
+    def post(self, url: str, *, json: dict) -> httpx.Response:
+        self.bodies.append(json)
+        status, body = self.replies.pop(0)
+        return httpx.Response(status, json=body, request=httpx.Request("POST", url))
 
 
 def _reviewer(client: _ScriptedClient, **kwargs: object) -> gemini_reviewer.GeminiReviewer:
@@ -84,8 +82,9 @@ def _reviewer(client: _ScriptedClient, **kwargs: object) -> gemini_reviewer.Gemi
 class GeminiReviewLoopTests(unittest.TestCase):
     def test_shell_round_then_submit(self) -> None:
         shell = _FakeShell()
-        shell_turn = _reply(_call("shell", {"command": "git log -1"}, "c1"))
-        client = _ScriptedClient([shell_turn, _reply(_call("submit_review", SUBMIT, "c2"))])
+        shell_turn = _reply(("shell", {"command": "git log -1"}, "c1"))
+        client = _ScriptedClient([(200, shell_turn),
+                                  (200, _reply(("submit_review", SUBMIT, "c2")))])
 
         review = _reviewer(client).review(_ctx(shell))
 
@@ -93,24 +92,31 @@ class GeminiReviewLoopTests(unittest.TestCase):
         self.assertEqual("gemini:gemini-3.8-flash", review.model)
         self.assertEqual(["git log -1"], shell.commands)
         self.assertEqual(["submit_review", "shell"], [
-            d.name for d in client.calls[0]["config"].tools[0].function_declarations])
-        user, model_turn, results = client.calls[1]["contents"]
-        self.assertIs(shell_turn.candidates[0].content, model_turn)
-        response = results.parts[0].function_response
-        self.assertEqual(("c1", "shell"), (response.id, response.name))
-        self.assertIn("commit deadbeef", str(response.response))
+            d["name"] for d in client.bodies[0]["tools"][0]["functionDeclarations"]])
+        user, model_turn, results = client.bodies[1]["contents"]
+        self.assertEqual(shell_turn["candidates"][0]["content"], model_turn)
+        response = results["parts"][0]["functionResponse"]
+        self.assertEqual(("c1", "shell"), (response["id"], response["name"]))
+        self.assertIn("commit deadbeef", str(response["response"]))
+
+    def test_rate_limit_is_retried(self) -> None:
+        client = _ScriptedClient([(429, {"error": {"code": 429}}),
+                                  (200, _reply(("submit_review", SUBMIT, "c1")))])
+        with mock.patch.object(common.time, "sleep"):
+            review = _reviewer(client).review(_ctx(None))
+        self.assertEqual("minor_issues_approve", review.classification)
+        self.assertEqual(2, len(client.bodies))
 
     def test_empty_reply_is_a_provider_ended_turn(self) -> None:
-        client = _ScriptedClient([types.GenerateContentResponse(candidates=[])])
+        client = _ScriptedClient([(200, {"promptFeedback": {"blockReason": "OTHER"}})])
         with self.assertRaises(ProviderTurnFailed):
             _reviewer(client).run(_ctx(None))
 
     def test_effort_and_summary_set_thinking(self) -> None:
-        client = _ScriptedClient([_reply(_call("submit_review", SUBMIT, "c1"))])
+        client = _ScriptedClient([(200, _reply(("submit_review", SUBMIT, "c1")))])
         _reviewer(client, effort="high", reasoning_summary="detailed").review(_ctx(None))
-        thinking = client.calls[0]["config"].thinking_config
-        self.assertEqual("high", thinking.thinking_level.lower())
-        self.assertTrue(thinking.include_thoughts)
+        self.assertEqual({"includeThoughts": True, "thinkingLevel": "high"},
+                         client.bodies[0]["generationConfig"]["thinkingConfig"])
 
     def test_unknown_effort_rejected(self) -> None:
         with self.assertRaises(ValueError):

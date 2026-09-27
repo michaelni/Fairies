@@ -27,31 +27,15 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Minimal stand-ins for the provider SDKs so their reviewers can be driven
-without network access. ``install_anthropic`` replaces ``anthropic``
-unless it is already imported; ``install_genai`` stands in only where
-``google-genai`` is not installed.
+A minimal stand-in for the ``anthropic`` SDK so its reviewer can be
+driven without network access. ``install_anthropic`` replaces the SDK
+unless it is already imported.
 """
 
 from __future__ import annotations
 
 import sys
 import types
-
-_TYPES = ("Candidate", "Content", "FunctionCall", "FunctionDeclaration",
-          "FunctionResponse", "GenerateContentConfig", "GenerateContentResponse",
-          "GenerateContentResponseUsageMetadata", "HttpOptions", "HttpRetryOptions",
-          "Part", "ThinkingConfig", "Tool")
-
-
-class _Obj:
-    def __init__(self, **fields: object) -> None:
-        self.__dict__.update(fields)
-
-    def __getattr__(self, name: str) -> None:
-        if name.startswith("__"):
-            raise AttributeError(name)
-        return None
 
 
 def install_anthropic() -> None:
@@ -72,20 +56,3 @@ def install_anthropic() -> None:
         setattr(fake, name, type(name, (_E,), {}))
     sys.modules["anthropic"] = fake
 
-
-def install_genai() -> None:
-    try:
-        import google.genai  # noqa: F401
-        return
-    except ImportError:
-        pass
-    genai_types = types.ModuleType("google.genai.types")
-    for name in _TYPES:
-        setattr(genai_types, name, type(name, (_Obj,), {}))
-    genai = types.ModuleType("google.genai")
-    genai.types = genai_types
-    genai.Client = object
-    google_pkg = sys.modules.get("google") or types.ModuleType("google")
-    google_pkg.genai = genai
-    sys.modules.update({"google": google_pkg, "google.genai": genai,
-                        "google.genai.types": genai_types})

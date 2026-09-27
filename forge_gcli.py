@@ -1222,6 +1222,16 @@ def list_commit_statuses(
     Forgejo and GitLab report everything through statuses and are left
     at the single request.
 
+    A status never moves the PR's ``updated_at``: Forgejo's
+    NewCommitStatus inserts a commit_status row and touches no issue
+    column (models/git/commit_status.go, https://codeberg.org/forgejo/
+    forgejo/src/branch/forgejo/models/git/commit_status.go), so no item
+    field tells whether CI moved. The repo-wide signal is
+    ``GET /repos/{owner}/{repo}/actions/runs`` (in the swagger of
+    Forgejo 16.0.5+gitea-1.22.0; paged, filterable by status and
+    head_sha, each run names its commit_sha): only heads with a run
+    since the last look need their statuses refetched.
+
     A response that is not a list yields no rows rather than raising:
     a PR whose CI cannot be read is skipped for want of CI, and that
     beats failing the review outright.

@@ -3020,7 +3020,9 @@ def prepare_pr(
     # than an unmoving updated_at), so the cache's (pr.updated_at + TTL)
     # pattern would serve stale CI -- and per CONTRIBUTING.md a cache
     # that can lie is worse than no cache. A pure-TTL cache is also
-    # off the table for the same reason.
+    # off the table for the same reason. That is by construction, not
+    # chance; forge_gcli.list_commit_statuses names the forge code and
+    # the one repo-wide listing that does tell when CI moved.
     raw_status_list = list_commit_statuses(args, head_ref)
     # ``CANCELLED`` and ``BLOCKED`` are surfaced separately for the
     # operator-facing summary at end-of-run: Forgejo's HTTP API offers

@@ -1687,28 +1687,6 @@ def effective_review_states(reviews: list[ApiObject]) -> dict[str, ReviewState]:
     return states
 
 
-def has_review_by_user(reviews: list[ApiObject], login: str | None) -> bool:
-    if not login:
-        return False
-    for review in reviews:
-        user = review.get("user") or {}
-        reviewer = user.get("login") or user.get("username")
-        if isinstance(reviewer, str) and reviewer == login:
-            return True
-    return False
-
-
-def effective_min_age_days(
-    args: argparse.Namespace,
-    discussion: list[ApiObject],
-    self_login: str | None,
-) -> float:
-    d = float(args.min_age_days)
-    if self_login and has_review_by_user(discussion, self_login):
-        d = min(d, REVIEWED_PR_MIN_AGE_DAYS)
-    return d
-
-
 def compile_wip_regex(prefixes: list[str]) -> re.Pattern[str]:
     escaped = [re.escape(p) for p in prefixes if p]
     if not escaped:
@@ -2927,8 +2905,11 @@ def prepare_pr(
     if last_activity is None:
         return skip("cannot determine activity timestamp", last_activity_value=None)
 
-    min_age_days = effective_min_age_days(
-        args, reviews + comments + review_comments, self_login)
+    min_age_days = float(args.min_age_days)
+    if self_login and any(
+            (user.get("login") or user.get("username")) == self_login
+            for user in (it.get("user") or {} for it in reviews + comments + review_comments)):
+        min_age_days = min(min_age_days, REVIEWED_PR_MIN_AGE_DAYS)
     if last_activity > now - timedelta(days=min_age_days):
         return skip(
             "activity is newer than threshold",

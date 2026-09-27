@@ -83,10 +83,6 @@ REVIEW = {
 NOW = datetime(2026, 6, 10, tzinfo=timezone.utc)
 
 
-class _PastGate(Exception):
-    """Sentinel: ``prepare_pr`` got past the already-approved gate."""
-
-
 def _call(review: dict, *, min_age_days: float = 30) -> object:
     args = SimpleNamespace(
         force_skip_prs=frozenset(),
@@ -130,13 +126,9 @@ class StaleApprovalRereviewTests(unittest.TestCase):
         )
 
     def test_stale_approval_is_reconsidered(self) -> None:
-        # The min-age lookup lies just past the already-approved gate;
-        # reaching it proves the stale approval no longer skips the PR.
-        with patch.object(
-            fairy, "effective_min_age_days", side_effect=_PastGate(),
-        ), patch.object(fairy, "list_commit_statuses", return_value=[]):
-            with self.assertRaises(_PastGate):
-                _call(REVIEW)
+        with patch.object(fairy, "list_commit_statuses", return_value=[]):
+            decision = _call(REVIEW)
+        self.assertEqual(decision.reason, "no commit statuses / CI results found")
 
     def test_fresh_approval_still_skips(self) -> None:
         # Same review before the force-pushes (stale not yet set).

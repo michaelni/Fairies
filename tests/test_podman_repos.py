@@ -55,12 +55,8 @@ import podman_host as lc  # noqa: E402
 import podman_repos as lr  # noqa: E402
 
 
-def _completed(returncode: int, stdout: bytes = b"", stderr: bytes = b"") -> mock.Mock:
-    cp = mock.Mock()
-    cp.returncode = returncode
-    cp.stdout = stdout
-    cp.stderr = stderr
-    return cp
+def _completed(returncode: int, stdout: bytes = b"", stderr: bytes = b"") -> lc._CmdResult:
+    return lc._CmdResult(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 class BuildRepoSpecsTests(unittest.TestCase):

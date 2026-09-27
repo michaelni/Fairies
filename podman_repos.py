@@ -207,7 +207,7 @@ def ensure_remote_mirror(
         logger.info(
             "mirror init failed (attempt %d/%d) path=%s: %s; retrying in %.1fs",
             attempt, attempts, mirror_path,
-            result.stderr.decode(errors="replace").strip().replace("\n", " "), delay,
+            result.stderr_text.replace("\n", " "), delay,
         )
         time.sleep(delay)
 
@@ -269,5 +269,5 @@ def _check_remote(result, what: str, host: RemoteHost) -> None:
     if result.returncode != 0:
         raise ContainerInfraError(
             f"remote-local {what!r} on {host.ssh_dest} failed (rc={result.returncode}): "
-            f"{result.stderr.decode(errors='replace').strip()}"
+            f"{result.stderr_text}"
         )

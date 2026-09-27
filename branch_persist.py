@@ -226,7 +226,7 @@ def _list_fake_refs(handle: ContainerHandle, repo_name: str) -> dict[str, str]:
         raise BranchTransferError(
             f"listing the fairy remote of {repo_name!r} in container "
             f"{handle.container_id[:12]} failed: "
-            f"{cp.stderr.decode(errors='replace').strip()}")
+            f"{cp.stderr_text}")
     return _parse_ref_listing(cp.stdout.decode(errors="replace"), repo_name)
 
 
@@ -260,7 +260,7 @@ def setup_container_remotes(
             raise BranchTransferError(
                 f"creating the fairy remote for {spec.name!r} in container "
                 f"{handle.container_id[:12]} failed: "
-                f"{cp.stderr.decode(errors='replace').strip()}")
+                f"{cp.stderr_text}")
         # a pattern refspec that matches nothing pushes nothing; the
         # priority remote pushes last, so it wins name collisions
         for remote in reversed(FAIRY_BRANCH_REMOTES):
@@ -316,7 +316,7 @@ def add_to_container_remote(
         if cp.returncode != 0:
             raise BranchTransferError(
                 f"adding branch {branch!r} of {repo!r} to the fairy remote "
-                f"failed: {cp.stderr.decode(errors='replace').strip()}")
+                f"failed: {cp.stderr_text}")
         logger.info("added branch %r of %r to the fairy remote in "
                     "container %s", branch, repo, handle.container_id[:12])
 
@@ -351,7 +351,7 @@ def _forge_branch_tips(handle: ContainerHandle,
     if cp.returncode != 0:
         raise BranchTransferError(
             f"listing the forge branches of {container_path!r} failed: "
-            f"{cp.stderr.decode(errors='replace').strip()}")
+            f"{cp.stderr_text}")
     tips: dict[str, str] = {}
     for line in cp.stdout.decode(errors="replace").splitlines():
         name, _, sha = line.partition(" ")
@@ -390,11 +390,10 @@ def _bundle_from_container(handle: ContainerHandle, repo: str, branch: str,
         f"refs/heads/{branch}", *(("--not", *negatives) if negatives else ()),
         max_output_bytes=MAX_BUNDLE_BYTES)
     if cp.returncode != 0:
-        stderr = cp.stderr.decode(errors="replace").strip()
-        if "empty bundle" in stderr:
+        if "empty bundle" in cp.stderr_text:
             return ""
         raise BranchTransferError(
-            f"bundling {branch!r} of {repo!r} failed: {stderr}")
+            f"bundling {branch!r} of {repo!r} failed: {cp.stderr_text}")
     return base64.b64encode(cp.stdout).decode("ascii")
 
 

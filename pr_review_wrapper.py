@@ -1363,7 +1363,7 @@ def open_review_container_shell(
                 raise podman_host.ContainerInfraError(
                     f"git config {key} in container "
                     f"{handle.container_id[:12]} failed: "
-                    f"{cp.stderr.decode(errors='replace').strip()}")
+                    f"{cp.stderr_text}")
         podman_repos.start_recoll_index(handle)
         podman_host.copy_into_container(handle, AGENT_LOCAL_PATH, AGENT_CONTAINER_DIR)
         session = podman_host.open_container_shell(handle, AGENT_CONTAINER_PATH)

@@ -370,6 +370,10 @@ class _CmdResult:
     stdout: bytes
     stderr: bytes
 
+    @property
+    def stderr_text(self) -> str:
+        return self.stderr.decode(errors="replace").strip()
+
 
 def _run_capture(cmd: list[str], *, timeout_s: float, label: str) -> _CmdResult:
     """Run ``cmd`` to completion capturing output, with debug timing logs.
@@ -513,7 +517,7 @@ def ensure_isolated_network(name: str, *, host: RemoteHost) -> None:
     cp = _podman(host, "network", "create", name)
     if cp.returncode != 0:
         raise ContainerInfraError(
-            f"podman network create {name!r} failed: {cp.stderr.decode(errors='replace').strip()}"
+            f"podman network create {name!r} failed: {cp.stderr_text}"
         )
 
 
@@ -729,7 +733,7 @@ def start_ephemeral_container(
     cp = _podman(host, *args, timeout_s=120.0)
     if cp.returncode != 0:
         raise ContainerInfraError(
-            f"podman run failed: {cp.stderr.decode(errors='replace').strip()}"
+            f"podman run failed: {cp.stderr_text}"
         )
     container_id = cp.stdout.decode(errors="replace").strip()
     if not container_id:
@@ -770,7 +774,7 @@ def reap_stale_containers(
         if listed.returncode != 0:
             logger.warning(
                 "reap: listing %s on %s failed: %s", image, host.ssh_dest,
-                listed.stderr.decode(errors="replace").strip())
+                listed.stderr_text)
             continue
         ids = listed.stdout.decode(errors="replace").split()
         if not ids:
@@ -785,7 +789,7 @@ def reap_stale_containers(
             logger.warning(
                 "reap: rm of %d %s container(s) on %s failed: %s",
                 len(ids), image, host.ssh_dest,
-                rm.stderr.decode(errors="replace").strip())
+                rm.stderr_text)
     return removed
 
 
@@ -803,7 +807,7 @@ def pause_container(handle: ContainerHandle) -> None:
     if cp.returncode != 0:
         logger.warning(
             "podman pause id=%s failed: %s",
-            handle.container_id[:12], cp.stderr.decode(errors="replace").strip(),
+            handle.container_id[:12], cp.stderr_text,
         )
         return
     logger.warning(
@@ -824,7 +828,7 @@ def stop_container(handle: ContainerHandle) -> None:
     if cp.returncode != 0:
         logger.warning(
             "podman rm -f id=%s failed (already gone?): %s",
-            handle.container_id[:12], cp.stderr.decode(errors="replace").strip(),
+            handle.container_id[:12], cp.stderr_text,
         )
         return
     logger.info("ephemeral container stopped id=%s", handle.container_id[:12])
@@ -848,7 +852,7 @@ def copy_into_container(
     if cp.returncode != 0:
         raise ContainerInfraError(
             f"mkdir -p {dest_dir} in container failed: "
-            f"{cp.stderr.decode(errors='replace').strip()}"
+            f"{cp.stderr_text}"
         )
     tar_argv = ["tar", "-C", str(local_path.parent), "-cf", "-", local_path.name]
     cp_argv = handle.host.argv(["podman", "cp", "-", f"{handle.container_id}:{dest_dir}"])

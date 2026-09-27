@@ -240,8 +240,8 @@ DELETE_RECORD = {
 }
 
 
-def _cmd(rc: int = 0, stdout: bytes = b"", stderr: bytes = b"") -> SimpleNamespace:
-    return SimpleNamespace(returncode=rc, stdout=stdout, stderr=stderr)
+def _cmd(rc: int = 0, stdout: bytes = b"", stderr: bytes = b"") -> podman_host._CmdResult:
+    return podman_host._CmdResult(returncode=rc, stdout=stdout, stderr=stderr)
 
 
 def _repo_spec(name: str = "ffmpeg") -> podman_repos.RepoSpec:

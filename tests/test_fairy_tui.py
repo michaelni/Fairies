@@ -248,6 +248,37 @@ class PollTests(DbCase):
         self.model.poll()
         self.assertEqual(self.keys(), [])
 
+    def test_acknowledging_waits_for_the_scans_transition(self) -> None:
+        """The scan moves error/ to queued/ under the item's transition
+        lock; an s pressed meanwhile must see the move, not write the
+        error/ ticket back beside the queued/ one."""
+        self.db.push("error", "pr", "5", {"error": "boom"})
+        self.model.poll()
+        reading = Event()
+
+        def scan_moves_it() -> None:
+            reading.wait()
+            with self.db.lock("pr", "5"):
+                self.db.write(self.db.path("queued", "pr", "5"), {"error": "boom"})
+                self.db.path("error", "pr", "5").unlink()
+        scan = Thread(target=scan_moves_it)
+        scan.start()
+        real_datetime = fairy_tui.datetime
+
+        class Clock:
+            """The acknowledgement stamps the ticket between reading and
+            writing it; the scan's move lands in that gap."""
+            @staticmethod
+            def now(tz):
+                reading.set()
+                time.sleep(0.2)
+                return real_datetime.now(tz)
+        with mock.patch.object(fairy_tui, "datetime", Clock):
+            self.model.act("skip")
+        scan.join()
+        self.assertIsNone(self.db.get("error", "pr", "5"))
+        self.assertEqual(self.db.find("pr", "5"), "queued")
+
     def test_an_error_stays_listed_until_acknowledged(self) -> None:
         self.db.push("error", "pr", "5", {"error": "boom"})
         self.model.poll()

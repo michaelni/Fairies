@@ -673,10 +673,10 @@ class Model:
                 self.seen_live.add(key)
             elif action in ("apply", "apply-force", "skip") \
                     and _unacknowledged(item):
-                if workset.update_json(
-                        db.path(item.state, item.kind, item.number),
-                        lambda d: d.update(acknowledged_at=datetime.now(
-                            timezone.utc).isoformat())) is None:
+                if not db.try_move(item.state, item.state, item.kind, item.number,
+                                   mutate=lambda d: d.update(
+                                       acknowledged_at=datetime.now(
+                                           timezone.utc).isoformat())):
                     logger.info("%s changed under the cursor; not acknowledged",
                                 label)
                     return

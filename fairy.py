@@ -2800,39 +2800,6 @@ def prepare_pr(
     if pr.get("state") != "open" and not (is_forced and args.force_review_non_open):
         return skip("not open", last_activity_value=last_activity)
 
-    if is_marked_wip(pr, wip_re) and not is_forced:
-        return skip("marked WIP/draft", last_activity_value=last_activity)
-
-    if not pr.get("mergeable") and not is_forced:
-        return skip("has conflicts with the target branch",
-                    last_activity_value=last_activity)
-
-    # Compute review state once, here, so the value is available to the
-    # end-of-run "external approvers" reminder list even on PRs that
-    # are about to early-skip via the backoff gate just below or the
-    # forced-review path further down. The same ``states`` value is
-    # re-used by the blockers / self-approved gates further down (no
-    # second pass).
-    states = effective_review_states(reviews)
-    has_blocker = any(
-        rs.state == "CHANGES_REQUESTED" for rs in states.values()
-    )
-    if not has_blocker:
-        # Stale approvals are excluded: the forge no longer counts them
-        # towards mergeability, so listing the PR as "approved and
-        # waiting to be merged" would tell the operator to merge
-        # something the forge will refuse.
-        external_approvers = tuple(sorted(
-            login for login, rs in states.items()
-            if rs.state == "APPROVED" and not rs.stale and login != self_login
-        ))
-        # An auto-merge-queued PR will merge itself when CI flips green
-        # (or already has); listing it as "needs human merge" is noise.
-        # Pay one ``get_auto_merge`` call only for PRs that would
-        # otherwise show up in the reminder.
-        if external_approvers and get_auto_merge() == "merge":
-            external_approvers = ()
-
     forced_review_reason: str | None = None
     if number in args.force_review_prs:
         forced_review_reason = "forced review by --force-review"
@@ -2894,6 +2861,39 @@ def prepare_pr(
                     latest_review_request.isoformat(),
                     reviewer_last_activity.isoformat() if reviewer_last_activity else "-",
                 )
+
+    if is_marked_wip(pr, wip_re) and forced_review_reason is None:
+        return skip("marked WIP/draft", last_activity_value=last_activity)
+
+    if not pr.get("mergeable") and not is_forced:
+        return skip("has conflicts with the target branch",
+                    last_activity_value=last_activity)
+
+    # Compute review state once, here, so the value is available to the
+    # end-of-run "external approvers" reminder list even on PRs that
+    # are about to early-skip via the backoff gate just below or the
+    # forced-review path further down. The same ``states`` value is
+    # re-used by the blockers / self-approved gates further down (no
+    # second pass).
+    states = effective_review_states(reviews)
+    has_blocker = any(
+        rs.state == "CHANGES_REQUESTED" for rs in states.values()
+    )
+    if not has_blocker:
+        # Stale approvals are excluded: the forge no longer counts them
+        # towards mergeability, so listing the PR as "approved and
+        # waiting to be merged" would tell the operator to merge
+        # something the forge will refuse.
+        external_approvers = tuple(sorted(
+            login for login, rs in states.items()
+            if rs.state == "APPROVED" and not rs.stale and login != self_login
+        ))
+        # An auto-merge-queued PR will merge itself when CI flips green
+        # (or already has); listing it as "needs human merge" is noise.
+        # Pay one ``get_auto_merge`` call only for PRs that would
+        # otherwise show up in the reminder.
+        if external_approvers and get_auto_merge() == "merge":
+            external_approvers = ()
 
     if forced_review_reason is not None:
         auto_merge_value = get_auto_merge()

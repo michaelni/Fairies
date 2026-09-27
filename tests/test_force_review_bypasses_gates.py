@@ -67,7 +67,8 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
           force_review_non_open: bool = False,
           workset_dir: Path | None = None,
           now: datetime | None = None,
-          llm_review_cmd: str | None = None) -> object:
+          llm_review_cmd: str | None = None,
+          self_login: str | None = None) -> object:
     args = SimpleNamespace(
         force_skip_prs=force_skip,
         force_review_prs=force_review,
@@ -83,7 +84,7 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
         llm_review_cmd=llm_review_cmd,
     )
     return fairy.prepare_pr(
-        args, pr, now=now, self_login=None, wip_re=WIP_RE,
+        args, pr, now=now, self_login=self_login, wip_re=WIP_RE,
         cache=gcli_cache.Cache(),
         discussion_cache_max_age=timedelta(hours=1),
     )
@@ -159,6 +160,62 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
         self.assertEqual(decision.reason, "has conflicts with the target branch")
         self.assertEqual(decision.last_activity,
                          datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+
+class RequestedReviewOverridesWipGateTests(unittest.TestCase):
+    """A review request or @mention gets a WIP-titled PR reviewed.
+
+    Real capture: FFmpeg #24737 opened with a "WIP:" title and its author
+    requested a review from Forgejo_Fairy at 10:14 UTC; the WIP gate
+    skipped every scan until the prefix was dropped 5h45m later.
+    """
+
+    REQUEST_REVIEW = {
+        "id": 8895,
+        "state": "REQUEST_REVIEW",
+        "submitted_at": "2026-09-27T10:14:32Z",
+        "user": {"id": 852, "login": "Forgejo_Fairy",
+                 "username": "Forgejo_Fairy"},
+        "commit_id": "",
+        "body": "",
+    }
+    MENTION = {
+        "user": {"login": "alice", "username": "alice"},
+        "created_at": "2026-09-27T10:14:32Z",
+        "body": "@Forgejo_Fairy please have a look",
+    }
+
+    def _prepare(self, pr: dict, *, reviews: tuple = (), comments: tuple = ()) -> object:
+        with (
+            patch.object(fairy, "get_pr_discussion",
+                         return_value=(list(reviews), list(comments), [])),
+            patch.object(fairy, "get_pr_timeline", return_value=[]),
+            patch.object(fairy, "get_auto_merge_info", return_value="no"),
+            patch.object(fairy, "get_pr_head_ref", return_value=None),
+        ):
+            return _call(pr, llm_review_cmd="./wrapper",
+                         self_login="Forgejo_Fairy")
+
+    def test_request_and_mention_reach_a_wip_pr(self) -> None:
+        pr = {"number": 24737, "state": "open", "mergeable": True,
+              "title": "WIP: libavformat/ftp: fix"}
+        self.assertEqual(self._prepare(pr).reason, "marked WIP/draft")
+        for label, kwargs, reason in (
+            ("request", {"reviews": (self.REQUEST_REVIEW,)},
+             "review requested from Forgejo_Fairy"),
+            ("mention", {"comments": (self.MENTION,)},
+             "later discussion mentions reviewer Forgejo_Fairy"),
+        ):
+            with self.subTest(label):
+                prepared = self._prepare(pr, **kwargs)
+                self.assertIsInstance(prepared, fairy.PreparedPR)
+                self.assertEqual(prepared.base_reason, reason)
+
+    def test_the_conflicts_gate_still_holds(self) -> None:
+        pr = {"number": 24737, "state": "open", "mergeable": False,
+              "title": "WIP: libavformat/ftp: fix"}
+        decision = self._prepare(pr, reviews=(self.REQUEST_REVIEW,))
+        self.assertEqual(decision.reason, "has conflicts with the target branch")
 
 
 class ForcedReviewIgnoresTriageSkipTests(unittest.TestCase):

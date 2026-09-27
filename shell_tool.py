@@ -46,7 +46,6 @@ import json
 import logging
 import os
 import threading
-import time
 from typing import Callable, Sequence
 
 from common import (EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED,
@@ -68,7 +67,6 @@ __all__ = [
     "halt",
     "halted",
     "run_session_commands",
-    "watch_halt_file",
 ]
 
 logger = logging.getLogger(__name__)
@@ -121,20 +119,6 @@ def abort_if_cancelled() -> None:
     if halted_by_file():
         pause_all_containers()
         raise SystemExit(EXIT_REVIEW_STOPPED_BY_HALT_FILE)
-
-
-def watch_halt_file() -> None:
-    """Start a daemon thread that pauses every container of the run within
-    a second of the halt file appearing: a review stops only at its next
-    boundary, and a codex pass that makes no further shell call never
-    reaches one."""
-    def watch() -> None:
-        while not halted_by_file():
-            time.sleep(1.0)
-        logger.warning("halt file %s exists", HALT_FILE)
-        pause_all_containers()
-
-    threading.Thread(target=watch, daemon=True, name="halt-watch").start()
 
 
 def exec_shell_call(

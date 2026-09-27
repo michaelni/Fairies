@@ -519,7 +519,7 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
             mock.patch.object(wrapper, "open_review_container_shell",
                               side_effect=self._open_review),
             mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
-            mock.patch.object(wrapper.shell_tool, "watch_halt_file") as watch,
+            mock.patch.object(wrapper, "stop_containers_on_termination") as watch,
             mock.patch.object(wrapper.shell_tool, "HALT_FILE", None),
             mock.patch.object(
                 wrapper.sys, "argv",

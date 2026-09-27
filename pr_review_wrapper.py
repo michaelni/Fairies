@@ -1297,14 +1297,22 @@ def unattended_posting_block(branches: Sequence[JsonObject]) -> str | None:
 
 def stop_containers_on_termination() -> None:
     """On SIGTERM, or when the parent process (fairy's worker) exits,
-    remove every container this run started and exit with 143."""
+    remove every container this run started and exit with 143. Pause
+    them within a second of the halt file appearing: a review stops only
+    at its next boundary, and a codex pass that makes no further shell
+    call never reaches one."""
     parent_pid = os.getppid()
     terminated = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: terminated.set())
 
     def watch() -> None:
+        paused = False
         while not terminated.wait(1.0) and os.getppid() == parent_pid:
-            pass
+            if not paused and shell_tool.halted_by_file():
+                logger.warning("halt file %s exists; pausing this run's containers",
+                               shell_tool.HALT_FILE)
+                podman_host.pause_all_containers()
+                paused = True
         logger.warning("%s; removing this run's containers",
                        "SIGTERM received" if terminated.is_set()
                        else f"parent process {parent_pid} exited")
@@ -1404,8 +1412,6 @@ def main() -> int:
     args = parse_args()
     shell_tool.CANCEL_FILE = args.workset_file
     shell_tool.HALT_FILE = args.halt_file
-    if args.halt_file:
-        shell_tool.watch_halt_file()
     debug_dir_specified = any(
         arg == "--debug-response-dir" or arg.startswith("--debug-response-dir=")
         for arg in sys.argv[1:]

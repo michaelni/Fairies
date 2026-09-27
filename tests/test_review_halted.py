@@ -52,6 +52,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import fairy  # noqa: E402
+import podman_host  # noqa: E402
+import pr_review_wrapper  # noqa: E402
 import shell_tool  # noqa: E402
 from common import (EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED,  # noqa: E402
                     EXIT_REVIEW_STOPPED_BY_HALT_FILE, EXIT_TURN_FAILED,
@@ -182,8 +184,8 @@ class HaltStopsSiblingReviewersTests(unittest.TestCase):
     def test_the_watcher_pauses_the_containers_once_the_halt_file_appears(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(shell_tool, "HALT_FILE", f"{tmp}/halted"), \
-                mock.patch.object(shell_tool, "pause_all_containers") as pause_all:
-            shell_tool.watch_halt_file()
+                mock.patch.object(podman_host, "pause_all_containers") as pause_all:
+            pr_review_wrapper.stop_containers_on_termination()
             time.sleep(1.5)
             pause_all.assert_not_called()
             Path(tmp, "halted").touch()

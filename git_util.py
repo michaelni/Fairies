@@ -74,16 +74,7 @@ def get_repo_head_sha(repo_root: Path) -> str:
 
 def git_rev_parse(repo_root: Path, ref: str) -> str:
     """Resolve ``ref`` to its full SHA in ``repo_root``."""
-    cp = subprocess.run(
-        ["git", "-C", str(repo_root), "rev-parse", "--verify", ref],
-        check=False, text=True, capture_output=True,
-    )
-    if cp.returncode != 0 or not cp.stdout.strip():
-        raise RuntimeError(
-            f"git rev-parse {ref!r} in {repo_root} failed: "
-            f"{cp.stderr.strip() or 'empty output'}"
-        )
-    return cp.stdout.strip()
+    return _git_stdout(repo_root, "rev-parse", "--verify", ref).decode().strip()
 
 
 def git_resolve_first(repo_root: Path, refs: Sequence[str]) -> str | None:
@@ -98,16 +89,7 @@ def git_resolve_first(repo_root: Path, refs: Sequence[str]) -> str | None:
 
 
 def git_merge_base(repo_root: Path, sha_a: str, sha_b: str) -> str:
-    cp = subprocess.run(
-        ["git", "-C", str(repo_root), "merge-base", sha_a, sha_b],
-        check=False, text=True, capture_output=True,
-    )
-    if cp.returncode != 0 or not cp.stdout.strip():
-        raise RuntimeError(
-            f"git merge-base {sha_a} {sha_b} in {repo_root} failed: "
-            f"{cp.stderr.strip() or 'no common ancestor'}"
-        )
-    return cp.stdout.strip()
+    return _git_stdout(repo_root, "merge-base", sha_a, sha_b).decode().strip()
 
 
 def git_merge_tree(repo_root: Path, sha_a: str, sha_b: str) -> str | None:
@@ -132,7 +114,7 @@ def _git_stdout(repo_root: Path, *args: str,
     if cp.returncode != 0:
         raise RuntimeError(
             f"git {' '.join(args)} in {repo_root} failed: "
-            f"{cp.stderr.decode('utf-8', errors='replace').strip()}"
+            f"{cp.stderr.decode('utf-8', errors='replace').strip() or f'exit status {cp.returncode}'}"
         )
     return cp.stdout
 

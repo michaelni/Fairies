@@ -758,6 +758,19 @@ def start_ephemeral_container(
     return handle
 
 
+def _reap(host: RemoteHost, container_ids: list[str], what: str) -> bool:
+    """``podman rm -f`` the leaked ``container_ids``, ``what`` naming them in
+    the logs; True once they are gone."""
+    rm = _podman(host, "rm", "-f", *container_ids, timeout_s=120.0)
+    if rm.returncode != 0:
+        logger.warning("reap: rm of %d %s on %s failed: %s", len(container_ids),
+                       what, host.ssh_dest, rm.stderr_text)
+        return False
+    logger.info("reaped %d %s on %s: %s", len(container_ids), what,
+                host.ssh_dest, container_ids)
+    return True
+
+
 def reap_stale_containers(
     host: RemoteHost, *, images: Sequence[str], older_than: str = "60m",
 ) -> int:
@@ -788,19 +801,8 @@ def reap_stale_containers(
                 listed.stderr_text)
             continue
         ids = listed.stdout.decode(errors="replace").split()
-        if not ids:
-            continue
-        rm = _podman(host, "rm", "-f", *ids, timeout_s=120.0)
-        if rm.returncode == 0:
+        if ids and _reap(host, ids, f"stale container(s) image={image}"):
             removed += len(ids)
-            logger.info(
-                "reaped %d stale container(s) image=%s host=%s",
-                len(ids), image, host.ssh_dest)
-        else:
-            logger.warning(
-                "reap: rm of %d %s container(s) on %s failed: %s",
-                len(ids), image, host.ssh_dest,
-                rm.stderr_text)
     return removed
 
 

@@ -80,7 +80,9 @@ class VetterRoleTests(unittest.TestCase):
             "minor_issues_approve", "LLM-GPT-5.4: fine",
             ({"label": "bug", "op": "add", "reason": "", "post": False},),
             ({"repo": "ffmpeg", "branch": "pr7-fix", "mode": "push",
-              "sha": "abc", "bundle": "AAAA"},),
+              "sha": "abc", "bundle": "AAAA",
+              "pr": {"target": "master", "title": "avutil: fix x",
+                     "body": "Buy specs at example.com"}},),
             model="openai:gpt-5.4")
         role = llm_prompt.make_vetter_role(review, task="pr", inherits_branches=True)
         self.assertEqual("vetter", role.name)
@@ -90,6 +92,8 @@ class VetterRoleTests(unittest.TestCase):
         self.assertIn("classification: minor_issues_approve", texts[-1])
         self.assertIn('"label": "bug"', texts[-1])
         self.assertIn('"branch": "pr7-fix"', texts[-1])
+        # the PR fairy opens is posted verbatim: the vetter must see it
+        self.assertIn('"body": "Buy specs at example.com"', texts[-1])
         self.assertNotIn("AAAA", texts[-1])  # the bundle stays out of the prompt
         self.assertTrue(texts[-1].endswith("message:\nLLM-GPT-5.4: fine\n"))
         self.assertEqual({"persist_branches": True}, role.prompt_kwargs)

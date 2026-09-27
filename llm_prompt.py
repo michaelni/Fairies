@@ -963,7 +963,7 @@ internal explanation of why you chose that route; it is logged but not
 posted to Forgejo.
 ''' * (not pr and triager)}\
 {f'''##Vetting task
-The user message ends with the {"review" if pr else "analysis"} fairy is about to post on this {subject_long}. You are NOT {"reviewing the pull request" if pr else "analyzing the issue"} yourself: decide whether that message and the branches it declares can go out without an operator looking at them first.
+The user message ends with the {"review" if pr else "analysis"} fairy is about to post on this {subject_long}. You are NOT {"reviewing the pull request" if pr else "analyzing the issue"} yourself: decide whether that message, the branches it declares and the title and body of any pull request they open can go out without an operator looking at them first.
 Set ``hold_for_human_inspection`` to true when any of these holds:
 - the message is insulting, condescending or otherwise likely to offend, or takes a side in a controversy beyond the technical facts
 - the message advertises anything or links to a place that sells anything
@@ -1204,7 +1204,7 @@ def make_triager_role(
 
 
 def make_vet_user_text(review: Review) -> str:
-    branches = [{key: record.get(key) for key in ("repo", "branch", "mode", "sha")}
+    branches = [{key: record.get(key) for key in ("repo", "branch", "mode", "sha", "pr")}
                 for record in review.branches]
     return (
         f"The verdict to vet, from {model_label(review.model)}:\n\n"

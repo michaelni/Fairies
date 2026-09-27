@@ -1193,11 +1193,16 @@ class RoleWithBranchesTests(unittest.TestCase):
             reviewer_username="fairy")
         for role in ("review", "combiner", "issue_investigator", "issue_combiner"):
             with self.subTest(role=role):
-                self.assertNotIn("##Persisting branches",
-                                 llm_prompt.generate_llm_prompt(role=role, **kwargs))
+                disabled = llm_prompt.generate_llm_prompt(role=role, **kwargs)
+                self.assertNotIn("##Persisting branches", disabled)
+                self.assertNotIn("persist a branch", disabled)
+                self.assertNotIn("push to fairy remote", disabled)
                 enabled = llm_prompt.generate_llm_prompt(
                     role=role, persist_branches=True, **kwargs)
                 self.assertIn("##Persisting branches", enabled)
+                self.assertIn("persist a branch", enabled)
+                self.assertEqual(role == "issue_investigator",
+                                 "push to fairy remote" in enabled)
                 self.assertIn('remote "fairy"', enabled)
                 self.assertIn("fairy/<name>", enabled)
                 self.assertIn("Assisted-by: Fairy", enabled)

@@ -637,7 +637,7 @@ each produced by a different model; produce one combined review.
 ''' * combiner}\
 """
 #- The drafts are internal scaffolding: do NOT mention drafts, other models, or the combination process in the posted message. Write it as one normal review.
-f"""{'''##In your Issue investigator role
+f"""{f'''##In your Issue investigator role
 You are analyzing a reported issue (usually a bug report). Work through these goals, collecting evidence with the available tools.
 If the issue history shows that you already done so and already provided the results and you belive this past work is still valid
 then do NOT redo it but use the past results. If you cannot use the past results or have doubt in their validity then redo.
@@ -649,8 +649,9 @@ Make sure you add all needed details in your message so a subsequent session doe
 - Reproducibility: determine whether the report contains everything needed to reproduce it. When inputs are missing and only the reporter can provide them, ask for exactly the missing pieces. Set/clear the "needs info" label accordingly.
 - Regression: if the reported behavior worked before, identify the change that broke it -- ``git bisect`` in the checkout works (full history and every pull request head are available; build at each step). Name the culprit commit by hash and verify it, for example by re-testing the commit alledgedly breaking and the commit before it. A verified culprit commit means the regression label MUST be set; clear it if you verified it is not a regression; leave it unchanged if you cannot determine either.
 - Root cause: identify the root cause of the bug
-- IF you identified the root cause and are able to fix it and your fix is correct and complete create a fix in a branch and persist the branch (push to fairy remote) and open a pull request.
+{"""- IF you identified the root cause and are able to fix it and your fix is correct and complete create a fix in a branch and persist the branch (push to fairy remote) and open a pull request.
 - IF you can implement the requested feature and your implementation is correct and complete create a change in a branch and persist the branch (push to fairy remote) and open a pull request.
+""" * persist_branches}\
 - Affected branches: for bugs (not enhancements), check whether master and the active release branches are affected.
 - Fixes: if a fix or a pull request for this issue already exists, link it.
 - Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis of a bug (enhancements get no repro/*) you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack and cannot emulate/simulate). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Issues concluded resolution/invalid or resolution/duplicate need no repro/*. Set "needs info"/"needs sample" whenever your message asks the reporter for something (information, a sample, a retest) -- their answer re-triggers analysis only if one of these labels is set -- and clear them once the information arrived. resolution/duplicate, resolution/invalid, resolution/external and resolution/fixed (only with a verified fixing commit) are definite verdicts; other resolution/* decisions belong to humans.
@@ -767,7 +768,7 @@ Outside this path, maintainers can manually push changes when needed.
 - Refer to issues and pull requests by their number (#N); never mention the internal export file names they were read from (like 012345.md).
 - Refer to specifications by their official title. NEVER link to a place that sells anything. Especially not to places that sell specifications.
 - If you need information, that is unavailable to you but that is likely available to the {"pull request author" if pr else "issue reporter"} then ask him/her in the message.
-- If you find an issue and the solution is clear, simple, complete, and aligned with the actual goal of the {subject}, provide it as a copy-pasteable code/comment snippet and or persist a branch with the fix if the fix is more than a simple snippet.
+- If you find an issue and the solution is clear, simple, complete, and aligned with the actual goal of the {subject}, provide it as a copy-pasteable code/comment snippet{" and or persist a branch with the fix if the fix is more than a simple snippet" * persist_branches}.
 - If you suggest a solution, review it as well and document any issues it has.
 
 ''' * (not vetter)}\

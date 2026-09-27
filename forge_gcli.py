@@ -113,7 +113,7 @@ __all__ = [
     "KIND_PR",
     "PUSH_EVENT",
     "REVIEW_REQUEST_EVENT",
-    "COMMENT_REF_EVENT",
+    "CROSS_REFERENCE_EVENTS",
     "CLOSE_EVENT",
     "REOPEN_EVENT",
     "MERGE_EVENT",
@@ -933,7 +933,13 @@ PUSH_EVENT = "pull_push"
 AUTO_MERGE_SCHEDULE_EVENT = "pull_scheduled_merge"
 AUTO_MERGE_CANCEL_EVENT = "pull_cancel_scheduled_merge"
 REVIEW_REQUEST_EVENT = "review_request"
-COMMENT_REF_EVENT = "comment_ref"
+# Where the mention of a cross reference sits, by event type. Forgejo
+# names the mentioning item's kind and whether the mention is in its
+# description or in a comment on it; GitHub's ``cross-referenced``
+# names neither, so its origin is None.
+_CROSS_REFERENCE_ORIGIN = {"issue_ref": "description", "pull_ref": "description",
+                           "comment_ref": "comment", "cross-referenced": None}
+CROSS_REFERENCE_EVENTS = frozenset(_CROSS_REFERENCE_ORIGIN)
 CLOSE_EVENT = "close"
 REOPEN_EVENT = "reopen"
 MERGE_EVENT = "merge_pull"
@@ -1000,8 +1006,8 @@ def project_timeline_event(event: dict) -> dict:
     requested reviewer) and ``removed_assignee`` (True when the request
     was withdrawn) -- Forgejo/Gitea put the requester under ``user``
     and the requestee under ``assignee`` (captured on FFmpeg #23197).
-    A ``comment_ref`` entry carries ``ref_issue``, the number and title
-    of the issue or pull request whose text mentioned this one."""
+    A cross-reference entry carries the keys of
+    ``_cross_reference_fields``."""
     projected = {
         "type": event.get("type"),
         "id": event.get("id"),
@@ -1014,13 +1020,37 @@ def project_timeline_event(event: dict) -> dict:
     elif projected["type"] == REVIEW_REQUEST_EVENT:
         projected["assignee"] = norm_user(event.get("assignee"))
         projected["removed_assignee"] = bool(event.get("removed_assignee"))
-    elif projected["type"] == COMMENT_REF_EVENT:
-        projected["ref_issue"] = _referenced_item(event["ref_issue"])
+    elif projected["type"] in CROSS_REFERENCE_EVENTS:
+        projected.update(_cross_reference_fields(
+            projected["type"], event["ref_issue"], event.get("ref_action"),
+            (event.get("ref_comment") or {}).get("body")))
     return projected
 
 
-def _referenced_item(item: dict) -> dict:
-    return {key: item.get(key) for key in ("number", "title")}
+def _cross_reference_fields(kind: str, mentioning_item: dict,
+                            action: str | None, comment_body: str | None) -> dict:
+    """The ``ref_*`` keys of a projected cross-reference event.
+
+    kind:            the event type, one of ``CROSS_REFERENCE_EVENTS``
+    mentioning_item: the forge's issue object for the item whose text
+                     mentioned this one
+    action:          Forgejo's ``ref_action`` (none, closes, reopens,
+                     neutered); None on GitHub, whose timeline has none
+    comment_body:    the mentioning comment's text, None when the
+                     mention sits in the item's description
+    """
+    return {
+        "ref_issue": {
+            "number": mentioning_item.get("number"),
+            "title": mentioning_item.get("title"),
+            "state": mentioning_item.get("state"),
+            "repository": (mentioning_item.get("repository") or {}).get("full_name"),
+            "is_pull": bool(mentioning_item.get("pull_request")),
+        },
+        "ref_origin": _CROSS_REFERENCE_ORIGIN[kind],
+        "ref_action": action,
+        "ref_comment": comment_body,
+    }
 
 
 # GitHub spells the entry kind ``event`` where Forgejo says ``type``,
@@ -1090,8 +1120,8 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
     https://docs.github.com/en/rest/issues/timeline; folded into the
     Forgejo ``review_request`` shape. A mention from another issue or
     pull request is the event ``cross-referenced`` with the mentioning
-    item under ``source.issue`` (same document); folded into the
-    Forgejo ``comment_ref`` shape.
+    item under ``source.issue`` (same document); it keeps its name and
+    gets the Forgejo cross-reference keys.
     """
     out: list[dict] = []
     run: list[dict] = []
@@ -1125,9 +1155,9 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
                         "assignee": norm_user(event.get("requested_reviewer")),
                         "removed_assignee": kind == "review_request_removed"})
             continue
-        if kind == "cross-referenced":
-            out.append({**_project_github_event(event), "type": COMMENT_REF_EVENT,
-                        "ref_issue": _referenced_item(event["source"]["issue"])})
+        if kind in CROSS_REFERENCE_EVENTS:
+            out.append({**_project_github_event(event), **_cross_reference_fields(
+                kind, event["source"]["issue"], None, None)})
             continue
         out.append({**_project_github_event(event),
                     "type": _GITHUB_STATE_EVENTS.get(kind, kind)})

@@ -222,18 +222,24 @@ class ReviewRequestProjectionTests(unittest.TestCase):
              for e in got],
             [("review_request", None, False)])
 
-    def test_a_cross_reference_folds_into_the_forgejo_shape(self) -> None:
+    def test_a_cross_reference_gets_the_forgejo_keys(self) -> None:
         """No capture; the synthetic event follows the documented
         schema (https://docs.github.com/en/rest/issues/timeline)."""
         got = _timeline("github", [
             {"event": "cross-referenced", "id": 4,
              "actor": {"login": "michaelni"},
              "source": {"type": "issue",
-                        "issue": {"number": 7, "title": "the other one"}},
+                        "issue": {"number": 7, "title": "the other one",
+                                  "state": "open",
+                                  "repository": {"full_name": "o/other"},
+                                  "pull_request": {"url": "u"}}},
              "created_at": "2026-07-28T12:00:00Z"}])
         self.assertEqual(
-            [(e["type"], e["user"]["login"], e["ref_issue"]) for e in got],
-            [("comment_ref", "michaelni", {"number": 7, "title": "the other one"})])
+            [(e["type"], e["user"]["login"], e["ref_issue"], e["ref_origin"],
+              e["ref_action"], e["ref_comment"]) for e in got],
+            [("cross-referenced", "michaelni",
+              {"number": 7, "title": "the other one", "state": "open",
+               "repository": "o/other", "is_pull": True}, None, None, None)])
 
 
 if __name__ == "__main__":

@@ -296,32 +296,56 @@ class StateEventsTests(unittest.TestCase):
                          ["closed", "reopened", "merged"])
 
 
-class CommentRefProjectionTests(unittest.TestCase):
-    """A comment_ref entry (real capture: FFmpeg #24702, mentioned twice
-    from #24049, the second time by the fairy's own review there) keeps
-    the mentioning item's number and title."""
+def _cross_references(timeline: list[dict]) -> list[tuple]:
+    return [(e["type"], e["user"]["login"], e["created_at"], e["ref_issue"],
+             e["ref_origin"], e["ref_action"], e["ref_comment"])
+            for e in timeline if e["type"] in forge_gcli.CROSS_REFERENCE_EVENTS]
 
-    def test_pr_24702_names_the_mentioning_pull_request(self) -> None:
+
+class CrossReferenceProjectionTests(unittest.TestCase):
+    """Real captures: FFmpeg #24702 was mentioned twice from comments on
+    #24049, the second time by the fairy's own review there; FFmpeg
+    issue #22956 was mentioned from issue #22981's description, from a
+    comment on #22981, from a commit and from pull request #24677's
+    description."""
+
+    def test_pr_24702_keeps_the_mentioning_comments(self) -> None:
         timeline = _load_timeline("ffmpeg_pr_24702_comment_ref_timeline.json")
-        self.assertEqual(
-            [(e["user"]["login"], e["created_at"], e["ref_issue"])
-             for e in timeline if e["type"] == forge_gcli.COMMENT_REF_EVENT],
-            [("dowu", "2026-09-26T01:41:39Z",
-              {"number": 24049, "title": "tivi"}),
-             ("Forgejo_Fairy", "2026-09-26T13:17:33Z",
-              {"number": 24049, "title": "woca wutina"})])
+        pr_24049 = {"number": 24049, "state": "open", "is_pull": True,
+                    "repository": "FFmpeg/FFmpeg"}
+        self.assertEqual(_cross_references(timeline), [
+            ("comment_ref", "dowu", "2026-09-26T01:41:39Z",
+             {**pr_24049, "title": "tivi"}, "comment", "none", "cikuji hujoko pavoju"),
+            ("comment_ref", "Forgejo_Fairy", "2026-09-26T13:17:33Z",
+             {**pr_24049, "title": "woca wutina"}, "comment", "none", "metehocu soruladu")])
         self.assertNotIn("ref_issue", timeline[0])
 
+    def test_issue_22956_keeps_description_mentions(self) -> None:
+        timeline = _load_timeline("ffmpeg_issue_22956_ref_timeline.json")
+        issue_22981 = {"number": 22981, "state": "closed", "is_pull": False,
+                       "repository": "FFmpeg/FFmpeg"}
+        self.assertEqual(_cross_references(timeline), [
+            ("issue_ref", "veziditi", "2026-05-01T09:30:52Z",
+             {**issue_22981, "title": "jocibewa jakufu wezuki"}, "description", "none", None),
+            ("comment_ref", "Forgejo_Fairy", "2026-09-06T23:52:14Z",
+             {**issue_22981, "title": "mobuli"}, "comment", "none", "suna"),
+            ("pull_ref", "michaelni", "2026-09-24T19:16:44Z",
+             {"number": 24677, "title": "wobonoja lemovutu", "state": "open",
+              "is_pull": True, "repository": "FFmpeg/FFmpeg"}, "description", "none", None)])
+        self.assertEqual([e["type"] for e in timeline if "ref_issue" not in e],
+                         ["commit_ref"])
+
     def test_the_mentions_reach_the_built_discussion(self) -> None:
-        timeline = _load_timeline("ffmpeg_pr_24702_comment_ref_timeline.json")
+        timeline = _load_timeline("ffmpeg_issue_22956_ref_timeline.json")
         disc = fairy.build_llm_discussion([], [], [], timeline)
-        self.assertEqual(
-            [(d["author"], d["number"], d["title"]) for d in disc
-             if d["kind"] == "cross_reference"],
-            [("dowu", 24049, "tivi"), ("Forgejo_Fairy", 24049, "woca wutina")])
-        self.assertEqual([d["kind"] for d in disc],
-                         ["push", "review_request", "cross_reference",
-                          "cross_reference"])
+        self.assertEqual([d["kind"] for d in disc], ["cross_reference"] * 3)
+        self.assertEqual(disc[2], {
+            "kind": "cross_reference", "author": "michaelni",
+            "created_at": "2026-09-24T19:16:44Z", "repository": "FFmpeg/FFmpeg",
+            "number": 24677, "title": "wobonoja lemovutu", "state": "open",
+            "is_pull": True, "origin": "description", "action": "none",
+            "body": None})
+        self.assertEqual((disc[1]["origin"], disc[1]["body"]), ("comment", "suna"))
 
 
 if __name__ == "__main__":

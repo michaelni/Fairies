@@ -829,7 +829,10 @@ pushed new code. A ``review_request`` item records ``author`` asking
 request naming the current reviewer identity is a direct invitation.
 A ``state`` item records ``author`` closing, reopening or merging the
 pull request. A ``cross_reference`` item records ``author`` mentioning
-this item from issue or pull request ``number`` (``title``).
+this item from issue or pull request ``repository``#``number``
+(``title``, ``state``, ``is_pull``) in its ``origin`` -- description or
+comment, ``body`` being the comment's text -- and ``action`` the forge's
+closing intent: none, closes, reopens or neutered.
 A ``review`` item with an empty body is a bare verdict click; its
 ``state`` still counts.
 

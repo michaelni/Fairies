@@ -107,7 +107,7 @@ from forge_gcli import (
     AUTO_MERGE_CANCEL_EVENT,
     AUTO_MERGE_SCHEDULE_EVENT,
     CLOSE_EVENT,
-    COMMENT_REF_EVENT,
+    CROSS_REFERENCE_EVENTS,
     MERGE_EVENT,
     PUSH_EVENT,
     REOPEN_EVENT,
@@ -1677,15 +1677,21 @@ def review_request_events_from_timeline(
 
 def cross_reference_events_from_timeline(
         timeline: list[ApiObject]) -> list[DiscussionItem]:
-    """The comment_ref timeline entries as ``kind="cross_reference"``
-    discussion items: who mentioned this item from which issue or pull
-    request (``number``, ``title``) and when."""
+    """The cross-reference timeline entries as ``kind="cross_reference"``
+    discussion items: ``author`` mentioned this item from the issue or
+    pull request ``repository``#``number`` (``title``, ``state``,
+    ``is_pull``) in its ``origin`` (description or comment, None when
+    the forge does not say), ``body`` being the mentioning comment's
+    text and ``action`` Forgejo's closes/reopens intent."""
     return [{
         "kind": "cross_reference",
         "author": _timeline_name(entry.get("user")),
-        **entry["ref_issue"],
         "created_at": entry.get("created_at"),
-    } for entry in timeline if entry.get("type") == COMMENT_REF_EVENT]
+        **entry["ref_issue"],
+        "origin": entry["ref_origin"],
+        "action": entry["ref_action"],
+        "body": entry["ref_comment"],
+    } for entry in timeline if entry.get("type") in CROSS_REFERENCE_EVENTS]
 
 
 STATE_EVENTS = {CLOSE_EVENT: "closed", REOPEN_EVENT: "reopened",
@@ -2035,7 +2041,7 @@ def build_llm_discussion(
     push events into a single chronologically-sorted list for the LLM.
 
     ``timeline`` is the raw ``/issues/{n}/timeline`` payload; its
-    ``pull_push``, ``review_request``, ``comment_ref`` and state-change
+    ``pull_push``, ``review_request``, cross-reference and state-change
     entries are consumed (see ``push_events_from_timeline`` /
     ``review_request_events_from_timeline`` /
     ``cross_reference_events_from_timeline`` /

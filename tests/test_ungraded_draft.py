@@ -106,6 +106,11 @@ class UngradedPromptTests(unittest.TestCase):
                      "Non issues:"):
             self.assertIn(case, text)
 
+    def test_only_the_pr_combiner_is_asked_to_grade(self) -> None:
+        grading = "categorized each issue in minor / moderate / major"
+        self.assertIn(grading, prompt_for("combiner"))
+        self.assertNotIn(grading, prompt_for("issue_combiner"))
+
     def test_reviewer_and_combiner_keep_the_classes_when_grading(self) -> None:
         for role in ("review", "combiner"):
             text = prompt_for(role)

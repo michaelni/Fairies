@@ -1019,7 +1019,7 @@ Before finalizing:
 {"- Check coverage: did you consider every changed hunk for issues, or note that you did not inspect it?\n"                                                        * (pr and not combiner)}\
 {"- Check coverage: did you address duplicates, reproducibility, regression, root cause, and affected branches, or note which you could not?\n"                    * (not pr and not combiner)}\
 {"- Check coverage: did you verify, refute, or explicitly mark as unverified every material point a draft raised? No point may be silently dropped.\n"             * combiner}\
-{"- Check that you have categorized each issue in minor / moderate / major\n" * combiner}\
+{"- Check that you have categorized each issue in minor / moderate / major\n" * (pr and combiner)}\
 </verification_loop>
 ''' * (not vetter)}\
 {'''<verification_loop>

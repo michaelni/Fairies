@@ -931,6 +931,18 @@ def pause_all_containers() -> None:
         pause_container(handle)
 
 
+def stop_all_containers() -> None:
+    """Remove every running container this process started; paused ones
+    stay. A container whose start is still in flight is left to
+    :func:`reap_orphaned_containers`."""
+    with _state_lock:
+        handles = [handle for handle, _ in _running.values()]
+    logger.warning("removing all %d running container(s) of this process",
+                   len(handles))
+    for handle in handles:
+        stop_container(handle)
+
+
 def stop_container(handle: ContainerHandle) -> None:
     """Forcibly remove the container, unless it was paused.
 

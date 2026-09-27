@@ -511,6 +511,16 @@ class PauseContainerTests(ContainerStateHarness, unittest.TestCase):
                          [call for call in podman_calls if call[0] == "pause"])
 
 
+    def test_stop_all_removes_the_running_containers_only(self) -> None:
+        podman_calls = self.record_podman()
+        lc.start_ephemeral_container(image="i", host=HOST)
+        lc.stop_container(lc.start_ephemeral_container(image="i", host=HOST))
+        lc.pause_container(lc.start_ephemeral_container(image="i", host=HOST))
+        lc.start_ephemeral_container(image="i", host=HOST)
+        del podman_calls[:]
+        lc.stop_all_containers()
+        self.assertEqual([("rm", "-f", "cid1"), ("rm", "-f", "cid4")], podman_calls)
+
 class OrphanReaperTests(ContainerStateHarness, unittest.TestCase):
     def _owner_file(self, token: str) -> Path:
         owners = self.cache_dir / "container-owners" / "fairy@h_None"

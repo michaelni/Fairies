@@ -238,6 +238,29 @@ class PollTests(DbCase):
         self.model.poll()
         self.assertEqual(self.keys(), [])
 
+    def test_one_press_acknowledges_a_settled_row_that_also_carries_a_post(self) -> None:
+        self.db.push("skipped", "pr", "5", verdict(
+            5, "skip", unacknowledged_post_at="2026-07-24T10:00:00+00:00"))
+        self.model.poll()
+        self.model.act("skip")
+        ticket = self.db.get("skipped", "pr", "5")
+        self.assertNotIn("unacknowledged_post_at", ticket)
+        self.assertTrue(ticket["acknowledged_at"])
+        self.model.poll()
+        self.assertFalse(fairy_tui._unacknowledged(self.model.items[(R1, "pr", "5")]))
+
+    def test_a_carried_agent_post_is_acknowledged_before_the_row_acts(self) -> None:
+        self.db.push("queued", "pr", "5", verdict(
+            5, unacknowledged_post_at="2026-07-24T10:00:00+00:00"))
+        self.model.poll()
+        self.assertTrue(fairy_tui._unacknowledged(self.model.items[(R1, "pr", "5")]))
+        self.model.act("skip")
+        ticket = self.db.get("queued", "pr", "5")
+        self.assertNotIn("unacknowledged_post_at", ticket)
+        self.assertNotIn("acknowledged_at", ticket)
+        self.model.poll()
+        self.assertFalse(fairy_tui._unacknowledged(self.model.items[(R1, "pr", "5")]))
+
     def test_an_llm_skip_stays_listed_until_acknowledged(self) -> None:
         self.db.push("skipped", "pr", "5", verdict(5, "skip", reason="LLM skip: quiet"))
         self.model.poll()

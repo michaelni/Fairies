@@ -399,6 +399,19 @@ def snapshot_closed(db: filedb.Db, ns: argparse.Namespace, kind: str,
     return failed or complete
 
 
+def _unacknowledged_agent_post_at(prior: str | None,
+                                 prior_data: dict | None) -> str | None:
+    """When the agent posted on the item on its own and no y or s has
+    acknowledged that yet: the posted_at, carried by every ticket that
+    replaced the posted/ one since. None otherwise."""
+    if not prior_data:
+        return None
+    if prior == "posted" and prior_data.get("agent_promoted") \
+            and not prior_data.get("acknowledged_at"):
+        return prior_data.get("posted_at") or prior_data.get("state_changed_at")
+    return prior_data.get("unacknowledged_post_at")
+
+
 def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 wip_re, cache_age, limit, evals={},
                 template_only=frozenset(),
@@ -414,6 +427,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
         if prior in IN_FLIGHT:
             continue
         prior_data = db.get(prior, kind, token) if prior else None
+        agent_post_at = _unacknowledged_agent_post_at(prior, prior_data)
+        carried = {"unacknowledged_post_at": agent_post_at} if agent_post_at else {}
         if prior == "reviewed" and number not in forced_ns and prior_data:
             # Any guard-matching verdict stands -- including skips that
             # carry label changes: they sit in reviewed/ awaiting the
@@ -516,11 +531,10 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # attention rows until the operator's y or s: rerouted to
             # merge-ready/ it would vanish among them before anyone
             # read it.
-            if prior == "posted" and (prior_data or {}).get("agent_promoted") \
-                    and not prior_data.get("acknowledged_at"):
+            if prior == "posted" and agent_post_at:
                 _refresh_activity(db, prior, kind, token, prepared)
                 continue
-            ticket = gate_ticket(prepared, item)
+            ticket = {**gate_ticket(prepared, item), **carried}
             if state == "error":
                 if prior in ("posted", "cancelled", "reviewed"):
                     # never clobber archive or a standing verdict
@@ -573,6 +587,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             "error_backoff_h": error_backoff_h,
             "forced": number in forced_ns,
             "prepared": fairy.prepared_to_dict(prepared),
+            **carried,
         }
         if number not in template_only:
             _route(db, kind, token, "queued", ticket, prior)
@@ -986,8 +1001,14 @@ def promote_reviewed(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
         if dry_run:
             logger.info("%s #%s: DRY RUN, would promote to outgoing/", kind, number)
         else:
-            db.try_move("reviewed", "outgoing", kind, number,
-                        mutate=lambda data: data.update(agent_promoted=True))
+            db.try_move("reviewed", "outgoing", kind, number, mutate=promote)
+
+
+def promote(ticket: dict) -> None:
+    """The agent's own post: flagged for the operator's y or s, and it
+    supersedes the earlier unacknowledged post the ticket carried."""
+    ticket.pop("unacknowledged_post_at", None)
+    ticket["agent_promoted"] = True
 
 
 def log_summary(db: filedb.Db) -> None:

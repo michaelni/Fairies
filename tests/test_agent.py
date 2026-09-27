@@ -217,6 +217,24 @@ class TicketRoutingTests(AgentCase):
         self.assertEqual(self.db.find("pr", "1"), "posted")
         self.assertEqual(self.db.find("pr", "2"), "merge-ready")
 
+    def test_new_activity_carries_the_unacknowledged_agent_post_along(self) -> None:
+        """A push replaces the posted/ ticket with a queued/ one; the
+        fact that the agent already posted must survive on it, and on
+        the gate ticket of the scan after that."""
+        self.db.push("posted", "pr", "1", {"agent_promoted": True,
+                                           "posted_at": "2026-07-24T10:00:00+00:00"})
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.get("queued", "pr", "1")["unacknowledged_post_at"],
+                         "2026-07-24T10:00:00+00:00")
+        self.db.push("reviewed", "pr", "2", {
+            "unacknowledged_post_at": "2026-07-24T10:00:00+00:00",
+            "expected_updated_at": "stale"})
+        self.ns.auto_mode = True  # manual mode keeps a reviewed/ verdict as is
+        self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(pr)
+        self.scan([make_pr(2)])
+        self.assertEqual(self.db.get("skipped", "pr", "2")["unacknowledged_post_at"],
+                         "2026-07-24T10:00:00+00:00")
+
     def test_gate_skip_refreshes_the_archived_activity_stamp(self) -> None:
         self.db.push("posted", "pr", "1",
                      {"last_activity_iso": "2026-07-17T21:32:47+00:00"})
@@ -939,6 +957,17 @@ class SendTests(SendCase):
             self.send(pr_ns=self.ns)
         self.assertEqual(self.db.find("pr", "1"), "posted")
         self.assertEqual(self.db.find("pr", "2"), "reviewed")
+
+    def test_a_new_agent_post_supersedes_the_carried_unacknowledged_one(self) -> None:
+        self.ns.auto_mode = True
+        self.db.push("reviewed", "pr", "1", verdict_ticket(
+            1, unacknowledged_post_at="2026-07-24T10:00:00+00:00"))
+        with mock.patch.object(fairy, "submit_decision_action",
+                               return_value=None):
+            self.send(pr_ns=self.ns)
+        posted = self.db.get("posted", "pr", "1")
+        self.assertTrue(posted["agent_promoted"])
+        self.assertNotIn("unacknowledged_post_at", posted)
 
     def test_unpostable_outgoing_goes_back_to_reviewed(self) -> None:
         self.db.push("outgoing", "pr", "1", verdict_ticket(1, "skip"))

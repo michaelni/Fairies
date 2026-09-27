@@ -128,7 +128,9 @@ ci-blocked rows whose CI run waits for you to release it in the
 forge), `merge`, `ci`, `actionable`, `all`. A
 verdict the agent posted on its own (`--auto-mode`,
 `--vetted-auto-mode`) stays in `relevant` and `review` as a `posted`
-row until you acknowledge it with `y` or `s`.
+row until you acknowledge it with `y` or `s`; when new activity
+replaces that row before you did, the flag moves to the new row and
+the first `y` or `s` there acknowledges the post.
 
 **Sorts** (`t` cycles): `arrival`, `status` (actionable first, then
 the live pipeline, attention, settled), `repo`, `number`.

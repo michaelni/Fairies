@@ -136,18 +136,33 @@ class Item:
     error: str = ""      # why the current file fails to parse
 
 
-def _unacknowledged(item: Item) -> bool:
-    """A ticket the agent settled on its own -- a verdict posted by
-    itself, a skip on the LLM's word or a failure -- that the operator
-    has not yet acknowledged with y or s."""
+def _settled_by_agent(item: Item) -> bool:
+    """A ticket the agent settled on its own: a verdict posted by
+    itself, a skip on the LLM's word or a failure."""
     data = item.data
-    settled_by_agent = {
+    return bool({
         "posted": data.get("agent_promoted"),
         "skipped": data.get("llm_at") and not data.get("snoozed_at"),
         "error": data.get("error"),
-    }
-    return bool(settled_by_agent.get(item.state)
-                and not data.get("acknowledged_at"))
+    }.get(item.state))
+
+
+def _unacknowledged(item: Item) -> bool:
+    """A ticket the agent settled, or one carrying the agent's earlier
+    post on the item, that the operator has not yet acknowledged with
+    y or s."""
+    return bool(item.data.get("unacknowledged_post_at")
+                or _settled_by_agent(item)
+                and not item.data.get("acknowledged_at"))
+
+
+def _acknowledge(item: Item, data: dict) -> None:
+    """The operator's y or s on an unacknowledged row: the post the
+    ticket carries is cleared and, when the agent settled the ticket
+    itself, it is stamped acknowledged; one press covers both."""
+    data.pop("unacknowledged_post_at", None)
+    if _settled_by_agent(item):
+        data["acknowledged_at"] = datetime.now(timezone.utc).isoformat()
 
 
 def _repo_short(repo: str) -> str:
@@ -674,9 +689,7 @@ class Model:
             elif action in ("apply", "apply-force", "skip") \
                     and _unacknowledged(item):
                 if not db.try_move(item.state, item.state, item.kind, item.number,
-                                   mutate=lambda d: d.update(
-                                       acknowledged_at=datetime.now(
-                                           timezone.utc).isoformat())):
+                                   mutate=lambda d: _acknowledge(item, d)):
                     logger.info("%s changed under the cursor; not acknowledged",
                                 label)
                     return
@@ -1467,8 +1480,12 @@ class UILoop:
                                   initial=("log_warn", "reviewer failed: "))
         if _unacknowledged(item):
             head.append([("st_reviewed", (
-                ("failed" if item.state == "error" else item.state)
-                + " by the agent — y or s acknowledges")[:width])])
+                (f"posted by the agent {_when(data['unacknowledged_post_at'])}, "
+                 "before the item moved on"
+                 if data.get("unacknowledged_post_at") else
+                 ("failed" if item.state == "error" else item.state)
+                 + " by the agent")
+                + " — y or s acknowledges")[:width])])
         if data.get("vetting"):
             vetting = data["vetting"]
             head += tui_core.wrap(

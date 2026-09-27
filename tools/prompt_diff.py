@@ -35,8 +35,9 @@ script re-invokes itself with that checkout first on sys.path, so the
 revision's own code generates every prompt into one text file per
 prompt: the developer prompts of all roles (review, code_review,
 design_review, combiner, triager, vetter, issue_investigator,
-issue_combiner, issue_triager, issue_vetter, plus the CI-failure
-variants) and the user-text builders.
+issue_combiner, issue_triager, issue_vetter, plus the CI-failure,
+ungraded-draft and persisting-branches variants) and the user-text
+builders.
 The two directories are then compared with ``git diff --no-index``.
 All generation inputs (model, features, repos, machines, fixtures) are
 fixed by the invoking script, so the diff shows exactly what the code
@@ -77,7 +78,12 @@ logger = logging.getLogger(__name__)
 ROLES = ("review", "code_review", "design_review", "combiner", "triager",
          "vetter", "issue_investigator", "issue_combiner", "issue_triager",
          "issue_vetter")
-CI_ROLES = ("review", "combiner", "triager")
+PROMPT_VARIANTS = {
+    "ci":       ({"ci_triage_mode": True},   ("review", "combiner", "triager")),
+    "ungraded": ({"classifies": False},      ("review", "code_review", "design_review")),
+    "branches": ({"persist_branches": True}, ("review", "combiner", "vetter",
+                                              "issue_investigator", "issue_combiner", "issue_vetter")),
+}
 
 MODEL = "openai:gpt-5.5"
 FEATURES = frozenset({"source_bundle", "vector_store_search", "web_search",
@@ -172,18 +178,23 @@ def dump_prompts(checkout: Path, outdir: Path, project_facts: str,
         machines=machines,
     )
     params = inspect.signature(llm_prompt.generate_llm_prompt).parameters
-    dropped = (set(common_kwargs) | {"role", "ci_triage_mode"}) - set(params)
+    dropped = (set(common_kwargs) | {"role"}
+               | {k for kw, _ in PROMPT_VARIANTS.values() for k in kw}) - set(params)
     if dropped:
         logger.warning("this revision's generate_llm_prompt does not accept:"
                        " %s", sorted(dropped))
     for role in ROLES:
-        for ci in (False, True) if role in CI_ROLES else (False,):
+        variants = [("", {})] + [
+            ("+" + name, variant_kwargs)
+            for name, (variant_kwargs, roles) in PROMPT_VARIANTS.items()
+            if role in roles and variant_kwargs.keys() <= params.keys()]
+        for suffix, variant_kwargs in variants:
             kwargs = {k: v for k, v in
-                      {**common_kwargs, "role": role, "ci_triage_mode": ci}.items()
+                      {**common_kwargs, "role": role, **variant_kwargs}.items()
                       if k in params}
             if role.endswith("vetter"):
                 kwargs.pop("allowed_labels"), kwargs.pop("allowed_models")
-            generate(role + "+ci" * ci,
+            generate(role + suffix,
                      lambda kw=kwargs: llm_prompt.generate_llm_prompt(**kw))
 
     generate("user_review", lambda: llm_prompt.make_user_text(

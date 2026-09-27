@@ -4,6 +4,7 @@
 
 # ---- whole files the tests read as-is -------------------------------
 path:tests/fixtures/ci_log/
+path:tests/fixtures/gemini/
 path:tests/fixtures/github/
 path:tests/fixtures/openai_citation_runs/
 path:tests/fixtures/wrapper_functional_runs/

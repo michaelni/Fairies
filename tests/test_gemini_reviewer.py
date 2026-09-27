@@ -32,6 +32,7 @@ GeminiReviewer on the shared tool loop, replayed with a scripted client.
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -48,6 +49,11 @@ import common  # noqa: E402
 import gemini_reviewer  # noqa: E402
 from llm_review_api import ProviderTurnFailed  # noqa: E402
 from tests.test_anthropic_reviewer import _ctx, _FakeShell  # noqa: E402
+
+QUOTA_429 = json.loads((Path(__file__).parent / "fixtures" / "gemini"
+                        / "free_tier_429.json").read_text())
+PER_MINUTE = QUOTA_429["GenerateRequestsPerMinutePerProjectPerModel-FreeTier"]
+PER_DAY = QUOTA_429["GenerateRequestsPerDayPerProjectPerModel-FreeTier"]
 
 SUBMIT = {"classification": "minor_issues_approve", "message": "LLM review: one nit.",
           "head_vs_branch_diff_evidence": False}
@@ -100,12 +106,19 @@ class GeminiReviewLoopTests(unittest.TestCase):
         self.assertIn("commit deadbeef", str(response["response"]))
 
     def test_rate_limit_is_retried(self) -> None:
-        client = _ScriptedClient([(429, {"error": {"code": 429}}),
+        client = _ScriptedClient([(429, PER_MINUTE),
                                   (200, _reply(("submit_review", SUBMIT, "c1")))])
         with mock.patch.object(common.time, "sleep"):
             review = _reviewer(client).review(_ctx(None))
         self.assertEqual("minor_issues_approve", review.classification)
         self.assertEqual(2, len(client.bodies))
+
+    def test_exhausted_daily_quota_is_not_retried(self) -> None:
+        client = _ScriptedClient([(429, PER_DAY)])
+        with mock.patch.object(common.time, "sleep") as sleep, \
+                self.assertRaises(httpx.HTTPStatusError):
+            _reviewer(client).review(_ctx(None))
+        sleep.assert_not_called()
 
     def test_empty_reply_is_a_provider_ended_turn(self) -> None:
         client = _ScriptedClient([(200, {"promptFeedback": {"blockReason": "OTHER"}})])

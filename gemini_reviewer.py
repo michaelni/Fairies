@@ -60,11 +60,26 @@ GEMINI_EFFORTS = ("minimal", "low", "medium", "high")
 _URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 
+def _daily_quota(response: httpx.Response) -> str | None:
+    """The per-day quota a 429 reports exhausted, if any."""
+    try:
+        return next((v["quotaId"] for d in response.json()["error"]["details"]
+                     for v in d.get("violations", []) if "PerDay" in v["quotaId"]), None)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
 def _retryable(exc: Exception) -> bool:
     # Rate limits (https://ai.google.dev/gemini-api/docs/rate-limits) answer
-    # 429 until the window passes; back off instead of failing the review.
-    return (isinstance(exc, httpx.HTTPStatusError)
-            and exc.response.status_code in (429, 500, 502, 503, 504))
+    # 429 until the window passes; back off instead of failing the review,
+    # unless the exhausted window is a whole day.
+    if not (isinstance(exc, httpx.HTTPStatusError)
+            and exc.response.status_code in (429, 500, 502, 503, 504)):
+        return False
+    quota = _daily_quota(exc.response) if exc.response.status_code == 429 else None
+    if quota:
+        logger.error("generate_content: daily quota %s exhausted; not retrying", quota)
+    return quota is None
 
 
 class GeminiReviewer(Reviewer):

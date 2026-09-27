@@ -757,15 +757,12 @@ class Model:
         """Jump to the next row waiting for the operator, reviewed or an
         unacknowledged agent post: the first at/after the cursor,
         wrapping to the first overall."""
-        remaining = {(it.repo, it.kind, it.number) for it in self.visible()
-                     if it.state == "reviewed" or _unacknowledged(it)} - {key}
-        if not remaining:
-            return
-        keys = [(it.repo, it.kind, it.number) for it in self._sync_cursor()]
-        nxt = next((k for k in keys[self.cursor:] if k in remaining),
-                   next((k for k in keys if k in remaining), None))
-        if nxt is not None:
-            self._move_cursor_to(nxt)
+        vis = self._sync_cursor()
+        for it in vis[self.cursor:] + vis[:self.cursor]:
+            k = (it.repo, it.kind, it.number)
+            if k != key and (it.state == "reviewed" or _unacknowledged(it)):
+                self._move_cursor_to(k)
+                return
 
     def _relevant(self, item: Item) -> bool:
         key = (item.repo, item.kind, item.number)

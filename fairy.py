@@ -1124,7 +1124,7 @@ def list_recently_closed_prs(args: argparse.Namespace,
     cutoff = scan_closed_cutoff(args, newest_seen)
     if cutoff is None:
         return []
-    return forge_gcli.list_closed_since(args, "pulls", cutoff)
+    return forge_gcli.list_since(args, "pulls", cutoff, state="closed")
 
 
 def get_pr(args: argparse.Namespace, pr_number: int) -> ApiObject:

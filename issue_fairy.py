@@ -197,10 +197,10 @@ def list_recently_closed_issues(
     cutoff = scan_closed_cutoff(args, newest_seen)
     if cutoff is None:
         return []
-    data = forge_gcli.list_closed_since(args, "issues", cutoff)
+    data = forge_gcli.list_since(args, "issues", cutoff, state="closed")
     if closed_pr_numbers is None:
         closed_pr_numbers = {pr["number"] for pr in
-                             forge_gcli.list_closed_since(args, "pulls", cutoff)}
+                             forge_gcli.list_since(args, "pulls", cutoff, state="closed")}
     issues = [i for i in data if i.get("number") not in closed_pr_numbers]
     logger.debug(
         "closed issue listing: %d item(s), %d after removing closed PRs",

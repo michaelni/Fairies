@@ -127,7 +127,7 @@ __all__ = [
     "gcli_create_pr",
     "gcli_prefix",
     "issues_listing_takes_type_filter",
-    "list_closed_since",
+    "list_since",
     "newest_updated_at",
     "list_commit_statuses",
     "pr_merged",
@@ -787,22 +787,23 @@ def _recent_first(args: argparse.Namespace, page_size: int) -> dict:
     return {"limit": page_size, "sort": "recentupdate"}
 
 
-def list_closed_since(args: argparse.Namespace, endpoint: str,
-                      cutoff: datetime) -> list[dict]:
-    """Closed ``pulls`` / ``issues`` entries whose ``updated_at`` is at
-    or after ``cutoff``, most recently updated first.
+def list_since(args: argparse.Namespace, endpoint: str, cutoff: datetime,
+               *, state: str) -> list[dict]:
+    """``pulls`` / ``issues`` entries in ``state`` ("open", "closed" or
+    "all") whose ``updated_at`` is at or after ``cutoff``, most
+    recently updated first.
 
     Pages the listing and stops at the first entry past the cutoff --
     the recency sort makes that the end of the window -- so the cost
-    scales with the window, not the repo's closed history. The served
-    page length proves nothing about being on the last page (see
+    scales with the window, not the repo's history. The served page
+    length proves nothing about being on the last page (see
     ``_recent_first``): paging ends only at the cutoff or on an empty
     page. An entry without a parsable ``updated_at`` is skipped, never
     trusted to end the window."""
     params = _recent_first(args, 100 if _forge_type(args) == "github" else 50)
     out: list[dict] = []
     for page in count(1):
-        query = urlencode({"state": "closed", "page": page, **params})
+        query = urlencode({"state": state, "page": page, **params})
         data = gcli_api(args, build_repo_path(
             args.owner, args.repo, f"/{endpoint}?{query}"))
         if not isinstance(data, list):

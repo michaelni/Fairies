@@ -57,7 +57,7 @@ class WindowTests(unittest.TestCase):
     def test_off_by_default_and_listing_makes_no_forge_call(self) -> None:
         ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.assertIsNone(fairy.scan_closed_cutoff(ns))
-        with mock.patch.object(forge_gcli, "list_closed_since") as fetch:
+        with mock.patch.object(forge_gcli, "list_since") as fetch:
             self.assertEqual(fairy.list_recently_closed_prs(ns), [])
             self.assertEqual(issue_fairy.list_recently_closed_issues(ns), [])
         fetch.assert_not_called()
@@ -102,7 +102,7 @@ class ListClosedSinceTests(unittest.TestCase):
                  entry(52, "2026-07-18T00:00:00Z")]
         with mock.patch.object(forge_gcli, "gcli_api",
                                side_effect=[page1, page2]) as api:
-            got = forge_gcli.list_closed_since(ns, "pulls", self.CUTOFF)
+            got = forge_gcli.list_since(ns, "pulls", self.CUTOFF, state="closed")
         self.assertEqual([i["number"] for i in got], list(range(51)))
         self.assertEqual(api.call_count, 2)
         first = api.call_args_list[0].args[1]
@@ -115,7 +115,7 @@ class ListClosedSinceTests(unittest.TestCase):
         ns = SimpleNamespace(owner="o", repo="r", forge_type="github")
         with mock.patch.object(forge_gcli, "gcli_api",
                                return_value=[]) as api:
-            forge_gcli.list_closed_since(ns, "issues", self.CUTOFF)
+            forge_gcli.list_since(ns, "issues", self.CUTOFF, state="closed")
         path = api.call_args.args[1]
         self.assertIn("sort=updated", path)
         self.assertIn("direction=desc", path)
@@ -126,7 +126,7 @@ class ListClosedSinceTests(unittest.TestCase):
         short = [entry(n, "2026-07-25T00:00:00Z") for n in range(30)]
         with mock.patch.object(forge_gcli, "gcli_api",
                                side_effect=[short, []]) as api:
-            got = forge_gcli.list_closed_since(ns, "pulls", self.CUTOFF)
+            got = forge_gcli.list_since(ns, "pulls", self.CUTOFF, state="closed")
         self.assertEqual(len(got), 30)
         self.assertEqual(api.call_count, 2)
 
@@ -138,7 +138,7 @@ class ListClosedSinceTests(unittest.TestCase):
                 entry(4, "2026-07-01T00:00:00Z")]
         with mock.patch.object(forge_gcli, "gcli_api",
                                return_value=page):
-            got = forge_gcli.list_closed_since(ns, "pulls", self.CUTOFF)
+            got = forge_gcli.list_since(ns, "pulls", self.CUTOFF, state="closed")
         self.assertEqual([i["number"] for i in got], [1, 3])
 
 
@@ -173,7 +173,7 @@ class ClosedIssueListingTests(unittest.TestCase):
         issues = [entry(3, "2026-07-25T00:00:00Z"),
                   entry(4, "2026-07-25T00:00:00Z")]
         prs = [entry(4, "2026-07-25T00:00:00Z")]
-        with mock.patch.object(forge_gcli, "list_closed_since",
+        with mock.patch.object(forge_gcli, "list_since",
                                side_effect=[issues, prs]):
             got = issue_fairy.list_recently_closed_issues(ns)
         self.assertEqual([i["number"] for i in got], [3])

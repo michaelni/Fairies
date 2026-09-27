@@ -1251,16 +1251,12 @@ def normalize_review_state(state: str | None) -> str | None:
 def normalize_status_state(state: str | None) -> str | None:
     """Normalize the ``state``/``status`` field of a single commit-status row.
 
-    This is a pure string normalizer. For Forgejo Actions cancellations
-    the row's state field is ``failure`` (not ``cancelled``) and the
-    cancellation hint lives in the row's ``description`` instead -- use
-    ``row_effective_state(row)`` for that case, which combines this
-    normalizer with the description override.
+    A pure string normalizer; ``row_effective_state(row)`` adds the
+    description-based ``BLOCKED`` override on top of it.
 
-    The ``CANCELLED`` / ``CANCELED`` mapping entries below are real
-    (not dead): GitLab's commit-status API emits
-    ``state="canceled"`` directly when a pipeline is cancelled, and
-    a future Forgejo version may surface ``cancelled`` here too.
+    The ``CANCELLED`` / ``CANCELED`` mapping entries are real (not
+    dead): GitLab's commit-status API emits ``state="canceled"``
+    directly when a pipeline is cancelled.
     """
     if not state:
         return None
@@ -1280,22 +1276,13 @@ def normalize_status_state(state: str | None) -> str | None:
         "ERROR": "ERROR",
         "FAILURE": "FAILURE",
         "FAILED": "FAILURE",
-        # ``CANCELLED`` and ``CANCELED`` (single-L, GitLab spelling) are
-        # kept as a distinct logical state rather than collapsed into
-        # ``FAILURE``: a cancelled job is usually an infra hiccup or a
-        # superseded run that just needs a click on the UI's "Rerun"
-        # button. Forgejo's HTTP API exposes no rerun endpoint
-        # (verified against the swagger spec -- only ``/dispatches``
-        # exists for writes), so fairy can't drive the retry itself.
-        # If a future Forgejo release adds one, this code can be taught
-        # to use it. Instead, callers that build the CI-triage
-        # payload for the LLM exclude ``CANCELLED`` contexts (see
-        # ``CI_TRIAGE_NAG_STATES``) and the operator-facing summary at
-        # end-of-run lists the affected PRs so a human can click the
-        # Rerun button. ``TIMED_OUT`` is intentionally still folded
-        # into ``FAILURE`` -- a timeout is much more likely to be a
-        # real test problem than a transient infra issue, so we still
-        # want the LLM to nag about it.
+        # ``CANCELLED`` and ``CANCELED`` (single-L, GitLab spelling) stay
+        # a distinct logical state rather than collapsing into
+        # ``FAILURE``: a cancelled job just needs a rerun, so
+        # ``CI_TRIAGE_NAG_STATES`` keeps it out of the LLM CI-triage
+        # payload and the end-of-run summary lists it for the operator.
+        # ``TIMED_OUT`` folds into ``FAILURE``: a timeout is a failure
+        # the review must see.
         "CANCELLED": "CANCELLED",
         "CANCELED": "CANCELLED",
         "TIMED_OUT": "FAILURE",
@@ -1397,15 +1384,12 @@ def extract_contexts_with_state(
     whose *latest* effective state equals ``target_state``.
 
     Used by the end-of-run summary (and only by it) to surface PRs
-    that need the operator to act in the Forgejo UI -- ``CANCELLED``
-    contexts need a manual Rerun click, ``BLOCKED`` contexts need
-    the gating condition to be released. Forgejo's HTTP API exposes
-    neither a rerun endpoint nor a way to release required-condition
-    gates (verified against the swagger spec; first observed on
-    Forgejo 15.0.0+gitea-1.22.0), so fairy cannot drive these by
-    itself. Both states are also excluded from the LLM CI-triage
-    payload upstream (see ``CI_TRIAGE_NAG_STATES``), so the model is
-    not asked to nag about jobs that just need a human.
+    that need the operator to act in the forge UI: ``CANCELLED``
+    contexts need a rerun, ``BLOCKED`` contexts need the gating
+    condition released. Forgejo's HTTP API offers no way to release
+    required-condition gates (verified against the swagger spec), so
+    fairy cannot drive that itself. Both states are also excluded
+    from the LLM CI-triage payload (see ``CI_TRIAGE_NAG_STATES``).
     """
     return tuple(
         sorted(
@@ -3024,13 +3008,6 @@ def prepare_pr(
     # chance; forge_gcli.list_commit_statuses names the forge code and
     # the one repo-wide listing that does tell when CI moved.
     raw_status_list = list_commit_statuses(args, head_ref)
-    # ``CANCELLED`` and ``BLOCKED`` are surfaced separately for the
-    # operator-facing summary at end-of-run: Forgejo's HTTP API offers
-    # no rerun endpoint and no way to release blocked-by-required-
-    # conditions gates, so a human has to click. Both states are also
-    # hidden from the LLM CI-triage payload below (see
-    # ``CI_TRIAGE_NAG_STATES``) so the model is not prompted to nag
-    # about something that just needs the UI Rerun button.
     cancelled_ctxs, blocked_ctxs = _contexts_needing_a_human(number, raw_status_list)
 
     last_self_nonapproval = get_last_self_nonapproval_activity(reviews, comments, review_comments, self_login)

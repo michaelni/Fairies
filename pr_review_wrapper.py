@@ -69,9 +69,12 @@ import base64
 from dataclasses import replace
 import json
 import logging
+import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -1292,6 +1295,25 @@ def unattended_posting_block(branches: Sequence[JsonObject]) -> str | None:
     return None
 
 
+def stop_containers_on_termination() -> None:
+    """On SIGTERM, or when the parent process (fairy's worker) exits,
+    remove every container this run started and exit with 143."""
+    parent_pid = os.getppid()
+    terminated = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: terminated.set())
+
+    def watch() -> None:
+        while not terminated.wait(1.0) and os.getppid() == parent_pid:
+            pass
+        logger.warning("%s; removing this run's containers",
+                       "SIGTERM received" if terminated.is_set()
+                       else f"parent process {parent_pid} exited")
+        podman_host.stop_all_containers()
+        os._exit(128 + signal.SIGTERM)
+
+    threading.Thread(target=watch, name="termination-watch", daemon=True).start()
+
+
 def emit_review_stdout(
     classification: str,
     message: str,
@@ -1418,6 +1440,7 @@ def main() -> int:
         color=args.color,
     )
     concurrency.configure(args.concurrency)
+    stop_containers_on_termination()
 
     # OPENAI_API_KEY is only required when an OpenAI backend actually runs.
     model_specs = [

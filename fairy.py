@@ -1600,106 +1600,58 @@ def _timeline_name(user: dict | None) -> str:
     return user.get("login") or user.get("full_name") or "?"
 
 
-def push_events_from_timeline(timeline: list[ApiObject]) -> list[DiscussionItem]:
-    """Extract ``pull_push`` timeline entries as discussion-list items.
-
-    One event is emitted per push to the PR head branch. We surface
-    them as synthetic ``kind="push"`` items so the triage and main
-    reviewer prompts can see "after my last comment, the author pushed
-    commit X" as a first-class signal, instead of having to infer it
-    from a SHA mentioned in a prior fairy comment vs the current
-    ``head_sha`` (which the triager has been observed to speculate
-    around -- see PR #23197 in fairy's history).
-
-    A push whose payload the forge layer could not read carries no
-    ``commit_ids`` and is skipped: suppressing it beats blocking the
-    whole review on a hard failure.
-    """
-    items: list[DiscussionItem] = []
-    for entry in timeline:
-        if entry.get("type") != PUSH_EVENT or "commit_ids" not in entry:
-            continue
-        commit_ids = entry["commit_ids"]
-        items.append({
-            "kind": "push",
-            "author": _timeline_name(entry.get("user")),
-            "created_at": entry.get("created_at"),
-            "head_sha": commit_ids[-1] if commit_ids else None,
+def _push_fields(entry: ApiObject) -> dict | None:
+    """None for a push whose payload the forge layer could not read:
+    suppressing it beats blocking the whole review on a hard failure."""
+    if "commit_ids" not in entry:
+        return None
+    commit_ids = entry["commit_ids"]
+    return {"head_sha": commit_ids[-1] if commit_ids else None,
             "is_force_push": entry.get("is_force_push"),
-            "commit_count": len(commit_ids),
-        })
-    return items
-
-def review_request_events_from_timeline(
-        timeline: list[ApiObject]) -> list[DiscussionItem]:
-    """``review_request`` timeline entries as ``kind="review_request"``
-    discussion items: who asked whom for a review, when, and whether
-    the request was withdrawn (``removed``). Valuable to the operator
-    and the LLM alike -- a review request IS the invitation the
-    reviewer acts on, and it was previously invisible in the
-    discussion."""
-    items: list[DiscussionItem] = []
-    for entry in timeline:
-        if entry.get("type") != forge_gcli.REVIEW_REQUEST_EVENT:
-            continue
-        items.append({
-            "kind": "review_request",
-            "author": _timeline_name(entry.get("user")),
-            "reviewer": _timeline_name(entry.get("assignee")),
-            "removed": bool(entry.get("removed_assignee")),
-            "created_at": entry.get("created_at"),
-        })
-    return items
-
-
-def cross_reference_events_from_timeline(
-        timeline: list[ApiObject]) -> list[DiscussionItem]:
-    """The cross-reference timeline entries as ``kind="cross_reference"``
-    discussion items: ``author`` mentioned this item from the issue or
-    pull request ``repository``#``number`` (``title``, ``state``,
-    ``is_pull``) in its ``origin`` (description or comment, None when
-    the forge does not say), ``body`` being the mentioning comment's
-    text and ``action`` Forgejo's closes/reopens intent."""
-    return [{
-        "kind": "cross_reference",
-        "author": _timeline_name(entry.get("user")),
-        "created_at": entry.get("created_at"),
-        **entry["ref_issue"],
-        "origin": entry["ref_origin"],
-        "action": entry["ref_action"],
-        "body": entry["ref_comment"],
-    } for entry in timeline if entry.get("type") in CROSS_REFERENCE_EVENTS]
-
-
-def commit_reference_events_from_timeline(
-        timeline: list[ApiObject]) -> list[DiscussionItem]:
-    """The commit-mention timeline entries as ``kind="commit_reference"``
-    discussion items: ``author``'s commit ``sha`` mentioned this item,
-    ``body`` being the forge's rendering of that commit (Forgejo: its
-    repository and subject; GitHub: empty)."""
-    return [{
-        "kind": "commit_reference",
-        "author": _timeline_name(entry.get("user")),
-        "created_at": entry.get("created_at"),
-        "sha": entry["ref_commit_sha"],
-        "body": entry["body"],
-    } for entry in timeline if entry.get("type") in COMMIT_REFERENCE_EVENTS]
+            "commit_count": len(commit_ids)}
 
 
 STATE_EVENTS = {CLOSE_EVENT: "closed", REOPEN_EVENT: "reopened",
                 MERGE_EVENT: "merged"}
 
+_TIMELINE_ITEMS: dict[str, tuple[str, Callable[[ApiObject], dict | None]]] = {
+    PUSH_EVENT: ("push", _push_fields),
+    forge_gcli.REVIEW_REQUEST_EVENT: ("review_request", lambda entry: {
+        "reviewer": _timeline_name(entry.get("assignee")),
+        "removed": bool(entry.get("removed_assignee"))}),
+    **dict.fromkeys(CROSS_REFERENCE_EVENTS, ("cross_reference", lambda entry: {
+        **entry["ref_issue"], "origin": entry["ref_origin"],
+        "action": entry["ref_action"], "body": entry["ref_comment"]})),
+    **dict.fromkeys(COMMIT_REFERENCE_EVENTS, ("commit_reference", lambda entry: {
+        "sha": entry["ref_commit_sha"], "body": entry["body"]})),
+    **dict.fromkeys(STATE_EVENTS, ("state", lambda entry: {
+        "state": STATE_EVENTS[entry["type"]]})),
+}
 
-def state_events_from_timeline(
-        timeline: list[ApiObject]) -> list[DiscussionItem]:
-    """The close, reopen and merge timeline entries as ``kind="state"``
-    discussion items: who moved the item to ``state`` and when."""
-    return [{
-        "kind": "state",
-        "author": _timeline_name(entry.get("user")),
-        "state": STATE_EVENTS[entry["type"]],
-        "created_at": entry.get("created_at"),
-    } for entry in timeline if entry.get("type") in STATE_EVENTS]
+
+def timeline_events(timeline: list[ApiObject]) -> list[DiscussionItem]:
+    """The push, review request, cross-reference, commit-reference and
+    close / reopen / merge entries of an issue timeline as discussion
+    items of kind ``push``, ``review_request``, ``cross_reference``,
+    ``commit_reference`` and ``state``: who did it, when, and the
+    kind's own fields. A push carries its head SHA, force flag and
+    commit count; a review request the requested reviewer and whether
+    the request was withdrawn; a cross reference the mentioning issue
+    or pull request (``repository``, ``number``, ``title``, ``state``,
+    ``is_pull``), its ``origin`` (description or comment, None when the
+    forge does not say), the mentioning comment's text as ``body`` and
+    Forgejo's closes/reopens intent as ``action``; a commit reference
+    the commit's ``sha`` and the forge's rendering of it as ``body``
+    (Forgejo: repository and subject; GitHub: empty); a state change
+    the new state."""
+    items: list[DiscussionItem] = []
+    for entry in timeline:
+        kind, fields = _TIMELINE_ITEMS.get(entry.get("type"), (None, None))
+        extra = fields(entry) if kind else None
+        if extra is not None:
+            items.append({"kind": kind, "author": _timeline_name(entry.get("user")),
+                          **extra, "created_at": entry.get("created_at")})
+    return items
 
 
 class ReviewState(NamedTuple):
@@ -2034,12 +1986,7 @@ def build_llm_discussion(
 
     ``timeline`` is the raw ``/issues/{n}/timeline`` payload; its
     ``pull_push``, ``review_request``, cross-reference, commit-reference
-    and state-change entries are consumed (see
-    ``push_events_from_timeline`` /
-    ``review_request_events_from_timeline`` /
-    ``cross_reference_events_from_timeline`` /
-    ``commit_reference_events_from_timeline`` /
-    ``state_events_from_timeline``).
+    and state-change entries are consumed (see ``timeline_events``).
     Passing ``None`` (or omitting it) yields a comments-only discussion.
     The push items carry ``kind="push"`` plus ``head_sha`` /
     ``is_force_push`` so the triage LLM can tell unambiguously that
@@ -2051,11 +1998,7 @@ def build_llm_discussion(
     """
     items: list[DiscussionItem] = []
     if timeline:
-        items.extend(push_events_from_timeline(timeline))
-        items.extend(review_request_events_from_timeline(timeline))
-        items.extend(cross_reference_events_from_timeline(timeline))
-        items.extend(commit_reference_events_from_timeline(timeline))
-        items.extend(state_events_from_timeline(timeline))
+        items.extend(timeline_events(timeline))
 
     for comment in comments:
         body = comment.get("body")
@@ -2675,7 +2618,7 @@ def prepare_pr(
     # cached copy when ``pr.updated_at`` matches and transparently
     # refetches when it advances, so both consumers (auto-merge
     # detection via ``auto_merge_state_from_timeline``, LLM-discussion
-    # enrichment via ``push_events_from_timeline``) see the same single
+    # enrichment via ``timeline_events``) see the same single
     # live copy without an extra in-process memo.
     def get_timeline() -> list[ApiObject]:
         try:
@@ -2780,9 +2723,9 @@ def prepare_pr(
     # auto-merge / LLM-discussion consumers already read.
     latest_push = max_dt([
         first_dt(item, "created_at")
-        for item in push_events_from_timeline(
-            filter_activity_after(get_timeline(), ignore_after, "created_at")
-        )
+        for item in timeline_events(
+            filter_activity_after(get_timeline(), ignore_after, "created_at"))
+        if item["kind"] == "push"
     ])
     if latest_push is not None and (last_activity is None or latest_push > last_activity):
         logger.debug(

@@ -138,14 +138,14 @@ class PushGroupingTests(unittest.TestCase):
         # The commit is stamped 19:12:10, the force-push happened at
         # 19:39:47; the activity gate must see the later one, and the
         # pusher rather than the commit's author.
-        item = fairy.push_events_from_timeline(
+        item = fairy.timeline_events(
             _github("testrepo_pr2_forcepush_timeline.json"))[0]
         self.assertEqual(item["created_at"], "2026-07-28T19:39:47Z")
         self.assertEqual(item["author"], "michaelni")
         self.assertTrue(item["is_force_push"])
 
     def test_the_push_reaches_fairy_as_a_discussion_item(self) -> None:
-        items = fairy.push_events_from_timeline(
+        items = fairy.timeline_events(
             _github("testrepo_pr4_timeline.json"))
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["kind"], "push")
@@ -191,10 +191,11 @@ class ReviewRequestProjectionTests(unittest.TestCase):
              ("review_request", "michaelni", True, "forgejo-fairy[bot]")])
 
     def test_the_requests_reach_fairy_as_discussion_items(self) -> None:
-        items = fairy.review_request_events_from_timeline(
+        items = fairy.timeline_events(
             _github("testrepo_review_request_timeline.json"))
         self.assertEqual(
-            [(i["author"], i["reviewer"], i["removed"]) for i in items],
+            [(i["author"], i["reviewer"], i["removed"]) for i in items
+             if i["kind"] == "review_request"],
             [("forgejo-fairy[bot]", "michaelni", False),
              ("forgejo-fairy[bot]", "michaelni", True)])
 
@@ -208,7 +209,7 @@ class ReviewRequestProjectionTests(unittest.TestCase):
             [("close", "forgejo-fairy[bot]", "2026-08-17T01:39:19Z")])
         self.assertEqual(
             [(i["author"], i["state"])
-             for i in fairy.state_events_from_timeline(got)],
+             for i in fairy.timeline_events(got) if i["kind"] == "state"],
             [("forgejo-fairy[bot]", "closed")])
 
     def test_a_team_request_projects_to_no_assignee(self) -> None:

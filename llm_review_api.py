@@ -94,6 +94,7 @@ __all__ = [
     "build_review_schema",
     "build_triage_schema",
     "check_schema",
+    "model_label",
     "model_needs_diff_tripwire",
     "review_with_turn_retries",
     "run_parallel",
@@ -383,6 +384,15 @@ def check_schema(value: object, schema: dict[str, object], path: str = "$") -> N
         if item_schema is not None:
             for index, item in enumerate(value):
                 check_schema(item, item_schema, f"{path}[{index}]")
+
+
+def model_label(model: str) -> str:
+    """User-facing model label.
+
+    model:   reviewer name ``provider:[vendor/]model[+login]``
+    returns: the model, uppercased, e.g. ``GPT-5.4``
+    """
+    return (model or "unknown").rpartition(":")[2].rpartition("/")[2].partition("+")[0].upper()
 
 
 def model_needs_diff_tripwire(model: str) -> bool:

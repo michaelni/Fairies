@@ -48,25 +48,26 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import llm_prompt  # noqa: E402
+import llm_review_api  # noqa: E402
 from llm_review_api import Review  # noqa: E402
 
 
 class ModelLabelTests(unittest.TestCase):
     def test_vendor_prefix_stripped_and_uppercased(self) -> None:
-        self.assertEqual("GLM-5.3", llm_prompt.model_label("zai:glm-5.3"))
-        self.assertEqual("GPT-5.4", llm_prompt.model_label("gpt-5.4"))
+        self.assertEqual("GLM-5.3", llm_review_api.model_label("zai:glm-5.3"))
+        self.assertEqual("GPT-5.4", llm_review_api.model_label("gpt-5.4"))
         self.assertEqual("SPACE-BUNNY-ALPHA",
-                         llm_prompt.model_label("openrouter:stealth/space-bunny-alpha"))
-        self.assertEqual("UNKNOWN", llm_prompt.model_label(""))
+                         llm_review_api.model_label("openrouter:stealth/space-bunny-alpha"))
+        self.assertEqual("UNKNOWN", llm_review_api.model_label(""))
 
     def test_account_suffix_stays_out_of_the_label(self) -> None:
         """A reviewer name carries the login as ``+<codex-home basename>``
         or ``+<api-key-env>``; that is deployment configuration and must
         not surface in prompts or posted messages."""
         self.assertEqual("GPT-5.6-SOL",
-                         llm_prompt.model_label("codex:gpt-5.6-sol+second-home"))
+                         llm_review_api.model_label("codex:gpt-5.6-sol+second-home"))
         self.assertEqual("GLM-5.3",
-                         llm_prompt.model_label("zai:glm-5.3+ZAI_API_KEY_2"))
+                         llm_review_api.model_label("zai:glm-5.3+ZAI_API_KEY_2"))
 
 
 class PromptForTests(unittest.TestCase):

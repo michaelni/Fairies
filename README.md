@@ -262,7 +262,8 @@ unit that reloads it on boot.
 reviewer). Provider prefixes: `openai:`, `anthropic:`, `zai:`,
 `openrouter:` (any OpenRouter model id, e.g.
 `openrouter:stealth/space-bunny-alpha`, via `OPENROUTER_API_KEY`),
-`codex:`. Each reviewer gets its own isolated container shell; the
+`gemini:` (Google's Gemini API via `GEMINI_API_KEY`; needs the
+`google-genai` package), `codex:`. Each reviewer gets its own isolated container shell; the
 model reviewers run concurrently (`--concurrency PROVIDER:COUNT` caps how
 many calls one provider gets at a time, across every fairy process on the
 machine). A local-GPU backend is TODO -- PRs very welcome.

@@ -61,6 +61,10 @@ if "anthropic" not in sys.modules:
         setattr(fake, _name, type(_name, (_E,), {}))
     sys.modules["anthropic"] = fake
 
+from tests import fake_genai  # noqa: E402
+
+fake_genai.install()
+
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
                             ProviderContentFlagged, ProviderTurnFailed,
@@ -73,6 +77,7 @@ import workset  # noqa: E402
 from openai_reviewer import OpenAIReviewer  # noqa: E402
 from openai_reviewer import OpenAIContainerUnhealthy  # noqa: E402
 from anthropic_reviewer import AnthropicReviewer  # noqa: E402
+from gemini_reviewer import GeminiReviewer  # noqa: E402
 
 
 def _ctx() -> ReviewContext:
@@ -174,6 +179,13 @@ class MakeReviewerTests(unittest.TestCase):
         self.assertEqual("https://openrouter.ai/api", r.base_url)
         self.assertEqual("OPENROUTER_API_KEY", r.api_key_env)
 
+    def test_gemini_provider(self) -> None:
+        r = review_pipeline.make_reviewer("gemini:gemini-3.8-flash@high", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+        self.assertIsInstance(r, GeminiReviewer)
+        self.assertEqual("gemini:gemini-3.8-flash", r.name)
+        self.assertEqual("high", r.effort)
+        self.assertEqual("GEMINI_API_KEY", r.api_key_env)
+
     def test_anthropic_provider(self) -> None:
         r = review_pipeline.make_reviewer("anthropic:claude-opus-4", args=_args(), resources=None, role=COMBINER_ROLE, verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
@@ -222,6 +234,10 @@ class MakeReviewerTests(unittest.TestCase):
             args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
         self.assertEqual("ZAI_API_KEY_2", r.api_key_env)
         self.assertEqual("zai:glm-4.6+ZAI_API_KEY_2", r.name)
+        r = review_pipeline.make_reviewer(
+            "gemini:gemini-3.8-flash:api-key-env=GEMINI_API_KEY_2",
+            args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+        self.assertEqual("GEMINI_API_KEY_2", r.api_key_env)
 
     def test_option_value_may_contain_colons(self) -> None:
         """A Windows codex home like C:\\codex-home survives the split."""

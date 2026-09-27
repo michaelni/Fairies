@@ -115,7 +115,7 @@ def make_reviewer(
     Options select a credential other than the deployment default, so
     one spec can name e.g. the same codex model on a different login:
     ``codex-home=DIR`` (codex) overrides --codex-home, ``api-key-env=VAR``
-    (anthropic/zai/openrouter) overrides the provider's key variable. A reviewer
+    (anthropic/zai/openrouter/gemini) overrides the provider's key variable. A reviewer
     built with an option carries a ``+`` name suffix so logs tell the
     credentials apart.
 
@@ -123,12 +123,14 @@ def make_reviewer(
     OpenAI resources (``resources`` must not be None for this provider).
     ``anthropic:<m>`` -> AnthropicReviewer; ``zai:<m>`` / ``openrouter:<m>``
     -> AnthropicReviewer pointed at that vendor's Anthropic-compatible
-    endpoint (``ANTHROPIC_ENDPOINTS``). ``codex:<m>`` ->
+    endpoint (``ANTHROPIC_ENDPOINTS``). ``gemini:<m>`` -> GeminiReviewer
+    on Google's Gemini API (``GEMINI_API_KEY``). ``codex:<m>`` ->
     CodexReviewer driving the pinned codex CLI. Provider modules (and
     their SDKs) are imported only when actually requested.
 
     ``@effort`` sets that reviewer's effort: an OpenAI reasoning effort,
-    an Anthropic/GLM thinking effort (``ANTHROPIC_EFFORTS``), or a codex
+    an Anthropic/GLM thinking effort (``ANTHROPIC_EFFORTS``), a Gemini
+    thinking level (``GEMINI_EFFORTS``), or a codex
     ``model_reasoning_effort`` (``CODEX_EFFORTS``). When the spec has no
     ``@effort``, ``default_effort`` applies (``None`` keeps the provider
     default). This is the only way to set effort -- there is no shared
@@ -151,13 +153,13 @@ def make_reviewer(
     provider, sep, model = spec_body.partition(":")
     if not sep:
         raise SystemExit(
-            f"--model {spec!r}: missing provider prefix (use openai:/anthropic:/zai:/openrouter:/codex:)"
+            f"--model {spec!r}: missing provider prefix (use openai:/anthropic:/zai:/openrouter:/gemini:/codex:)"
         )
     if not model:
         raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
     codex_home = options.pop("codex-home", None) if provider == "codex" else None
     api_key_env = (options.pop("api-key-env", None)
-                   if provider in ANTHROPIC_ENDPOINTS else None)
+                   if provider in ANTHROPIC_ENDPOINTS or provider == "gemini" else None)
     if options:
         raise SystemExit(
             f"--model {spec!r}: unsupported option(s): {', '.join(sorted(options))}"
@@ -169,17 +171,22 @@ def make_reviewer(
             max_output_tokens=max_output_tokens, service_tier=service_tier,
             verbosity=verbosity,
         )
-    if provider in ANTHROPIC_ENDPOINTS:
-        from anthropic_reviewer import AnthropicReviewer
-
-        base_url, default_api_key_env = ANTHROPIC_ENDPOINTS[provider]
+    if provider in ANTHROPIC_ENDPOINTS or provider == "gemini":
+        if provider == "gemini":
+            from gemini_reviewer import GeminiReviewer as reviewer_class
+            endpoint = {}
+        else:
+            from anthropic_reviewer import AnthropicReviewer as reviewer_class
+            base_url, default_api_key_env = ANTHROPIC_ENDPOINTS[provider]
+            endpoint = {"base_url": base_url, "api_key_env": default_api_key_env}
+        if api_key_env:
+            endpoint["api_key_env"] = api_key_env
         try:
-            return AnthropicReviewer(
+            return reviewer_class(
                 model,
                 name=f"{provider}:{model}" + (f"+{api_key_env}" if api_key_env else ""),
                 role=role,
-                base_url=base_url,
-                api_key_env=api_key_env or default_api_key_env,
+                **endpoint,
                 max_tool_rounds=args.podman_max_tool_rounds,
                 exec_timeout_s=args.podman_exec_timeout,
                 effort=effort,
@@ -224,7 +231,7 @@ def make_reviewer(
             )
         except ValueError as exc:  # invalid @effort suffix
             raise SystemExit(f"--model {spec!r}: {exc}")
-    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai/openrouter/codex)")
+    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai/openrouter/gemini/codex)")
 
 
 def run_triage(triager: Reviewer, ctx: ReviewContext) -> dict[str, object] | None:

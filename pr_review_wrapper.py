@@ -239,8 +239,9 @@ def parse_args() -> argparse.Namespace:
             "appear again under another prompt. All reviewers (--model plus each "
             "--extra-model) run on the same PR; with more than one "
             "you must pass --combine-model to merge their drafts. '@EFFORT' sets "
-            "that reviewer's effort: an OpenAI reasoning effort, or off/low/"
-            "medium/high/xhigh/max as the Anthropic/GLM thinking effort."
+            "that reviewer's effort: an OpenAI reasoning effort, off/low/"
+            "medium/high/xhigh/max as the Anthropic/GLM thinking effort, or "
+            "minimal/low/medium/high as the Gemini thinking level."
         ),
     )
     p.add_argument(
@@ -1439,6 +1440,7 @@ def main() -> int:
         logging.getLogger("shell_tool"),
         logging.getLogger("anthropic_common"),
         logging.getLogger("tool_loop"),
+        logging.getLogger("gemini_reviewer"),
         logging.getLogger("codex_catalog"),
         logging.getLogger("codex_container"),
         logging.getLogger("codex_reviewer"),

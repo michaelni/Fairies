@@ -536,19 +536,16 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
         self.assertEqual([("pause", "cid1"), ("pause", "cid2")],
                          [call for call in podman_calls if call[0] != "run"])
 
-    def test_poisoned_container_paused_not_removed(self) -> None:
+    def test_poisoned_container_paused_at_once_not_removed(self) -> None:
         request_obj = _fixture_request()
-        paused: list[object] = []
-        stopped: list[object] = []
-
-        def fake_open_review(spec, repo_specs, args, session_commands=()):
-            return mock.Mock(name="handle"), mock.Mock(name="session"), ""
-
+        podman_calls = self.record_podman()
+        paused_during_review: list[tuple[str, ...]] = []
         halted: list[bool] = []
 
         def fake_review_pr(ctx, reviewers, combiner, **kw):
             session, _ = ctx.open_shell("x86_64")   # opens+registers one
             ctx.report_poisoned(session)            # flag it suspect
+            paused_during_review.extend(c for c in podman_calls if c[0] == "pause")
             halted.append(wrapper.shell_tool.halted())
             return wrapper.llm_review_api.Review(
                 classification="approve", message="")
@@ -561,10 +558,8 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
             mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
             mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
             mock.patch.object(wrapper, "open_review_container_shell",
-                              side_effect=fake_open_review),
+                              side_effect=self._open_review),
             mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
-            mock.patch.object(wrapper.podman_host, "pause_container", paused.append),
-            mock.patch.object(wrapper.podman_host, "stop_container", stopped.append),
             # process-global, so restore it rather than halt the whole run
             mock.patch.object(wrapper.shell_tool, "_halted", False),
             mock.patch.object(
@@ -578,9 +573,9 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
         ):
             rc = wrapper.main()
 
-        self.assertEqual(1, len(paused))
-        self.assertEqual(1, len(stopped))
-        self.assertNotIn(paused[0], stopped)
+        self.assertEqual([("pause", "cid2")], paused_during_review)
+        self.assertEqual([("pause", "cid2"), ("rm", "-f", "cid1")],
+                         [call for call in podman_calls if call[0] != "run"])
         # The draft came back clean, but a suspect container taints it:
         # halt without posting instead of handing fairy a verdict.
         self.assertEqual(wrapper.EXIT_REVIEW_HALTED, rc)

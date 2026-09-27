@@ -1552,8 +1552,7 @@ def main() -> int:
     spec_by_label = {m.label: m for m in machines}
     ensemble_shells: list[tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]] = []
     primary_shells: dict[str, podman_host.ContainerShellSession] = {}
-    # Keyed by id() since sessions are unhashable; their containers are
-    # paused, not removed, at cleanup.
+    # Keyed by id() since sessions are unhashable.
     poisoned_session_ids: set[int] = set()
     session_handles: dict[int, podman_host.ContainerHandle] = {}
     session_seeds: dict[int, branch_persist.RemoteSeeds] = {}
@@ -1618,9 +1617,10 @@ def main() -> int:
     def report_poisoned(session: podman_host.ContainerShellSession) -> None:
         poisoned_session_ids.add(id(session))
         logger.warning(
-            "review container flagged as poisoned (codex run crashed); it "
-            "will be paused for forensics instead of removed"
+            "review container flagged as poisoned (codex run crashed); "
+            "pausing it for forensics"
         )
+        podman_host.pause_container(session_handles[id(session)])
         shell_tool.halt()
 
     uploaded_file_ids: list[str] = []
@@ -2081,10 +2081,7 @@ def main() -> int:
             container_lease.release(healthy=container_lease_healthy)
         for handle, session in ensemble_shells:
             session.close()
-            if id(session) in poisoned_session_ids:
-                podman_host.pause_container(handle)
-            else:
-                podman_host.stop_container(handle)
+            podman_host.stop_container(handle)
 
 
 if __name__ == "__main__":

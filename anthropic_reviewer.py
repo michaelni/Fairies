@@ -47,10 +47,10 @@ import json
 from anthropic import Anthropic
 
 import concurrency
-from common import JsonObject, dump_response_debug_artifacts
+from common import JsonObject, dump_response_debug_artifacts, load_api_key
 from llm_prompt import REVIEWER_ROLE
 from llm_review_api import ReviewContext, Reviewer, RoleSpec
-from anthropic_common import call_with_anthropic_retry, load_api_key
+from anthropic_common import call_with_anthropic_retry
 from shell_tool import abort_if_cancelled
 from tool_loop import Conversation, ToolCall, review_prompt, review_tools, run_tool_loop
 

@@ -44,6 +44,8 @@ import sys
 import tempfile
 from typing import TypeAlias
 
+from dotenv import dotenv_values
+
 logger = logging.getLogger(__name__)
 
 
@@ -81,6 +83,20 @@ def format_turn_failure(exc: BaseException) -> str:
 
 def parse_turn_failure(stdout: str) -> str:
     return json.loads(stdout)["error"]
+
+
+def load_api_key(env_var: str) -> str | None:
+    """Return the API key from the environment, falling back to ``.env``.
+
+    Parameterized by ``env_var`` so one loader serves every provider's key
+    variable (``ANTHROPIC_API_KEY``, ``ZAI_API_KEY``, ...). Process
+    environment wins over ``.env``; ``dotenv_values`` is read directly so
+    we never mutate the live process environment as a side effect.
+    """
+    env_key = os.environ.get(env_var)
+    if env_key:
+        return env_key
+    return dotenv_values(".env").get(env_var)
 
 
 def response_to_debug_json(response: object) -> JsonObject:

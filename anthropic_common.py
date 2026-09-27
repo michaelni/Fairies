@@ -27,8 +27,8 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Thin Anthropic-SDK glue shared by the Anthropic / GLM reviewer: API-key
-loading and a retry wrapper typed to Anthropic's exception classes.
+Thin Anthropic-SDK glue shared by the Anthropic / GLM reviewer: a retry
+wrapper typed to Anthropic's exception classes.
 
 What does NOT belong: prompt text, the review pipeline, or any
 OpenAI-specific code. This mirrors the small subset of ``openai_common``
@@ -44,12 +44,10 @@ need not install ``anthropic``.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from collections.abc import Callable
 from typing import TypeVar
 
-from dotenv import dotenv_values
 from anthropic import (
     APIConnectionError,
     APITimeoutError,
@@ -60,7 +58,6 @@ from anthropic import (
 
 __all__ = [
     "DEFAULT_ANTHROPIC_RETRIES",
-    "load_api_key",
     "call_with_anthropic_retry",
 ]
 
@@ -100,20 +97,6 @@ def _is_quota_exhausted(exc: Exception) -> bool:
     text = str(getattr(exc, "message", "") or exc).lower()
     return ("insufficient balance" in text or "no resource package" in text
             or "usage limit reached" in text)
-
-
-def load_api_key(env_var: str) -> str | None:
-    """Return the API key from the environment, falling back to ``.env``.
-
-    Parameterized by ``env_var`` so the same loader serves Anthropic
-    (``ANTHROPIC_API_KEY``) and z.ai / GLM (``ZAI_API_KEY``). Process
-    environment wins over ``.env``; ``dotenv_values`` is read directly so
-    we never mutate the live process environment as a side effect.
-    """
-    env_key = os.environ.get(env_var)
-    if env_key:
-        return env_key
-    return dotenv_values(".env").get(env_var)
 
 
 def _retry_delay(exc: Exception, attempt: int) -> float:

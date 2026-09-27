@@ -389,7 +389,8 @@ class ContainerStateHarness:
     of the containers it started."""
 
     def setUp(self) -> None:
-        for name, value in (("_running", {}), ("_paused", set())):
+        for name, value in (("_running", {}), ("_paused", set()),
+                            ("_frozen", False)):
             patcher = mock.patch.object(lc, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -494,6 +495,15 @@ class PauseContainerTests(ContainerStateHarness, unittest.TestCase):
         handle = lc.start_ephemeral_container(image="i", host=HOST)
         lc.pause_container(handle)
         self.assertIsNotNone(self._channel(handle).wait(timeout=5))
+
+    def test_pause_all_covers_running_and_later_started_containers(self) -> None:
+        podman_calls = self.record_podman()
+        lc.start_ephemeral_container(image="i", host=HOST)
+        lc.stop_container(lc.start_ephemeral_container(image="i", host=HOST))
+        lc.pause_all_containers()
+        lc.start_ephemeral_container(image="i", host=HOST)
+        self.assertEqual([("pause", "cid1"), ("pause", "cid3")],
+                         [call for call in podman_calls if call[0] == "pause"])
 
 
 class CopyAndOpenShellTests(unittest.TestCase):

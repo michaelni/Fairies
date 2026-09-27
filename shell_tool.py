@@ -46,11 +46,12 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Callable, Sequence
 
 from common import (EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED,
                     EXIT_REVIEW_STOPPED_BY_HALT_FILE, JsonObject)
-from podman_host import ContainerShellSession
+from podman_host import ContainerShellSession, pause_all_containers
 from shell_bridge_client import (  # noqa: F401
     SHELL_TOOL_DESCRIPTION,
     SHELL_TOOL_NAME,
@@ -66,8 +67,8 @@ __all__ = [
     "exec_shell_call",
     "halt",
     "halted",
-    "halted_by_file",
     "run_session_commands",
+    "watch_halt_file",
 ]
 
 logger = logging.getLogger(__name__)
@@ -112,12 +113,28 @@ def halted_by_file() -> bool:
 def abort_if_cancelled() -> None:
     """Exit the wrapper with EXIT_REVIEW_CANCELLED once the operator has
     flagged the claimed ticket, with EXIT_REVIEW_STOPPED_BY_HALT_FILE
-    once the halt file exists; called before every model turn and
-    shell command so a review stops at its next boundary."""
+    once the halt file exists, after pausing every container of the run;
+    called before every model turn and shell command so a review stops
+    at its next boundary."""
     if cancelled():
         raise SystemExit(EXIT_REVIEW_CANCELLED)
     if halted_by_file():
+        pause_all_containers()
         raise SystemExit(EXIT_REVIEW_STOPPED_BY_HALT_FILE)
+
+
+def watch_halt_file() -> None:
+    """Start a daemon thread that pauses every container of the run within
+    a second of the halt file appearing: a review stops only at its next
+    boundary, and a codex pass that makes no further shell call never
+    reaches one."""
+    def watch() -> None:
+        while not halted_by_file():
+            time.sleep(1.0)
+        logger.warning("halt file %s exists", HALT_FILE)
+        pause_all_containers()
+
+    threading.Thread(target=watch, daemon=True, name="halt-watch").start()
 
 
 def exec_shell_call(

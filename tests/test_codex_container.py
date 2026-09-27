@@ -43,6 +43,7 @@ import podman_host
 import codex_container
 from codex_container import CodexContainer, CodexShellRelay
 from test_podman_host import ContainerStateHarness
+from common import EXIT_REVIEW_STOPPED_BY_HALT_FILE
 
 HOST = podman_host.RemoteHost("fairy@box", identity="/id")
 
@@ -247,6 +248,11 @@ class RelayCancelTests(unittest.TestCase):
     def test_cancel_at_a_shell_call_kills_codex_and_keeps_the_container(self) -> None:
         container = self._serve(SystemExit)
         container.kill_run.assert_called_once()
+        container.stop.assert_not_called()
+
+    def test_a_halt_leaves_the_codex_container_to_the_halt_pause(self) -> None:
+        container = self._serve(SystemExit(EXIT_REVIEW_STOPPED_BY_HALT_FILE))
+        container.kill_run.assert_not_called()
         container.stop.assert_not_called()
 
     def test_normal_eof_stops_nothing(self) -> None:

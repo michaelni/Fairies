@@ -54,7 +54,7 @@ import threading
 from pathlib import Path
 from typing import Callable, Sequence
 
-from common import tagged_thread_name
+from common import EXIT_REVIEW_STOPPED_BY_HALT_FILE, tagged_thread_name
 from podman_host import (
     CONTAINER_CPUS,
     CONTAINER_MEMORY,
@@ -352,10 +352,11 @@ class CodexShellRelay:
                            open_shell=self.open_shell,
                            max_timeout_s=self.max_timeout_s,
                            shells=self._shells)
-        except SystemExit:
-            logger.warning("run stopped (operator cancel or halted review); "
-                           "killing codex")
-            self.container.kill_run()
+        except SystemExit as stop:
+            if stop.code != EXIT_REVIEW_STOPPED_BY_HALT_FILE:
+                logger.warning("run stopped (operator cancel or halted review); "
+                               "killing codex")
+                self.container.kill_run()
         except ValueError as exc:
             # The relay's pipes raise this once stop() closed them: a shell
             # call outlived codex and its response has nowhere to go.

@@ -80,6 +80,7 @@ import pr_review_wrapper as wrapper
 import openai_reviewer
 from llm_review_api import Review
 from common import EXIT_REVIEW_STOPPED_BY_HALT_FILE
+from test_podman_host import ContainerStateHarness
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "wrapper_functional_runs"
@@ -450,7 +451,7 @@ class VetStageTests(unittest.TestCase):
                 self.assertNotIn("vetting", ticket)
 
 
-class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
+class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase):
     """Regression: a wrapper failure after the eager container open but
     before the review (here: build_source_bundle rejecting a request
     without pull_request.head_sha, observed 2026-07-14 on a smoke run)
@@ -489,20 +490,22 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
         session.close.assert_called_once_with()
         self.assertEqual([handle], stopped)
 
+    @staticmethod
+    def _open_review(spec, repo_specs, args, session_commands=()):
+        handle = wrapper.podman_host.start_ephemeral_container(
+            image="i", host=spec.host)
+        return handle, mock.Mock(name="session"), ""
+
     def test_halt_file_pauses_every_container_of_the_run(self) -> None:
         request_obj = _fixture_request()
-        paused: list[object] = []
-        stopped: list[object] = []
         halt_file = tempfile.NamedTemporaryFile()
         self.addCleanup(halt_file.close)
-
-        def fake_open_review(spec, repo_specs, args, session_commands=()):
-            return mock.Mock(name="handle"), mock.Mock(name="session"), ""
+        podman_calls = self.record_podman()
 
         def fake_review_pr(ctx, reviewers, combiner, **kw):
             ctx.open_shell("x86_64")
-            wrapper.shell_tool.abort_if_cancelled()
-            raise AssertionError("the halt file was not seen")
+            raise wrapper.podman_host.ContainerShellError(
+                "container shell channel closed (eof)")
 
         with (
             mock.patch.object(wrapper, "OpenAI", return_value=mock.Mock()),
@@ -512,10 +515,9 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
             mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
             mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
             mock.patch.object(wrapper, "open_review_container_shell",
-                              side_effect=fake_open_review),
+                              side_effect=self._open_review),
             mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
-            mock.patch.object(wrapper.podman_host, "pause_container", paused.append),
-            mock.patch.object(wrapper.podman_host, "stop_container", stopped.append),
+            mock.patch.object(wrapper.shell_tool, "watch_halt_file") as watch,
             mock.patch.object(wrapper.shell_tool, "HALT_FILE", None),
             mock.patch.object(
                 wrapper.sys, "argv",
@@ -530,8 +532,9 @@ class PodmanCleanupOnEarlyFailureTests(unittest.TestCase):
                 wrapper.main()
 
         self.assertEqual(EXIT_REVIEW_STOPPED_BY_HALT_FILE, caught.exception.code)
-        self.assertEqual(2, len(paused))
-        self.assertEqual([], stopped)
+        watch.assert_called_once_with()
+        self.assertEqual([("pause", "cid1"), ("pause", "cid2")],
+                         [call for call in podman_calls if call[0] != "run"])
 
     def test_poisoned_container_paused_not_removed(self) -> None:
         request_obj = _fixture_request()

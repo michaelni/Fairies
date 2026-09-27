@@ -629,6 +629,7 @@ CONTAINER_PIDS_LIMIT = 4096
 _state_lock = threading.Lock()
 _running: dict[str, tuple[ContainerHandle, list[subprocess.Popen]]] = {}
 _paused: set[str] = set()
+_frozen = False
 
 
 @dataclass(frozen=True)
@@ -751,6 +752,9 @@ def start_ephemeral_container(
     )
     with _state_lock:
         _running[container_id] = (handle, [])
+        frozen = _frozen
+    if frozen:
+        pause_container(handle)
     return handle
 
 
@@ -849,6 +853,19 @@ def pause_container(handle: ContainerHandle) -> None:
         "`podman rm -f %s` on that host to release the resources",
         handle.container_id[:12], handle.host.ssh_dest, handle.container_id[:12],
     )
+
+
+def pause_all_containers() -> None:
+    """Pause every container this process started and has not removed, and
+    every one it starts from now on."""
+    global _frozen
+    with _state_lock:
+        _frozen = True
+        handles = [handle for handle, _ in _running.values()]
+    logger.warning("pausing all %d running container(s) of this process",
+                   len(handles))
+    for handle in handles:
+        pause_container(handle)
 
 
 def stop_container(handle: ContainerHandle) -> None:

@@ -42,6 +42,7 @@ import argparse
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -165,16 +166,31 @@ class HaltStopsSiblingReviewersTests(unittest.TestCase):
         # the status keeps the wrapper's halted exit code intact.
         self.assertEqual(EXIT_REVIEW_HALTED, caught.exception.code)
 
-    def test_halt_file_stops_the_next_shell_call(self) -> None:
+    def test_halt_file_pauses_the_containers_and_stops_the_next_shell_call(self) -> None:
         with tempfile.NamedTemporaryFile() as halt_file, \
-                mock.patch.object(shell_tool, "HALT_FILE", halt_file.name):
+                mock.patch.object(shell_tool, "HALT_FILE", halt_file.name), \
+                mock.patch.object(shell_tool, "pause_all_containers") as pause_all:
             self.assertTrue(shell_tool.halted_by_file())
             with self.assertRaises(SystemExit) as caught:
                 shell_tool.exec_shell_call(
                     None, {"command": "true"}, max_timeout_s=1.0)
         self.assertEqual(EXIT_REVIEW_STOPPED_BY_HALT_FILE, caught.exception.code)
+        pause_all.assert_called_once_with()
         with mock.patch.object(shell_tool, "HALT_FILE", halt_file.name):
             self.assertFalse(shell_tool.halted_by_file())
+
+    def test_the_watcher_pauses_the_containers_once_the_halt_file_appears(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(shell_tool, "HALT_FILE", f"{tmp}/halted"), \
+                mock.patch.object(shell_tool, "pause_all_containers") as pause_all:
+            shell_tool.watch_halt_file()
+            time.sleep(1.5)
+            pause_all.assert_not_called()
+            Path(tmp, "halted").touch()
+            deadline = time.monotonic() + 5
+            while not pause_all.called and time.monotonic() < deadline:
+                time.sleep(0.1)
+        pause_all.assert_called_once_with()
 
     def test_halt_file_exit_becomes_review_cancelled(self) -> None:
         args = argparse.Namespace(

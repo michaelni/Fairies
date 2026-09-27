@@ -1382,6 +1382,8 @@ def main() -> int:
     args = parse_args()
     shell_tool.CANCEL_FILE = args.workset_file
     shell_tool.HALT_FILE = args.halt_file
+    if args.halt_file:
+        shell_tool.watch_halt_file()
     debug_dir_specified = any(
         arg == "--debug-response-dir" or arg.startswith("--debug-response-dir=")
         for arg in sys.argv[1:]
@@ -2069,6 +2071,9 @@ def main() -> int:
             branches=list(review.branches),
         )
         return 0
+    except Exception:
+        shell_tool.abort_if_cancelled()
+        raise
     finally:
         for file_id in uploaded_file_ids:
             delete_uploaded_file(client, file_id, verbose=args.verbose)
@@ -2076,7 +2081,7 @@ def main() -> int:
             container_lease.release(healthy=container_lease_healthy)
         for handle, session in ensemble_shells:
             session.close()
-            if id(session) in poisoned_session_ids or shell_tool.halted_by_file():
+            if id(session) in poisoned_session_ids:
                 podman_host.pause_container(handle)
             else:
                 podman_host.stop_container(handle)

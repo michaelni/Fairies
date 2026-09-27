@@ -295,22 +295,21 @@ def _route(db: filedb.Db, kind: str, number: filedb.TicketId, state: str,
                     kind, number)
 
 
-def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
-              now: datetime, cache, self_login,
+def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str,
+              items: list[dict], *, now: datetime, cache, self_login,
               forced: set[filedb.TicketId],
               serve_operator: Callable[[], None] = lambda: None,
               ) -> set[tuple[str, int]]:
-    """One gate pass over the side's open items; returns the open set.
+    """One gate pass over ``items``, the side's open listing, plus the
+    forced numbers not among them; returns the open set.
     ``serve_operator`` runs before every item, so a y or r pressed
     during the pass is answered without waiting for its end."""
     if kind == "pr":
-        fetch_one, list_open, forced_ns = fairy.get_pr, fairy.list_open_prs, \
-            ns.force_review_prs
+        fetch_one, forced_ns = fairy.get_pr, ns.force_review_prs
         wip_re = fairy.compile_wip_regex(
             fairy.DEFAULT_WIP_PREFIXES + (ns.wip_prefixes or []))
     else:
-        fetch_one, list_open, forced_ns = issue_fairy.get_issue, \
-            issue_fairy.list_open_issues, ns.force_review_issues
+        fetch_one, forced_ns = issue_fairy.get_issue, ns.force_review_issues
     # a request may name a sample/review token: the base item is
     # fetched and force-prepared once; tickets are created for each
     # requested evaluation
@@ -325,16 +324,10 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
     # template but must not queue a base evaluation nobody asked for
     template_only = {b for b in evals
                      if str(b) not in forced and b not in forced_ns}
-    if ns.forced_only:  # --forced-only: no open listing, just the named items
-        items = []
-        missing = sorted(forced_ns | forced_base)
-    else:
-        items = list_open(ns)
-        listed = {int(i["number"]) for i in items
-                  if str(i.get("number")).isdigit()}
-        # forced/requested numbers may be closed or merged: absent from
-        # the open listing but explicitly asked for
-        missing = sorted((forced_ns | forced_base) - listed)
+    listed = {int(i["number"]) for i in items if str(i.get("number")).isdigit()}
+    # forced/requested numbers may be closed or merged: absent from
+    # the open listing but explicitly asked for
+    missing = sorted((forced_ns | forced_base) - listed)
     for n in missing:
         try:
             items.append(fetch_one(ns, n))
@@ -783,7 +776,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                     continue
                 served[kind] |= late
                 open_set.update(scan_side(
-                    db, _forced_only(ns), kind, now=now, cache=caches[kind],
+                    db, ns, kind, [], now=now, cache=caches[kind],
                     self_login=login(kind), forced=late,
                     serve_operator=serve_outgoing))
                 finish_requests(db, {kind: late}, {kind})
@@ -793,8 +786,10 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                 full_kinds.add(kind)
             pending = forced[kind] - served[kind]
             served[kind] |= forced[kind]
+            items = [] if ns.forced_only else fairy.list_open_prs(ns) \
+                if kind == "pr" else issue_fairy.list_open_issues(ns)
             open_set |= scan_side(
-                db, ns, kind, now=now, cache=caches[kind],
+                db, ns, kind, items, now=now, cache=caches[kind],
                 self_login=login(kind), forced=pending,
                 serve_operator=serve_operator)
             if ns.forced_only:

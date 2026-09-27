@@ -226,7 +226,8 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         # reviewer activity was invisible in run logs, 2026-07-02).
         import anthropic_common
         import shell_tool
-        self.assertEqual("anthropic_reviewer", anthropic_reviewer.logger.name)
+        import tool_loop
+        self.assertEqual("tool_loop", tool_loop.logger.name)
         self.assertEqual("anthropic_common", anthropic_common.logger.name)
         self.assertEqual("shell_tool", shell_tool.logger.name)
 

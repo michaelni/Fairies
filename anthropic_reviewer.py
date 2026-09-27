@@ -43,32 +43,22 @@ Anthropic / GLM code path imports it (lazily, via the reviewer factory).
 from __future__ import annotations
 
 import json
-import logging
-from collections.abc import Sequence
 
 from anthropic import Anthropic
 
 import concurrency
 from common import JsonObject, dump_response_debug_artifacts
-from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
-import podman_host
-from llm_review_api import (
-    BadModelOutput,
-    ReviewContext,
-    Reviewer,
-    RoleSpec,
-)
+from llm_prompt import REVIEWER_ROLE
+from llm_review_api import ReviewContext, Reviewer, RoleSpec
 from anthropic_common import call_with_anthropic_retry, load_api_key
-from shell_tool import (abort_if_cancelled, build_shell_tool_schema,
-                        exec_machine_call)
+from shell_tool import abort_if_cancelled
+from tool_loop import Conversation, ToolCall, review_prompt, review_tools, run_tool_loop
 
 __all__ = [
     "ANTHROPIC_EFFORTS",
     "DEFAULT_ANTHROPIC_MAX_TOKENS",
     "AnthropicReviewer",
 ]
-
-logger = logging.getLogger(__name__)
 
 # Conservative output-token budget that every current Anthropic / GLM model
 # accepts; raise per-model via the constructor when a model allows more.
@@ -89,25 +79,6 @@ ANTHROPIC_EFFORTS = ("off", "low", "medium", "high", "xhigh", "max")
 # a thinking budget grew max_tokens past it). Our tool-round responses stay
 # far below max_tokens, so the pessimistic estimate does not apply.
 ANTHROPIC_TIMEOUT_S = 900.0
-
-_SUBMIT_REVIEW = "submit_review"
-_SHELL = "shell"
-
-
-def _build_submit_review_tool(role: RoleSpec) -> JsonObject:
-    return {
-        "name": _SUBMIT_REVIEW,
-        "description": (
-            "Return your final verdict. Call this exactly once, when "
-            "finished, filling every schema field."
-        ),
-        "input_schema": role.schema["schema"],
-    }
-
-
-def _build_shell_tool(machines: Sequence[podman_host.ShellHostSpec]) -> JsonObject:
-    return build_shell_tool_schema([m.label for m in machines])
-
 
 class AnthropicReviewer(Reviewer):
     """One Anthropic Messages-API pass of a ``RoleSpec`` behind the shared
@@ -181,150 +152,81 @@ class AnthropicReviewer(Reviewer):
         return Anthropic(**kwargs)
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
-        client = self._client()
+        system, texts = review_prompt(self.role, ctx, vendor="anthropic", model=self.model)
+        conversation = _Conversation(self, ctx, system, texts, review_tools(self.role, ctx))
+        return run_tool_loop(conversation, self.role, ctx, what="messages.create",
+                             max_tool_rounds=self.max_tool_rounds,
+                             exec_timeout_s=self.exec_timeout_s)
 
-        features: set[str] = set()
-        if ctx.source_bundle is not None:
-            features.add("source_bundle")
-        use_shell = ctx.open_shell is not None
-        if use_shell:
-            features.add("podman_shell")
 
-        system = generate_llm_prompt(
-            role=self.role.name,
-            vendor="anthropic",
-            model=self.model,
-            features=features,
-            repo_roots=ctx.repo_roots,
-            container_repo_mounts=ctx.repo_mount_paths,
-            machines=ctx.machines,
-            reviewer_username=ctx.reviewer_username,
-            project_facts=ctx.project_facts,
-            ci_triage_mode=ctx.ci_triage_mode,
-            **self.role.prompt_kwargs,
-        )
-
-        # Anthropic has no file-upload primitive, so the patch and source
-        # bundle are inlined as text blocks (OpenAI uploads them as files).
-        user_texts = self.role.user_texts(ctx)
-        user_blocks: list[JsonObject] = [
-            {"type": "text", "text": user_texts[0]},
-        ]
-        if ctx.patch_text:  # empty for the issue-investigator task (no patch)
-            user_blocks.append({"type": "text", "text": ctx.patch_text})
-        if ctx.source_bundle is not None:
-            user_blocks.append({"type": "text", "text": ctx.source_bundle})
-        user_blocks.extend({"type": "text", "text": text} for text in user_texts[1:])
-        user_blocks.append({
-            "type": "text",
-            "text": "Return your final verdict by calling the submit_review tool. "
-                    "Do not put the review in plain text.",
-        })
-
-        messages: list[JsonObject] = [{"role": "user", "content": user_blocks}]
+class _Conversation(Conversation):
+    def __init__(self, reviewer: AnthropicReviewer, ctx: ReviewContext, system: str,
+                 texts: list[str], tools: list[JsonObject]) -> None:
+        self.reviewer = reviewer
+        self.client = reviewer._client()
+        self.ctx = ctx
         # Anthropic caches only up to explicit cache_control breakpoints;
         # z.ai caches implicitly and ignores them.
-        system_blocks: list[JsonObject] = [
+        self.system: list[JsonObject] = [
             {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}},
         ]
-        tools: list[JsonObject] = [_build_submit_review_tool(self.role)]
-        if use_shell:
-            tools.append(_build_shell_tool(ctx.machines))
+        self.tools = tools
+        self.messages: list[JsonObject] = [
+            {"role": "user", "content": [{"type": "text", "text": t} for t in texts]},
+        ]
+        self.conv_path: str | None = None
 
-        shells: dict[str, podman_host.ContainerShellSession] = {}
-        nudged = False
-        rounds = 0
-        conv_path: str | None = None
-        while True:
-            logger.info(
-                "anthropic messages.create role=%s model=%s round=%d shell=%s",
-                self.role.name, self.model, rounds, use_shell,
+    def send(self) -> list[ToolCall]:
+        reviewer = self.reviewer
+        _mark_cache_breakpoint(self.messages)
+        # Snapshot: ``messages`` grows across rounds and the dump
+        # must record what this round actually sent.
+        request_kwargs: JsonObject = {
+            "model": reviewer.model,
+            "system": self.system,
+            "messages": list(self.messages),
+            "tools": self.tools,
+            "max_tokens": reviewer.max_tokens,
+        }
+        if reviewer.effort == "off":
+            request_kwargs["thinking"] = {"type": "disabled"}
+        elif reviewer.effort is not None:
+            thinking: JsonObject = {"type": "adaptive"}
+            # claude-opus-5 returns a thinking summary only with
+            # display=summarized (probed 2026-08-09); z.ai glm-5.3
+            # accepts it and still returns thinking (probed
+            # 2026-08-15), so no per-backend branch.
+            if reviewer.reasoning_summary in ("concise", "detailed"):
+                thinking["display"] = "summarized"
+            request_kwargs["thinking"] = thinking
+            request_kwargs["output_config"] = {"effort": reviewer.effort}
+        abort_if_cancelled()
+        with concurrency.slot(reviewer.name.partition(":")[0]):
+            response = call_with_anthropic_retry(
+                lambda: self.client.messages.create(**request_kwargs),
+                what="messages.create",
+                verbose=reviewer.verbose,
             )
-            _mark_cache_breakpoint(messages)
-            # Snapshot: ``messages`` grows across rounds and the dump
-            # must record what this round actually sent.
-            request_kwargs: JsonObject = {
-                "model": self.model,
-                "system": system_blocks,
-                "messages": list(messages),
-                "tools": tools,
-                "max_tokens": self.max_tokens,
-            }
-            if self.effort == "off":
-                request_kwargs["thinking"] = {"type": "disabled"}
-            elif self.effort is not None:
-                thinking: JsonObject = {"type": "adaptive"}
-                # claude-opus-5 returns a thinking summary only with
-                # display=summarized (probed 2026-08-09); z.ai glm-5.3
-                # accepts it and still returns thinking (probed
-                # 2026-08-15), so no per-backend branch.
-                if self.reasoning_summary in ("concise", "detailed"):
-                    thinking["display"] = "summarized"
-                request_kwargs["thinking"] = thinking
-                request_kwargs["output_config"] = {"effort": self.effort}
-            abort_if_cancelled()
-            with concurrency.slot(self.name.partition(":")[0]):
-                response = call_with_anthropic_retry(
-                    lambda: client.messages.create(**request_kwargs),
-                    what="messages.create",
-                    verbose=self.verbose,
-                )
-            if self.debug_dir:
-                conv_path = dump_response_debug_artifacts(
-                    response, request_kwargs, wrapper_request=ctx.request,
-                    debug_dir=self.debug_dir, verbose=self.verbose,
-                    conversation=conv_path,
-                ) or conv_path
+        if reviewer.debug_dir:
+            self.conv_path = dump_response_debug_artifacts(
+                response, request_kwargs, wrapper_request=self.ctx.request,
+                debug_dir=reviewer.debug_dir, verbose=reviewer.verbose,
+                conversation=self.conv_path,
+            ) or self.conv_path
+        self.messages.append({"role": "assistant", "content": _echo_content(response.content)})
+        return [ToolCall(b.id, b.name, b.input) for b in response.content
+                if getattr(b, "type", None) == "tool_use"]
 
-            tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
-            submit = next((b for b in tool_uses if b.name == _SUBMIT_REVIEW), None)
-            if submit is not None:
-                result = self.role.validate(submit.input)
-                ctx.collect_into(result, shells.values())
-                if self.verbose:
-                    verdict = result.get("classification") or result.get("route") or "-"
-                    logger.debug("anthropic %s verdict=%s", self.role.name, verdict)
-                return result
+    def add_user_text(self, text: str) -> None:
+        self.messages.append({"role": "user", "content": text})
 
-            if not tool_uses:
-                if nudged:
-                    raise BadModelOutput()
-                nudged = True
-                messages.append({"role": "assistant", "content": _echo_content(response.content)})
-                messages.append({
-                    "role": "user",
-                    "content": "You did not call submit_review. Return the verdict now via submit_review.",
-                })
-                continue
-
-            rounds += 1
-            if self.max_tool_rounds > 0 and rounds > self.max_tool_rounds:
-                raise RuntimeError(
-                    f"messages.create: exceeded shell tool-call limit ({self.max_tool_rounds})"
-                )
-
-            messages.append({"role": "assistant", "content": _echo_content(response.content)})
-            results: list[JsonObject] = []
-            for use in tool_uses:
-                if use.name == _SHELL and use_shell:
-                    payload = exec_machine_call(
-                        shells, tuple(m.label for m in ctx.machines),
-                        ctx.open_shell, use.input,
-                        max_timeout_s=self.exec_timeout_s,
-                    )
-                    results.append({
-                        "type": "tool_result",
-                        "tool_use_id": use.id,
-                        "content": json.dumps(payload, ensure_ascii=False),
-                    })
-                else:
-                    results.append({
-                        "type": "tool_result",
-                        "tool_use_id": use.id,
-                        "content": json.dumps({"error": f"unsupported tool {use.name!r}"}),
-                        "is_error": True,
-                    })
-            messages.append({"role": "user", "content": results})
+    def add_tool_results(self, results: list[tuple[ToolCall, JsonObject, bool]]) -> None:
+        self.messages.append({"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": call.id,
+             "content": json.dumps(payload, ensure_ascii=False),
+             **({"is_error": True} if is_error else {})}
+            for call, payload, is_error in results
+        ]})
 
 
 def _echo_content(content: list[object]) -> list[JsonObject]:

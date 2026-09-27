@@ -89,7 +89,7 @@ FFMPEG_ISSUES=(
     --llm-review-cmd "./pr_review_wrapper.py
         --repo-root ffmpeg
         --extra-repo-root all_ffmpeg
-        --triage-model openai:gpt-5.6-luna --vet-model openai:gpt-5.6-luna
+        --triage-model openai:gpt-6-luna --vet-model openai:gpt-6-luna
         --triage-service-tier flex
         --model $MODEL
         --service-tier flex

@@ -59,6 +59,8 @@ import forge_gcli  # noqa: E402
 import filedb  # noqa: E402
 import gcli_cache  # noqa: E402
 
+from test_agent import forge_listing  # noqa: E402
+
 NOW = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
 OLD = "2026-06-01T00:00:00Z"
 
@@ -237,6 +239,7 @@ class ScanCase(unittest.TestCase):
     def scan(self, ns: argparse.Namespace, prs: list[dict],
              prepare=None) -> None:
         with mock.patch.object(fairy, "list_open_prs", return_value=prs), \
+                forge_listing(), \
                 mock.patch.object(fairy, "get_pr",
                                   side_effect=lambda ns, n: open_pr(n)), \
                 mock.patch.object(forge_gcli, "self_login", return_value=None), \

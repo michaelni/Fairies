@@ -77,8 +77,8 @@ notes/ holds the operator's notes on a forge item: discussion entries
 the forge never sees, handed to the LLM with every evaluation of the
 item. Outside the pipeline like items/, written by the operator alone.
 
-A document outside every state, such as the agent's closed-scan
-reach, lives as a JSON file in the root (read/write).
+A document outside every state, such as the agent's scan stamps,
+lives as a JSON file in the root (read/write).
 
 superseded/ holds the verdict a rerun request displaced, so an operator
 can get it back. Outside the pipeline like items/, written by the

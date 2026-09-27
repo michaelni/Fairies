@@ -297,13 +297,14 @@ def _route(db: filedb.Db, kind: str, number: filedb.TicketId, state: str,
 
 def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str,
               items: list[dict], *, now: datetime, cache, self_login,
-              forced: set[filedb.TicketId],
+              forced: set[filedb.TicketId], refetch: set[int] = frozenset(),
               serve_operator: Callable[[], None] = lambda: None,
               ) -> set[tuple[str, int]]:
     """One gate pass over ``items``, the side's open listing, plus the
-    forced numbers not among them; returns the open set.
-    ``serve_operator`` runs before every item, so a y or r pressed
-    during the pass is answered without waiting for its end."""
+    forced numbers and the ``refetch`` numbers not among them, fetched
+    one by one; returns the open set. ``serve_operator`` runs before
+    every item, so a y or r pressed during the pass is answered
+    without waiting for its end."""
     if kind == "pr":
         fetch_one, forced_ns = fairy.get_pr, ns.force_review_prs
         wip_re = fairy.compile_wip_regex(
@@ -327,7 +328,7 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str,
     listed = {int(i["number"]) for i in items if str(i.get("number")).isdigit()}
     # forced/requested numbers may be closed or merged: absent from
     # the open listing but explicitly asked for
-    missing = sorted((forced_ns | forced_base) - listed)
+    missing = sorted((forced_ns | forced_base | refetch) - listed)
     for n in missing:
         try:
             items.append(fetch_one(ns, n))
@@ -364,33 +365,29 @@ def scan_side(db: filedb.Db, ns: argparse.Namespace, kind: str,
 
 def snapshot_closed(db: filedb.Db, ns: argparse.Namespace, kind: str,
                     closed_items: list[dict], cache,
-                    serve_operator: Callable[[], None]) -> datetime | None:
+                    serve_operator: Callable[[], None]) -> str | None:
     """Refresh the listed closed items' snapshots, skipping those whose
     stored snapshot already carries the listed updated_at. Returns the
-    stamp the next closed listing must reach: the newest listed one, or
-    the oldest one whose snapshot failed, so that it is listed again;
-    None when nothing was listed."""
+    oldest updated_at among the items whose snapshot failed, so that
+    the next listing reaches them again; None when none failed."""
     # --scan-closed-days: snapshot-only visibility. Deliberately
     # NOT fed to the gates and NOT part of the open set: a closed
     # ticket must never become a review candidate by mere listing,
     # and closure cancels/pruning must proceed as if the option were
     # off. The infinite cache age skips the edit-catching discussion
     # TTL for these items only.
-    complete = failed = None
+    failed: list[str] = []
     for item in closed_items:
         serve_operator()
         token = str(item.get("number"))
-        stamp = iso_to_dt(item.get("updated_at"))
-        if not token.isdigit() or stamp is None:
+        if not token.isdigit() or not item.get("updated_at"):
             continue
         stored = db.get(filedb.ITEM_STATE, kind, token)
-        if (stored and stored.get("updated_at") == item.get("updated_at")) \
-                or _put_snapshot(db, ns, kind, token, item, cache,
-                                 timedelta.max):
-            complete = max(complete or stamp, stamp)
-        else:
-            failed = min(failed or stamp, stamp)
-    return failed or complete
+        if not (stored and stored.get("updated_at") == item.get("updated_at")) \
+                and not _put_snapshot(db, ns, kind, token, item, cache,
+                                      timedelta.max):
+            failed.append(str(item["updated_at"]))
+    return min(failed, key=iso_to_dt, default=None)
 
 
 def _unacknowledged_agent_post_at(prior: str | None,
@@ -685,6 +682,15 @@ def cancel_tickets(db: filedb.Db, kind: str,
                 logger.info("%s #%s cancelled: %s", kind, number, reason)
 
 
+def ci_pending_numbers(db: filedb.Db, kind: str) -> set[int]:
+    """Forge numbers whose gate ticket says the head's CI was still
+    running when the item was last looked at."""
+    return {filedb.forge_number(number)
+            for state in ("skipped", "ci-blocked", "merge-ready", "awaiting-approver")
+            for k, number in db.list_state(state)
+            if k == kind and (db.get(state, k, number) or {}).get("ci_pending")}
+
+
 class SideCaches:
     """The sides' gcli caches, each loaded on first use and saved when
     the holder closes, so a pass touches only the files it needs."""
@@ -713,41 +719,50 @@ def sides_of(pr_ns: argparse.Namespace | None,
             if ns is not None}
 
 
+SCAN_STAMPS_DOC = "scan-stamps.json"
+SNAPSHOT_RETRY_DOC = "snapshot-retry.json"
+LISTING_OVERLAP = timedelta(minutes=5)
+
+
+def listing_cutoff(ns: argparse.Namespace, stamp: str | None,
+                   now: datetime) -> datetime:
+    """Where the side's listing stops: LISTING_OVERLAP before ``stamp``,
+    the newest updated_at the last successful listing saw, on the
+    assumption that an update visible after a listing carries an
+    updated_at no older than that minus the overlap. Never before the
+    --scan-closed-days window; ``now`` (the simulated clock under
+    --simulate-past) when neither bounds it."""
+    now = getattr(ns, "simulate_past", None) or now
+    bounds = [now - timedelta(days=ns.scan_closed_days)] \
+        if ns.scan_closed_days > 0 else []
+    if (since := iso_to_dt(stamp)) is not None:
+        bounds.append(since - LISTING_OVERLAP)
+    return max(bounds, default=now)
+
+
 def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
               issue_ns: argparse.Namespace | None,
               now: datetime | None = None,
-              dry_run: bool = False) -> None:
+              dry_run: bool = False, *, full: bool = True) -> None:
+    """One scan of every side. A full pass lists all open items and
+    gates each, cancels the tickets of items no longer listed and
+    prunes; an incremental pass gates only the listed open items whose
+    snapshot is behind the listing or which have no ticket (a review
+    --limit deferred), plus the tickets whose CI was pending, and
+    cancels from the listing. Every pass lists what the
+    forge updated since the side's stamp, the newest updated_at its
+    last successful listing saw; the stamp is recorded once the
+    listing succeeded, so a failed listing is redone from the same
+    cutoff. A closed snapshot that failed is remembered by its
+    updated_at, and the full pass lists from there so that it is
+    tried again. A side without a stamp yet is scanned like a full
+    pass."""
     now = now or datetime.now(timezone.utc)
     forced = consume_requests(db)
-    closed_pulls: dict[float, list[dict]] = {}
-    reach_doc = db.root / "closed-scan.json"
-    newest_seen = iso_to_dt((db.read(reach_doc) or {}).get("reach"))
-
-    def closed_pulls_for(ns: argparse.Namespace) -> list[dict]:
-        """The ns's closed-PR window, fetched once per distinct
-        --scan-closed-days: both sides usually share the window, and
-        the issue side needs the PR numbers again for subtraction."""
-        if ns.scan_closed_days not in closed_pulls:
-            closed_pulls[ns.scan_closed_days] = \
-                fairy.list_recently_closed_prs(ns, newest_seen)
-        return closed_pulls[ns.scan_closed_days]
-
-    def closed_for(ns: argparse.Namespace, kind: str) -> list[dict] | None:
-        """The side's closed-window items; a listing failure (None)
-        costs this pass's snapshot freshness, never the scan (the
-        per-item _put_snapshot guard's contract, extended to the
-        fetch)."""
-        try:
-            if kind == "pr":
-                return closed_pulls_for(ns)
-            return issue_fairy.list_recently_closed_issues(
-                ns, closed_pr_numbers={p["number"]
-                                       for p in closed_pulls_for(ns)},
-                newest_seen=newest_seen)
-        except Exception as exc:
-            logger.warning("%s: closed listing failed; snapshots not "
-                           "refreshed this pass: %s", kind, exc)
-            return None
+    stamps_doc = db.root / SCAN_STAMPS_DOC
+    stamps: dict[str, str] = db.read(stamps_doc) or {}
+    retry_doc = db.root / SNAPSHOT_RETRY_DOC
+    retry: dict[str, str] = db.read(retry_doc) or {}
     open_set: set[tuple[str, int]] = set()
     kinds: set[str] = set()
     # A --forced-only side's open_set is just the named items, not the
@@ -757,8 +772,6 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     sides = sides_of(pr_ns, issue_ns)
     served: dict[str, set[filedb.TicketId]] = {kind: set() for kind in sides}
     logins: dict[str, str | None] = {}
-    reach: list[datetime] = []
-    listing_failed = False
 
     def login(kind: str) -> str | None:
         if kind not in logins:
@@ -791,27 +804,65 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                 full_kinds.add(kind)
             pending = forced[kind] - served[kind]
             served[kind] |= forced[kind]
-            items = [] if ns.forced_only else fairy.list_open_prs(ns) \
-                if kind == "pr" else issue_fairy.list_open_issues(ns)
+            if ns.forced_only:
+                open_set |= scan_side(
+                    db, ns, kind, [], now=now, cache=caches[kind],
+                    self_login=login(kind), forced=pending,
+                    serve_operator=serve_operator)
+                continue
+            full_side = full or not stamps.get(kind)
+            cutoff = listing_cutoff(
+                ns, retry.get(kind) if full_side and retry.get(kind) else stamps.get(kind),
+                now)
+            listed = True
+            try:
+                changed = [
+                    i for i in (forge_gcli.list_since(ns, "pulls", cutoff, state="all")
+                                if kind == "pr"
+                                else issue_fairy.list_issues_since(ns, cutoff))
+                    if str(i.get("number")).isdigit()]
+            except Exception as exc:
+                logger.warning("%s: listing the items updated since %s failed; "
+                               "what they need waits for the next pass: %s",
+                               kind, cutoff, exc)
+                changed, listed = [], False
+            if changed:
+                logger.info("%s: %d item(s) updated since %s", kind, len(changed), cutoff)
+            reasons = {int(i["number"]): closure_reason_of(kind, i) for i in changed}
+            closed = [i for i in changed if reasons[int(i["number"])]]
+            if full_side:
+                items = fairy.list_open_prs(ns) if kind == "pr" \
+                    else issue_fairy.list_open_issues(ns)
+            else:
+                items = [i for i in changed if not reasons[int(i["number"])]
+                         and ((db.get(filedb.ITEM_STATE, kind, str(i["number"])) or {})
+                              .get("updated_at") != i.get("updated_at")
+                              or db.find(kind, str(i["number"])) is None)]
+            refetch = set() if full_side else ci_pending_numbers(db, kind) - {
+                int(i["number"]) for i in items + closed}
             open_set |= scan_side(
                 db, ns, kind, items, now=now, cache=caches[kind],
-                self_login=login(kind), forced=pending,
+                self_login=login(kind), forced=pending, refetch=refetch,
                 serve_operator=serve_operator)
-            if ns.forced_only:
-                continue
-            closed = closed_for(ns, kind)
-            if closed is None:
-                listing_failed = True
-            elif (reached := snapshot_closed(db, ns, kind, closed,
-                                             caches[kind], serve_operator)):
-                reach.append(reached)
+            failed = snapshot_closed(db, ns, kind, closed, caches[kind],
+                                     serve_operator) \
+                if ns.scan_closed_days > 0 else None
+            cancel_tickets(db, kind, lambda n: None if (kind, n) in open_set
+                           else reasons.get(n) or (closure_reason(
+                               db, ns, kind, str(n), caches[kind]) if full_side else None))
+            if listed:
+                newest = str(changed[0]["updated_at"]) if changed \
+                    else forge_gcli.newest_updated_at(ns, kind)
+                if newest:
+                    stamps[kind] = newest
+                if failed:
+                    retry[kind] = min((s for s in (failed, retry.get(kind)) if s),
+                                      key=iso_to_dt)
+                elif full_side:
+                    retry.pop(kind, None)
         finish_requests(db, forced, kinds)
-        for kind in full_kinds:
-            cancel_tickets(db, kind, lambda n, kind=kind: None
-                           if (kind, n) in open_set else closure_reason(
-                               db, sides[kind], kind, str(n), caches[kind]))
-    if reach and not listing_failed:
-        db.write(reach_doc, {"reach": min(reach).isoformat()})
+    db.write(stamps_doc, stamps)
+    db.write(retry_doc, retry)
     for kind, number in db.reap():
         logger.warning("%s #%s re-queued: its worker died", kind, number)
     # A crash between a transition's dst-write and src-unlink leaves the
@@ -823,7 +874,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     for state in filedb.STATES:
         if state not in ("requests", "llm"):
             db.reap(state, None)
-    if full_kinds == kinds:  # prune's keep-set is kind-blind
+    if full and full_kinds == kinds:  # prune's keep-set is kind-blind
         for ns, kind in ((pr_ns, "pr"), (issue_ns, "issue")):
             if ns is None:
                 continue
@@ -1156,12 +1207,12 @@ def make_parser() -> argparse.ArgumentParser:
                    help="filedb root; its config.toml, written by "
                         "configurator.py, carries the side options")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
-                   help="tick every N seconds: one tiny listing per side "
-                        "tells whether the forge moved, a rescan follows "
-                        "when it did and hourly regardless; operator files "
+                   help="tick every N seconds: one listing per side tells "
+                        "what moved on the forge, a rescan of that follows, "
+                        "of everything hourly; operator files "
                         "(requests/, outgoing/) and a worker's verdict "
                         "(reviewed/) wake the loop instantly via watchdog "
-                        "(default: one pass, cron style)")
+                        "(default: one full pass, cron style)")
     p.add_argument("--drain", type=int, nargs="?", const=1, default=0,
                    metavar="N",
                    help="run the LLM worker inline between scan and send "
@@ -1199,11 +1250,11 @@ def warn_simulate_past_limitations(ignore_after: datetime) -> None:
 
 def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
              issue_ns: argparse.Namespace | None,
-             args: argparse.Namespace) -> None:
+             args: argparse.Namespace, *, full: bool = True) -> None:
     sides = sides_of(pr_ns, issue_ns)
 
     def review_cycle() -> None:
-        scan_pass(db, pr_ns, issue_ns, dry_run=args.dry_run)
+        scan_pass(db, pr_ns, issue_ns, dry_run=args.dry_run, full=full)
         if args.drain:
             worker.drain(db, sides, parallel=args.drain)
 
@@ -1217,22 +1268,6 @@ def one_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
 
 PASS_RETRY_S = 60.0
 FULL_PASS_S = 3600.0
-
-
-def forge_moved(sides: dict[str, argparse.Namespace],
-                newest: dict[str, str | None]) -> bool:
-    """Whether a side's most recently updated item changed since the
-    last call: one single-entry listing per side, the stamps kept in
-    ``newest`` between calls. The first call only records them."""
-    moved = False
-    for kind, ns in sides.items():
-        stamp = forge_gcli.newest_updated_at(ns, kind)
-        if stamp != newest.get(kind, stamp):
-            logger.info("%s: forge moved, newest update %s -> %s",
-                        kind, newest[kind], stamp)
-            moved = True
-        newest[kind] = stamp
-    return moved
 
 
 def _forced_only(ns: argparse.Namespace | None) -> argparse.Namespace | None:
@@ -1251,7 +1286,7 @@ def requests_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
     is hammering, and it kept the press invisible for the length of a
     scan (production: ~74s for one issue); the scheduled full scan
     stays on its own clock."""
-    one_pass(db, _forced_only(pr_ns), _forced_only(issue_ns), args)
+    one_pass(db, _forced_only(pr_ns), _forced_only(issue_ns), args, full=False)
 
 
 def _help() -> str:
@@ -1313,18 +1348,15 @@ def main() -> int:
                           wake.set) is not None
     sides = sides_of(pr_ns, issue_ns)
     next_scan = next_full = 0.0
-    newest: dict[str, str | None] = {}
 
-    def scan_due() -> bool:
-        nonlocal next_scan, next_full
+    def scan_due() -> bool | None:
+        """None until the next tick; then whether the due pass is a
+        full one (always without --loop, else hourly)."""
+        nonlocal next_scan
         if time.monotonic() < next_scan:
-            return False
+            return None
         next_scan = time.monotonic() + args.loop
-        if args.loop and not forge_moved(sides, newest) \
-                and time.monotonic() < next_full:
-            return False
-        next_full = time.monotonic() + FULL_PASS_S
-        return True
+        return not args.loop or time.monotonic() >= next_full
 
     marker = halt_marker.path(db.root, lead.halt_file)
     while True:
@@ -1333,8 +1365,10 @@ def main() -> int:
                 logger.warning("halted: %s -- remove %s to resume",
                                halt, marker)
                 next_scan = time.monotonic() + args.loop
-            elif scan_due():
-                one_pass(db, pr_ns, issue_ns, args)
+            elif (full := scan_due()) is not None:
+                one_pass(db, pr_ns, issue_ns, args, full=full)
+                if full:
+                    next_full = time.monotonic() + FULL_PASS_S
             elif db.list_state("requests"):
                 requests_pass(db, pr_ns, issue_ns, args)
             else:

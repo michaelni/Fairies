@@ -164,7 +164,6 @@ __all__ = [
     "item_body_mentions_user",
     "label_names",
     "list_open_prs",
-    "list_recently_closed_prs",
     "llm_skip_reason",
     "logger",
     "make_parser",
@@ -176,7 +175,6 @@ __all__ = [
     "prepared_to_dict",
     "safe_apply_llm_review_to_prepared",
     "safe_prepare_pr",
-    "scan_closed_cutoff",
     "submit_decision_action",
     "validate_sides",
     "validate_worker_sides",
@@ -1096,36 +1094,6 @@ def list_open_prs(args: argparse.Namespace, owner: str | None = None,
         raise RuntimeError(f"expected list of PRs, got {type(data).__name__}")
     return [pr for pr in data if isinstance(pr, dict)]
 
-
-CLOSED_RESCAN_OVERLAP = timedelta(hours=1)
-
-
-def scan_closed_cutoff(args: argparse.Namespace,
-                       newest_seen: datetime | None = None
-                       ) -> datetime | None:
-    """The oldest ``updated_at`` the closed listing must reach: the
-    --scan-closed-days window, from the simulated clock under
-    --simulate-past, or only CLOSED_RESCAN_OVERLAP before
-    ``newest_seen`` -- the stamp the stored closed snapshots are
-    complete up to -- when that is later. None when the option is
-    off."""
-    if args.scan_closed_days <= 0:
-        return None
-    now = getattr(args, "simulate_past", None) or datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=args.scan_closed_days)
-    if newest_seen is not None:
-        cutoff = max(cutoff, newest_seen - CLOSED_RESCAN_OVERLAP)
-    return cutoff
-
-
-def list_recently_closed_prs(args: argparse.Namespace,
-                             newest_seen: datetime | None = None
-                             ) -> list[ApiObject]:
-    """Closed PRs inside the scan_closed_cutoff window; [] when off."""
-    cutoff = scan_closed_cutoff(args, newest_seen)
-    if cutoff is None:
-        return []
-    return forge_gcli.list_since(args, "pulls", cutoff, state="closed")
 
 
 def get_pr(args: argparse.Namespace, pr_number: int) -> ApiObject:

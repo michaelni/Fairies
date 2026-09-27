@@ -788,10 +788,11 @@ def _recent_first(args: argparse.Namespace, page_size: int) -> dict:
 
 
 def list_since(args: argparse.Namespace, endpoint: str, cutoff: datetime,
-               *, state: str) -> list[dict]:
+               *, state: str, **filters: str) -> list[dict]:
     """``pulls`` / ``issues`` entries in ``state`` ("open", "closed" or
     "all") whose ``updated_at`` is at or after ``cutoff``, most
-    recently updated first.
+    recently updated first; ``filters`` are further query parameters
+    (``type="issues"``).
 
     Pages the listing and stops at the first entry past the cutoff --
     the recency sort makes that the end of the window -- so the cost
@@ -803,12 +804,12 @@ def list_since(args: argparse.Namespace, endpoint: str, cutoff: datetime,
     params = _recent_first(args, 100 if _forge_type(args) == "github" else 50)
     out: list[dict] = []
     for page in count(1):
-        query = urlencode({"state": state, "page": page, **params})
+        query = urlencode({"state": state, "page": page, **filters, **params})
         data = gcli_api(args, build_repo_path(
             args.owner, args.repo, f"/{endpoint}?{query}"))
         if not isinstance(data, list):
             raise RuntimeError(
-                f"expected list of closed {endpoint}, got {type(data).__name__}")
+                f"expected list of {state} {endpoint}, got {type(data).__name__}")
         if not data:
             return out
         for item in data:

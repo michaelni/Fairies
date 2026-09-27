@@ -46,44 +46,18 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import agent  # noqa: E402
-import fairy  # noqa: E402
+
 import forge_gcli  # noqa: E402
 import issue_fairy  # noqa: E402
 
 from test_agent import AgentCase, NOW, make_pr, verdict_ticket  # noqa: E402
 
 
-class WindowTests(unittest.TestCase):
-    def test_off_by_default_and_listing_makes_no_forge_call(self) -> None:
-        ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
-        self.assertIsNone(fairy.scan_closed_cutoff(ns))
-        with mock.patch.object(forge_gcli, "list_since") as fetch:
-            self.assertEqual(fairy.list_recently_closed_prs(ns), [])
-            self.assertEqual(issue_fairy.list_recently_closed_issues(ns), [])
-        fetch.assert_not_called()
-
-    def test_cutoff_follows_the_simulated_clock(self) -> None:
-        ns = fairy.parse_args(["--owner", "o", "--repo", "r",
-                               "--scan-closed-days", "7"])
-        ns.simulate_past = NOW
-        self.assertEqual(fairy.scan_closed_cutoff(ns), NOW - timedelta(days=7))
-
-    def test_cutoff_narrows_to_the_newest_snapshotted_update(self) -> None:
-        ns = fairy.parse_args(["--owner", "o", "--repo", "r",
-                               "--scan-closed-days", "7"])
-        ns.simulate_past = NOW
-        seen = NOW - timedelta(days=1)
-        self.assertEqual(fairy.scan_closed_cutoff(ns, seen),
-                         seen - fairy.CLOSED_RESCAN_OVERLAP)
-        self.assertEqual(fairy.scan_closed_cutoff(ns, NOW - timedelta(days=30)),
-                         NOW - timedelta(days=7))
+def entry(n: int, updated: str, state: str = "closed") -> dict:
+    return {"number": n, "updated_at": updated, "state": state}
 
 
-def entry(n: int, updated: str) -> dict:
-    return {"number": n, "updated_at": updated}
-
-
-class ListClosedSinceTests(unittest.TestCase):
+class ListSinceTests(unittest.TestCase):
     """Paging must not trust the served page length: GitHub ignores
     ``limit`` (its parameter is ``per_page``, default 30 items,
     https://docs.github.com/en/rest/pulls/pulls) and Forgejo/Gitea cap
@@ -166,29 +140,42 @@ class NewestUpdatedAtTests(unittest.TestCase):
         self.assertIn("direction=desc", path)
 
 
-class ClosedIssueListingTests(unittest.TestCase):
-    def test_closed_prs_are_subtracted_from_the_issue_listing(self) -> None:
-        ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r",
-                                     "--scan-closed-days", "7"])
-        issues = [entry(3, "2026-07-25T00:00:00Z"),
-                  entry(4, "2026-07-25T00:00:00Z")]
-        prs = [entry(4, "2026-07-25T00:00:00Z")]
-        with mock.patch.object(forge_gcli, "list_since",
-                               side_effect=[issues, prs]):
-            got = issue_fairy.list_recently_closed_issues(ns)
-        self.assertEqual([i["number"] for i in got], [3])
+
+
+class IssuesSinceTests(unittest.TestCase):
+    CUTOFF = datetime(2026, 7, 20, tzinfo=timezone.utc)
+
+    def test_a_type_filter_where_the_forge_takes_one(self) -> None:
+        ns = SimpleNamespace(owner="o", repo="r", forge_type="gitea")
+        with mock.patch.object(forge_gcli, "gcli_api", return_value=[]) as api:
+            issue_fairy.list_issues_since(ns, self.CUTOFF)
+        self.assertEqual(api.call_count, 1)
+        self.assertIn("type=issues", api.call_args.args[1])
+        self.assertIn("state=all", api.call_args.args[1])
+
+    def test_pr_rows_are_subtracted_where_it_takes_none(self) -> None:
+        ns = SimpleNamespace(owner="o", repo="r", forge_type="github")
+        with mock.patch.object(
+                forge_gcli, "list_since",
+                side_effect=lambda a, endpoint, c, **kw:
+                [entry(1, "x"), entry(2, "x")] if endpoint == "issues"
+                else [entry(2, "x")]) as since:
+            got = issue_fairy.list_issues_since(ns, self.CUTOFF)
+        self.assertEqual([i["number"] for i in got], [1])
+        self.assertEqual({c.args[1] for c in since.call_args_list},
+                         {"issues", "pulls"})
 
 
 class ScanClosedAgentTests(AgentCase):
     """Visibility only: snapshots refresh, the review pipeline and the
     closure lifecycle behave exactly as if the option were off."""
+    P1, P2, P3 = ("2026-07-26T00:00:00Z", "2026-07-26T01:00:00Z",
+                  "2026-07-26T02:00:00Z")
 
     def scan_with_closed(self, closed: list[dict], prs: list[dict],
-                         fetch=None) -> None:
+                         fetch=None, probe: str = P1) -> None:
         self.ns.scan_closed_days = 7.0
-        with mock.patch.object(fairy, "list_recently_closed_prs",
-                               return_value=closed):
-            self.scan(prs, fetch=fetch)
+        self.scan(prs, fetch=fetch, changed=closed, probe=probe)
 
     def test_closed_items_snapshot_but_never_reach_the_gates(self) -> None:
         closed = {**make_pr(2), "state": "closed", "merged": True}
@@ -218,95 +205,42 @@ class ScanClosedAgentTests(AgentCase):
         self.scan_with_closed([closed], [])
         self.assertEqual(self.db.get("items", "pr", "2")["state"], "merged")
 
-    def test_a_failing_closed_listing_never_breaks_the_scan(self) -> None:
-        self.ns.scan_closed_days = 7.0
-        with mock.patch.object(fairy, "list_recently_closed_prs",
-                               side_effect=RuntimeError("502")):
-            self.scan([{**make_pr(1), "state": "open"}])
-        self.assertEqual(self.db.find("pr", "1"), "queued")
-
     def test_unchanged_closed_items_skip_the_snapshot_rebuild(self) -> None:
         """The stored snapshot's updated_at is the memory, so the skip
         survives a restart."""
         closed = {**make_pr(2), "state": "closed", "merged": True}
-        self.scan_with_closed([closed], [])
-        self.scan_with_closed([closed], [])
+        self.scan_with_closed([closed], [], probe=self.P1)
+        self.scan_with_closed([closed], [], probe=self.P2)
         self.assertEqual(self.thread.call_count, 1)
         self.scan_with_closed(
-            [dict(closed, updated_at="2026-07-21T00:00:00Z")], [])
+            [dict(closed, updated_at="2026-07-21T00:00:00Z")], [], probe=self.P3)
         self.assertEqual(self.thread.call_count, 2)
 
-    def test_closed_pulls_fetched_once_for_both_sides(self) -> None:
-        issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
-        self.ns.scan_closed_days = issue_ns.scan_closed_days = 7.0
-        with mock.patch.object(fairy, "list_open_prs", return_value=[]), \
-                mock.patch.object(issue_fairy, "list_open_issues",
-                                  return_value=[]), \
-                mock.patch.object(forge_gcli, "self_login",
-                                  return_value="fairy"), \
-                mock.patch.object(agent.gcli_cache, "load_cache",
-                                  return_value=mock.Mock()), \
-                mock.patch.object(agent.gcli_cache, "save_cache"), \
-                mock.patch.object(
-                    fairy, "list_recently_closed_prs",
-                    return_value=[entry(4, "2026-07-25T00:00:00Z")]) as prs, \
-                mock.patch.object(issue_fairy, "list_recently_closed_issues",
-                                  return_value=[]) as issues:
-            agent.scan_pass(self.db, self.ns, issue_ns, now=NOW)
-        prs.assert_called_once()
-        self.assertEqual(issues.call_args.kwargs["closed_pr_numbers"], {4})
+    def test_with_the_option_off_a_listed_closure_cancels_but_is_not_kept(self) -> None:
+        self.db.push("reviewed", "pr", "2", verdict_ticket(2))
+        closed = {**make_pr(2), "state": "closed", "merged": True}
+        self.scan([], changed=[closed], probe=self.P1)
+        self.assertEqual(self.db.find("pr", "2"), "cancelled")
+        self.assertIsNone(self.db.get("items", "pr", "2"))
 
-    def test_both_listings_start_at_the_recorded_reach(self) -> None:
-        """A snapshot written outside the listing -- a forced fetch of
-        a closed item -- must not move the bound: only the listing
-        knows what it covered."""
-        issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
-        self.ns.scan_closed_days = issue_ns.scan_closed_days = 7.0
-        self.db.write(self.db.root / "closed-scan.json", {"reach": "2026-07-25T00:00:00Z"})
-        self.db.push("items", "pr", "9",
-                     {"state": "merged", "updated_at": "2026-07-28T00:00:00Z"})
-        with mock.patch.object(fairy, "list_open_prs", return_value=[]), \
-                mock.patch.object(issue_fairy, "list_open_issues",
-                                  return_value=[]), \
-                mock.patch.object(forge_gcli, "self_login",
-                                  return_value="fairy"), \
-                mock.patch.object(agent.gcli_cache, "load_cache",
-                                  return_value=mock.Mock()), \
-                mock.patch.object(agent.gcli_cache, "save_cache"), \
-                mock.patch.object(
-                    fairy, "list_recently_closed_prs",
-                    return_value=[entry(5, "2026-07-26T00:00:00Z")]) as prs, \
-                mock.patch.object(issue_fairy, "list_recently_closed_issues",
-                                  return_value=[]) as issues:
-            agent.scan_pass(self.db, self.ns, issue_ns, now=NOW)
-        newest = datetime(2026, 7, 25, tzinfo=timezone.utc)
-        self.assertEqual(prs.call_args.args[1], newest)
-        self.assertEqual(issues.call_args.kwargs["newest_seen"], newest)
-
-    def reach(self) -> str | None:
-        return (self.db.read(self.db.root / "closed-scan.json") or {}).get("reach")
-
-    def test_the_listing_records_how_far_it_reached(self) -> None:
-        self.scan_with_closed([entry(2, "2026-07-25T00:00:00Z"),
-                               entry(3, "2026-07-23T00:00:00Z")], [])
-        self.assertEqual(self.reach(), "2026-07-25T00:00:00+00:00")
-
-    def test_a_failed_snapshot_caps_the_reach_so_it_is_listed_again(self) -> None:
+    def test_a_failed_snapshot_is_listed_again_by_the_full_pass(self) -> None:
         with mock.patch.object(agent, "_put_snapshot",
                                side_effect=lambda db, ns, kind, token, *a:
                                token != "3"):
             self.scan_with_closed([entry(2, "2026-07-25T00:00:00Z"),
                                    entry(3, "2026-07-23T00:00:00Z"),
                                    entry(4, "2026-07-22T00:00:00Z")], [])
-        self.assertEqual(self.reach(), "2026-07-23T00:00:00+00:00")
-
-    def test_a_failed_listing_leaves_the_reach_alone(self) -> None:
-        self.db.write(self.db.root / "closed-scan.json", {"reach": "2026-07-20T00:00:00Z"})
-        self.ns.scan_closed_days = 7.0
-        with mock.patch.object(fairy, "list_recently_closed_prs",
-                               side_effect=RuntimeError("502")):
-            self.scan([])
-        self.assertEqual(self.reach(), "2026-07-20T00:00:00Z")
+        self.assertEqual(self.db.read(self.db.root / agent.SCAN_STAMPS_DOC),
+                         {"pr": "2026-07-25T00:00:00Z"})
+        self.assertEqual(self.db.read(self.db.root / agent.SNAPSHOT_RETRY_DOC),
+                         {"pr": "2026-07-23T00:00:00Z"})
+        self.scan([], full=False)
+        self.assertEqual(self.since.call_args.args[2],
+                         datetime(2026, 7, 24, 23, 55, tzinfo=timezone.utc))
+        self.scan_with_closed([], [])
+        self.assertEqual(self.since.call_args.args[2],
+                         datetime(2026, 7, 22, 23, 55, tzinfo=timezone.utc))
+        self.assertEqual(self.db.read(self.db.root / agent.SNAPSHOT_RETRY_DOC), {})
 
     def test_closure_still_cancels_a_scanned_closed_tickets_verdict(self) -> None:
         self.db.push("reviewed", "pr", "2", verdict_ticket(2))

@@ -51,10 +51,10 @@ or when a watch cannot be set up (logged), they poll every second:
   `merge-ready/`, `awaiting-approver/`), applies the skip backoff and
   `--limit`, posts `outgoing/` verdicts (guard-checked), reaps dead
   workers and prunes. `--loop N` to daemonize: every N seconds one
-  single-entry listing per side asks the forge for its newest update,
-  and the pass runs when that moved, or hourly regardless (CI results
-  and expiring waits move nothing on the forge), so N can be a few
-  seconds. Default is one pass (cron style); `--drain N` runs the worker inline for a
+  listing per side asks the forge for its updates since the last pass,
+  and the pass covers those, or everything hourly (CI results and
+  expiring waits move nothing on the forge), so N can be a few
+  seconds. Default is one full pass (cron style); `--drain N` runs the worker inline for a
   self-contained one-shot, N tickets concurrently; `--dry-run` logs
   what would be posted. Side options on its command line override the
   config.toml values like the worker's do.

@@ -79,6 +79,20 @@ def gate_skip(pr: dict, reason: str = "no activity", **fields) -> fairy.Decision
                           reason, None, **fields)
 
 
+@contextlib.contextmanager
+def forge_listing(probe: str | None = "p1", changed=()):
+    """The scan's updated-since listings stubbed: ``changed`` is what a
+    listing since the last pass returns (an exception: what it raises)
+    and ``probe`` the forge's newest stamp, asked for only when the
+    listing came back empty."""
+    listing = {"side_effect": changed} if isinstance(changed, Exception) \
+        else {"return_value": list(changed)}
+    with mock.patch.object(forge_gcli, "newest_updated_at", return_value=probe), \
+            mock.patch.object(forge_gcli, "list_since", **listing) as since, \
+            mock.patch.object(issue_fairy, "list_issues_since", **listing):
+        yield since
+
+
 class AgentCase(unittest.TestCase):
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
@@ -91,8 +105,12 @@ class AgentCase(unittest.TestCase):
         self.thread = patcher.start()
         self.addCleanup(patcher.stop)
 
-    def scan(self, prs: list[dict], fetch=None) -> None:
+    def scan(self, prs: list[dict], fetch=None, *, full: bool = True,
+             changed=(), probe: str = "p1") -> None:
+        """A pass: ``prs`` is the full open listing, ``changed`` what the
+        forge updated since the last pass, ``probe`` its newest stamp."""
         with mock.patch.object(fairy, "list_open_prs", return_value=prs), \
+                forge_listing(probe, changed) as self.since, \
                 mock.patch.object(fairy, "get_pr",
                                   side_effect=fetch or (lambda ns, n: make_pr(n))), \
                 mock.patch.object(fairy, "safe_prepare_pr", self.prepare), \
@@ -100,7 +118,7 @@ class AgentCase(unittest.TestCase):
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):
-            agent.scan_pass(self.db, self.ns, None, now=NOW)
+            agent.scan_pass(self.db, self.ns, None, now=NOW, full=full)
 
     def age(self, state: str, kind: str, number: int, hours: float) -> None:
         data = self.db.get(state, kind, number)
@@ -777,6 +795,7 @@ class LifecycleTests(AgentCase):
         with mock.patch.object(fairy, "list_open_prs", return_value=[]), \
                 mock.patch.object(issue_fairy, "list_open_issues",
                                   return_value=[]), \
+                forge_listing(), \
                 mock.patch.object(forge_gcli, "self_login",
                                   return_value="fairy"), \
                 mock.patch.object(agent.gcli_cache, "load_cache",
@@ -1544,6 +1563,7 @@ class IssueSideScanTests(AgentCase):
         ins.limit = 1
         with mock.patch.object(issue_fairy, "list_open_issues",
                                return_value=issues), \
+                forge_listing(), \
                 mock.patch.object(issue_fairy, "prepare_issue",
                                   side_effect=prepare) as self.prepare_issue, \
                 mock.patch.object(forge_gcli, "self_login", return_value="fairy"), \
@@ -1770,11 +1790,8 @@ class LoopTests(unittest.TestCase):
     cron sees the failure in the exit code."""
 
     def run_main(self, flags: str, outcomes: list,
-                 wait=None, watched: bool = True,
-                 newest=None) -> list[int]:
-        """``newest`` feeds the forge probe; by default every tick
-        sees a moved forge."""
-        import itertools
+                 wait=None, watched: bool = True) -> list[bool]:
+        """Runs main; returns whether each pass was a full one."""
         import shlex
         import time
         tmp = tempfile.TemporaryDirectory()
@@ -1785,8 +1802,8 @@ class LoopTests(unittest.TestCase):
         argv = ["agent.py", "--db-root", tmp.name] + shlex.split(flags)
         calls = self.calls = []
 
-        def one_pass(*args, **kwargs) -> None:
-            calls.append(len(calls))
+        def one_pass(*args, full: bool) -> None:
+            calls.append(full)
             outcome = outcomes[min(len(calls) - 1, len(outcomes) - 1)]
             if outcome is not None:
                 raise outcome
@@ -1801,9 +1818,6 @@ class LoopTests(unittest.TestCase):
                                   return_value=mock.Mock() if watched
                                   else None) as self.watch, \
                 mock.patch.object(agent, "Event", return_value=wake), \
-                mock.patch.object(forge_gcli, "newest_updated_at",
-                                  side_effect=newest or itertools.count()
-                                  ) as self.newest, \
                 mock.patch.object(sys, "argv", argv):
             self.rc = agent.main()
         return calls
@@ -1819,67 +1833,25 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 3)
 
     def test_without_loop_a_single_pass_returns(self) -> None:
-        self.assertEqual(self.run_main("", [None]), [0])
+        self.assertEqual(self.run_main("", [None]), [True])
         self.assertEqual(self.rc, 0)
-        self.newest.assert_not_called()
 
-    def test_an_unmoved_forge_costs_a_probe_and_no_pass(self) -> None:
-        import time
-        waits = []
-
-        def wait(timeout=None):
-            waits.append(timeout)
-            if len(waits) == 4:
-                raise _StopLoop()
-            time.sleep(timeout)
-
+    def test_the_first_pass_is_full_then_incremental_until_the_hour(self) -> None:
         with self.assertRaises(_StopLoop):
-            self.run_main("--loop 0.01", [None], wait=wait,
-                          newest=["same"] * 9)
-        self.assertEqual(len(self.calls), 1)
-        self.assertEqual(self.newest.call_count, 4)
-        self.assertEqual(self.send_pass.call_count, 3)
+            self.run_main("--loop 0.01", [None, None, _StopLoop()])
+        self.assertEqual(self.calls, [True, False, False])
 
-    def test_a_full_pass_runs_hourly_on_an_unmoved_forge(self) -> None:
+    def test_a_full_pass_runs_hourly(self) -> None:
         with mock.patch.object(agent, "FULL_PASS_S", 0.0), \
                 self.assertRaises(_StopLoop):
-            self.run_main("--loop 0.01", [None, None, _StopLoop()],
-                          newest=["same"] * 9)
-        self.assertEqual(len(self.calls), 3)
+            self.run_main("--loop 0.01", [None, None, _StopLoop()])
+        self.assertEqual(self.calls, [True, True, True])
 
-    def test_a_change_during_the_first_pass_is_rescanned(self) -> None:
-        """The stamps must describe the forge as the first pass listed
-        it: recorded only at the next probe, an update made in between
-        would be part of the baseline and never trigger a rescan."""
-        import time
-        forge = {"stamp": "p1"}
-        waits = []
-
-        def wait(timeout=None):
-            waits.append(timeout)
-            forge["stamp"] = "p2"
-            if len(waits) == 3:
-                raise _StopLoop()
-            time.sleep(timeout)
-
+    def test_a_failed_full_pass_is_retried_as_a_full_one(self) -> None:
         with self.assertRaises(_StopLoop):
-            self.run_main("--loop 0.01", [None], wait=wait,
-                          newest=lambda ns, kind: forge["stamp"])
-        self.assertEqual(len(self.calls), 2)
-
-    def test_forge_moved_records_first_then_compares_per_side(self) -> None:
-        sides = {"pr": fairy.parse_args(["--owner", "o", "--repo", "r"]),
-                 "issue": issue_fairy.parse_args(["--owner", "o", "--repo", "r"])}
-        newest: dict = {}
-        with mock.patch.object(forge_gcli, "newest_updated_at",
-                               side_effect=["p1", "i1", "p1", "i1",
-                                            "p1", "i2"]) as probe:
-            self.assertFalse(agent.forge_moved(sides, newest))
-            self.assertFalse(agent.forge_moved(sides, newest))
-            self.assertTrue(agent.forge_moved(sides, newest))
-        self.assertEqual(newest, {"pr": "p1", "issue": "i2"})
-        self.assertEqual([c.args[1] for c in probe.call_args_list],
-                         ["pr", "issue"] * 3)
+            self.run_main("--loop 0.01", [RuntimeError("forge 500"), None,
+                                          _StopLoop()])
+        self.assertEqual(self.calls, [True, True, False])
 
     def test_a_failed_pass_does_not_kill_the_daemon(self) -> None:
         """A transient forge/gcli error costs one interval, not the
@@ -1974,3 +1946,156 @@ class FinishRequestsUnderClaimTests(AgentCase):
             self.assertIsNone(self.db.get("requests", "pr", "5"))
         finally:
             claim.abort()
+
+
+class IncrementalScanTests(AgentCase):
+    """--loop passes between the hourly full ones list what the forge
+    updated since the side's stamp, the newest updated_at the last
+    successful listing saw, and gate only what the snapshots have not
+    seen yet."""
+    OLD = "2026-07-19T11:00:00Z"
+    NEW = "2026-07-19T12:00:00Z"
+
+    def stamps(self) -> dict:
+        return self.db.read(self.db.root / agent.SCAN_STAMPS_DOC) or {}
+
+    def test_a_quiet_tick_costs_one_listing_and_gates_nothing(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.db.push("items", "pr", "1", {"updated_at": self.OLD})
+        self.db.push("skipped", "pr", "1", {"reason": "no activity"})
+        self.scan([make_pr(1)], full=False, changed=[dict(make_pr(1), updated_at=self.OLD)])
+        self.since.assert_called_once()
+        self.prepare.assert_not_called()
+        self.assertEqual(self.stamps(), {"pr": self.OLD})
+
+    def test_an_incremental_pass_gates_only_what_moved(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.scan([make_pr(1), make_pr(2)], full=False,
+                  changed=[dict(make_pr(2), updated_at=self.NEW)])
+        self.assertEqual([c.args[1]["number"] for c in self.prepare.call_args_list],
+                         [2])
+        self.assertEqual(self.since.call_args.args[2],
+                         datetime(2026, 7, 19, 10, 55, tzinfo=timezone.utc))
+        self.assertEqual(self.since.call_args.kwargs, {"state": "all"})
+        self.assertEqual(self.stamps(), {"pr": self.NEW})
+
+    def test_a_full_pass_gates_every_open_item(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.scan([make_pr(1), make_pr(2)], full=True, probe=self.NEW,
+                  changed=[make_pr(2)])
+        self.assertEqual([c.args[1]["number"] for c in self.prepare.call_args_list],
+                         [1, 2])
+
+    def test_a_failed_listing_keeps_the_stamp_and_finishes_the_pass(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.db.push("requests", "pr", "4", {"action": "rerun"})
+        self.scan([], full=False, probe=self.NEW, changed=RuntimeError("502"))
+        self.assertEqual(self.stamps(), {"pr": self.OLD})
+        self.assertEqual(self.prepare.call_args.args[1]["number"], 4)
+        self.assertIsNone(self.db.get("requests", "pr", "4"))
+
+    def test_a_forced_number_on_a_merged_item_is_not_cancelled(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.ns.force_review_prs = {9}
+        merged = {**make_pr(9), "state": "closed", "merged": True}
+        self.scan([], full=False, changed=[merged], fetch=lambda ns, n: merged)
+        self.assertEqual(self.db.find("pr", "9"), "queued")
+
+    def test_a_pending_ci_item_inside_the_overlap_is_still_refetched(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.db.push("items", "pr", "3", {"updated_at": self.NEW})
+        self.db.push("skipped", "pr", "3", {"ci_pending": True})
+        self.scan([], full=False, changed=[dict(make_pr(3), updated_at=self.NEW)])
+        self.assertEqual(self.prepare.call_args.args[1]["number"], 3)
+
+    def test_an_item_without_a_ticket_is_gated_although_its_snapshot_is_current(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.db.push("items", "pr", "2", {"updated_at": self.NEW})
+        self.scan([], full=False, changed=[dict(make_pr(2), updated_at=self.NEW)])
+        self.assertEqual(self.prepare.call_args.args[1]["number"], 2)
+
+    def test_a_merged_state_counts_as_closed(self) -> None:
+        """GitLab reports a merged request with state ``merged``."""
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.db.push("reviewed", "pr", "2", verdict_ticket(2))
+        self.scan([], full=False, changed=[{
+            **make_pr(2), "state": "merged", "merged_at": self.NEW,
+            "updated_at": self.NEW}])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.get("cancelled", "pr", "2")["reason"], "merged")
+
+    def test_an_empty_repository_records_no_stamp(self) -> None:
+        self.scan([], full=False, probe=None)
+        self.assertEqual(self.stamps(), {})
+        self.scan([make_pr(1)], full=False, probe=self.NEW)
+        self.assertEqual(self.prepare.call_args.args[1]["number"], 1)
+        self.assertEqual(self.stamps(), {"pr": self.NEW})
+
+    def test_a_listed_closure_cancels_the_ticket(self) -> None:
+        self.db.push("reviewed", "pr", "2", verdict_ticket(2))
+        self.scan([], full=False, probe=self.NEW,
+                  changed=[{**make_pr(2), "state": "closed", "merged": True}])
+        self.assertEqual(self.db.get("cancelled", "pr", "2")["reason"], "merged")
+
+    def test_an_incremental_pass_never_cancels_by_absence(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.db.push("reviewed", "pr", "2", verdict_ticket(2))
+        self.scan([], full=False, probe=self.NEW)
+        self.assertEqual(self.db.find("pr", "2"), "reviewed")
+
+    def test_without_a_stamp_an_incremental_pass_scans_like_a_full_one(self) -> None:
+        self.db.push("reviewed", "pr", "2", verdict_ticket(2))
+        self.scan([make_pr(1)], full=False, probe=self.NEW,
+                  fetch=lambda ns, n: dict(make_pr(n), state="closed"))
+        self.assertEqual([c.args[1]["number"] for c in self.prepare.call_args_list],
+                         [1])
+        self.assertEqual(self.db.find("pr", "2"), "cancelled")
+        self.assertEqual(self.stamps(), {"pr": self.NEW})
+
+    def test_a_ticket_with_pending_ci_is_looked_at_again(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.db.push("skipped", "pr", "3", {"ci_pending": True})
+        self.db.push("skipped", "pr", "4", {"ci_pending": False})
+        self.scan([make_pr(3), make_pr(4)], full=False, probe=self.OLD)
+        self.assertEqual([c.args[1]["number"] for c in self.prepare.call_args_list],
+                         [3])
+
+    def test_a_closed_item_with_pending_ci_is_cancelled_not_regated(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.db.push("merge-ready", "pr", "7", {"ci_pending": True})
+        self.scan([], full=False, probe=self.NEW,
+                  changed=[{**make_pr(7), "state": "closed", "merged": True}])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.get("cancelled", "pr", "7")["reason"], "merged")
+
+    def test_a_full_pass_survives_a_failing_listing(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.scan([make_pr(1)], full=True, probe=self.NEW,
+                  changed=RuntimeError("502"))
+        self.assertEqual([c.args[1]["number"] for c in self.prepare.call_args_list],
+                         [1])
+        self.assertEqual(self.stamps(), {"pr": self.OLD})
+
+    def test_every_pass_lists_since_the_stamp(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.scan([], full=True, probe=self.OLD)
+        self.assertEqual(self.since.call_args.args[2],
+                         datetime(2026, 7, 19, 10, 55, tzinfo=timezone.utc))
+
+    def test_a_listed_row_without_a_number_is_ignored(self) -> None:
+        self.db.write(self.db.root / agent.SCAN_STAMPS_DOC, {"pr": self.OLD})
+        self.scan([], full=False, probe=self.NEW, changed=[{"state": "open"}])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.stamps(), {"pr": self.NEW})
+
+    def test_listing_cutoff(self) -> None:
+        cutoff = agent.listing_cutoff
+        self.assertEqual(cutoff(self.ns, None, NOW), NOW)
+        self.assertEqual(cutoff(self.ns, self.OLD, NOW),
+                         datetime(2026, 7, 19, 10, 55, tzinfo=timezone.utc))
+        self.ns.scan_closed_days = 7.0
+        self.assertEqual(cutoff(self.ns, None, NOW), NOW - timedelta(days=7))
+        self.assertEqual(cutoff(self.ns, "2026-07-01T00:00:00Z", NOW),
+                         NOW - timedelta(days=7))
+        self.assertEqual(cutoff(self.ns, NOW.isoformat(), NOW),
+                         NOW - agent.LISTING_OVERLAP)

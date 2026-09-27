@@ -332,20 +332,30 @@ class CrossReferenceProjectionTests(unittest.TestCase):
             ("pull_ref", "michaelni", "2026-09-24T19:16:44Z",
              {"number": 24677, "title": "wobonoja lemovutu", "state": "open",
               "is_pull": True, "repository": "FFmpeg/FFmpeg"}, "description", "none", None)])
-        self.assertEqual([e["type"] for e in timeline if "ref_issue" not in e],
-                         ["commit_ref"])
+        self.assertEqual(
+            [(e["type"], e["user"]["login"], e["ref_commit_sha"], e["body"])
+             for e in timeline if "ref_issue" not in e],
+            [("commit_ref", "michaelni",
+              "48e0046c0a0688b330b374d40333a2615dd68ddf", "zawiza cuhulugo")])
 
     def test_the_mentions_reach_the_built_discussion(self) -> None:
         timeline = _load_timeline("ffmpeg_issue_22956_ref_timeline.json")
         disc = fairy.build_llm_discussion([], [], [], timeline)
-        self.assertEqual([d["kind"] for d in disc], ["cross_reference"] * 3)
-        self.assertEqual(disc[2], {
+        self.assertEqual([d["kind"] for d in disc],
+                         ["cross_reference", "cross_reference",
+                          "commit_reference", "cross_reference"])
+        self.assertEqual(disc[3], {
             "kind": "cross_reference", "author": "michaelni",
             "created_at": "2026-09-24T19:16:44Z", "repository": "FFmpeg/FFmpeg",
             "number": 24677, "title": "wobonoja lemovutu", "state": "open",
             "is_pull": True, "origin": "description", "action": "none",
             "body": None})
         self.assertEqual((disc[1]["origin"], disc[1]["body"]), ("comment", "suna"))
+        self.assertEqual(disc[2], {
+            "kind": "commit_reference", "author": "michaelni",
+            "created_at": "2026-09-24T19:12:29Z",
+            "sha": "48e0046c0a0688b330b374d40333a2615dd68ddf",
+            "body": "zawiza cuhulugo"})
 
 
 if __name__ == "__main__":

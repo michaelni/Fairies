@@ -1362,6 +1362,17 @@ class DetailTests(DbCase):
         self.assertIn("mentioned this from o/other#24049 the other one (closes)", text)
         self.assertIn("fixed by this", text)
 
+    def test_a_commit_reference_line_names_the_commit(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
+            {"kind": "commit_reference", "author": "michaelni", "sha": "b" * 40,
+             "body": "the fix", "created_at": "2026-07-19T09:00:00Z"}]))
+        self.model.poll()
+        ui = make_ui(self.model)
+        with self.model.lock:
+            text = fairy_tui._plain(ui.detail_lines(90))
+        self.assertIn("mentioned this from commit bbbbbbbbbb", text)
+        self.assertIn("the fix", text)
+
     def test_a_review_request_line_names_requester_and_reviewer(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
             {"kind": "review_request", "author": "michaelni",

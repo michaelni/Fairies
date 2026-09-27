@@ -241,6 +241,18 @@ class ReviewRequestProjectionTests(unittest.TestCase):
               {"number": 7, "title": "the other one", "state": "open",
                "repository": "o/other", "is_pull": True}, None, None, None)])
 
+    def test_a_commit_mention_gets_the_forgejo_key(self) -> None:
+        """No capture; the synthetic event follows the documented schema
+        (https://docs.github.com/en/rest/using-the-rest-api/issue-event-types)."""
+        got = _timeline("github", [
+            {"event": "referenced", "id": 5, "actor": {"login": "michaelni"},
+             "commit_id": "a" * 40, "commit_url": "u",
+             "created_at": "2026-07-28T12:00:00Z"}])
+        self.assertEqual(
+            [(e["type"], e["user"]["login"], e["ref_commit_sha"], e["body"])
+             for e in got],
+            [("referenced", "michaelni", "a" * 40, "")])
+
 
 if __name__ == "__main__":
     unittest.main()

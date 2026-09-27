@@ -114,6 +114,7 @@ __all__ = [
     "PUSH_EVENT",
     "REVIEW_REQUEST_EVENT",
     "CROSS_REFERENCE_EVENTS",
+    "COMMIT_REFERENCE_EVENTS",
     "CLOSE_EVENT",
     "REOPEN_EVENT",
     "MERGE_EVENT",
@@ -940,6 +941,11 @@ REVIEW_REQUEST_EVENT = "review_request"
 _CROSS_REFERENCE_ORIGIN = {"issue_ref": "description", "pull_ref": "description",
                            "comment_ref": "comment", "cross-referenced": None}
 CROSS_REFERENCE_EVENTS = frozenset(_CROSS_REFERENCE_ORIGIN)
+# A mention from a commit message: Forgejo's ``commit_ref`` names the
+# commit under ``ref_commit_sha`` and renders its repository and subject
+# as the entry's body, GitHub's ``referenced`` names it under
+# ``commit_id`` with an empty body.
+COMMIT_REFERENCE_EVENTS = frozenset({"commit_ref", "referenced"})
 CLOSE_EVENT = "close"
 REOPEN_EVENT = "reopen"
 MERGE_EVENT = "merge_pull"
@@ -1007,7 +1013,8 @@ def project_timeline_event(event: dict) -> dict:
     was withdrawn) -- Forgejo/Gitea put the requester under ``user``
     and the requestee under ``assignee`` (captured on FFmpeg #23197).
     A cross-reference entry carries the keys of
-    ``_cross_reference_fields``."""
+    ``_cross_reference_fields``; a commit-reference entry carries the
+    mentioning commit under ``ref_commit_sha``."""
     projected = {
         "type": event.get("type"),
         "id": event.get("id"),
@@ -1024,6 +1031,8 @@ def project_timeline_event(event: dict) -> dict:
         projected.update(_cross_reference_fields(
             projected["type"], event["ref_issue"], event.get("ref_action"),
             (event.get("ref_comment") or {}).get("body")))
+    elif projected["type"] in COMMIT_REFERENCE_EVENTS:
+        projected["ref_commit_sha"] = event.get("ref_commit_sha")
     return projected
 
 
@@ -1121,7 +1130,10 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
     Forgejo ``review_request`` shape. A mention from another issue or
     pull request is the event ``cross-referenced`` with the mentioning
     item under ``source.issue`` (same document); it keeps its name and
-    gets the Forgejo cross-reference keys.
+    gets the Forgejo cross-reference keys. A mention from a commit
+    message is the event ``referenced`` with the commit under
+    ``commit_id`` (https://docs.github.com/en/rest/using-the-rest-api/issue-event-types);
+    it keeps its name and gets the Forgejo ``ref_commit_sha`` key.
     """
     out: list[dict] = []
     run: list[dict] = []
@@ -1158,6 +1170,10 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
         if kind in CROSS_REFERENCE_EVENTS:
             out.append({**_project_github_event(event), **_cross_reference_fields(
                 kind, event["source"]["issue"], None, None)})
+            continue
+        if kind in COMMIT_REFERENCE_EVENTS:
+            out.append({**_project_github_event(event),
+                        "ref_commit_sha": event.get("commit_id")})
             continue
         out.append({**_project_github_event(event),
                     "type": _GITHUB_STATE_EVENTS.get(kind, kind)})

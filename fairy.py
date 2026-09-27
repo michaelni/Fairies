@@ -107,6 +107,7 @@ from forge_gcli import (
     AUTO_MERGE_CANCEL_EVENT,
     AUTO_MERGE_SCHEDULE_EVENT,
     CLOSE_EVENT,
+    COMMIT_REFERENCE_EVENTS,
     CROSS_REFERENCE_EVENTS,
     MERGE_EVENT,
     PUSH_EVENT,
@@ -1694,6 +1695,21 @@ def cross_reference_events_from_timeline(
     } for entry in timeline if entry.get("type") in CROSS_REFERENCE_EVENTS]
 
 
+def commit_reference_events_from_timeline(
+        timeline: list[ApiObject]) -> list[DiscussionItem]:
+    """The commit-mention timeline entries as ``kind="commit_reference"``
+    discussion items: ``author``'s commit ``sha`` mentioned this item,
+    ``body`` being the forge's rendering of that commit (Forgejo: its
+    repository and subject; GitHub: empty)."""
+    return [{
+        "kind": "commit_reference",
+        "author": _timeline_name(entry.get("user")),
+        "created_at": entry.get("created_at"),
+        "sha": entry["ref_commit_sha"],
+        "body": entry["body"],
+    } for entry in timeline if entry.get("type") in COMMIT_REFERENCE_EVENTS]
+
+
 STATE_EVENTS = {CLOSE_EVENT: "closed", REOPEN_EVENT: "reopened",
                 MERGE_EVENT: "merged"}
 
@@ -2041,10 +2057,12 @@ def build_llm_discussion(
     push events into a single chronologically-sorted list for the LLM.
 
     ``timeline`` is the raw ``/issues/{n}/timeline`` payload; its
-    ``pull_push``, ``review_request``, cross-reference and state-change
-    entries are consumed (see ``push_events_from_timeline`` /
+    ``pull_push``, ``review_request``, cross-reference, commit-reference
+    and state-change entries are consumed (see
+    ``push_events_from_timeline`` /
     ``review_request_events_from_timeline`` /
     ``cross_reference_events_from_timeline`` /
+    ``commit_reference_events_from_timeline`` /
     ``state_events_from_timeline``).
     Passing ``None`` (or omitting it) yields a comments-only discussion.
     The push items carry ``kind="push"`` plus ``head_sha`` /
@@ -2060,6 +2078,7 @@ def build_llm_discussion(
         items.extend(push_events_from_timeline(timeline))
         items.extend(review_request_events_from_timeline(timeline))
         items.extend(cross_reference_events_from_timeline(timeline))
+        items.extend(commit_reference_events_from_timeline(timeline))
         items.extend(state_events_from_timeline(timeline))
 
     for comment in comments:

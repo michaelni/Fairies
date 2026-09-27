@@ -1554,6 +1554,8 @@ class UILoop:
                     what = f"mentioned this from {c.get('repository')}#{c.get('number')} {c.get('title')}"
                     if c.get("action") in ("closes", "reopens"):
                         what += f" ({c['action']})"
+                elif c.get("kind") == "commit_reference":
+                    what = f"mentioned this from commit {str(c.get('sha') or '')[:10]}"
                 elif c.get("kind") == "state":
                     what = str(c.get("state"))
                 else:

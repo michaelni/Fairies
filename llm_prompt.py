@@ -820,7 +820,7 @@ as "after our last reply" for the purpose of the criteria below.
 
 The prior discussion is a chronological list whose ``kind`` field tells
 you what each item is: ``comment``, ``review``, ``review_comment``,
-``push``, ``review_request``, ``cross_reference`` or ``state``. A ``push`` item is a real push to the
+``push``, ``review_request``, ``cross_reference``, ``commit_reference`` or ``state``. A ``push`` item is a real push to the
 PR head branch (the author or a maintainer landed new commits) and
 carries ``head_sha`` and ``is_force_push``. A ``push`` item whose
 timestamp is newer than our last reply/review means the author has
@@ -832,7 +832,9 @@ pull request. A ``cross_reference`` item records ``author`` mentioning
 this item from issue or pull request ``repository``#``number``
 (``title``, ``state``, ``is_pull``) in its ``origin`` -- description or
 comment, ``body`` being the comment's text -- and ``action`` the forge's
-closing intent: none, closes, reopens or neutered.
+closing intent: none, closes, reopens or neutered. A ``commit_reference``
+item records ``author``'s commit ``sha`` mentioning this item, ``body``
+being the forge's rendering of that commit.
 A ``review`` item with an empty body is a bare verdict click; its
 ``state`` still counts.
 

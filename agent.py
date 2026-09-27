@@ -100,8 +100,9 @@ MIN_BACKOFF_H = 24.0
 IN_FLIGHT = ("queued", "llm", "outgoing")
 
 
-class Halted(Exception):
-    """The scan sighted --halt-keyword and halted the db."""
+class Halted(BaseException):
+    """The scan sighted --halt-keyword and halted the db. Not an
+    Exception: the scan's per-item catch-alls must let it through."""
 
 
 def backoff_wait_h(prior_backoff_h: float) -> float:
@@ -946,7 +947,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
         claim.finish(state, dict(ticket, send_blocked=reason))
         logger.info("%s #%s not posted (%s) -> %s/", kind, number, reason, state)
         return state
-    except Exception:
+    except BaseException:
         claim.abort()
         raise
 

@@ -1135,6 +1135,19 @@ class ItemSnapshotScanTests(SendCase):
         self.assertEqual(self.db.list_state("queued"), [])
         self.prepare.assert_not_called()
 
+    def test_halt_keyword_on_an_item_that_left_the_listing_halts(self) -> None:
+        """The closure fetch runs under a catch-all that turns any failure
+        into a "not open" cancel; Halted must pass it, or the ticket is
+        cancelled and the pass goes on to post outgoing/ while halted."""
+        self.ns.halt_keyword = "FAIRY-STOP"
+        self.db.push("reviewed", "pr", "9", {"title": "t9"})
+        with self.assertRaises(agent.Halted):
+            self.scan([], fetch=lambda ns, n: dict(make_pr(n), state="closed",
+                                                   body="FAIRY-STOP"))
+        self.assertEqual(halt_marker.reason(halt_marker.path(self.db.root)),
+                         "a posted 'FAIRY-STOP' in https://forge/pr/9")
+        self.assertEqual(self.db.find("pr", "9"), "reviewed")
+
     def test_halt_keyword_in_the_body_names_the_item_author(self) -> None:
         self.ns.halt_keyword = "FAIRY-STOP"
         with self.assertRaises(agent.Halted):

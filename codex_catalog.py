@@ -55,7 +55,7 @@ def resolve_codex_home(codex_home: str | None) -> str:
 
 def harden_codex_catalog(catalog: JsonObject) -> JsonObject:
     """Return a copy of a codex model catalog with the two direct host-file
-    tools closed on every model entry.
+    tools closed and the ask-the-user tools removed on every model entry.
 
     Fairy's codex only ever needs to drive the review container via the MCP
     shell tool; codex's own host-side tools are pure attack surface on a
@@ -68,6 +68,10 @@ def harden_codex_catalog(catalog: JsonObject) -> JsonObject:
       conversation. The tool stays listed but is inert.
     * ``apply_patch_tool_type`` -> ``None`` -- the ``apply_patch`` tool
       (which reads and writes host files) is not offered at all.
+    * ``experimental_supported_tools`` loses ``send_user_message_async``,
+      which on gpt-6-astra (observed 2026-09-27) also brings
+      ``request_user_input_async``: a review pass has no user, so a
+      question asked through it is accepted and never answered.
 
     ``tool_mode`` is deliberately left untouched: forcing a ``code_mode``
     model (gpt-5.6-*) to standard tool calling does not shrink its surface,
@@ -86,4 +90,8 @@ def harden_codex_catalog(catalog: JsonObject) -> JsonObject:
             if isinstance(mods, list):
                 entry["input_modalities"] = [m for m in mods if m != "image"]
             entry["apply_patch_tool_type"] = None
+            tools = entry.get("experimental_supported_tools")
+            if isinstance(tools, list):
+                entry["experimental_supported_tools"] = \
+                    [t for t in tools if t != "send_user_message_async"]
     return hardened

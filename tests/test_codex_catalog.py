@@ -44,7 +44,8 @@ class HardenCatalogTests(unittest.TestCase):
         "models": [
             {"slug": "gpt-5.6-sol", "input_modalities": ["text", "image"],
              "apply_patch_tool_type": "freeform", "tool_mode": "code_mode_only",
-             "context_window": 400000},
+             "context_window": 400000,
+             "experimental_supported_tools": ["send_user_message_async", "clock"]},
             {"slug": "gpt-5.5", "input_modalities": ["text", "image"],
              "apply_patch_tool_type": "freeform", "tool_mode": None},
         ],
@@ -58,6 +59,10 @@ class HardenCatalogTests(unittest.TestCase):
         # unrelated fields survive
         self.assertEqual(400000, out["models"][0]["context_window"])
         self.assertEqual("abc", out["etag"])
+
+    def test_removes_ask_the_user_tool(self) -> None:
+        out = codex_catalog.harden_codex_catalog(self.CATALOG)
+        self.assertEqual(["clock"], out["models"][0]["experimental_supported_tools"])
 
     def test_tool_mode_left_untouched(self) -> None:
         out = codex_catalog.harden_codex_catalog(self.CATALOG)

@@ -36,7 +36,6 @@ import os
 import pickle
 import re
 import threading
-import time
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -145,11 +144,16 @@ def dump_response_debug_artifacts(
         else:
             response_json = payload["response"]
             response_id = response_json.get("id") if isinstance(response_json, dict) else None
-            stem = response_id if isinstance(response_id, str) and response_id else f"response_{int(time.time())}"
             out_dir = Path(debug_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"{stem}.jsonl"
-            out_path.write_text(line, encoding="utf-8")
+            if isinstance(response_id, str) and response_id:
+                out_path = out_dir / f"{response_id}.jsonl"
+                out_path.write_text(line, encoding="utf-8")
+            else:
+                fd, name = tempfile.mkstemp(prefix="response_", suffix=".jsonl", dir=out_dir)
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(line)
+                out_path = Path(name)
             if verbose:
                 logger.debug("wrote response debug dump to %s", out_path)
         return str(out_path)

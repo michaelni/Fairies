@@ -51,7 +51,7 @@ from common import dump_response_debug_artifacts  # noqa: E402
 
 
 class _Resp:
-    def __init__(self, rid: str) -> None:
+    def __init__(self, rid: str | None) -> None:
         self.id = rid
 
     def model_dump(self) -> dict:
@@ -89,6 +89,18 @@ class ConversationDumpTests(unittest.TestCase):
                 _Resp("resp_b"), {}, debug_dir=tmp, verbose=False)
             self.assertNotEqual(p1, p2)
             self.assertEqual(2, len(list(Path(tmp).iterdir())))
+
+    def test_responses_without_id_get_distinct_files(self) -> None:
+        # Regression: id-less responses were named response_<unix seconds>
+        # and overwrote each other when two reviewers started in the same
+        # second.
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = [dump_response_debug_artifacts(
+                _Resp(None), {"input": [n]}, debug_dir=tmp, verbose=False)
+                for n in range(2)]
+            self.assertNotEqual(paths[0], paths[1])
+            self.assertEqual([[0], [1]], [
+                json.loads(Path(p).read_text())["request"]["input"] for p in paths])
 
 
 if __name__ == "__main__":

@@ -69,6 +69,12 @@ class ModelLabelTests(unittest.TestCase):
         self.assertEqual("GLM-5.3",
                          llm_review_api.model_label("zai:glm-5.3+ZAI_API_KEY_2"))
 
+    def test_openrouter_variant_and_login_stripped_for_label_and_tripwire(self) -> None:
+        name = "openrouter:openai/gpt-5.4:free+OPENROUTER_API_KEY_2"
+        self.assertEqual("GPT-5.4", llm_review_api.model_label(name))
+        self.assertTrue(llm_review_api.model_needs_diff_tripwire(name))
+        self.assertFalse(llm_review_api.model_needs_diff_tripwire("openrouter:openai/gpt-5.5"))
+
 
 class PromptForTests(unittest.TestCase):
     def test_derived_identity_facts(self) -> None:

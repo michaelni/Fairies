@@ -389,19 +389,18 @@ def check_schema(value: object, schema: dict[str, object], path: str = "$") -> N
 def model_label(model: str) -> str:
     """User-facing model label.
 
-    model:   reviewer name ``provider:[vendor/]model[+login]``
+    model:   reviewer name ``provider:[vendor/]model[:variant][+login]``
     returns: the model, uppercased, e.g. ``GPT-5.4``
     """
-    return (model or "unknown").rpartition(":")[2].rpartition("/")[2].partition("+")[0].upper()
+    return (model.partition("+")[0].split(":")[:2][-1].rpartition("/")[2] or "unknown").upper()
 
 
 def model_needs_diff_tripwire(model: str) -> bool:
     """gpt-5.4 and glm-5.2 produced PR #23553's head-vs-target-tip verdicts
     (gpt-5.5 did not): those versions and older get flag enforcement and,
     in ``llm_prompt``, the extra merge-semantics text; newer versions are
-    exempt until observed misbehaving. ``model`` is a name/spec like
-    ``openai:gpt-5.4[@high]``."""
-    m = re.match(r"(gpt|glm)-(\d+)(?:\.(\d+))?", model.rpartition(":")[2].lower())
+    exempt until observed misbehaving."""
+    m = re.match(r"(gpt|glm)-(\d+)(?:\.(\d+))?", model_label(model).lower())
     return bool(m) and (int(m[2]), int(m[3] or 0)) <= {"gpt": (5, 4), "glm": (5, 2)}[m[1]]
 
 

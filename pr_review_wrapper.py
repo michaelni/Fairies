@@ -1439,6 +1439,7 @@ def main() -> int:
         # fetching a logger from the registry does not import the module.
         logging.getLogger("shell_tool"),
         logging.getLogger("anthropic_common"),
+        logging.getLogger("anthropic_reviewer"),
         logging.getLogger("tool_loop"),
         logging.getLogger("gemini_reviewer"),
         logging.getLogger("codex_catalog"),

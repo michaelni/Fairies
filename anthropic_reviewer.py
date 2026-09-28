@@ -35,22 +35,20 @@ Structured output uses Anthropic's tool-use idiom: the model investigates
 via the ``shell`` tool (per-machine ``ctx.open_shell`` sessions) and
 returns its verdict by calling a ``submit_review`` tool whose
 ``input_schema`` is the role's output schema.
-
-Importing this module pulls in the ``anthropic`` package, so only the
-Anthropic / GLM code path imports it (lazily, via the reviewer factory).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 
-from anthropic import Anthropic
+import httpx
 
 import concurrency
 from common import JsonObject, call_with_retry, dump_response_debug_artifacts, load_api_key
 from llm_prompt import REVIEWER_ROLE
 from llm_review_api import ReviewContext, Reviewer, RoleSpec
-import anthropic_common
+from anthropic_common import ANTHROPIC_API_URL, retryable
 from shell_tool import abort_if_cancelled
 from tool_loop import Conversation, ToolCall, review_prompt, review_tools, run_tool_loop
 
@@ -59,6 +57,8 @@ __all__ = [
     "DEFAULT_ANTHROPIC_MAX_TOKENS",
     "AnthropicReviewer",
 ]
+
+logger = logging.getLogger(__name__)
 
 # Conservative output-token budget that every current Anthropic / GLM model
 # accepts; raise per-model via the constructor when a model allows more.
@@ -72,13 +72,6 @@ DEFAULT_ANTHROPIC_MAX_TOKENS = 16_000
 # at all, keeping the provider default (on z.ai: no thinking).
 ANTHROPIC_EFFORTS = ("off", "low", "medium", "high", "xhigh", "max")
 
-# Per-request timeout, far above the longest single call observed (135s).
-# Also opts out of the SDK's static pre-flight check that rejects
-# non-streaming requests whose max_tokens COULD take >10 min to generate
-# (raised for max_tokens > 21333; killed every GLM draft on 2026-07-03 when
-# a thinking budget grew max_tokens past it). Our tool-round responses stay
-# far below max_tokens, so the pessimistic estimate does not apply.
-ANTHROPIC_TIMEOUT_S = 900.0
 
 class AnthropicReviewer(Reviewer):
     """One Anthropic Messages-API pass of a ``RoleSpec`` behind the shared
@@ -91,8 +84,9 @@ class AnthropicReviewer(Reviewer):
     ``BadModelOutput`` when the model never produces a schema-valid
     verdict.
 
-    ``base_url`` + ``api_key_env`` select the backend: defaults reach
-    Anthropic; pass z.ai's Anthropic endpoint + ``ZAI_API_KEY`` for GLM.
+    ``base_url`` + ``api_key_env`` select the backend (``ANTHROPIC_ENDPOINTS``):
+    defaults reach Anthropic; pass z.ai's Anthropic endpoint + ``ZAI_API_KEY``
+    for GLM.
     ``name`` is the stable label recorded on the ``Review`` (e.g.
     ``"anthropic:claude-opus-4"`` or ``"zai:glm-5.3"``).
 
@@ -113,7 +107,7 @@ class AnthropicReviewer(Reviewer):
         *,
         name: str,
         role: RoleSpec = REVIEWER_ROLE,
-        base_url: str | None = None,
+        base_url: str = ANTHROPIC_API_URL,
         api_key_env: str = "ANTHROPIC_API_KEY",
         max_tokens: int = DEFAULT_ANTHROPIC_MAX_TOKENS,
         max_tool_rounds: int = 0,
@@ -140,16 +134,12 @@ class AnthropicReviewer(Reviewer):
         self.verbose = verbose
         self.debug_dir = debug_dir
 
-    def _client(self) -> Anthropic:
+    def _client(self) -> httpx.Client:
         api_key = load_api_key(self.api_key_env)
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is not set (env or .env)")
-        kwargs: dict[str, object] = {
-            "api_key": api_key, "max_retries": 0, "timeout": ANTHROPIC_TIMEOUT_S,
-        }
-        if self.base_url:
-            kwargs["base_url"] = self.base_url
-        return Anthropic(**kwargs)
+        return httpx.Client(base_url=self.base_url, timeout=900.0, headers={
+            "x-api-key": api_key, "anthropic-version": "2023-06-01"})
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
         system, texts = review_prompt(self.role, ctx, vendor="anthropic", model=self.model)
@@ -200,21 +190,29 @@ class _Conversation(Conversation):
                 thinking["display"] = "summarized"
             request_kwargs["thinking"] = thinking
             request_kwargs["output_config"] = {"effort": reviewer.effort}
+
+        def post() -> JsonObject:
+            response = self.client.post("/v1/messages", json=request_kwargs)
+            if response.is_error:
+                logger.warning("messages HTTP %d: %s", response.status_code, response.text[:2000])
+            return response.raise_for_status().json()
+
         abort_if_cancelled()
         with concurrency.slot(reviewer.name.partition(":")[0]):
-            response = call_with_retry(
-                lambda: self.client.messages.create(**request_kwargs),
-                retryable=anthropic_common.retryable, what="messages.create",
-            )
+            response = call_with_retry(post, retryable=retryable, what="messages")
         if reviewer.debug_dir:
             self.conv_path = dump_response_debug_artifacts(
                 response, request_kwargs, wrapper_request=self.ctx.request,
                 debug_dir=reviewer.debug_dir, verbose=reviewer.verbose,
                 conversation=self.conv_path,
             ) or self.conv_path
-        self.messages.append({"role": "assistant", "content": _echo_content(response.content)})
-        return [ToolCall(b.id, b.name, b.input) for b in response.content
-                if getattr(b, "type", None) == "tool_use"]
+        # The Messages API requires the prior assistant turn to be replayed
+        # before the matching tool_results, thinking blocks unmodified
+        # (signature included); see the Messages API extended thinking
+        # documentation ("Preserving thinking blocks").
+        self.messages.append({"role": "assistant", "content": response["content"]})
+        return [ToolCall(b["id"], b["name"], b["input"]) for b in response["content"]
+                if b["type"] == "tool_use"]
 
     def add_user_text(self, text: str) -> None:
         self.messages.append({"role": "user", "content": text})
@@ -226,42 +224,6 @@ class _Conversation(Conversation):
              **({"is_error": True} if is_error else {})}
             for call, payload, is_error in results
         ]})
-
-
-def _echo_content(content: list[object]) -> list[JsonObject]:
-    """Rebuild an assistant turn's content blocks as plain dicts to send back.
-
-    The Messages API requires the prior assistant turn (including its
-    ``tool_use`` blocks) to be replayed before the matching ``tool_result``s.
-    Reconstructing dicts from the response blocks (rather than echoing SDK
-    objects) keeps the loop independent of the SDK's input/output type
-    interchangeability and trivially testable with lightweight fakes.
-    """
-    blocks: list[JsonObject] = []
-    for block in content:
-        kind = getattr(block, "type", None)
-        if kind == "text":
-            blocks.append({"type": "text", "text": block.text})
-        elif kind == "tool_use":
-            blocks.append({
-                "type": "tool_use",
-                "id": block.id,
-                "name": block.name,
-                "input": block.input,
-            })
-        # With extended thinking enabled the API rejects a tool-result
-        # turn unless the assistant's thinking blocks are replayed
-        # unmodified (signature included); see the Messages API extended
-        # thinking documentation ("Preserving thinking blocks").
-        elif kind == "thinking":
-            blocks.append({
-                "type": "thinking",
-                "thinking": block.thinking,
-                "signature": block.signature,
-            })
-        elif kind == "redacted_thinking":
-            blocks.append({"type": "redacted_thinking", "data": block.data})
-    return blocks
 
 
 def _mark_cache_breakpoint(messages: list[JsonObject]) -> None:

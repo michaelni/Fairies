@@ -47,10 +47,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tests import fake_sdks  # noqa: E402
-
-fake_sdks.install_anthropic()
-
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
                             ProviderContentFlagged, ProviderTurnFailed,
@@ -176,7 +172,7 @@ class MakeReviewerTests(unittest.TestCase):
         r = review_pipeline.make_reviewer("anthropic:claude-opus-4", args=_args(), resources=None, role=COMBINER_ROLE, verbose=False)
         self.assertIsInstance(r, AnthropicReviewer)
         self.assertEqual("anthropic:claude-opus-4", r.name)
-        self.assertIsNone(r.base_url)
+        self.assertEqual("https://api.anthropic.com", r.base_url)
         self.assertIs(COMBINER_ROLE, r.role)
 
     def test_unknown_provider_rejected(self) -> None:

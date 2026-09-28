@@ -27,13 +27,11 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-AnthropicReviewer Messages tool-loop, replayed with a scripted client.
-
-The ``anthropic`` SDK is mocked (like the OpenAI replay tests mock
-``openai``) so the test runs without the package or network. It pins the
-shape the loop depends on: the model investigates via the ``shell`` tool
-(dispatched onto a fake ContainerShellSession), then returns its verdict by
-calling ``submit_review`` with REVIEW_SCHEMA-shaped input.
+AnthropicReviewer Messages tool-loop, replayed with a scripted client
+answering each POST from a queue, so the test runs without network. It
+pins the shape the loop depends on: the model investigates via the
+``shell`` tool (dispatched onto a fake ContainerShellSession), then returns
+its verdict by calling ``submit_review`` with REVIEW_SCHEMA-shaped input.
 """
 
 from __future__ import annotations
@@ -41,15 +39,12 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest import mock
+
+import httpx
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-
-from tests import fake_sdks  # noqa: E402
-
-fake_sdks.install_anthropic()
 
 import podman_host  # noqa: E402
 from llm_review_api import ReviewContext  # noqa: E402
@@ -57,27 +52,21 @@ import anthropic_reviewer  # noqa: E402
 import llm_prompt  # noqa: E402
 
 
-class _Block:
-    def __init__(self, **kw: object) -> None:
-        self.__dict__.update(kw)
-
-
-class _Message:
-    def __init__(self, content: list[_Block]) -> None:
-        self.content = content
+def _reply(content: list[dict]) -> dict:
+    return {"content": content}
 
 
 class _ScriptedClient:
-    """Returns the next queued _Message on each messages.create call."""
+    """Answers each POST with the next queued reply, recording the request."""
 
-    def __init__(self, scripted: list[_Message]) -> None:
-        self._scripted = list(scripted)
+    def __init__(self, replies: list[dict]) -> None:
+        self._replies = list(replies)
         self.calls: list[dict] = []
-        self.messages = self
 
-    def create(self, **kwargs: object) -> _Message:
-        self.calls.append(dict(kwargs))
-        return self._scripted.pop(0)
+    def post(self, url: str, *, json: dict) -> httpx.Response:
+        self.calls.append(dict(json))
+        return httpx.Response(200, json=self._replies.pop(0),
+                              request=httpx.Request("POST", url))
 
 
 class _FakeShell:
@@ -118,9 +107,9 @@ class AnthropicReviewLoopTests(unittest.TestCase):
     def test_shell_round_then_submit(self) -> None:
         shell = _FakeShell()
         client = _ScriptedClient([
-            _Message([_Block(type="tool_use", id="t1", name="shell",
+            _reply([dict(type="tool_use", id="t1", name="shell",
                              input={"command": "git log -1"})]),
-            _Message([_Block(type="tool_use", id="t2", name="submit_review",
+            _reply([dict(type="tool_use", id="t2", name="submit_review",
                              input={"classification": "minor_issues_approve",
                                     "message": "LLM review: one nit.",
                                     "head_vs_branch_diff_evidence": False})]),
@@ -153,9 +142,9 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         # read=7730 marked; z.ai accepts the markers and is unaffected).
         shell = _FakeShell()
         client = _ScriptedClient([
-            _Message([_Block(type="tool_use", id="t1", name="shell",
+            _reply([dict(type="tool_use", id="t1", name="shell",
                              input={"command": "git log -1"})]),
-            _Message([_Block(type="tool_use", id="t2", name="submit_review",
+            _reply([dict(type="tool_use", id="t2", name="submit_review",
                              input={"classification": "approve", "message": "",
                                     "head_vs_branch_diff_evidence": False})]),
         ])
@@ -202,11 +191,12 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         import tool_loop
         self.assertEqual("tool_loop", tool_loop.logger.name)
         self.assertEqual("anthropic_common", anthropic_common.logger.name)
+        self.assertEqual("anthropic_reviewer", anthropic_reviewer.logger.name)
         self.assertEqual("shell_tool", shell_tool.logger.name)
 
     def test_no_shell_direct_submit(self) -> None:
         client = _ScriptedClient([
-            _Message([_Block(type="tool_use", id="t1", name="submit_review",
+            _reply([dict(type="tool_use", id="t1", name="submit_review",
                              input={"classification": "approve", "message": "",
                                     "head_vs_branch_diff_evidence": False})]),
         ])
@@ -223,7 +213,7 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         from llm_prompt import make_triager_role
 
         client = _ScriptedClient([
-            _Message([_Block(type="tool_use", id="t1", name="submit_review",
+            _reply([dict(type="tool_use", id="t1", name="submit_review",
                              input={"route": "engage", "message": "", "reason": "new code",
                                     "prompt_injection": False,
                                     "requested_verbosity": None})]),
@@ -242,8 +232,8 @@ class AnthropicReviewLoopTests(unittest.TestCase):
 
 
 class EffortThinkingTests(unittest.TestCase):
-    def _submit(self) -> _Message:
-        return _Message([_Block(type="tool_use", id="t1", name="submit_review",
+    def _submit(self) -> dict:
+        return _reply([dict(type="tool_use", id="t1", name="submit_review",
                                 input={"classification": "approve", "message": "",
                                        "head_vs_branch_diff_evidence": False})])
 
@@ -297,39 +287,14 @@ class EffortThinkingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             anthropic_reviewer.AnthropicReviewer("glm-5.3", name="zai:glm-5.3", effort="turbo")
 
-    def test_client_gets_explicit_timeout(self) -> None:
-        # Regression (production 2026-07-03, PR 22592): with the SDK-default
-        # client timeout, anthropic's static pre-flight rejects non-streaming
-        # requests whose max_tokens could take >10 min to generate
-        # ("Streaming is required for operations that may take longer than
-        # 10 minutes", anthropic 0.115.0 _calculate_nonstreaming_timeout,
-        # threshold max_tokens > 128000*600/3600 = 21333); every GLM draft
-        # died before a single request when max_tokens crossed it. An
-        # explicit client timeout opts out of that pre-flight.
-        recorded: dict = {}
-
-        class _Recorder:
-            def __init__(self, **kwargs: object) -> None:
-                recorded.update(kwargs)
-
-        with mock.patch.object(anthropic_reviewer, "Anthropic", _Recorder), \
-                mock.patch.object(anthropic_reviewer, "load_api_key",
-                                  return_value="k"):
-            anthropic_reviewer.AnthropicReviewer(
-                "glm-5.3", name="zai:glm-5.3", effort="medium",
-            )._client()
-        self.assertEqual(
-            anthropic_reviewer.ANTHROPIC_TIMEOUT_S, recorded["timeout"],
-        )
-
     def test_thinking_blocks_are_replayed_with_signature(self) -> None:
         # The Messages API rejects tool-result turns unless the assistant's
         # thinking blocks are echoed unmodified (signature included).
         shell = _FakeShell()
         client = _ScriptedClient([
-            _Message([
-                _Block(type="thinking", thinking="check the log", signature="sig1"),
-                _Block(type="tool_use", id="t1", name="shell",
+            _reply([
+                dict(type="thinking", thinking="check the log", signature="sig1"),
+                dict(type="tool_use", id="t1", name="shell",
                        input={"command": "git log -1"}),
             ]),
             self._submit(),
@@ -358,9 +323,9 @@ class PersistBranchesTests(unittest.TestCase):
 
     def _scripted(self) -> _ScriptedClient:
         return _ScriptedClient([
-            _Message([_Block(type="tool_use", id="t1", name="shell",
+            _reply([dict(type="tool_use", id="t1", name="shell",
                              input={"command": "git push fairy fix-x"})]),
-            _Message([_Block(type="tool_use", id="t2", name="submit_review",
+            _reply([dict(type="tool_use", id="t2", name="submit_review",
                              input={"classification": "minor_issues_approve",
                                     "message": "LLM review: built fix-x.",
                                     "head_vs_branch_diff_evidence": False,

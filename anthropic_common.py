@@ -27,31 +27,28 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Thin Anthropic-SDK glue shared by the Anthropic / GLM reviewer: which of
-Anthropic's exception classes ``common.call_with_retry`` retries.
+Thin Messages-API glue shared by the Anthropic / GLM / OpenRouter
+reviewer: Anthropic's own endpoint and which HTTP replies
+``common.call_with_retry`` retries.
 
 What does NOT belong: prompt text, the review pipeline, or any
-OpenAI-specific code. This mirrors the small subset of ``openai_common``
-the Anthropic path needs; the two cannot share one retry helper because
-each is typed to its own SDK's exception classes and reads different
-rate-limit headers.
-
-Importing this module pulls in the ``anthropic`` package, so only the
-Anthropic / GLM code path imports it (lazily); OpenAI-only deployments
-need not install ``anthropic``.
+OpenAI-specific code.
 """
 
 from __future__ import annotations
 
 import logging
 
-from anthropic import InternalServerError, OverloadedError, RateLimitError
+import httpx
 
 __all__ = [
+    "ANTHROPIC_API_URL",
     "retryable",
 ]
 
 logger = logging.getLogger(__name__)
+
+ANTHROPIC_API_URL = "https://api.anthropic.com"
 
 # z.ai signals two "stop calling, waiting won't help soon" states as an
 # HTTP 429 with these error codes (Anthropic proper uses neither; both
@@ -66,44 +63,40 @@ logger = logging.getLogger(__name__)
 ZAI_QUOTA_EXHAUSTED_CODES = frozenset({"1113", "1308"})
 
 
-def _is_quota_exhausted(exc: Exception) -> bool:
+def _is_quota_exhausted(response: httpx.Response) -> bool:
     """True for a billing/quota 429 that retrying cannot fix soon
     (``ZAI_QUOTA_EXHAUSTED_CODES``).
 
-    ``exc.body`` is the vendor's JSON error object (attacker/vendor-shaped,
-    so checked structurally at this boundary); fall back to the human
-    message for shapes that don't carry the structured code.
+    The body is the vendor's JSON error object (vendor-shaped, so checked
+    structurally at this boundary); fall back to the human message for
+    shapes that don't carry the structured code.
     """
-    body = getattr(exc, "body", None)
-    if isinstance(body, dict):
-        error = body.get("error")
-        if isinstance(error, dict) and str(error.get("code")) in ZAI_QUOTA_EXHAUSTED_CODES:
-            return True
-    text = str(getattr(exc, "message", "") or exc).lower()
+    try:
+        code = response.json()["error"]["code"]
+    except (ValueError, KeyError, TypeError):
+        code = None
+    if str(code) in ZAI_QUOTA_EXHAUSTED_CODES:
+        return True
+    text = response.text.lower()
     return ("insufficient balance" in text or "no resource package" in text
             or "usage limit reached" in text)
 
 
 def retryable(exc: Exception) -> bool:
-    """Whether ``common.call_with_retry`` should retry ``exc``: Anthropic
-    rate-limit / overloaded / 5xx errors, except z.ai's quota exhaustion.
+    """Whether ``common.call_with_retry`` should retry ``exc``: a Messages
+    rate-limit (429) / overloaded (529) / 5xx reply, except z.ai's quota
+    exhaustion.
 
-    ``APIConnectionError`` / ``APITimeoutError`` are not retried: like the
-    OpenAI main call, an unpredictable long request is restarted by the
-    outer caller -- which has its own deadline -- rather than silently
-    re-issued here, where a duplicate would be billed.
+    Connection errors and timeouts are not retried: like the OpenAI main
+    call, an unpredictable long request is restarted by the outer caller
+    -- which has its own deadline -- rather than silently re-issued here,
+    where a duplicate would be billed.
     """
-    # OverloadedError is the SDK's dedicated 529 class; it is NOT a
-    # subclass of InternalServerError (which only covers >=500 without
-    # a dedicated class), so it must be listed explicitly. Observed
-    # from z.ai as code 1305 during peak load 2026-07.
-    if not isinstance(exc, (RateLimitError, InternalServerError, OverloadedError)):
+    if not isinstance(exc, httpx.HTTPStatusError):
         return False
-    if isinstance(exc, RateLimitError) and _is_quota_exhausted(exc):
-        # Balance / usage-window exhaustion dressed as a 429: fail
-        # fast rather than hammer an endpoint that stays dead for
-        # hours (until re-funded or the usage window resets).
-        logger.error("anthropic %s: balance or usage window exhausted; not retrying: %s",
-                     type(exc).__name__, exc)
+    status = exc.response.status_code
+    if status == 429 and _is_quota_exhausted(exc.response):
+        logger.error("messages HTTP 429: balance or usage window exhausted; not retrying: %s",
+                     exc.response.text[:2000])
         return False
-    return True
+    return status == 429 or status >= 500

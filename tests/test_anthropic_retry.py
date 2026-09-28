@@ -31,8 +31,8 @@ common.call_with_retry with anthropic_common.retryable: retry transient
 429s/529s, but fail fast on z.ai's "insufficient balance" and "usage
 window exhausted" 429s so a dead-for-hours endpoint is not hammered.
 
-The ``anthropic`` SDK is mocked (like the reviewer replay tests) so the
-RateLimitError class is a plain Exception we can raise with a ``.body``.
+The replies are ``httpx.Response`` objects built from the real z.ai
+bodies, so the test runs without network.
 """
 
 from __future__ import annotations
@@ -42,20 +42,18 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import httpx
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from tests import fake_sdks  # noqa: E402
-
-fake_sdks.install_anthropic()
-
 import anthropic_common  # noqa: E402
 import common  # noqa: E402
 
-# Real bodies observed from z.ai's Anthropic-compatible endpoint; the SDK
-# surfaces both as RateLimitError. 1113 (2026-06): account out of balance.
-# 1308 (2026-07): the account's 5-hour usage window is exhausted.
+# Real bodies observed from z.ai's Anthropic-compatible endpoint, both as
+# HTTP 429. 1113 (2026-06): account out of balance. 1308 (2026-07): the
+# account's 5-hour usage window is exhausted.
 _ZAI_BALANCE_BODY = {
     "type": "error",
     "error": {
@@ -73,8 +71,7 @@ _ZAI_USAGE_WINDOW_BODY = {
                    "reset at 2026-07-03 11:11:54][20260703110251648ad94226c14a7e]",
     },
 }
-# Real body observed from z.ai (2026-07) during peak load; the SDK surfaces
-# it as OverloadedError (a dedicated 529 class, NOT InternalServerError).
+# Real body observed from z.ai (2026-07) during peak load, as HTTP 529.
 _ZAI_OVERLOADED_BODY = {
     "type": "error",
     "error": {
@@ -86,85 +83,84 @@ _ZAI_OVERLOADED_BODY = {
 }
 
 
-def _rate_limit(body: dict | None = None, message: str = "") -> Exception:
-    exc = anthropic_common.RateLimitError(message or "429")
-    exc.body = body
-    exc.message = message
-    return exc
+def _response(status: int, body: dict | str) -> httpx.Response:
+    request = httpx.Request("POST", "https://example.com/v1/messages")
+    if isinstance(body, str):
+        return httpx.Response(status, text=body, request=request)
+    return httpx.Response(status, json=body, request=request)
+
+
+def _status_error(status: int, body: dict | str) -> httpx.HTTPStatusError:
+    response = _response(status, body)
+    return httpx.HTTPStatusError(str(status), request=response.request, response=response)
+
+
+class _Scripted:
+    """Raises or returns the next queued reply on each call."""
+
+    def __init__(self, replies: list) -> None:
+        self._replies = list(replies)
+        self.calls = 0
+
+    def __call__(self) -> object:
+        self.calls += 1
+        reply = self._replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+
+def _retry(func: _Scripted) -> object:
+    with mock.patch.object(common.time, "sleep"):
+        return common.call_with_retry(func, retryable=anthropic_common.retryable, what="probe")
 
 
 class QuotaExhaustedTests(unittest.TestCase):
     def test_detects_structured_1113(self) -> None:
-        self.assertTrue(anthropic_common._is_quota_exhausted(_rate_limit(_ZAI_BALANCE_BODY)))
+        self.assertTrue(anthropic_common._is_quota_exhausted(_response(429, _ZAI_BALANCE_BODY)))
 
     def test_detects_structured_1308(self) -> None:
-        self.assertTrue(anthropic_common._is_quota_exhausted(_rate_limit(_ZAI_USAGE_WINDOW_BODY)))
+        self.assertTrue(anthropic_common._is_quota_exhausted(_response(429, _ZAI_USAGE_WINDOW_BODY)))
 
     def test_detects_message_fallback(self) -> None:
-        exc = _rate_limit(None, "Insufficient balance or no resource package")
-        self.assertTrue(anthropic_common._is_quota_exhausted(exc))
+        self.assertTrue(anthropic_common._is_quota_exhausted(
+            _response(429, "Insufficient balance or no resource package")))
 
     def test_plain_rate_limit_is_not_quota(self) -> None:
-        exc = _rate_limit({"type": "error", "error": {"type": "rate_limit_error"}}, "slow down")
-        self.assertFalse(anthropic_common._is_quota_exhausted(exc))
+        self.assertFalse(anthropic_common._is_quota_exhausted(
+            _response(429, {"type": "error", "error": {"type": "rate_limit_error"}})))
 
 
 class RetryTests(unittest.TestCase):
     def test_balance_error_is_not_retried(self) -> None:
-        calls = {"n": 0}
-
-        def func():
-            calls["n"] += 1
-            raise _rate_limit(_ZAI_BALANCE_BODY)
-
-        with mock.patch.object(common.time, "sleep") as sleep:
-            with self.assertRaises(anthropic_common.RateLimitError):
-                common.call_with_retry(func, retryable=anthropic_common.retryable, what="probe")
-        self.assertEqual(1, calls["n"])
-        sleep.assert_not_called()
+        func = _Scripted([_status_error(429, _ZAI_BALANCE_BODY)])
+        with self.assertRaises(httpx.HTTPStatusError):
+            _retry(func)
+        self.assertEqual(1, func.calls)
 
     def test_usage_window_error_is_not_retried(self) -> None:
-        calls = {"n": 0}
+        func = _Scripted([_status_error(429, _ZAI_USAGE_WINDOW_BODY)])
+        with self.assertRaises(httpx.HTTPStatusError):
+            _retry(func)
+        self.assertEqual(1, func.calls)
 
-        def func():
-            calls["n"] += 1
-            raise _rate_limit(_ZAI_USAGE_WINDOW_BODY)
-
-        with mock.patch.object(common.time, "sleep") as sleep:
-            with self.assertRaises(anthropic_common.RateLimitError):
-                common.call_with_retry(func, retryable=anthropic_common.retryable, what="probe")
-        self.assertEqual(1, calls["n"])
-        sleep.assert_not_called()
+    def test_bad_request_is_not_retried(self) -> None:
+        func = _Scripted([_status_error(400, "invalid_request_error")])
+        with self.assertRaises(httpx.HTTPStatusError):
+            _retry(func)
+        self.assertEqual(1, func.calls)
 
     def test_transient_rate_limit_is_retried(self) -> None:
-        calls = {"n": 0}
-
-        def func():
-            calls["n"] += 1
-            if calls["n"] < 3:
-                raise _rate_limit(None, "please slow down")
-            return "ok"
-
-        with mock.patch.object(common.time, "sleep"):
-            result = common.call_with_retry(func, retryable=anthropic_common.retryable, what="probe")
-        self.assertEqual("ok", result)
-        self.assertEqual(3, calls["n"])
+        func = _Scripted([_status_error(429, "please slow down"),
+                          _status_error(429, "please slow down"), "ok"])
+        self.assertEqual("ok", _retry(func))
+        self.assertEqual(3, func.calls)
 
     def test_overloaded_529_is_retried(self) -> None:
-        calls = {"n": 0}
-
-        def func():
-            calls["n"] += 1
-            if calls["n"] < 3:
-                exc = anthropic_common.OverloadedError("529")
-                exc.body = _ZAI_OVERLOADED_BODY
-                raise exc
-            return "ok"
-
-        with mock.patch.object(common.time, "sleep"):
-            result = common.call_with_retry(func, retryable=anthropic_common.retryable, what="probe")
-        self.assertEqual("ok", result)
-        self.assertEqual(3, calls["n"])
+        func = _Scripted([_status_error(529, _ZAI_OVERLOADED_BODY),
+                          _status_error(529, _ZAI_OVERLOADED_BODY), "ok"])
+        self.assertEqual("ok", _retry(func))
+        self.assertEqual(3, func.calls)
 
 
 if __name__ == "__main__":

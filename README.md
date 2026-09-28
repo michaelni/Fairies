@@ -120,8 +120,7 @@ you can use `--fallback-model PROVIDER:MODEL[@EFFORT]` for other failures
 
 1. Configure a gcli account for your fairy user.
 2. Put API keys in the environment or `.env`: `OPENAI_API_KEY`, plus
-   `ANTHROPIC_API_KEY` / `ZAI_API_KEY` when those providers are used
-   (`pip install anthropic` only then; OpenAI-only deployments don't need it).
+   `ANTHROPIC_API_KEY` / `ZAI_API_KEY` when those providers are used.
 3. Clone your repository next to fairy and add the PR head refs
    (used for patch generation and available inside the review container):
 

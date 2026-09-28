@@ -57,6 +57,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from anthropic_common import ANTHROPIC_API_URL
 from common import JsonObject
 from podman_host import ContainerInfraError, ContainerShellSession, ShellHostSpec
 
@@ -165,10 +166,10 @@ TRIAGE_REQUESTABLE_EFFORTS = ("medium", "high", "xhigh")
 # and the ``requested_verbosity`` values a user may ask the triager for.
 VERBOSITY_LEVELS = ("low", "medium", "high")
 
-# Anthropic Messages-API backends by ``provider:`` prefix: base URL
-# (``None`` is Anthropic itself) and the API key variable.
+# Anthropic Messages-API backends by ``provider:`` prefix: base URL and
+# the API key variable.
 ANTHROPIC_ENDPOINTS = {
-    "anthropic": (None, "ANTHROPIC_API_KEY"),
+    "anthropic": (ANTHROPIC_API_URL, "ANTHROPIC_API_KEY"),
     "zai":       ("https://api.z.ai/api/anthropic", "ZAI_API_KEY"),
     "openrouter": ("https://openrouter.ai/api", "OPENROUTER_API_KEY"),
 }

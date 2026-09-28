@@ -95,9 +95,16 @@ class VerdictRoutingTests(WorkerCase):
         t = self.db.get("reviewed", "pr", "5")
         self.assertEqual(t["review"]["classification"], "moderate_issues")
         self.assertEqual(t["expected_updated_at"], "2026-07-19T10:00:00Z")
-        self.assertEqual(t["expected_head_ref"], "h5")
+        self.assertEqual(t["expected_head_sha"], "h5")
         self.assertNotIn("prepared", t)  # the payload is spent
         self.assertIsNone(self.db.get("llm", "pr", "5"))
+
+    def test_the_head_pin_is_never_a_branch_name(self) -> None:
+        ticket = queued_ticket(5)
+        ticket["prepared"]["pr"]["head"] = {"ref": "topic"}
+        self.db.push("queued", "pr", "5", ticket)
+        self.run_one(5, lambda ns, p: decision(5))
+        self.assertIsNone(self.db.get("reviewed", "pr", "5")["expected_head_sha"])
 
     def test_llm_skip_keeps_its_backoff_in_skipped(self) -> None:
         self.db.push("queued", "pr", "5", queued_ticket(5, backoff=48))

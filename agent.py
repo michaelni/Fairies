@@ -430,8 +430,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # operator, and a re-queue would burn an LLM run and yank
             # the row out from under the cursor every scan.
             if (prior_data.get("expected_updated_at") == item.get("updated_at")
-                    and (kind != "pr" or prior_data.get("expected_head_ref")
-                         == fairy.get_pr_head_ref(item))):
+                    and (kind != "pr" or prior_data.get("expected_head_sha")
+                         == fairy.get_pr_head_sha(item))):
                 continue  # standing verdict; reuse
         if prior == "cancelled" and number not in forced_ns and prior_data \
                 and str(prior_data.get("reason", "")).startswith("operator") \
@@ -556,8 +556,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             last_iso = (prepared.last_activity.isoformat()
                         if prepared.last_activity else None)
             if last_iso == prior_data.get("reviewed_activity_iso") \
-                    and (kind != "pr" or prior_data.get("expected_head_ref")
-                         == fairy.get_pr_head_ref(item)):
+                    and (kind != "pr" or prior_data.get("expected_head_sha")
+                         == fairy.get_pr_head_sha(item)):
                 db.try_move("skipped", "skipped", kind, token,
                             mutate=lambda d: d.update(
                                 expected_updated_at=item.get("updated_at")))
@@ -924,7 +924,7 @@ def ticket_decision(kind: str, number, ticket: dict) -> fairy.Decision | None:
     return dataclasses_replace(
         decision,
         expected_pr_updated_at=ticket.get("expected_updated_at"),
-        expected_head_ref=ticket.get("expected_head_ref"))
+        expected_head_sha=ticket.get("expected_head_sha"))
 
 
 def postable(decision: fairy.Decision | None) -> bool:

@@ -89,7 +89,7 @@ def verdict(n: int, classification: str = "moderate_issues", msg: str = "m",
          "review": {"classification": classification, "message": msg,
                     "label_changes": labels or []},
          "expected_updated_at": "2026-07-19T10:00:00Z",
-         "expected_head_ref": f"h{n}", "llm_at": "2026-07-20T00:00:00+00:00"}
+         "expected_head_sha": f"h{n}", "llm_at": "2026-07-20T00:00:00+00:00"}
     t.update(fields)
     return t
 

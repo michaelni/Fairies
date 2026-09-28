@@ -194,7 +194,7 @@ class TicketRoutingTests(AgentCase):
         self.prepare.assert_not_called()
         self.db.push("reviewed", "pr", "2", {
             "review": {"classification": "moderate_issues"},
-            "expected_updated_at": "old", "expected_head_ref": "old"})
+            "expected_updated_at": "old", "expected_head_sha": "old"})
         self.prepare.side_effect = lambda ns, pr, **kw: fairy.Decision(
             pr["number"], pr["title"], "a", "-", "error",
             "forge 500", None, "error", "")
@@ -292,7 +292,7 @@ class TicketRoutingTests(AgentCase):
 def llm_skip(backoff: float, updated: str = "2026-07-19T10:00:00Z",
              head: str = "h1", last_iso: str | None = None) -> dict:
     return {"llm_at": NOW.isoformat(), "skip_backoff_h": backoff,
-            "expected_updated_at": updated, "expected_head_ref": head,
+            "expected_updated_at": updated, "expected_head_sha": head,
             "last_activity_iso": last_iso, "reviewed_activity_iso": last_iso}
 
 
@@ -364,7 +364,7 @@ class BackoffTests(AgentCase):
             "llm_at": NOW.isoformat(), "reason": "operator skip",
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "2026-07-19T10:00:00Z",
-            "expected_head_ref": "h1"})
+            "expected_head_sha": "h1"})
         self.age("skipped", "pr", "1", hours=1)
         self.scan([make_pr(1)])
         self.prepare.assert_not_called()  # snoozing
@@ -379,7 +379,7 @@ class BackoffTests(AgentCase):
             "snoozed_at": NOW.isoformat(), "reason": "operator skip",
             "skip_backoff_h": 0,
             "expected_updated_at": "2026-07-19T10:00:00Z",
-            "expected_head_ref": "h1"})
+            "expected_head_sha": "h1"})
         self.age("skipped", "pr", "1", hours=1)
         self.scan([make_pr(1)])
         self.prepare.assert_not_called()
@@ -408,7 +408,7 @@ class BackoffTests(AgentCase):
              "reason": "operator skip",
              "review": {"classification": "moderate_issues"},
              "expected_updated_at": "2026-07-19T10:00:00Z",
-             "expected_head_ref": "h1"}
+             "expected_head_sha": "h1"}
         self.db.push("skipped", "pr", "1", t)
         self.scan([make_pr(1)])
         self.prepare.assert_not_called()
@@ -441,7 +441,7 @@ class ReuseTests(AgentCase):
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "2026-07-19T10:00:00Z",
-            "expected_head_ref": "h1"})
+            "expected_head_sha": "h1"})
         self.scan([make_pr(1)])
         self.prepare.assert_not_called()
         self.assertEqual(self.db.find("pr", "1"), "reviewed")
@@ -453,7 +453,7 @@ class ReuseTests(AgentCase):
             "review": {"classification": "skip",
                        "label_changes": [{"label": "needs docs", "op": "add"}]},
             "expected_updated_at": "2026-07-19T10:00:00Z",
-            "expected_head_ref": "h1"})
+            "expected_head_sha": "h1"})
         self.scan([make_pr(1)])
         self.prepare.assert_not_called()
         self.assertEqual(self.db.find("pr", "1"), "reviewed")
@@ -514,7 +514,7 @@ class ReuseTests(AgentCase):
         operator (r/s/Y); nothing may clobber it."""
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "approve", "message": "KEEP"},
-            "expected_updated_at": "old", "expected_head_ref": "old",
+            "expected_updated_at": "old", "expected_head_sha": "old",
             "send_blocked": "PR updated_at changed"})
         self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(pr)
         self.scan([make_pr(1)])
@@ -526,7 +526,7 @@ class ReuseTests(AgentCase):
         self.ns.auto_mode = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "approve", "message": "m"},
-            "expected_updated_at": "old", "expected_head_ref": "old",
+            "expected_updated_at": "old", "expected_head_sha": "old",
             "send_blocked": "PR updated_at changed"})
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "queued")
@@ -540,13 +540,13 @@ class ReuseTests(AgentCase):
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues", "message": "KEEP"},
             "expected_updated_at": "2026-07-01T00:00:00Z",  # PR changed since
-            "expected_head_ref": "old", "last_activity_iso": "old"})
+            "expected_head_sha": "old", "last_activity_iso": "old"})
         self.prepare.side_effect = lambda ns, pr, **kw: dataclasses.replace(
             prepared_for(pr), last_activity=NOW)
         self.scan([make_pr(1)])
         data = self.db.get("reviewed", "pr", "1")
         self.assertEqual(data["review"]["message"], "KEEP")
-        self.assertEqual(data["expected_head_ref"], "old")
+        self.assertEqual(data["expected_head_sha"], "old")
         self.assertEqual(data["last_activity_iso"], NOW.isoformat())
 
     def test_auto_mode_requeues_a_stale_reviewed_verdict(self) -> None:
@@ -554,7 +554,7 @@ class ReuseTests(AgentCase):
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "2026-07-01T00:00:00Z",  # PR changed since
-            "expected_head_ref": "old"})
+            "expected_head_sha": "old"})
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "queued")
 
@@ -564,7 +564,7 @@ class ReuseTests(AgentCase):
             self.db.push("reviewed", "pr", number, {
                 "review": {"classification": "moderate_issues", "message": "KEEP"},
                 "expected_updated_at": "2026-07-01T00:00:00Z",  # PR changed since
-                "expected_head_ref": "old",
+                "expected_head_sha": "old",
                 "vetting": {"hold_for_human_inspection": hold, "reason": ""}})
         self.scan([make_pr(1), make_pr(2)])
         for number in ("1", "2"):
@@ -578,7 +578,7 @@ class ReuseTests(AgentCase):
         self.ns.auto_mode = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
-            "expected_updated_at": "old", "expected_head_ref": "old"})
+            "expected_updated_at": "old", "expected_head_sha": "old"})
 
         def prepare_and_skip(ns, pr, **kw):
             self.db.try_move("reviewed", "skipped", "pr", str(pr["number"]),
@@ -596,7 +596,7 @@ class ReuseTests(AgentCase):
         self.ns.auto_mode = True
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
-            "expected_updated_at": "old", "expected_head_ref": "old"})
+            "expected_updated_at": "old", "expected_head_sha": "old"})
 
         def prepare_and_y(ns, pr, **kw):
             self.db.try_move("reviewed", "outgoing", "pr", str(pr["number"]))
@@ -814,7 +814,7 @@ def verdict_ticket(n: int, classification: str = "moderate_issues",
          "review": {"classification": classification, "message": msg,
                     "label_changes": labels or []},
          "expected_updated_at": "2026-07-19T10:00:00Z",
-         "expected_head_ref": f"h{n}", "llm_at": NOW.isoformat()}
+         "expected_head_sha": f"h{n}", "llm_at": NOW.isoformat()}
     t.update(fields)
     return t
 
@@ -874,7 +874,7 @@ class SendTests(SendCase):
         self.assertEqual(decision.action, "comment")
         # the ticket's guard rides on the rebuilt decision
         self.assertEqual(decision.expected_pr_updated_at, "2026-07-19T10:00:00Z")
-        self.assertEqual(decision.expected_head_ref, "h1")
+        self.assertEqual(decision.expected_head_sha, "h1")
         self.assertTrue(self.db.get("posted", "pr", "1")["posted_at"])
         self.assertIsNone(self.db.get("outgoing", "pr", "1"))
 
@@ -1101,7 +1101,7 @@ class SendTests(SendCase):
     def test_issue_outgoing_posts_through_the_issue_seam(self) -> None:
         issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.db.push("outgoing", "issue", "5", verdict_ticket(
-            5, "reply", expected_head_ref=None))
+            5, "reply", expected_head_sha=None))
         with mock.patch.object(issue_fairy, "submit_issue_decision",
                                return_value=None) as submit:
             self.send(issue_ns=issue_ns)
@@ -1113,7 +1113,7 @@ class SendTests(SendCase):
         issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r",
                                            "--auto-mode"])
         self.db.push("reviewed", "issue", "5", verdict_ticket(
-            5, "reply", expected_head_ref=None))
+            5, "reply", expected_head_sha=None))
         with mock.patch.object(issue_fairy, "submit_issue_decision",
                                return_value=None) as submit:
             self.send(issue_ns=issue_ns)
@@ -1278,7 +1278,7 @@ class ItemSnapshotScanTests(SendCase):
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "reply"},
             "expected_updated_at": "2026-07-19T10:00:00Z",
-            "expected_head_ref": "b1"})
+            "expected_head_sha": "b1"})
         self.db.push("skipped", "pr", "2", {
             "llm_at": NOW.isoformat(), "skip_backoff_h": 24,
             "expected_updated_at": "2026-07-19T10:00:00Z"})
@@ -1497,7 +1497,7 @@ class PortedGateContractTests(AgentCase):
         self.db.push("reviewed", "pr", "1", {
             "review": {"classification": "moderate_issues"},
             "expected_updated_at": "2026-07-19T10:00:00Z",
-            "expected_head_ref": "h1"})
+            "expected_head_sha": "h1"})
         self.ns.force_review_prs = {1}
         self.scan([make_pr(1)])
         self.assertEqual(self.db.find("pr", "1"), "queued")
@@ -1594,7 +1594,7 @@ class IssueSideScanTests(AgentCase):
         self.db.push("reviewed", "issue", "1", {
             "review": {"classification": "reply"},
             "expected_updated_at": "2026-07-19T10:00:00Z",
-            "expected_head_ref": None})
+            "expected_head_sha": None})
         self.scan_issues([make_issue(1)], prepare=AssertionError)
         self.prepare_issue.assert_not_called()
         self.assertEqual(self.db.find("issue", "1"), "reviewed")

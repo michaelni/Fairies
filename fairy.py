@@ -246,7 +246,7 @@ class Decision:
     llm_classification: str = "-"
     llm_message: str = ""
     expected_pr_updated_at: str | None = None
-    expected_head_ref: str | None = None
+    expected_head_sha: str | None = None
     # Names of commit-status contexts whose latest state needs a
     # human to act in the Forgejo UI. Both fields are propagated to
     # the end-of-run summary which lists affected PRs grouped by
@@ -1013,8 +1013,8 @@ def check_pr_still_unchanged(
     if (decision.expected_pr_updated_at is not None
             and current.get("updated_at") != decision.expected_pr_updated_at):
         return "PR updated_at changed"
-    if (decision.expected_head_ref is not None
-            and get_pr_head_ref(current) != decision.expected_head_ref):
+    if (decision.expected_head_sha is not None
+            and get_pr_head_sha(current) != decision.expected_head_sha):
         return "PR head changed"
     return None
 

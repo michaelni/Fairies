@@ -74,7 +74,7 @@ def _closed_pr(**overrides: object) -> dict:
 def _decision() -> fairy.Decision:
     return fairy.Decision(
         NUMBER, "t", "a", "-", "request_changes", "llm", None,
-        expected_pr_updated_at=UPDATED_AT, expected_head_ref=HEAD,
+        expected_pr_updated_at=UPDATED_AT, expected_head_sha=HEAD,
     )
 
 

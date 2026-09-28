@@ -201,6 +201,29 @@ def _fetch_pr_head(ns: argparse.Namespace, number: int,
                 (git_util.git_resolve_first(repo, refs) or "absent")[:12])
 
 
+def _patch_ids(db: filedb.Db, ns: argparse.Namespace, kind: str,
+               token: filedb.TicketId, base_sha: str | None,
+               head_sha: str | None) -> list[str] | None:
+    """The patch-ids of the PR's base..head series in --patch-repo,
+    kept from the standing snapshot while base and head are unchanged;
+    None without a mirror, under --simulate-past, and while the mirror
+    lacks the head."""
+    if ns.patch_repo is None or ns.simulate_past or None in (base_sha, head_sha):
+        return None
+    stored = db.get(filedb.ITEM_STATE, kind, token) or {}
+    if (stored.get("base_sha"), stored.get("head_sha")) == (base_sha, head_sha) \
+            and stored.get("patch_ids") is not None:
+        return stored["patch_ids"]
+    logger.debug("%s #%s: patch-ids of %s..%s in %s", kind, token,
+                 base_sha[:12], head_sha[:12], ns.patch_repo)
+    try:
+        return git_util.git_series_patch_ids(ns.patch_repo, base_sha, head_sha)
+    except RuntimeError as exc:
+        logger.warning("%s #%s: patch-ids of %s..%s not computed: %s",
+                       kind, token, base_sha[:12], head_sha[:12], exc)
+        return None
+
+
 def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                   token: filedb.TicketId, item: dict, cache,
                   cache_age: timedelta) -> bool:
@@ -217,7 +240,9 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
         reviews, comments, review_comments, timeline = _fetch_thread(
             ns, kind, item, cache, cache_age)
         if kind == "pr":
-            _fetch_pr_head(ns, item["number"], fairy.get_pr_head_sha(item))
+            base_sha = fairy.get_pr_base_sha(item)
+            head_sha = fairy.get_pr_head_sha(item)
+            _fetch_pr_head(ns, item["number"], head_sha)
             live = [s for s in
                     fairy.effective_review_states(reviews).values()
                     if not s.stale]
@@ -229,8 +254,9 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                 "approvals": sum(s.state == "APPROVED" for s in live),
                 "change_requests": sum(s.state == "CHANGES_REQUESTED"
                                        for s in live),
-                "base_sha": fairy.get_pr_base_sha(item),
-                "head_sha": fairy.get_pr_head_sha(item),
+                "base_sha": base_sha,
+                "head_sha": head_sha,
+                "patch_ids": _patch_ids(db, ns, kind, token, base_sha, head_sha),
             }
         else:
             status = {

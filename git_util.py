@@ -189,6 +189,16 @@ def git_patch_ids(repo_root: Path, shas: Sequence[str]) -> dict[str, str]:
     return out
 
 
+def git_series_patch_ids(repo_root: Path, base_sha: str, head_sha: str) -> list[str]:
+    """The patch-id of every non-merge commit of ``base..head``, oldest
+    first: the identity of the series, which a rebase that keeps each
+    patch leaves unchanged."""
+    shas = _git_stdout(repo_root, "rev-list", "--reverse", "--no-merges",
+                       f"{base_sha}..{head_sha}").decode().split()
+    ids = git_patch_ids(repo_root, shas)
+    return [ids[sha] for sha in shas if sha in ids]
+
+
 def git_range_diff(repo_root: Path, old_sha: str, new_sha: str) -> bytes:
     """``git range-diff old...new`` -- how the commit series was rewritten
     between the two tips."""

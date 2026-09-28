@@ -1228,6 +1228,12 @@ class ItemSnapshotScanTests(SendCase):
         self.assertEqual(snap["base_sha"], "base1")
         self.assertEqual(snap["head_sha"], "h1")
 
+    def test_without_a_mirror_the_snapshot_has_no_patch_ids(self) -> None:
+        with mock.patch.object(git_util, "git_series_patch_ids") as series:
+            self.scan([make_pr(1)])
+        series.assert_not_called()
+        self.assertIsNone(self.db.get("items", "pr", "1")["patch_ids"])
+
     def test_snapshot_head_sha_is_never_a_branch_name(self) -> None:
         self.thread.return_value = ([], [], [], [])
         pr = make_pr(1)
@@ -1351,14 +1357,16 @@ class PatchRepoFetchTests(AgentCase):
         self.patched(git_util, "git_forge_remote", return_value="fforge")
         self.ref = self.patched(git_util, "git_resolve_first",
                                 return_value=self.PREVIOUS)
+        self.series = self.patched(git_util, "git_series_patch_ids",
+                                   return_value=["p1", "p2"])
 
     def patched(self, module, name: str, **kw) -> mock.Mock:
         patcher = mock.patch.object(module, name, **kw)
         self.addCleanup(patcher.stop)
         return patcher.start()
 
-    def snapshot(self) -> dict:
-        pr = dict(make_pr(24625), head={"sha": self.HEAD, "ref": "h261"})
+    def snapshot(self, head: str = HEAD) -> dict:
+        pr = dict(make_pr(24625), head={"sha": head, "ref": "h261"})
         agent._put_snapshot(self.db, self.ns, "pr", "24625", pr, None,
                             timedelta(hours=1))
         return self.db.get("items", "pr", "24625")
@@ -1411,6 +1419,33 @@ class PatchRepoFetchTests(AgentCase):
             self.assertEqual(self.snapshot()["head_sha"], self.HEAD)
         self.fetch.assert_called_once()
         self.assertIn(f"is now {self.PREVIOUS[:12]}", logs.output[-1])
+
+
+    def test_the_snapshot_carries_the_series_patch_ids(self) -> None:
+        self.assertEqual(self.snapshot()["patch_ids"], ["p1", "p2"])
+        self.series.assert_called_once_with(Path("mirror"), "base24625",
+                                            self.HEAD)
+
+    def test_patch_ids_stand_with_the_head_and_follow_a_new_one(self) -> None:
+        self.snapshot()
+        self.snapshot()
+        self.series.assert_called_once()
+        self.series.return_value = ["p1", "p3"]
+        self.assertEqual(self.snapshot(head="f" * 40)["patch_ids"], ["p1", "p3"])
+        self.assertEqual(self.series.call_count, 2)
+
+    def test_an_unfetched_head_leaves_the_patch_ids_unknown_until_it_arrives(self) -> None:
+        self.series.side_effect = RuntimeError("bad revision")
+        with self.assertLogs(agent.logger, "WARNING") as logs:
+            self.assertIsNone(self.snapshot()["patch_ids"])
+        self.assertIn("bad revision", logs.output[-1])
+        self.series.side_effect = None
+        self.assertEqual(self.snapshot()["patch_ids"], ["p1", "p2"])
+
+    def test_simulate_past_computes_no_patch_ids(self) -> None:
+        self.ns.simulate_past = NOW
+        self.assertIsNone(self.snapshot()["patch_ids"])
+        self.series.assert_not_called()
 
 
 class DiscussionWiringTests(unittest.TestCase):

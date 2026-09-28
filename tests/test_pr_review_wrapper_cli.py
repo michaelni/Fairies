@@ -99,6 +99,21 @@ class ModelEnsembleOptionTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             parse("--combine-model", "codex:gpt-5.6-sol")
 
+    def test_an_agy_model_needs_an_agy_host_not_a_codex_host(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse("--extra-model", "agy:gemini-3.1-pro-high",
+                  "--combine-model", "openai:gpt-5.4",
+                  "--codex-host", "fairy@codexbox")
+        args = parse("--extra-model", "agy:gemini-3.1-pro-high",
+                     "--combine-model", "openai:gpt-5.4",
+                     "--agy-host", "fairy@agybox", "--agy-bin", "/opt/agy",
+                     "--agy-timeout-seconds", "900", "--agy-home", "/srv/agy")
+        self.assertEqual("fairy@agybox", args.agy_host.host.ssh_dest)
+        self.assertIsNone(args.codex_host)
+        self.assertEqual(("/opt/agy", 900.0, "/srv/agy"),
+                         (args.agy_bin, args.agy_timeout_seconds, args.agy_home))
+        self.assertEqual("localhost/fairy-agy:latest", args.agy_image)
+
 
 class MainPassPromptTests(unittest.TestCase):
     """The optional PROMPT= on --model / --extra-model. main() reads

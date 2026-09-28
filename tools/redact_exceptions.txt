@@ -49,6 +49,9 @@ github
 gitlab
 forgejo
 
+# ---- the Antigravity CLI's own tool names in its result events ------
+CallMcpTool
+
 # ---- the metasyntactic placeholders the tests write ------------------
 name
 addr

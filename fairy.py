@@ -651,6 +651,27 @@ def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
         ),
     )
     p.add_argument(
+        "--agy-host",
+        default=None,
+        metavar="[LABEL=]USER@HOST",
+        help=(
+            "podman host that runs the Antigravity CLI container, forwarded "
+            "as --agy-host to --llm-review-cmd. Required for any agy: model "
+            "spec (agy runs only in a container there). Provision it with "
+            "containers/provision_remote.py --agy-bin."
+        ),
+    )
+    p.add_argument(
+        "--agy-home",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Wrapper-side directory holding agy's antigravity-oauth-token, "
+            "forwarded as --agy-home to --llm-review-cmd. Default: agy's own "
+            "~/.gemini/antigravity-cli."
+        ),
+    )
+    p.add_argument(
         "--triage-label",
         action="append",
         type=parse_label_csv,
@@ -2204,18 +2225,17 @@ def flex_fallback_extra_args(cmd_str: str) -> list[str]:
 
 def podman_host_cmd_args(args: argparse.Namespace) -> list[str]:
     """Extra --llm-review-cmd flags that route LLM shell work into
-    containers on the podman host(s), and the codex container host when a
-    codex: model is used. Empty unless --podman-host / --codex-host is set."""
+    containers on the podman host(s), and the codex / agy container host
+    when such a model is used. Empty unless --podman-host / --codex-host /
+    --agy-host is set."""
     cmd: list[str] = []
     hosts = getattr(args, "podman_host", None)
     if hosts:
         cmd += ["--podman", *[f"--shell-host={h}" for h in hosts]]
-    codex_host = getattr(args, "codex_host", None)
-    if codex_host:
-        cmd += [f"--codex-host={codex_host}"]
-    codex_home = getattr(args, "codex_home", None)
-    if codex_home:
-        cmd += [f"--codex-home={codex_home}"]
+    for flag in ("codex_host", "codex_home", "agy_host", "agy_home"):
+        value = getattr(args, flag, None)
+        if value:
+            cmd += [f"--{flag.replace('_', '-')}={value}"]
     return cmd
 
 

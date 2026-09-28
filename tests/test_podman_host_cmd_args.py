@@ -86,6 +86,14 @@ class PodmanHostCmdArgsTests(unittest.TestCase):
             fairy.podman_host_cmd_args(args),
         )
 
+    def test_forwards_agy_host_and_home(self) -> None:
+        args = SimpleNamespace(
+            podman_host=[], agy_host="fairy@agybox", agy_home="/srv/fairy/agy")
+        self.assertEqual(
+            ["--agy-host=fairy@agybox", "--agy-home=/srv/fairy/agy"],
+            fairy.podman_host_cmd_args(args),
+        )
+
     def test_no_codex_flags_when_unset(self) -> None:
         args = SimpleNamespace(
             podman_host=["fairy@x86box"], codex_host=None, codex_home=None)

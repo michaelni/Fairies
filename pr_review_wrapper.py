@@ -104,10 +104,12 @@ from llm_review_api import (
     ReviewContext,
     Reviewer,
 )
+from agy_reviewer import DEFAULT_AGY_IMAGE
 from codex_reviewer import DEFAULT_CODEX_IMAGE
 import branch_persist
 import review_pipeline
-from review_pipeline import make_reviewer, review_pr, run_triage, vet_review
+from review_pipeline import (CLI_BACKENDS, make_reviewer, review_pr, run_triage,
+                             vet_review)
 import workset
 import podman_host
 import podman_repos
@@ -561,36 +563,38 @@ def parse_args() -> argparse.Namespace:
              "splice command + output into the prompt. ``{number}`` and "
              "``{base_ref}`` are replaced from the PR metadata. Repeatable.",
     )
-    p.add_argument(
-        "--codex-host",
-        metavar="[LABEL=]SSH_DEST",
-        default=None,
-        help="podman host that runs the codex container (same spec syntax "
-             "as --shell-host). Required for codex: model specs -- codex "
-             "runs only in a container there, never on the wrapper host. "
-             "Omit to disable codex support.",
-    )
-    p.add_argument(
-        "--codex-image",
-        default=DEFAULT_CODEX_IMAGE,
-        metavar="TAG",
-        help="Container image for the codex pass (default: %(default)s); "
-             "build it with containers/Containerfile.codex.",
-    )
-    p.add_argument(
-        "--codex-bin",
-        default="codex",
-        help="codex CLI path INSIDE the codex container (default: codex on "
-             "PATH, as baked by Containerfile.codex). Pin the deployed "
-             "version; the backend depends on its flag set.",
-    )
-    p.add_argument(
-        "--codex-timeout-seconds",
-        type=float,
-        default=0.0,
-        help="Kill a codex exec pass after this many seconds; 0 = no "
-             "watchdog (default), a pass runs as long as the model works.",
-    )
+    for cli, default_image in (("codex", DEFAULT_CODEX_IMAGE),
+                               ("agy", DEFAULT_AGY_IMAGE)):
+        p.add_argument(
+            f"--{cli}-host",
+            metavar="[LABEL=]SSH_DEST",
+            default=None,
+            help=f"podman host that runs the {cli} container (same spec syntax "
+                 f"as --shell-host). Required for {cli}: model specs -- {cli} "
+                 "runs only in a container there, never on the wrapper host. "
+                 f"Omit to disable {cli} support.",
+        )
+        p.add_argument(
+            f"--{cli}-image",
+            default=default_image,
+            metavar="TAG",
+            help=f"Container image for the {cli} pass (default: %(default)s); "
+                 f"build it with containers/Containerfile.{cli}.",
+        )
+        p.add_argument(
+            f"--{cli}-bin",
+            default=cli,
+            help=f"{cli} CLI path INSIDE the {cli} container (default: {cli} on "
+                 f"PATH, as baked by Containerfile.{cli}). Pin the deployed "
+                 "version; the backend depends on its flag set.",
+        )
+        p.add_argument(
+            f"--{cli}-timeout-seconds",
+            type=float,
+            default=0.0,
+            help=f"Kill a {cli} pass after this many seconds; 0 = no "
+                 "watchdog (default), a pass runs as long as the model works.",
+        )
     p.add_argument(
         "--codex-home",
         default=None,
@@ -598,6 +602,14 @@ def parse_args() -> argparse.Namespace:
         help="Wrapper-side CODEX_HOME: the auth.json copied into the codex "
              "container and the models_cache.json used to harden the tool "
              "catalog. Default: the environment / codex's ~/.codex.",
+    )
+    p.add_argument(
+        "--agy-home",
+        default=None,
+        metavar="DIR",
+        help="Wrapper-side directory holding agy's antigravity-oauth-token, "
+             "copied into the agy container. Default: agy's own "
+             "~/.gemini/antigravity-cli.",
     )
     p.add_argument(
         "--podman-ssh-identity",
@@ -775,14 +787,15 @@ def parse_args() -> argparse.Namespace:
         # rejected at parse time: discovered after run_parallel it would
         # have billed every reviewer before failing
         p.error("--extra-model requires --combine-model to merge the drafts")
-    codex_host_spec = args.codex_host
-    args.codex_host = None
-    if codex_host_spec:
-        try:
-            args.codex_host = podman_host.parse_shell_host(
-                codex_host_spec, identity=args.podman_ssh_identity)
-        except ValueError as exc:
-            p.error(str(exc))
+    for cli in CLI_BACKENDS:
+        host_spec = getattr(args, f"{cli}_host")
+        setattr(args, f"{cli}_host", None)
+        if host_spec:
+            try:
+                setattr(args, f"{cli}_host", podman_host.parse_shell_host(
+                    host_spec, identity=args.podman_ssh_identity))
+            except ValueError as exc:
+                p.error(str(exc))
     # Strip the optional PROMPT= before the provider-prefix scans below read
     # these specs. args.main_prompts stays parallel to [model, *extra_model].
     args.main_prompts = []
@@ -806,17 +819,17 @@ def parse_args() -> argparse.Namespace:
                        *(("--allowed-model", s) for s in args.allowed_model)):
         if spec and "=" in spec:
             p.error(f"{flag} {spec!r}: the prompt of this pass is fixed by the flag")
-    codex_specs = [
-        s for s in (args.model, *args.extra_model, args.combine_model,
-                    args.triage_model, args.vet_model, *args.allowed_model)
-        if s and s.startswith("codex:")
-    ]
-    if codex_specs and args.codex_host is None:
-        p.error(
-            f"codex model(s) {', '.join(codex_specs)} require --codex-host "
-            "(codex runs only in a container there, never on the wrapper host)"
-        )
-    if codex_specs:
+    all_specs = [s for s in (args.model, *args.extra_model, args.combine_model,
+                             args.triage_model, args.vet_model, *args.allowed_model)
+                 if s]
+    for cli in CLI_BACKENDS:
+        specs = [s for s in all_specs if s.startswith(f"{cli}:")]
+        if specs and getattr(args, f"{cli}_host") is None:
+            p.error(
+                f"{cli} model(s) {', '.join(specs)} require --{cli}-host "
+                f"({cli} runs only in a container there, never on the wrapper host)"
+            )
+    if any(s.startswith("codex:") for s in all_specs):
         args.max_patch_bytes = min(args.max_patch_bytes, CODEX_MAX_PATCH_BYTES)
         args.max_bundle_bytes = min(args.max_bundle_bytes, CODEX_MAX_BUNDLE_BYTES)
     return args
@@ -1444,7 +1457,9 @@ def main() -> int:
         logging.getLogger("gemini_reviewer"),
         logging.getLogger("codex_catalog"),
         logging.getLogger("cli_container"),
+        logging.getLogger("cli_reviewer"),
         logging.getLogger("codex_reviewer"),
+        logging.getLogger("agy_reviewer"),
         branch_persist.logger,
         color=args.color,
     )
@@ -1650,7 +1665,7 @@ def main() -> int:
     def report_poisoned(session: podman_host.ContainerShellSession) -> None:
         poisoned_session_ids.add(id(session))
         logger.warning(
-            "review container flagged as poisoned (codex run crashed); "
+            "review container flagged as poisoned (CLI reviewer run crashed); "
             "pausing it for forensics"
         )
         podman_host.pause_container(session_handles[id(session)])
@@ -1658,7 +1673,8 @@ def main() -> int:
 
     uploaded_file_ids: list[str] = []
     try:
-        for host in {m.host for m in machines} | {s.host for s in [args.codex_host] if s}:
+        for host in {m.host for m in machines} | {
+                s.host for s in (args.codex_host, args.agy_host) if s}:
             podman_host.reap_orphaned_containers(host)
         if args.podman:
             if not repo_roots:

@@ -226,16 +226,17 @@ def _patch_ids(db: filedb.Db, ns: argparse.Namespace, kind: str,
 
 def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                   token: filedb.TicketId, item: dict, cache,
-                  cache_age: timedelta) -> bool:
+                  cache_age: timedelta) -> dict | None:
     """Refresh the item's filedb snapshot: its fields, discussion and
     forge status -- for a PR the "open"/"closed"/"merged" state, the
-    auto-merge schedule and the approval and change-request counts
-    (latest non-stale review per author), for an issue the
-    "open"/"closed" state and its labels. A failure costs freshness,
-    never the scan of the item; returns whether the snapshot is
-    current. Raises Halted, after halting the db, when the item's
-    body, a comment, a review or a review comment carries
-    --halt-keyword; the reason names the poster and links the post."""
+    auto-merge schedule, the approval and change-request counts
+    (latest non-stale review per author) and the series' patch-ids,
+    for an issue the "open"/"closed" state and its labels. A failure
+    costs freshness, never the scan of the item; returns the snapshot
+    written, None when it could not be refreshed. Raises Halted, after
+    halting the db, when the item's body, a comment, a review or a
+    review comment carries --halt-keyword; the reason names the poster
+    and links the post."""
     try:
         reviews, comments, review_comments, timeline = _fetch_thread(
             ns, kind, item, cache, cache_age)
@@ -285,7 +286,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     except Exception as exc:
         logger.warning("%s #%s: item snapshot not refreshed: %s",
                        kind, token, exc)
-        return False
+        return None
     if ns.halt_keyword:
         for post in (item, *comments, *reviews, *review_comments):
             if ns.halt_keyword in str(post.get("body") or ""):
@@ -294,7 +295,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                           f"{post.get('html_url') or snapshot['html_url']}")
                 halt_marker.halt(halt_marker.path(db.root, ns.halt_file), reason)
                 raise Halted(reason)
-    return True
+    return snapshot
 
 
 def _refresh_activity(db: filedb.Db, state: str, kind: str,
@@ -443,7 +444,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
         serve_operator()
         number = int(item["number"])
         token = str(number)
-        _put_snapshot(db, ns, kind, token, item, cache, cache_age)
+        snapshot = _put_snapshot(db, ns, kind, token, item, cache, cache_age)
         prior = db.find(kind, token)
         if prior in IN_FLIGHT:
             continue
@@ -455,9 +456,14 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # carry label changes: they sit in reviewed/ awaiting the
             # operator, and a re-queue would burn an LLM run and yank
             # the row out from under the cursor every scan.
-            if (prior_data.get("expected_updated_at") == item.get("updated_at")
-                    and (kind != "pr" or prior_data.get("expected_head_sha")
-                         == fairy.get_pr_head_sha(item))):
+            if kind == "pr" and prior_data.get("expected_head_sha") \
+                    != fairy.get_pr_head_sha(item):
+                stands = fairy.only_rebased_since(
+                    snapshot, prior_data.get("expected_updated_at"),
+                    prior_data.get("expected_patch_ids"))
+            else:
+                stands = prior_data.get("expected_updated_at") == item.get("updated_at")
+            if stands:
                 continue  # standing verdict; reuse
         if prior == "cancelled" and number not in forced_ns and prior_data \
                 and str(prior_data.get("reason", "")).startswith("operator") \
@@ -654,15 +660,16 @@ REASON_CLOSED = "closed"
 
 
 def ingest_item(db: filedb.Db, ns: argparse.Namespace, kind: str,
-                number: filedb.TicketId, cache) -> dict:
+                number: filedb.TicketId, cache) -> tuple[dict, dict | None]:
     """Fetch the item behind ``number`` and refresh its filedb snapshot
-    with it: every forge read of an item lands in items/."""
+    with it: every forge read of an item lands in items/. Returns the
+    item and the snapshot, None when that could not be refreshed."""
     forge_number = filedb.forge_number(number)
     item = fairy.get_pr(ns, forge_number) if kind == "pr" \
         else issue_fairy.get_issue(ns, forge_number)
-    _put_snapshot(db, ns, kind, str(forge_number), item, cache,
-                  timedelta(hours=ns.discussion_cache_max_age_hours))
-    return item
+    snapshot = _put_snapshot(db, ns, kind, str(forge_number), item, cache,
+                             timedelta(hours=ns.discussion_cache_max_age_hours))
+    return item, snapshot
 
 
 def closure_reason_of(kind: str, item: dict) -> str | None:
@@ -683,7 +690,7 @@ def closure_reason(db: filedb.Db, ns: argparse.Namespace, kind: str,
     short -- and must not be cancelled at all. A failed fetch keeps the
     old revivable "not open"."""
     try:
-        item = ingest_item(db, ns, kind, number, cache)
+        item, _ = ingest_item(db, ns, kind, number, cache)
     except Exception as exc:
         logger.warning("%s #%s left the listing but the fate fetch "
                        "failed: %s", kind, number, exc)
@@ -950,7 +957,9 @@ def ticket_decision(kind: str, number, ticket: dict) -> fairy.Decision | None:
     return dataclasses_replace(
         decision,
         expected_pr_updated_at=ticket.get("expected_updated_at"),
-        expected_head_sha=ticket.get("expected_head_sha"))
+        expected_head_sha=ticket.get("expected_head_sha"),
+        expected_patch_ids=(None if ticket.get("expected_patch_ids") is None
+                            else tuple(ticket["expected_patch_ids"])))
 
 
 def postable(decision: fairy.Decision | None) -> bool:
@@ -960,11 +969,14 @@ def postable(decision: fairy.Decision | None) -> bool:
 
 
 def staleness_reason(ns: argparse.Namespace, kind: str, item: dict,
-                     decision: fairy.Decision) -> str | None:
+                     decision: fairy.Decision,
+                     snapshot: dict | None) -> str | None:
     """Why ``decision`` must not be posted onto ``item`` as it is now:
-    the item moved since the review, or is no longer open."""
+    the item moved since the review, or is no longer open. A PR's
+    ``snapshot`` (its refreshed items/ record) tells a push that only
+    rebased the series, which does not count as moving."""
     if kind == "pr":
-        return fairy.check_pr_still_unchanged(ns, item, decision)
+        return fairy.check_pr_still_unchanged(ns, item, decision, snapshot)
     return issue_fairy.check_issue_still_unchanged(ns, item, decision)
 
 
@@ -1020,11 +1032,11 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
                         fairy.manual_action_description(decision))
             claim.abort()
             return None
-        item = ingest_item(db, ns, kind, number, cache)
+        item, snapshot = ingest_item(db, ns, kind, number, cache)
         # the operator's Y: post as-is although the item may have
         # moved since the review; popped so the archive stays clean
         reason = None if ticket.pop("force_post", None) \
-            else staleness_reason(ns, kind, item, decision)
+            else staleness_reason(ns, kind, item, decision, snapshot)
         if reason is None:
             reason = post_decision(ns, kind, item, decision, cache=cache,
                                    counts=counts)

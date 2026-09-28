@@ -864,6 +864,97 @@ class SendCase(AgentCase):
                             dry_run=dry_run)
 
 
+PUSH = {"type": "pull_push", "created_at": "2026-07-20T00:00:00Z",
+        "user": {"login": "a"}, "body": "", "commit_ids": ["h2"],
+        "is_force_push": True}
+
+
+class RebasedSeriesCase(SendCase):
+    """A push after the review moved the head to h2 while --patch-repo
+    reports the same series patch-ids as the verdict."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ns.patch_repo = Path("mirror")
+        for name, value in (("git_resolve_first", "h2"),
+                            ("git_series_patch_ids", ["p1"])):
+            patcher = mock.patch.object(git_util, name, return_value=value)
+            self.addCleanup(patcher.stop)
+            setattr(self, name, patcher.start())
+        self.thread.return_value = ([], [], [], [PUSH])
+
+    def pushed(self, n: int = 1) -> dict:
+        return dict(make_pr(n), head={"sha": "h2"}, updated_at="later")
+
+
+class RebaseSendTests(RebasedSeriesCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.db.push("outgoing", "pr", "1",
+                     verdict_ticket(1, expected_patch_ids=["p1"]))
+
+    def send_pushed(self) -> mock.Mock:
+        with mock.patch.object(fairy, "submit_decision_action",
+                               return_value=None) as submit:
+            self.send(pr_ns=self.ns, changed={"head": {"sha": "h2"},
+                                              "updated_at": "later"})
+        return submit
+
+    def test_a_push_that_only_rebased_the_series_posts(self) -> None:
+        self.send_pushed().assert_called_once()
+        self.assertEqual(self.db.find("pr", "1"), "posted")
+
+    def test_a_comment_beside_the_rebase_blocks(self) -> None:
+        self.thread.return_value = ([], [
+            {"user": {"login": "carol"}, "body": "ping",
+             "created_at": "2026-07-20T01:00:00Z"}], [], [PUSH])
+        self.send_pushed().assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR head changed")
+
+    def test_a_push_that_changed_a_patch_blocks(self) -> None:
+        self.git_series_patch_ids.return_value = ["p2"]
+        self.send_pushed().assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR head changed")
+
+    def test_a_series_the_mirror_cannot_resolve_blocks(self) -> None:
+        self.git_series_patch_ids.side_effect = RuntimeError("bad revision")
+        with self.assertLogs(agent.logger, "WARNING"):
+            self.send_pushed().assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR head changed")
+
+    def test_a_verdict_without_patch_ids_blocks(self) -> None:
+        self.db.push("outgoing", "pr", "1", verdict_ticket(1))
+        self.send_pushed().assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR head changed")
+
+
+class RebaseReuseTests(RebasedSeriesCase):
+    """Auto mode, where a stale verdict is requeued rather than left
+    to the operator."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ns.auto_mode = True
+
+    def test_a_standing_verdict_survives_a_rebase_only_push(self) -> None:
+        self.db.push("reviewed", "pr", "1",
+                     verdict_ticket(1, expected_patch_ids=["p1"]))
+        self.scan([self.pushed()])
+        self.assertEqual(self.db.find("pr", "1"), "reviewed")
+        self.prepare.assert_not_called()
+
+    def test_a_push_that_changed_a_patch_requeues(self) -> None:
+        self.git_series_patch_ids.return_value = ["p2"]
+        self.db.push("reviewed", "pr", "1",
+                     verdict_ticket(1, expected_patch_ids=["p1"]))
+        self.scan([self.pushed()])
+        self.assertEqual(self.db.find("pr", "1"), "queued")
+
+
 class SendTests(SendCase):
     def test_actionable_outgoing_is_posted(self) -> None:
         self.db.push("outgoing", "pr", "1", verdict_ticket(1))
@@ -875,6 +966,7 @@ class SendTests(SendCase):
         # the ticket's guard rides on the rebuilt decision
         self.assertEqual(decision.expected_pr_updated_at, "2026-07-19T10:00:00Z")
         self.assertEqual(decision.expected_head_sha, "h1")
+        self.assertIsNone(decision.expected_patch_ids)
         self.assertTrue(self.db.get("posted", "pr", "1")["posted_at"])
         self.assertIsNone(self.db.get("outgoing", "pr", "1"))
 

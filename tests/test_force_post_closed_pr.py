@@ -83,7 +83,7 @@ def _check(force: bool, current: dict, *, non_open: bool = False) -> str | None:
         force_review_prs={NUMBER} if force else set(),
         force_review_non_open=non_open,
     )
-    return fairy.check_pr_still_unchanged(args, current, _decision())
+    return fairy.check_pr_still_unchanged(args, current, _decision(), None)
 
 
 class SubmitSeamTests(unittest.TestCase):

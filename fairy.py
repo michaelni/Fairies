@@ -81,7 +81,7 @@ import time
 from dataclasses import asdict as dataclasses_asdict, dataclass, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Iterable, NamedTuple, TypeAlias
+from typing import Callable, Iterable, NamedTuple, Sequence, TypeAlias
 from urllib.parse import urlencode, urljoin
 
 import branch_persist
@@ -169,6 +169,7 @@ __all__ = [
     "make_parser",
     "manual_action_description",
     "max_dt",
+    "only_rebased_since",
     "parse_args",
     "post_label_explanations",
     "prepared_pr_from_dict",
@@ -248,6 +249,7 @@ class Decision:
     llm_message: str = ""
     expected_pr_updated_at: str | None = None
     expected_head_sha: str | None = None
+    expected_patch_ids: tuple[str, ...] | None = None
     # Names of commit-status contexts whose latest state needs a
     # human to act in the Forgejo UI. Both fields are propagated to
     # the end-of-run summary which lists affected PRs grouped by
@@ -995,10 +997,27 @@ def branch_publication_block(
     return None
 
 
+def only_rebased_since(snapshot: dict | None, sampled_at: str | None,
+                       expected_patch_ids: Sequence[str] | None) -> bool:
+    """Whether everything that arrived on a PR after a review sampled
+    it at ``sampled_at`` is pushes that kept the series' patch-ids at
+    ``expected_patch_ids``, per the PR's items/ ``snapshot``: the head
+    moved, the patches did not. False whenever one of the three is
+    unknown."""
+    sampled = iso_to_dt(sampled_at)
+    return (snapshot is not None and sampled is not None
+            and expected_patch_ids is not None
+            and snapshot.get("patch_ids") == list(expected_patch_ids)
+            and all(entry.get("kind") == "push"
+                    for entry in snapshot.get("discussion") or ()
+                    if discussion_time(entry) > sampled))
+
+
 def check_pr_still_unchanged(
     args: argparse.Namespace,
     current: ApiObject,
     decision: Decision,
+    snapshot: dict | None,
 ) -> str | None:
     # ``--force-review`` with --force-review-non-open posts even to a
     # closed/merged PR (the forge still accepts comments there); the
@@ -1011,12 +1030,16 @@ def check_pr_still_unchanged(
     )
     if current.get("state") != "open" and not forced_non_open:
         return "PR is no longer open"
-    if (decision.expected_pr_updated_at is not None
-            and current.get("updated_at") != decision.expected_pr_updated_at):
-        return "PR updated_at changed"
-    if (decision.expected_head_sha is not None
-            and get_pr_head_sha(current) != decision.expected_head_sha):
+    head_moved = (decision.expected_head_sha is not None
+                  and get_pr_head_sha(current) != decision.expected_head_sha)
+    rebased = head_moved and only_rebased_since(
+        snapshot, decision.expected_pr_updated_at, decision.expected_patch_ids)
+    if head_moved and not rebased:
         return "PR head changed"
+    if (decision.expected_pr_updated_at is not None
+            and current.get("updated_at") != decision.expected_pr_updated_at
+            and not rebased):
+        return "PR updated_at changed"
     return None
 
 

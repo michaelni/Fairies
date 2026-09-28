@@ -36,8 +36,9 @@ Given a passwordless ssh destination (``user@host``) it:
    info``), with an actionable hint if the prerequisite is missing;
 2. builds the review image on the remote, rebuilding only when the
    Containerfile changed (tracked via an image label);
-3. with ``--codex-bin``, also builds the thin codex image (for a host
-   used as ``--codex-host``), staging the pinned binaries in;
+3. with ``--codex-bin`` / ``--agy-bin``, also builds the thin codex /
+   agy image (for a host used as ``--codex-host`` / ``--agy-host``),
+   staging the pinned binaries in;
 4. seeds a bare mirror per repo so per-review provisioning only has to
    push the PR delta (see podman_repos).
 
@@ -82,10 +83,12 @@ CONTEXT_DIR = REPO_ROOT / "containers"
 DOCKERFILE = CONTEXT_DIR / "Containerfile"
 CONTAINERFILE_LABEL = "fairy.containerfile-sha256"
 
-# Built only when --codex-bin is given: the binary must be staged into the
-# build context.
+# Built only when --codex-bin / --agy-bin is given: the binary must be
+# staged into the build context.
 CODEX_DEFAULT_TAG = "localhost/fairy-codex:latest"
 CODEX_DOCKERFILE = CONTEXT_DIR / "Containerfile.codex"
+AGY_DEFAULT_TAG = "localhost/fairy-agy:latest"
+AGY_DOCKERFILE = CONTEXT_DIR / "Containerfile.agy"
 
 
 def _run(argv: list[str], *, timeout_s: float = 60.0) -> subprocess.CompletedProcess:
@@ -228,13 +231,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="codex image tag (default: %(default)s)",
     )
     p.add_argument(
+        "--agy-bin", type=Path, default=None, metavar="PATH",
+        help="pinned Antigravity CLI binary; when given, also build the thin "
+             "agy image on this host (for a host used as --agy-host).",
+    )
+    p.add_argument(
+        "--agy-tag", default=AGY_DEFAULT_TAG,
+        help="agy image tag (default: %(default)s)",
+    )
+    p.add_argument(
         "--mirror-root", default=podman_repos.DEFAULT_MIRROR_ROOT,
         help="remote bare-mirror root, relative to the ssh home (default: %(default)s)",
     )
     p.add_argument("--rebuild", action="store_true", help="force image rebuild even if current")
     p.add_argument(
         "--reap-older-than", default="60m", metavar="DURATION",
-        help="reap leaked stopped review/codex containers older than this "
+        help="reap leaked stopped review/codex/agy containers older than this "
              "podman duration (default: %(default)s); running and paused "
              "containers are never touched. Set 'off' to skip.",
     )
@@ -262,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     # is never a reap candidate.
     if args.reap_older_than != "off":
         reaped = reap_stale_containers(
-            host, images=[args.tag, args.codex_tag],
+            host, images=[args.tag, args.codex_tag, args.agy_tag],
             older_than=args.reap_older_than)
         if reaped:
             logger.info("reaped %d stale container(s) on %s", reaped, args.ssh)
@@ -276,6 +288,11 @@ def main(argv: list[str] | None = None) -> int:
             rebuild=args.rebuild,
             binaries={"codex": args.codex_bin.resolve(),
                       "codex-code-mode-host": args.codex_code_mode_host_bin.resolve()},
+        )
+    if args.agy_bin is not None:
+        ensure_cli_image(
+            host=host, dockerfile=AGY_DOCKERFILE, tag=args.agy_tag,
+            rebuild=args.rebuild, binaries={"agy": args.agy_bin.resolve()},
         )
     if args.repo_roots:
         seed_mirrors(args.repo_roots, host, args.mirror_root)

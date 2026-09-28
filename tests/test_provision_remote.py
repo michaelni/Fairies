@@ -108,6 +108,18 @@ class EnsureImageTests(unittest.TestCase):
             self.assertTrue(build.call_args.kwargs["force"])
 
 
+class CliImageOptionTests(unittest.TestCase):
+    def test_agy_bin_builds_its_image_alone(self) -> None:
+        args = pr.parse_args(["--ssh", "fairy@h", "--agy-bin", "/stage/agy"])
+        self.assertEqual(Path("/stage/agy"), args.agy_bin)
+        self.assertEqual(pr.AGY_DEFAULT_TAG, args.agy_tag)
+        self.assertIsNone(args.codex_bin)
+
+    def test_codex_bin_needs_its_code_mode_host(self) -> None:
+        with self.assertRaises(SystemExit):
+            pr.parse_args(["--ssh", "fairy@h", "--codex-bin", "/stage/codex"])
+
+
 class SeedMirrorsTests(unittest.TestCase):
     def test_seeds_each_repo(self) -> None:
         host = lc.RemoteHost("fairy@h")

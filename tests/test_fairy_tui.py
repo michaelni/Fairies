@@ -1029,6 +1029,21 @@ class StatusColumnTests(DbCase):
         self.assertIn("#5        30", self.rows()[0])
 
 
+class AuthorColumnTests(DbCase):
+    def test_the_author_precedes_the_title_at_a_fixed_width(self) -> None:
+        self.db.push("reviewed", "pr", "5", dict(verdict(5), author="alice"))
+        self.db.push("reviewed", "pr", "6",
+                     dict(verdict(6), author="mallory" * 2))
+        self.db.push("requests", "pr", "7", {"title": "from disk"})
+        self.db.push("items", "pr", "7", {"state": "open", "author": "carol"})
+        self.model.poll()
+        rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in make_ui(self.model).list_rows()]
+        self.assertEqual([r[-20:] for r in rows],
+                         ["alice      from disk", "mallorymal from disk",
+                          "carol      from disk"])
+
+
 def _branch_verdict(n: int, pr: dict | None = None) -> dict:
     v = verdict(n)
     v["review"]["branches"] = [{

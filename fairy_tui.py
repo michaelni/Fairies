@@ -188,7 +188,8 @@ def _branch_mark(data: dict) -> tuple[str, str]:
 
 
 STATUS_FIELDS = ("state", "auto_merge", "approvals", "change_requests",
-                 "labels", "head_sha", "patch_ids")
+                 "labels", "head_sha", "patch_ids", "author")
+AUTHOR_W = 10
 _REPRO_CODES = {"repro/yes": ("sc_good", "Y"),
                 "repro/flaky": ("sc_warn", "F"),
                 "repro/no(env)": ("sc_warn", "n"),
@@ -1412,14 +1413,17 @@ class UILoop:
             state_disp += "+"
         if (it.repo, it.kind, it.number) in m.missing:
             state_disp += "?"
-        status = _status_cols(it, m.status.get(
-            (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {})
+        snap = m.status.get(
+            (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {}
+        status = _status_cols(it, snap)
         branch_mark = _branch_mark(it.data)
+        author = (it.data.get("author") or snap.get("author") or "")[:AUTHOR_W]
         if is_cursor:
             return ("cursor",
                     f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<7} "
                     f"{''.join(c for _, c in status)}{branch_mark[1]} "
-                    f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  {title}")
+                    f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  "
+                    f"{author:<{AUTHOR_W}} {title}")
         return [
             ("mark", mark),
             ("kind_pr" if it.kind == "pr" else "kind_issue",
@@ -1432,6 +1436,7 @@ class UILoop:
             (f"st_{it.state}", f"{state_disp:<{STATE_W}} "),
             ("llm", f"{llm:<9} "),
             ("num", f"{act:>4}  "),
+            ("label", f"{author:<{AUTHOR_W}} "),
             ("title", title),
         ]
 

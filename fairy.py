@@ -173,6 +173,7 @@ __all__ = [
     "post_label_explanations",
     "prepared_pr_from_dict",
     "prepared_to_dict",
+    "reviewed_patch_ids",
     "safe_apply_llm_review_to_prepared",
     "safe_prepare_pr",
     "submit_decision_action",
@@ -2115,6 +2116,18 @@ def patch_shas_for_run(
         args.patch_repo, args.patch_pr_ref_template.format(number=pr["number"]),
     )
     return git_util.git_merge_base(args.patch_repo, head, pr["base"]["ref"]), head
+
+
+def reviewed_patch_ids(args: argparse.Namespace, pr: ApiObject) -> list[str] | None:
+    """The patch-ids of the series a review of ``pr`` covers, over the
+    shas patch_shas_for_run names; None, logged, when --patch-repo
+    cannot resolve them."""
+    try:
+        base_sha, head_sha = patch_shas_for_run(args, pr)
+        return git_util.git_series_patch_ids(args.patch_repo, base_sha, head_sha)
+    except RuntimeError as exc:
+        logger.warning("pr #%s: patch-ids not computed: %s", pr.get("number"), exc)
+        return None
 
 
 def fetch_patch_for_llm(

@@ -83,9 +83,11 @@ def verdict_state(decision: fairy.Decision) -> str:
     return "reviewed"
 
 
-def verdict_fields(decision: fairy.Decision, prepared) -> dict:
+def verdict_fields(decision: fairy.Decision, prepared,
+                   ns: argparse.Namespace) -> dict:
     now = datetime.now(timezone.utc).isoformat()
-    item = getattr(prepared, "pr", None) or getattr(prepared, "issue", {})
+    pr = getattr(prepared, "pr", None)
+    item = pr or getattr(prepared, "issue", {})
     if decision.llm_classification == "error":
         # the guard makes an operator x on the error row stick
         return {"error": decision.reason, "llm_at": now,
@@ -109,8 +111,10 @@ def verdict_fields(decision: fairy.Decision, prepared) -> dict:
         "cancelled_ci_contexts": list(decision.cancelled_ci_contexts),
         "blocked_ci_contexts": list(decision.blocked_ci_contexts),
         "expected_updated_at": item.get("updated_at"),
-        "expected_head_sha": (fairy.get_pr_head_sha(item)
-                              if getattr(prepared, "pr", None) is not None else None),
+        "expected_head_sha": fairy.get_pr_head_sha(pr) if pr is not None else None,
+        "expected_patch_ids": (fairy.reviewed_patch_ids(ns, pr)
+                               if pr is not None and ns.patch_repo is not None
+                               else None),
         "last_activity_iso": (decision.last_activity.isoformat()
                               if decision.last_activity else None),
         # what the LLM run saw; the scan's backoff bypass compares
@@ -158,7 +162,7 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
         if ticket.pop("cancel", None):
             state = "cancelled"
         else:
-            ticket.update(verdict_fields(decision, prepared))
+            ticket.update(verdict_fields(decision, prepared, ns))
             state = verdict_state(decision)
     claim.finish(state, ticket)
     # workset.update_json's sidecar lock next to the claimed file

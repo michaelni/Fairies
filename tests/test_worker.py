@@ -45,6 +45,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import fairy  # noqa: E402
 import filedb  # noqa: E402
+import git_util  # noqa: E402
 import halt_marker  # noqa: E402
 import worker  # noqa: E402
 import workset  # noqa: E402
@@ -53,6 +54,7 @@ import workset  # noqa: E402
 def make_pr(n: int) -> dict:
     return {"number": n, "title": f"t{n}", "user": {"login": "a"},
             "updated_at": "2026-07-19T10:00:00Z", "head": {"sha": f"h{n}"},
+            "base": {"sha": f"base{n}", "ref": "main"},
             "html_url": f"https://forge/pr/{n}"}
 
 
@@ -105,6 +107,33 @@ class VerdictRoutingTests(WorkerCase):
         self.db.push("queued", "pr", "5", ticket)
         self.run_one(5, lambda ns, p: decision(5))
         self.assertIsNone(self.db.get("reviewed", "pr", "5")["expected_head_sha"])
+
+    def test_the_reviewed_series_patch_ids_ride_on_the_verdict(self) -> None:
+        self.ns.patch_repo = Path("mirror")
+        self.db.push("queued", "pr", "5", queued_ticket(5))
+        with mock.patch.object(git_util, "git_series_patch_ids",
+                               return_value=["p1", "p2"]) as series:
+            self.run_one(5, lambda ns, p: decision(5))
+        series.assert_called_once_with(Path("mirror"), "base5", "h5")
+        self.assertEqual(self.db.get("reviewed", "pr", "5")["expected_patch_ids"],
+                         ["p1", "p2"])
+
+    def test_without_a_mirror_the_verdict_has_no_patch_ids(self) -> None:
+        self.db.push("queued", "pr", "5", queued_ticket(5))
+        with mock.patch.object(git_util, "git_series_patch_ids") as series:
+            self.run_one(5, lambda ns, p: decision(5))
+        series.assert_not_called()
+        self.assertIsNone(self.db.get("reviewed", "pr", "5")["expected_patch_ids"])
+
+    def test_a_mirror_without_the_head_leaves_the_patch_ids_unknown(self) -> None:
+        self.ns.patch_repo = Path("mirror")
+        self.db.push("queued", "pr", "5", queued_ticket(5))
+        with mock.patch.object(git_util, "git_series_patch_ids",
+                               side_effect=RuntimeError("bad revision")), \
+                self.assertLogs(fairy.logger, "WARNING") as logs:
+            self.run_one(5, lambda ns, p: decision(5))
+        self.assertIn("bad revision", logs.output[0])
+        self.assertIsNone(self.db.get("reviewed", "pr", "5")["expected_patch_ids"])
 
     def test_llm_skip_keeps_its_backoff_in_skipped(self) -> None:
         self.db.push("queued", "pr", "5", queued_ticket(5, backoff=48))

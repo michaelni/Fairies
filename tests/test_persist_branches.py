@@ -1384,7 +1384,8 @@ class TicketRoundTripTests(unittest.TestCase):
         prepared = SimpleNamespace(
             pr={"updated_at": "2026-08-25T00:00:00Z", "head": {"ref": "b"}},
             discussion=[], reviewer_username="fairy")
-        fields = worker.verdict_fields(decision, prepared)
+        fields = worker.verdict_fields(
+            decision, prepared, fairy.parse_args(["--owner", "o", "--repo", "r"]))
         self.assertEqual(fields["review"]["branches"],
                          [GOOD_RECORD, DELETE_RECORD])
         rebuilt = agent.ticket_decision("pr", "5", {"review": fields["review"]})

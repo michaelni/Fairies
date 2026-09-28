@@ -27,7 +27,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-CodexContainer: ``podman exec`` argv construction over RemoteHost ssh."""
+CliContainer: ``podman exec`` argv construction over RemoteHost ssh."""
 
 import io
 import threading
@@ -40,8 +40,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import podman_host
-import codex_container
-from codex_container import CodexContainer, CodexShellRelay
+import cli_container
+from cli_container import CliContainer, CliShellRelay
 from test_podman_host import ContainerStateHarness
 from common import EXIT_REVIEW_STOPPED_BY_HALT_FILE
 
@@ -50,7 +50,7 @@ HOST = podman_host.RemoteHost("fairy@box", identity="/id")
 
 class ExecArgvTests(unittest.TestCase):
     def _container(self):
-        c = CodexContainer(image="localhost/fairy-codex:latest", host=HOST)
+        c = CliContainer(image="localhost/fairy-codex:latest", host=HOST)
         c.handle = podman_host.ContainerHandle(
             container_id="abc123", image="img", network=None, host=HOST)
         return c
@@ -67,7 +67,7 @@ class ExecArgvTests(unittest.TestCase):
     def test_interactive_and_env_flags(self) -> None:
         argv = self._container().exec_argv(
             ["codex", "exec", "-"], interactive=True,
-            env={"CODEX_HOME": codex_container.CONTAINER_CODEX_HOME},
+            env={"CODEX_HOME": cli_container.CONTAINER_CODEX_HOME},
         )
         self.assertEqual(
             "podman exec -i -e CODEX_HOME=/work/.codex-home abc123 "
@@ -82,7 +82,7 @@ class ExecArgvTests(unittest.TestCase):
 
     def test_read_file_max_bytes_uses_head(self) -> None:
         c = self._container()
-        with mock.patch.object(codex_container.subprocess, "run") as run:
+        with mock.patch.object(cli_container.subprocess, "run") as run:
             run.return_value = mock.Mock(returncode=0, stdout="{}")
             c.read_file("/work/.codex-run/last_message.json", max_bytes=1024)
         self.assertEqual(
@@ -90,22 +90,22 @@ class ExecArgvTests(unittest.TestCase):
             run.call_args.args[0][-1])
 
     def test_exec_before_start_is_error(self) -> None:
-        c = CodexContainer(image="img", host=HOST)
+        c = CliContainer(image="img", host=HOST)
         with self.assertRaises(RuntimeError):
             c.exec_argv(["codex"])
 
 
 class KillRunTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.container = CodexContainer(image="img", host=HOST)
+        self.container = CliContainer(image="img", host=HOST)
         self.container.handle = podman_host.ContainerHandle(
             container_id="cid", image="img", network=None, host=HOST)
 
     def _kill_during_run(self, **kill_effect) -> tuple[mock.Mock, mock.Mock]:
-        with mock.patch.object(codex_container, "run_on_remote_host",
+        with mock.patch.object(cli_container, "run_on_remote_host",
                                **kill_effect) as kill, \
-                mock.patch.object(codex_container, "stop_container") as stop, \
-                mock.patch.object(codex_container.subprocess, "Popen",
+                mock.patch.object(cli_container, "stop_container") as stop, \
+                mock.patch.object(cli_container.subprocess, "Popen",
                                   return_value=_FakeProc(
                                       b"", on_communicate=self.container.kill_run)):
             self.container.run(["codex"])
@@ -124,7 +124,7 @@ class KillRunTests(unittest.TestCase):
     def test_failed_kill_removes_the_container(self) -> None:
         for effect in (
                 {"return_value": mock.Mock(returncode=125)},
-                {"side_effect": codex_container.subprocess.TimeoutExpired(
+                {"side_effect": cli_container.subprocess.TimeoutExpired(
                     "ssh", 60.0)}):
             with self.subTest(effect=effect):
                 self.setUp()
@@ -132,12 +132,12 @@ class KillRunTests(unittest.TestCase):
                 stop.assert_called_once()
 
     def test_no_kill_outside_a_run(self) -> None:
-        with mock.patch.object(codex_container, "run_on_remote_host") as kill:
+        with mock.patch.object(cli_container, "run_on_remote_host") as kill:
             self.container.kill_run()
         kill.assert_not_called()
 
     def test_stop_removes_the_container_once(self) -> None:
-        with mock.patch.object(codex_container, "stop_container") as stop:
+        with mock.patch.object(cli_container, "stop_container") as stop:
             self.container.stop()
             self.container.stop()
         stop.assert_called_once()
@@ -146,7 +146,7 @@ class KillRunTests(unittest.TestCase):
 class RunTests(ContainerStateHarness, unittest.TestCase):
     def test_pausing_the_container_ends_a_codex_that_never_returns(self) -> None:
         self.record_podman()
-        c = CodexContainer(image="img", host=HOST)
+        c = CliContainer(image="img", host=HOST)
         codex = [sys.executable, "-c", "import time; time.sleep(60)"]
         with mock.patch.object(c, "exec_argv", return_value=codex):
             c.start()
@@ -187,14 +187,14 @@ class _FakeProc:
 
 
 class RelayReadinessTests(unittest.TestCase):
-    """CodexShellRelay.start scans stderr for RELAY-READY past ssh/podman
+    """CliShellRelay.start scans stderr for RELAY-READY past ssh/podman
     warning lines instead of trusting the first line."""
 
     def _relay(self):
-        c = CodexContainer(image="img", host=HOST)
+        c = CliContainer(image="img", host=HOST)
         c.handle = podman_host.ContainerHandle(
             container_id="abc", image="img", network=None, host=HOST)
-        return CodexShellRelay(
+        return CliShellRelay(
             c, relay_container_path="/work/.codex-run/relay.py",
             machine_labels=("x86_64",), open_shell=lambda label: (None, ""),
             max_timeout_s=60.0)
@@ -202,9 +202,9 @@ class RelayReadinessTests(unittest.TestCase):
     def _start_with_stderr(self, stderr_bytes):
         relay = self._relay()
         proc = _FakeProc(stderr_bytes)
-        with mock.patch.object(codex_container.subprocess, "Popen",
+        with mock.patch.object(cli_container.subprocess, "Popen",
                                return_value=proc), \
-                mock.patch.object(codex_container, "serve_dispatch"):
+                mock.patch.object(cli_container, "serve_dispatch"):
             relay.start(ready_timeout_s=5.0)
         return relay, proc
 
@@ -224,9 +224,9 @@ class RelayReadinessTests(unittest.TestCase):
     def test_dead_relay_raises_not_hangs(self) -> None:
         relay = self._relay()
         proc = _FakeProc(b"some podman error\n")  # EOF, no RELAY-READY
-        with mock.patch.object(codex_container.subprocess, "Popen",
+        with mock.patch.object(cli_container.subprocess, "Popen",
                                return_value=proc), \
-                mock.patch.object(codex_container, "serve_dispatch"):
+                mock.patch.object(cli_container, "serve_dispatch"):
             with self.assertRaisesRegex(RuntimeError, "relay failed to start"):
                 relay.start(ready_timeout_s=5.0)
         self.assertTrue(proc.killed)
@@ -235,12 +235,12 @@ class RelayReadinessTests(unittest.TestCase):
 class RelayCancelTests(unittest.TestCase):
     def _serve(self, dispatch_effect) -> mock.Mock:
         container = mock.Mock()
-        relay = CodexShellRelay(
+        relay = CliShellRelay(
             container, relay_container_path="/work/.codex-run/relay.py",
             machine_labels=("x86_64",), open_shell=lambda label: (None, ""),
             max_timeout_s=60.0)
         relay._proc = _FakeProc(b"")
-        with mock.patch.object(codex_container, "serve_dispatch",
+        with mock.patch.object(cli_container, "serve_dispatch",
                                side_effect=dispatch_effect):
             relay._serve()
         return container

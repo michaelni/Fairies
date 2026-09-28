@@ -32,7 +32,7 @@ Wrapper-side shell dispatch for the codex backend.
 The codex CLI runs inside a container on the ``--codex-host`` and spawns
 ``codex_bridge.py`` as its MCP shell server; the bridge connects to a
 container-local socket served by ``relay.py``, which the wrapper drives
-over a ``podman exec -i`` stdio channel (see ``codex_container``). This
+over a ``podman exec -i`` stdio channel (see ``cli_container``). This
 module's ``serve_dispatch`` is the wrapper end of that channel: it reads
 the bridge's shell-tool requests off the relay's stdout and dispatches
 each through ``shell_tool.exec_machine_call`` into the review containers,

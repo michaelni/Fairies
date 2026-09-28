@@ -31,7 +31,7 @@ The codex model catalog of one codex login (CODEX_HOME): resolving the
 home directory and hardening a catalog into the override a review pass
 may run with.
 
-What does NOT belong here: container lifecycle (``codex_container``)
+What does NOT belong here: container lifecycle (``cli_container``)
 and the review pass itself (``codex_reviewer``).
 """
 

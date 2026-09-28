@@ -31,7 +31,7 @@ Codex-CLI pass of a ``RoleSpec`` behind the shared ``Reviewer`` interface.
 
 Unlike the API backends this one runs no tool loop of its own: it spawns
 one pinned ``codex exec`` per pass inside a container on the
-``--codex-host`` (see ``codex_container``) and lets codex drive the model,
+``--codex-host`` (see ``cli_container``) and lets codex drive the model,
 with the review-container shell reaching codex as an MCP tool via
 ``codex_bridge.py`` -> ``relay.py`` -> the wrapper's ``serve_dispatch``,
 over a ``podman exec -i`` channel (no host-crossing socket).
@@ -55,13 +55,13 @@ import tempfile
 import time
 
 from codex_catalog import harden_codex_catalog, resolve_codex_home
-from codex_container import (
+from cli_container import (
     CONTAINER_CODEX_HOME,
     DEFAULT_CODEX_IMAGE,
     CONTAINER_RUN_DIR,
     RELAY_SOCKET_PATH,
-    CodexContainer,
-    CodexShellRelay,
+    CliContainer,
+    CliShellRelay,
     persist_refreshed_auth,
 )
 import concurrency
@@ -405,11 +405,11 @@ class CodexReviewer(Reviewer):
         use_shell = bool(ctx.machines) and ctx.open_shell is not None
         prompt = self._build_prompt(ctx, use_shell)
         scratch = tempfile.mkdtemp(prefix="fairy-codex-")  # local staging only
-        container = CodexContainer(
+        container = CliContainer(
             image=self.codex_image, host=self.codex_host.host,
             memory=self.codex_host.memory, cpus=self.codex_host.cpus,
         )
-        relay: CodexShellRelay | None = None
+        relay: CliShellRelay | None = None
         machine_labels = tuple(m.label for m in ctx.machines)
         try:
             schema_local = Path(scratch) / "output_schema.json"
@@ -433,7 +433,7 @@ class CodexReviewer(Reviewer):
                 for local in (Path(_BRIDGE_PATH), _BRIDGE_CLIENT_PATH,
                               _RELAY_PATH):
                     container.put_file(local, CONTAINER_RUN_DIR)
-                relay = CodexShellRelay(
+                relay = CliShellRelay(
                     container,
                     relay_container_path=f"{CONTAINER_RUN_DIR}/relay.py",
                     machine_labels=machine_labels,

@@ -27,14 +27,20 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Run a ``codex exec`` pass inside an ephemeral container on a remote podman
-host, so codex never executes on the wrapper host (which holds the ssh
-key and the provider API keys).
+Run one pass of a CLI coding agent (codex, agy) inside an ephemeral
+container on a remote podman host, so the CLI never executes on the
+wrapper host (which holds the ssh key and the provider API keys).
+
+What belongs here: the container lifecycle, the exec channel that feeds
+the prompt on stdin, the shell relay that services the CLI's MCP shell
+calls, and persisting a credential the CLI refreshed mid-run. What does
+NOT belong here: any CLI's command line, output format or error strings
+-- those live in that CLI's reviewer module.
 
 Built on the same podman_host primitives as the review shells --
 ``start_ephemeral_container`` / ``copy_into_container`` / ``podman exec``
-over ``RemoteHost`` ssh -- with no bind mounts: the codex binary is baked
-into the image, everything else (auth.json, codex_bridge.py, relay.py,
+over ``RemoteHost`` ssh -- with no bind mounts: the CLI binary is baked
+into the image, everything else (credentials, the bridge, relay.py,
 the prompt and schema) is ``podman cp``'d in per run.
 
 The shell tool reaches the review containers through ``relay.py`` (see
@@ -80,8 +86,8 @@ RELAY_SOCKET_PATH = f"{CONTAINER_RUN_DIR}/shell.sock"
 DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
 
 
-class CodexContainer:
-    """One ephemeral codex container on a remote podman host.
+class CliContainer:
+    """One ephemeral CLI container on a remote podman host.
 
     Thin lifecycle wrapper over podman_host: ``start`` launches it,
     ``put_file`` / ``put_text`` copy inputs in, ``run`` execs a command
@@ -108,7 +114,7 @@ class CodexContainer:
         self._lock = threading.Lock()
         self._running = False
 
-    def start(self) -> "CodexContainer":
+    def start(self) -> "CliContainer":
         self.handle = start_ephemeral_container(
             image=self.image, host=self.host, network=self.network,
             memory=self.memory, cpus=self.cpus,
@@ -117,7 +123,7 @@ class CodexContainer:
 
     def _cid(self) -> str:
         if self.handle is None:
-            raise RuntimeError("codex container not started")
+            raise RuntimeError("container not started")
         return self.handle.container_id
 
     def exec_argv(
@@ -218,7 +224,7 @@ class CodexContainer:
             except subprocess.TimeoutExpired:
                 rc = None
         if rc not in (0, 1):
-            logger.warning("killing the codex run failed (rc=%s); removing "
+            logger.warning("killing the run failed (rc=%s); removing "
                            "its container", rc)
             self.stop()
 
@@ -233,7 +239,7 @@ MAX_AUTH_BYTES = 256 * 1024
 
 
 def persist_refreshed_auth(
-    container: CodexContainer, auth_local: Path,
+    container: CliContainer, auth_local: Path,
 ) -> None:
     """Copy a mid-run token refresh back to the host auth.json.
 
@@ -284,8 +290,8 @@ def persist_refreshed_auth(
                 "(previous kept as auth.json.bak)")
 
 
-class CodexShellRelay:
-    """Drive ``relay.py`` in the codex container and service its shell calls.
+class CliShellRelay:
+    """Drive ``relay.py`` in the CLI container and service its shell calls.
 
     ``start`` execs ``relay.py`` over ``podman exec -i`` and, once it
     reports its container-local socket is bound, pumps every shell-tool
@@ -296,7 +302,7 @@ class CodexShellRelay:
 
     def __init__(
         self,
-        container: CodexContainer,
+        container: CliContainer,
         *,
         relay_container_path: str,
         machine_labels: Sequence[str],
@@ -317,30 +323,30 @@ class CodexShellRelay:
         self._ready = threading.Event()
         self._ready_lines: list[bytes] = []
 
-    def start(self, *, ready_timeout_s: float = 30.0) -> "CodexShellRelay":
+    def start(self, *, ready_timeout_s: float = 30.0) -> "CliShellRelay":
         argv = self.container.exec_argv(
             ["python3", self.relay_container_path, self.socket_path],
             interactive=True,
         )
-        logger.info("codex relay start socket=%s", self.socket_path)
+        logger.info("relay start socket=%s", self.socket_path)
         self._proc = track_exec_channel(self.container.handle, subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         ))
         # relay.py prints RELAY-READY on stderr once its socket is bound;
-        # codex must not start before that, or the bridge races an unbound socket.
+        # the CLI must not start before that, or the bridge races an unbound socket.
         threading.Thread(
             target=self._drain_stderr, daemon=True,
-            name=tagged_thread_name("codex-relay-stderr"),
+            name=tagged_thread_name("relay-stderr"),
         ).start()
         self._ready.wait(ready_timeout_s)
         ready = b"".join(self._ready_lines)
         if b"RELAY-READY" not in ready:
             self.stop()
-            raise ContainerInfraError(f"codex relay failed to start: {ready!r}")
+            raise ContainerInfraError(f"relay failed to start: {ready!r}")
         self._thread = threading.Thread(
             target=self._serve, daemon=True,
-            name=tagged_thread_name("codex-shell-dispatch"),
+            name=tagged_thread_name("shell-dispatch"),
         )
         self._thread.start()
         return self
@@ -355,12 +361,12 @@ class CodexShellRelay:
         except SystemExit as stop:
             if stop.code != EXIT_REVIEW_STOPPED_BY_HALT_FILE:
                 logger.warning("run stopped (operator cancel or halted review); "
-                               "killing codex")
+                               "killing the run")
                 self.container.kill_run()
         except ValueError as exc:
             # The relay's pipes raise this once stop() closed them: a shell
-            # call outlived codex and its response has nowhere to go.
-            logger.info("codex shell dispatch: relay already stopped; "
+            # call outlived the CLI and its response has nowhere to go.
+            logger.info("shell dispatch: relay already stopped; "
                         "dropping the late shell-call response (%s)", exc)
 
     def _drain_stderr(self) -> None:
@@ -368,7 +374,7 @@ class CodexShellRelay:
         saw_ready = False
         for raw in iter(lambda: self._proc.stderr.readline(65536), b""):
             if saw_ready:
-                logger.debug("codex relay stderr: %s",
+                logger.debug("relay stderr: %s",
                              raw.decode(errors="replace").rstrip())
                 continue
             if b"RELAY-READY" in raw:

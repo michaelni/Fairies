@@ -41,7 +41,7 @@ from unittest import mock
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import codex_container
+import cli_container
 import codex_reviewer
 import concurrency
 import podman_host
@@ -87,7 +87,7 @@ def _codex_home_ready(**files) -> str:
 
 
 class _FakeCodexContainer:
-    """Stand-in for CodexContainer: records podman-cp'd files and the codex
+    """Stand-in for CliContainer: records podman-cp'd files and the codex
     argv, returns canned run output / last message. ``on_run`` fires inside
     run() for concurrency-slot tests."""
 
@@ -301,9 +301,9 @@ class CodexReviewerRunTests(unittest.TestCase):
             [], returncode, stdout=jsonl, stderr=stderr)
         self.container = _FakeCodexContainer(
             proc, last_message, on_run=on_run, refreshed_auth=refreshed_auth)
-        with mock.patch.object(codex_reviewer, "CodexContainer",
+        with mock.patch.object(codex_reviewer, "CliContainer",
                                return_value=self.container), \
-                mock.patch.object(codex_reviewer, "CodexShellRelay") as relay:
+                mock.patch.object(codex_reviewer, "CliShellRelay") as relay:
             relay.return_value.start.return_value = relay.return_value
             relay.return_value.opened_sessions.return_value = \
                 getattr(self, "_relay_sessions", [])
@@ -365,7 +365,7 @@ class CodexReviewerRunTests(unittest.TestCase):
                                           "CODEX_API_KEY": "sk-y"}):
             self._run()
         self.assertEqual(
-            {"CODEX_HOME": codex_container.CONTAINER_CODEX_HOME},
+            {"CODEX_HOME": cli_container.CONTAINER_CODEX_HOME},
             self.container.env,
         )
 
@@ -672,9 +672,9 @@ class CodexReviewerRunTests(unittest.TestCase):
                                    lambda name: Path(lock_root) / name):
                 concurrency.configure([("codex", 1)])
                 self.addCleanup(concurrency.configure, [])
-                with mock.patch.object(codex_reviewer, "CodexContainer",
+                with mock.patch.object(codex_reviewer, "CliContainer",
                                        side_effect=make_fake), \
-                        mock.patch.object(codex_reviewer, "CodexShellRelay") as relay:
+                        mock.patch.object(codex_reviewer, "CliShellRelay") as relay:
                     relay.return_value.start.return_value = relay.return_value
                     threads = [threading.Thread(target=reviewer.run, args=(_ctx(),))
                                for _ in range(3)]

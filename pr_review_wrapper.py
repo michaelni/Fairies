@@ -104,7 +104,7 @@ from llm_review_api import (
     ReviewContext,
     Reviewer,
 )
-from codex_container import DEFAULT_CODEX_IMAGE
+from cli_container import DEFAULT_CODEX_IMAGE
 import branch_persist
 import review_pipeline
 from review_pipeline import make_reviewer, review_pr, run_triage, vet_review
@@ -1443,7 +1443,7 @@ def main() -> int:
         logging.getLogger("tool_loop"),
         logging.getLogger("gemini_reviewer"),
         logging.getLogger("codex_catalog"),
-        logging.getLogger("codex_container"),
+        logging.getLogger("cli_container"),
         logging.getLogger("codex_reviewer"),
         branch_persist.logger,
         color=args.color,

@@ -41,15 +41,15 @@ from unittest import mock
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import cli_reviewer
 import codex_reviewer
 import concurrency
 import podman_host
 import review_pipeline
+from cli_reviewer import CliAuthFailed, CliUsageLimit
 from codex_reviewer import (
-    CodexAuthFailed,
     CodexReviewer,
     CodexTurnFailed,
-    CodexUsageLimit,
     build_codex_exec_command,
     resolve_web_search,
     summarize_codex_events,
@@ -254,7 +254,7 @@ class WebSearchModeTests(unittest.TestCase):
     def _prompt_features(self, web_search):
         reviewer = CodexReviewer("m", name="codex:m", role=ROLE,
                                  codex_host=CODEX_HOST, web_search=web_search)
-        with mock.patch.object(codex_reviewer, "generate_llm_prompt",
+        with mock.patch.object(cli_reviewer, "generate_llm_prompt",
                                return_value="DEV") as gen:
             reviewer._build_prompt(_ctx(), False)
         return gen.call_args.kwargs["features"]
@@ -300,9 +300,9 @@ class CodexReviewerRunTests(unittest.TestCase):
             [], returncode, stdout=jsonl, stderr=stderr)
         self.container = _FakeCodexContainer(
             proc, last_message, on_run=on_run, refreshed_auth=refreshed_auth)
-        with mock.patch.object(codex_reviewer, "CliContainer",
+        with mock.patch.object(cli_reviewer, "CliContainer",
                                return_value=self.container), \
-                mock.patch.object(codex_reviewer, "CliShellRelay") as relay:
+                mock.patch.object(cli_reviewer, "CliShellRelay") as relay:
             relay.return_value.start.return_value = relay.return_value
             relay.return_value.opened_sessions.return_value = \
                 getattr(self, "_relay_sessions", [])
@@ -421,7 +421,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         jsonl = json.dumps({"type": "turn.failed", "error": {
             "message": "You've hit your usage limit",
             "type": "usage_limit_reached"}})
-        with self.assertRaises(CodexUsageLimit):
+        with self.assertRaises(CliUsageLimit):
             self._run(jsonl=jsonl, last_message=None, returncode=1)
 
     def test_missing_final_message_is_error(self) -> None:
@@ -435,8 +435,8 @@ class CodexReviewerRunTests(unittest.TestCase):
 
     def test_auth_failure_sets_auth_json_aside(self) -> None:
         home = _codex_home_ready()
-        with self.assertRaises(CodexAuthFailed), \
-                self.assertLogs(codex_reviewer.logger, "CRITICAL"):
+        with self.assertRaises(CliAuthFailed), \
+                self.assertLogs(cli_reviewer.logger, "CRITICAL"):
             self._run(reviewer=self._reviewer(codex_home=home),
                       jsonl=self._DEAD_REFRESH_TOKEN_EVENT,
                       last_message=None, returncode=1)
@@ -449,7 +449,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         # message text as shipped in codex-cli 0.147.0
         stderr = ("ERROR: no Codex credentials were found. Run codex login "
                   "or provide an API key\n")
-        with self.assertRaises(CodexAuthFailed):
+        with self.assertRaises(CliAuthFailed):
             self._run(reviewer=self._reviewer(codex_home=home),
                       stderr=stderr, last_message=None, returncode=1)
         self.assertFalse(Path(home, "auth.json").exists())
@@ -469,7 +469,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
         ctx = _ctx(report_poisoned=poisoned.append)
-        with self.assertRaises(CodexAuthFailed):
+        with self.assertRaises(CliAuthFailed):
             self._run(ctx=ctx, jsonl=self._DEAD_REFRESH_TOKEN_EVENT,
                       last_message=None, returncode=1)
         self.assertEqual([], poisoned)
@@ -478,7 +478,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         poisoned = []
         ctx = _ctx(report_poisoned=poisoned.append)
         self._relay_sessions = ["a session codex had opened"]
-        with mock.patch.object(codex_reviewer.shell_tool, "cancelled",
+        with mock.patch.object(cli_reviewer.shell_tool, "cancelled",
                                return_value=True):
             with self.assertRaises(SystemExit):
                 self._run(last_message=None, ctx=ctx)
@@ -487,7 +487,7 @@ class CodexReviewerRunTests(unittest.TestCase):
     def test_cancel_killed_run_persists_refreshed_auth(self) -> None:
         home = _codex_home_ready()
         rotated = '{"tokens": {"refresh_token": "rotated"}}'
-        with mock.patch.object(codex_reviewer.shell_tool, "cancelled",
+        with mock.patch.object(cli_reviewer.shell_tool, "cancelled",
                                return_value=True), \
                 self.assertRaises(SystemExit):
             self._run(reviewer=self._reviewer(codex_home=home), returncode=-9,
@@ -574,7 +574,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         ctx = _ctx(report_poisoned=poisoned.append)
         jsonl = json.dumps({"type": "turn.failed",
                             "error": {"type": "usage_limit_reached"}})
-        with self.assertRaises(CodexUsageLimit):
+        with self.assertRaises(CliUsageLimit):
             self._run(ctx=ctx, jsonl=jsonl, last_message=None)
         self.assertEqual([], poisoned)  # clean quota stop
 
@@ -616,7 +616,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
         ctx = _ctx(report_poisoned=poisoned.append)
-        with mock.patch.object(codex_reviewer.shell_tool, "_halted", True):
+        with mock.patch.object(cli_reviewer.shell_tool, "_halted", True):
             with self.assertRaises(RuntimeError):
                 self._run(ctx=ctx, last_message=None)
         # A sibling already halted the run, so this crash is its consequence
@@ -671,9 +671,9 @@ class CodexReviewerRunTests(unittest.TestCase):
                                    lambda name: Path(lock_root) / name):
                 concurrency.configure([("codex", 1)])
                 self.addCleanup(concurrency.configure, [])
-                with mock.patch.object(codex_reviewer, "CliContainer",
+                with mock.patch.object(cli_reviewer, "CliContainer",
                                        side_effect=make_fake), \
-                        mock.patch.object(codex_reviewer, "CliShellRelay") as relay:
+                        mock.patch.object(cli_reviewer, "CliShellRelay") as relay:
                     relay.return_value.start.return_value = relay.return_value
                     threads = [threading.Thread(target=reviewer.run, args=(_ctx(),))
                                for _ in range(3)]
@@ -706,7 +706,7 @@ class FactoryTests(unittest.TestCase):
         self.assertEqual("codex:gpt-5.6-sol", reviewer.name)
         self.assertEqual("xhigh", reviewer.effort)
         self.assertEqual("codex-pinned", reviewer.codex_bin)
-        self.assertEqual(CODEX_HOST, reviewer.codex_host)
+        self.assertEqual(CODEX_HOST, reviewer.host)
         self.assertEqual("disabled", reviewer.web_search)  # --web-search off
 
     def test_make_reviewer_web_search_modes(self) -> None:

@@ -27,16 +27,12 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Codex-CLI pass of a ``RoleSpec`` behind the shared ``Reviewer`` interface.
+Codex-CLI pass of a ``RoleSpec``: the ``codex exec`` command line, the
+model-catalog hardening, the ``--json`` event stream and codex's error
+strings, on top of ``cli_reviewer.CliReviewer`` which runs the pinned
+codex binary in a container on the ``--codex-host``.
 
-Unlike the API backends this one runs no tool loop of its own: it spawns
-one pinned ``codex exec`` per pass inside a container on the
-``--codex-host`` (see ``cli_container``) and lets codex drive the model,
-with the review-container shell reaching codex as an MCP tool via
-``mcp_shell_bridge.py`` -> ``relay.py`` -> the wrapper's ``serve_dispatch``,
-over a ``podman exec -i`` channel (no host-crossing socket).
-
-``usage_limit_reached`` raises ``CodexUsageLimit`` immediately and
+``usage_limit_reached`` raises ``CliUsageLimit`` immediately and
 run_parallel drops the pass, keeping surviving drafts.
 
 ``--concurrency codex:N`` caps how many passes run at once.
@@ -48,32 +44,25 @@ import json
 import logging
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
-import tempfile
-import time
 
+from cli_container import CliContainer
+from cli_reviewer import (BRIDGE_PATH, CliReviewer, CliUsageLimit, Staged,
+                          parse_event_line)
 from codex_catalog import harden_codex_catalog, resolve_codex_home
-from cli_container import CliContainer, CliShellRelay, persist_refreshed_auth
-import concurrency
-from common import JsonObject, dump_response_debug_artifacts
-from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
-from llm_review_api import (BadModelOutput, BranchCollectionFailed,
-                            ProviderContentFlagged,
-                            ProviderTurnFailed, ReviewContext,
-                            Reviewer, RoleSpec)
+from common import JsonObject
+from llm_prompt import REVIEWER_ROLE
+from llm_review_api import (BadModelOutput, ProviderContentFlagged,
+                            ProviderTurnFailed, RoleSpec)
 from podman_host import ShellHostSpec
-import shell_tool
 
 __all__ = [
     "CODEX_EFFORTS",
     "CODEX_WEB_SEARCH_MODES",
     "DEFAULT_CODEX_IMAGE",
-    "CodexAuthFailed",
     "CodexReviewer",
     "CodexTurnFailed",
-    "CodexUsageLimit",
     "build_codex_exec_command",
     "resolve_web_search",
 ]
@@ -85,7 +74,6 @@ DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
 # Under /work = the image WORKDIR.
 CONTAINER_RUN_DIR = "/work/.codex-run"
 CONTAINER_CODEX_HOME = "/work/.codex-home"
-RELAY_SOCKET_PATH = f"{CONTAINER_RUN_DIR}/shell.sock"
 
 # The union across models; an unsupported pairing still fails server-side.
 # 2026-07-17: gpt-5.6 rejected codex's documented "minimal" with
@@ -112,20 +100,6 @@ MCP_TOOL_TIMEOUT_S = 86_400
 # Read-back caps for the untrusted codex container: an oversized file
 # arrives truncated, so its JSON parse fails closed.
 MAX_LAST_MESSAGE_BYTES = 8 * 1024 * 1024
-
-_REPO_DIR = Path(__file__).resolve().parent
-_BRIDGE_PATH = str(_REPO_DIR / "mcp_shell_bridge.py")
-_BRIDGE_CLIENT_PATH = _REPO_DIR / "shell_bridge_client.py"
-_RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
-
-
-class CodexUsageLimit(RuntimeError):
-    """The usage window is exhausted; do not retry."""
-
-
-class CodexAuthFailed(RuntimeError):
-    """Codex rejected the stored credentials; only a human ``codex login``
-    can restore service, so do not retry."""
 
 
 class CodexTurnFailed(ProviderTurnFailed):
@@ -160,7 +134,7 @@ def build_codex_exec_command(
     reasoning_summary: str | None = None,
     catalog_override_path: str | None = None,
     bridge_python: str = sys.executable,
-    bridge_path: str = _BRIDGE_PATH,
+    bridge_path: str = str(BRIDGE_PATH),
 ) -> list[str]:
     """The full ``codex exec`` argv for one pass; prompt arrives on stdin.
 
@@ -212,17 +186,6 @@ def build_codex_exec_command(
     return cmd
 
 
-def _parse_event_line(line: str) -> JsonObject | None:
-    line = line.strip()
-    if not line or not line.startswith("{"):
-        return None
-    try:
-        event = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-    return event if isinstance(event, dict) else None
-
-
 def summarize_codex_events(jsonl: str) -> tuple[JsonObject, str]:
     """Extract ``(usage, error_text)`` from a ``codex exec --json`` stream.
 
@@ -235,7 +198,7 @@ def summarize_codex_events(jsonl: str) -> tuple[JsonObject, str]:
     usage: JsonObject = {}
     errors: list[str] = []
     for line in jsonl.splitlines():
-        event = _parse_event_line(line)
+        event = parse_event_line(line)
         if event is None:
             continue
         found = event.get("usage")
@@ -265,21 +228,20 @@ def _is_auth_failure(error_text: str) -> bool:
     return "log out and sign in again" in lowered or "codex login" in lowered
 
 
-class CodexReviewer(Reviewer):
-    """One ``codex exec`` pass of a ``RoleSpec`` behind the shared interface.
+class CodexReviewer(CliReviewer):
+    """One ``codex exec`` pass of a ``RoleSpec`` (see ``CliReviewer``).
 
-    ``run(ctx)`` builds the same role prompt as the API backends (inlining
-    patch and source bundle as text, like Anthropic), runs the pinned
-    codex binary against it and validates the schema-forced last message
-    with the role. Raises ``CodexUsageLimit`` on an exhausted plan window,
-    ``CodexTurnFailed`` when the provider ended the turn, and
-    ``BadModelOutput`` when the final message fails validation.
-
-    A login failure raises ``CodexAuthFailed`` after setting the host
-    auth.json aside as auth.json.invalid: fairy cannot log in itself, so
-    later passes fail fast instead of retrying the dead credentials until
-    a human runs ``codex login``.
+    Codex specifics: the model catalog is hardened host-side before
+    every run (``harden_codex_catalog``) and the schema-forced final
+    message is read from ``--output-last-message``; ``--json`` events on
+    stdout are telemetry and the source of the error classification.
     """
+
+    backend = "codex"
+    efforts = CODEX_EFFORTS
+    run_dir = CONTAINER_RUN_DIR
+    credential_dir = CONTAINER_CODEX_HOME
+    login_hint = "run `codex login` for the deployment's CODEX_HOME"
 
     def __init__(
         self,
@@ -300,30 +262,22 @@ class CodexReviewer(Reviewer):
         verbose: bool = False,
         debug_dir: str | None = None,
     ) -> None:
-        if effort is not None and effort not in CODEX_EFFORTS:
-            raise ValueError(f"effort {effort!r} not in {CODEX_EFFORTS}")
         if web_search not in CODEX_WEB_SEARCH_MODES:
             raise ValueError(
                 f"web_search {web_search!r} not in {CODEX_WEB_SEARCH_MODES}")
-        self.model = model
-        self.name = name
-        self.role = role
+        super().__init__(
+            model, name=name, role=role, host=codex_host, image=codex_image,
+            credential_local=Path(resolve_codex_home(codex_home)) / "auth.json",
+            exec_timeout_s=exec_timeout_s, effort=effort,
+            run_timeout_s=run_timeout_s, verbose=verbose, debug_dir=debug_dir,
+        )
         self.codex_bin = codex_bin
         self.codex_home = codex_home
-        # None means codex is unavailable (there is no local codex); run()
-        # rejects it.
-        self.codex_host = codex_host
-        self.codex_image = codex_image
-        self.exec_timeout_s = exec_timeout_s
-        self.effort = effort
         self.web_search = web_search
         self.verbosity = verbosity
         self.reasoning_summary = reasoning_summary
-        self.run_timeout_s = run_timeout_s  # 0 disables the watchdog
-        self.verbose = verbose
-        self.debug_dir = debug_dir
 
-    def _write_hardened_catalog(self, scratch: str) -> str:
+    def _write_hardened_catalog(self, scratch: str) -> Path:
         """Write a host-hardened copy of codex's model catalog into scratch
         and return its path for ``-c model_catalog_json=``.
 
@@ -351,7 +305,7 @@ class CodexReviewer(Reviewer):
                 "view_image/apply_patch hardening "
                 "(refresh: tools/refresh_codex_catalog.sh)"
             )
-        path = os.path.join(scratch, "hardened_catalog.json")
+        path = Path(scratch) / "hardened_catalog.json"
         with open(path, "w", encoding="utf-8") as f:
             json.dump(harden_codex_catalog(catalog), f)
         os.chmod(path, 0o600)
@@ -361,236 +315,71 @@ class CodexReviewer(Reviewer):
         )
         return path
 
-    def _build_prompt(self, ctx: ReviewContext, use_shell: bool) -> str:
-        features: set[str] = set()
-        if self.web_search != "disabled":
-            features.add("web_search")
-        if ctx.source_bundle is not None:
-            features.add("source_bundle")
-        if use_shell:
-            features.add("podman_shell")
-        developer = generate_llm_prompt(
-            role=self.role.name,
-            vendor="codex",
+    def _prompt_features(self) -> set[str]:
+        return {"web_search"} if self.web_search != "disabled" else set()
+
+    def _stage(self, scratch: str, *, use_shell: bool,
+               machine_labels: tuple[str, ...]) -> Staged:
+        catalog_local = self._write_hardened_catalog(scratch)
+        cmd = build_codex_exec_command(
+            codex_bin=self.codex_bin,
             model=self.model,
-            features=features,
-            repo_roots=ctx.repo_roots,
-            container_repo_mounts=ctx.repo_mount_paths,
-            machines=ctx.machines,
-            reviewer_username=ctx.reviewer_username,
-            project_facts=ctx.project_facts,
-            ci_triage_mode=ctx.ci_triage_mode,
-            **self.role.prompt_kwargs,
+            effort=self.effort,
+            scratch_dir=CONTAINER_RUN_DIR,
+            schema_path=f"{CONTAINER_RUN_DIR}/output_schema.json",
+            last_message_path=f"{CONTAINER_RUN_DIR}/last_message.json",
+            socket_path=self.socket_path if use_shell else None,
+            machine_labels=machine_labels,
+            catalog_override_path=f"{CONTAINER_RUN_DIR}/{catalog_local.name}",
+            web_search=self.web_search,
+            verbosity=self.verbosity,
+            reasoning_summary=self.reasoning_summary,
+            bridge_python="python3",
+            bridge_path=f"{CONTAINER_RUN_DIR}/{BRIDGE_PATH.name}",
         )
-        user_texts = self.role.user_texts(ctx)
-        parts = [developer, user_texts[0]]
-        if ctx.patch_text:
-            parts.append(ctx.patch_text)
-        if ctx.source_bundle is not None:
-            parts.append(ctx.source_bundle)
-        parts.extend(user_texts[1:])
-        parts.append(
-            "Your final message must be exactly one JSON object matching "
-            "the configured output schema -- no surrounding text."
-        )
-        return "\n\n".join(parts)
+        # The container env carries only CODEX_HOME; the wrapper's
+        # OPENAI_API_KEY/CODEX_API_KEY are not forwarded by podman
+        # exec, so codex cannot rebind to another credential.
+        return Staged(cmd, {"CODEX_HOME": CONTAINER_CODEX_HOME},
+                      [(catalog_local, CONTAINER_RUN_DIR)])
 
-    def run(self, ctx: ReviewContext) -> dict[str, object]:
-        if self.codex_host is None:
-            raise RuntimeError(
-                f"{self.name}: codex requires --codex-host; there is no "
-                "local codex backend."
+    def _run_summary(self, proc: subprocess.CompletedProcess
+                     ) -> tuple[JsonObject, str]:
+        return summarize_codex_events(proc.stdout)
+
+    def _final_object(self, container: CliContainer,
+                      proc: subprocess.CompletedProcess,
+                      error_text: str) -> object:
+        if _is_usage_limit(error_text) or _is_usage_limit(proc.stderr):
+            raise CliUsageLimit(
+                f"{self.name}: plan usage limit reached; details: "
+                f"{error_text or proc.stderr.strip()[-500:]}"
             )
-        use_shell = bool(ctx.machines) and ctx.open_shell is not None
-        prompt = self._build_prompt(ctx, use_shell)
-        scratch = tempfile.mkdtemp(prefix="fairy-codex-")  # local staging only
-        container = CliContainer(
-            image=self.codex_image, host=self.codex_host.host,
-            memory=self.codex_host.memory, cpus=self.codex_host.cpus,
-        )
-        relay: CliShellRelay | None = None
-        machine_labels = tuple(m.label for m in ctx.machines)
+        # Treat the last-message file, not the exit code, as the
+        # success signal: codex has exited 0 with no output.
+        last_message = (container.read_file(
+            f"{CONTAINER_RUN_DIR}/last_message.json",
+            max_bytes=MAX_LAST_MESSAGE_BYTES) or "").strip()
+        if not last_message:
+            if _is_auth_failure(error_text) or _is_auth_failure(proc.stderr):
+                raise self._invalidate_credential(
+                    error_text or proc.stderr.strip()[-2000:])
+            # A ``turn.failed`` event means the provider ended the turn
+            # itself, which says nothing about the review containers.
+            # Observed 2026-07-28: gpt-5.6-sol was refused mid-review of
+            # PR #23750 with "flagged for possible cybersecurity risk".
+            raise (
+                ProviderContentFlagged
+                if "flagged for possible cybersecurity risk" in error_text
+                else CodexTurnFailed if '"turn.failed"' in error_text
+                else RuntimeError)(
+                f"{self.name}: codex exec produced no final message "
+                f"(rc={proc.returncode}); errors: "
+                f"{error_text or proc.stderr.strip()[-2000:] or '-'}"
+            )
         try:
-            schema_local = Path(scratch) / "output_schema.json"
-            schema_local.write_text(
-                json.dumps(self.role.schema["schema"]), encoding="utf-8")
-            auth_local = Path(resolve_codex_home(self.codex_home)) / "auth.json"
-            if not auth_local.is_file():
-                raise RuntimeError(
-                    f"{self.name}: codex auth.json not found at {auth_local} "
-                    "(run `codex login` for the deployment's CODEX_HOME)"
-                )
-            catalog_local = self._write_hardened_catalog(scratch)
-
-            container.start()
-            container.put_file(auth_local, CONTAINER_CODEX_HOME)
-            container.put_file(schema_local, CONTAINER_RUN_DIR)
-            container.put_file(Path(catalog_local), CONTAINER_RUN_DIR)
-            catalog_container = \
-                f"{CONTAINER_RUN_DIR}/{Path(catalog_local).name}"
-            if use_shell:
-                for local in (Path(_BRIDGE_PATH), _BRIDGE_CLIENT_PATH,
-                              _RELAY_PATH):
-                    container.put_file(local, CONTAINER_RUN_DIR)
-                relay = CliShellRelay(
-                    container,
-                    relay_container_path=f"{CONTAINER_RUN_DIR}/relay.py",
-                    machine_labels=machine_labels,
-                    open_shell=ctx.open_shell,
-                    max_timeout_s=self.exec_timeout_s,
-                    socket_path=RELAY_SOCKET_PATH,
-                ).start()
-
-            cmd = build_codex_exec_command(
-                codex_bin=self.codex_bin,
-                model=self.model,
-                effort=self.effort,
-                scratch_dir=CONTAINER_RUN_DIR,
-                schema_path=f"{CONTAINER_RUN_DIR}/output_schema.json",
-                last_message_path=f"{CONTAINER_RUN_DIR}/last_message.json",
-                socket_path=RELAY_SOCKET_PATH if use_shell else None,
-                machine_labels=machine_labels,
-                catalog_override_path=catalog_container,
-                web_search=self.web_search,
-                verbosity=self.verbosity,
-                reasoning_summary=self.reasoning_summary,
-                bridge_python="python3",
-                bridge_path=f"{CONTAINER_RUN_DIR}/mcp_shell_bridge.py",
+            return json.loads(last_message)
+        except json.JSONDecodeError as exc:
+            raise BadModelOutput(
+                f"final message is not JSON despite --output-schema: {exc}"
             )
-
-            with concurrency.slot("codex"):
-                logger.info(
-                    "codex exec start role=%s model=%s effort=%s shell=%s host=%s",
-                    self.role.name, self.model, self.effort or "-", use_shell,
-                    self.codex_host.host.ssh_dest,
-                )
-                started = time.monotonic()
-                # The container env carries only CODEX_HOME; the wrapper's
-                # OPENAI_API_KEY/CODEX_API_KEY are not forwarded by podman
-                # exec, so codex cannot rebind to another credential.
-                try:
-                    proc = container.run(
-                        cmd, input_text=prompt,
-                        env={"CODEX_HOME": CONTAINER_CODEX_HOME},
-                        timeout_s=self.run_timeout_s or None,
-                    )
-                except subprocess.TimeoutExpired:
-                    raise RuntimeError(
-                        f"{self.name}: codex exec exceeded "
-                        f"--codex-timeout-seconds ({self.run_timeout_s:.0f}s)"
-                    )
-                elapsed = time.monotonic() - started
-                # Codex may have rotated the OAuth tokens mid-run, and --rm is
-                # about to discard the container's copy.
-                persist_refreshed_auth(
-                    container, f"{CONTAINER_CODEX_HOME}/auth.json", auth_local)
-
-            usage, error_text = summarize_codex_events(proc.stdout)
-            logger.info(
-                "codex exec done rc=%d dt=%.1fs usage=%s",
-                proc.returncode, elapsed,
-                json.dumps(usage, ensure_ascii=False) if usage else "-",
-            )
-            self._dump_debug_artifacts(ctx, prompt, cmd, proc, usage)
-            if _is_usage_limit(error_text) or _is_usage_limit(proc.stderr):
-                raise CodexUsageLimit(
-                    f"{self.name}: plan usage limit reached; details: "
-                    f"{error_text or proc.stderr.strip()[-500:]}"
-                )
-            # Treat the last-message file, not the exit code, as the
-            # success signal: codex has exited 0 with no output.
-            last_message = (container.read_file(
-                f"{CONTAINER_RUN_DIR}/last_message.json",
-                max_bytes=MAX_LAST_MESSAGE_BYTES) or "").strip()
-            if not last_message:
-                if _is_auth_failure(error_text) or _is_auth_failure(proc.stderr):
-                    invalidated = auth_local.with_name("auth.json.invalid")
-                    try:
-                        auth_local.replace(invalidated)
-                    except FileNotFoundError:
-                        pass  # a parallel pass already set it aside
-                    logger.critical(
-                        "codex: credentials rejected; %s set aside as %s so "
-                        "no further logins are attempted until a human runs "
-                        "`codex login`", auth_local, invalidated.name)
-                    raise CodexAuthFailed(
-                        f"{self.name}: codex rejected the credentials; "
-                        f"{auth_local} set aside as {invalidated.name}, run "
-                        f"`codex login` to restore service; errors: "
-                        f"{error_text or proc.stderr.strip()[-2000:] or '-'}"
-                    )
-                # A ``turn.failed`` event means the provider ended the turn
-                # itself, which says nothing about the review containers.
-                # Observed 2026-07-28: gpt-5.6-sol was refused mid-review of
-                # PR #23750 with "flagged for possible cybersecurity risk".
-                raise (
-                    ProviderContentFlagged
-                    if "flagged for possible cybersecurity risk" in error_text
-                    else CodexTurnFailed if '"turn.failed"' in error_text
-                    else RuntimeError)(
-                    f"{self.name}: codex exec produced no final message "
-                    f"(rc={proc.returncode}); errors: "
-                    f"{error_text or proc.stderr.strip()[-2000:] or '-'}"
-                )
-            try:
-                result_obj = json.loads(last_message)
-            except json.JSONDecodeError as exc:
-                raise BadModelOutput(
-                    f"final message is not JSON despite --output-schema: {exc}"
-                )
-            result = self.role.validate(result_obj)
-            ctx.collect_into(
-                result, relay.opened_sessions() if relay is not None else [])
-            if self.verbose:
-                verdict = result.get("classification") or result.get("route") or "-"
-                logger.debug("codex %s verdict=%s", self.role.name, verdict)
-            return result
-        except (CodexAuthFailed, CodexUsageLimit, ProviderTurnFailed):
-            raise  # clean provider-side stop; the containers are not suspect
-        except BadModelOutput:
-            raise  # codex ran fine, only the final JSON was malformed
-        except BranchCollectionFailed:
-            raise  # codex ran fine; fairy's own branch packing failed
-        except Exception:
-            shell_tool.abort_if_cancelled()
-            if shell_tool.halted():
-                raise  # a sibling's halt tore this run down; not evidence
-
-            # An abnormal exit may mean a PR-derived command tampered with the
-            # review containers, so mark them for forensics rather than removal.
-            if ctx.report_poisoned is not None and relay is not None:
-                for session in relay.opened_sessions():
-                    ctx.report_poisoned(session)
-            raise
-        finally:
-            if relay is not None:
-                relay.stop()
-            container.stop()
-            shutil.rmtree(scratch, ignore_errors=True)
-
-    def _dump_debug_artifacts(
-        self, ctx: ReviewContext, prompt: str, cmd: list[str],
-        proc: subprocess.CompletedProcess, usage: JsonObject,
-    ) -> None:
-        """One dump file per run in the API backends' request/response
-        format (``dump_response_debug_artifacts``), so codex runs read
-        the same way as openai:/anthropic: ones in the debug dir."""
-        if not self.debug_dir:
-            return
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        dump_response_debug_artifacts(
-            {
-                "id": f"codex-{stamp}-{self.role.name}",
-                "model": self.model,
-                "events": [_parse_event_line(line) or {"raw": line}
-                           for line in proc.stdout.splitlines()
-                           if line.strip()],
-                "stderr": proc.stderr,
-                "returncode": proc.returncode,
-                "usage": usage,
-            },
-            {"model": self.model, "effort": self.effort, "cmd": cmd,
-             "input": prompt},
-            wrapper_request=ctx.request,
-            debug_dir=self.debug_dir, verbose=self.verbose,
-        )

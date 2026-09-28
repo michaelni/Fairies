@@ -28,9 +28,9 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-In-container relay for the codex backend's shell tool.
+In-container relay for a CLI backend's shell tool.
 
-The codex CLI runs inside a review container and spawns ``codex_bridge.py``
+The CLI (codex, agy) runs inside its own container and spawns ``mcp_shell_bridge.py``
 as its MCP shell server; that bridge connects (as a
 ``shell_socket.ShellDispatchClient``) to a container-local unix socket.
 This relay *serves* that socket and pipes it, line for line, to its own
@@ -39,11 +39,11 @@ stdin/stdout -- which the wrapper drives from the outside via
 already use. Shell-tool requests thus reach the wrapper's dispatcher with
 no bind mount and no reverse tunnel:
 
-    codex -> codex_bridge --socket SOCK -> [relay's SOCK]
+    CLI -> mcp_shell_bridge --socket SOCK -> [relay's SOCK]
           -> relay stdout -> podman exec -> wrapper dispatcher
-    wrapper -> podman exec stdin -> relay stdin -> SOCK -> codex_bridge
+    wrapper -> podman exec stdin -> relay stdin -> SOCK -> mcp_shell_bridge
 
-One accepted connection == one codex run. Stdlib only and no fairy
+One accepted connection == one CLI run. Stdlib only and no fairy
 imports: the review image carries none of this, the file is ``podman
 cp``'d in per run.
 """
@@ -70,7 +70,7 @@ def main() -> int:
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(sock_path)
     srv.listen(1)
-    # The wrapper waits for this line before launching codex, so the bridge
+    # The wrapper waits for this line before launching the CLI, so the bridge
     # can never race an unbound socket.
     sys.stderr.write("RELAY-READY\n")
     sys.stderr.flush()

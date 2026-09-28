@@ -4,7 +4,7 @@
 # (`podman run --rm`) on the --codex-host, so codex never executes on the
 # wrapper host that holds the ssh key and the provider API keys. The only
 # model-reachable capability is the MCP shell into the review containers,
-# via relay.py; that, codex_bridge.py, shell_bridge_client.py, auth.json
+# via relay.py; that, mcp_shell_bridge.py, shell_bridge_client.py, auth.json
 # and the output schema are `podman cp`'d in per run (no bind mounts),
 # exactly like the review image copies fairy_agent.py; the prompt goes in
 # over the `podman exec -i` stdin. Host-side codex tools are stripped
@@ -25,7 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
     LANG=C.UTF-8
 
-# python3 runs codex_bridge.py + relay.py (copied in per run);
+# python3 runs mcp_shell_bridge.py + relay.py (copied in per run);
 # ca-certificates lets codex reach the OpenAI API over TLS. Unlike the
 # review image, the model apt-installs nothing here, so the apt lists are
 # dropped to keep the image lean.

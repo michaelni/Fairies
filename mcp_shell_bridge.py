@@ -27,10 +27,10 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-MCP stdio server bridging the codex CLI to the shell dispatch.
+MCP stdio server bridging a CLI coding agent to the shell dispatch.
 
-Runs inside the codex container. The codex CLI spawns this script per run
-(``mcp_servers.shell`` in the config the wrapper passes via ``-c``) and
+Runs inside the CLI container. The CLI (codex, agy) spawns this script
+per run as the MCP server its reviewer module configured, and
 speaks MCP -- JSON-RPC 2.0, newline-delimited over stdin/stdout -- to it.
 This bridge is a dumb pipe: it advertises the one canonical ``shell``
 tool and forwards each ``tools/call`` over a container-local unix socket
@@ -40,10 +40,10 @@ pipes it out over the wrapper's ``podman exec -i`` channel to
 timeouts live. It holds no credentials and can execute nothing itself.
 
 The socket connection opens lazily on the first ``tools/call`` and then
-persists: one bridge process = one connection = the codex run's private
+persists: one bridge process = one connection = the CLI run's private
 review-container set on the wrapper side.
 
-Implements the MCP subset codex needs from a tools-only server:
+Implements the MCP subset a tools-only server needs:
 ``initialize``, ``tools/list``, ``tools/call``, ``ping``, and ignores
 notifications. Unknown methods with an id get a MethodNotFound error.
 """

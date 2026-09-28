@@ -41,7 +41,7 @@ from unittest import mock
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import codex_bridge
+import mcp_shell_bridge
 import podman_host
 import shell_socket
 
@@ -57,12 +57,12 @@ class BridgeProtocolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.out: list[dict] = []
         patcher = mock.patch.object(
-            codex_bridge, "_write", side_effect=self.out.append)
+            mcp_shell_bridge, "_write", side_effect=self.out.append)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def _bridge(self, socket_path="/nonexistent", labels=("x86_64", "arm64")):
-        return codex_bridge.Bridge(socket_path, list(labels))
+        return mcp_shell_bridge.Bridge(socket_path, list(labels))
 
     def test_initialize_echoes_client_protocol_version(self) -> None:
         bridge = self._bridge()
@@ -92,7 +92,7 @@ class BridgeProtocolTests(unittest.TestCase):
         bridge = self._bridge()
         bridge.handle({"jsonrpc": "2.0", "id": 3, "method": "resources/list"})
         self.assertEqual(
-            codex_bridge.METHOD_NOT_FOUND, self.out[0]["error"]["code"])
+            mcp_shell_bridge.METHOD_NOT_FOUND, self.out[0]["error"]["code"])
 
     def test_notifications_are_ignored(self) -> None:
         bridge = self._bridge()
@@ -111,7 +111,7 @@ class BridgeProtocolTests(unittest.TestCase):
                        "params": {"name": "shell",
                                   "arguments": {"command": "true"}}})
         self.assertEqual(
-            codex_bridge.INTERNAL_ERROR, self.out[0]["error"]["code"])
+            mcp_shell_bridge.INTERNAL_ERROR, self.out[0]["error"]["code"])
 
     def _serve_on_unix_socket(self, open_shell, machine_labels):
         """Bind a unix socket and run serve_dispatch on one accepted

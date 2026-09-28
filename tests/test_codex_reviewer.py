@@ -355,7 +355,7 @@ class CodexReviewerRunTests(unittest.TestCase):
 
     def test_container_gets_auth_and_bridge_files(self) -> None:
         self._run()
-        for name in ("auth.json", "codex_bridge.py", "shell_bridge_client.py",
+        for name in ("auth.json", "mcp_shell_bridge.py", "shell_bridge_client.py",
                      "relay.py", "output_schema.json"):
             self.assertIn(name, self.container.copied)
 

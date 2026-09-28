@@ -27,10 +27,10 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Wrapper-side shell dispatch for the codex backend.
+Wrapper-side shell dispatch for the CLI backends.
 
-The codex CLI runs inside a container on the ``--codex-host`` and spawns
-``codex_bridge.py`` as its MCP shell server; the bridge connects to a
+The CLI (codex, agy) runs inside a container on its podman host and spawns
+``mcp_shell_bridge.py`` as its MCP shell server; the bridge connects to a
 container-local socket served by ``relay.py``, which the wrapper drives
 over a ``podman exec -i`` stdio channel (see ``cli_container``). This
 module's ``serve_dispatch`` is the wrapper end of that channel: it reads
@@ -66,8 +66,8 @@ __all__ = ["ShellDispatchClient", "serve_dispatch"]
 
 logger = logging.getLogger(__name__)
 
-# Request lines come from inside the codex container, so they are
-# attacker-forgeable rather than just what codex_bridge emits.
+# Request lines come from inside the CLI container, so they are
+# attacker-forgeable rather than just what mcp_shell_bridge emits.
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
 
 

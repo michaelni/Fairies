@@ -27,10 +27,10 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-The podman-free half of the codex shell bridge.
+The podman-free half of the CLI shell bridge.
 
-``codex_bridge.py`` runs INSIDE the codex container and imports only this
-module, so the thin codex image needs no orchestration code -- none of
+``mcp_shell_bridge.py`` runs INSIDE the CLI container and imports only this
+module, so the thin CLI image needs no orchestration code -- none of
 ``podman_host`` / ``shell_tool`` / ``shell_socket``, which pull in the
 review-side machinery. Stdlib only (``json``, ``socket``).
 

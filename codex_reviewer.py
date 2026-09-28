@@ -33,7 +33,7 @@ Unlike the API backends this one runs no tool loop of its own: it spawns
 one pinned ``codex exec`` per pass inside a container on the
 ``--codex-host`` (see ``cli_container``) and lets codex drive the model,
 with the review-container shell reaching codex as an MCP tool via
-``codex_bridge.py`` -> ``relay.py`` -> the wrapper's ``serve_dispatch``,
+``mcp_shell_bridge.py`` -> ``relay.py`` -> the wrapper's ``serve_dispatch``,
 over a ``podman exec -i`` channel (no host-crossing socket).
 
 ``usage_limit_reached`` raises ``CodexUsageLimit`` immediately and
@@ -114,7 +114,7 @@ MCP_TOOL_TIMEOUT_S = 86_400
 MAX_LAST_MESSAGE_BYTES = 8 * 1024 * 1024
 
 _REPO_DIR = Path(__file__).resolve().parent
-_BRIDGE_PATH = str(_REPO_DIR / "codex_bridge.py")
+_BRIDGE_PATH = str(_REPO_DIR / "mcp_shell_bridge.py")
 _BRIDGE_CLIENT_PATH = _REPO_DIR / "shell_bridge_client.py"
 _RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
 
@@ -455,7 +455,7 @@ class CodexReviewer(Reviewer):
                 verbosity=self.verbosity,
                 reasoning_summary=self.reasoning_summary,
                 bridge_python="python3",
-                bridge_path=f"{CONTAINER_RUN_DIR}/codex_bridge.py",
+                bridge_path=f"{CONTAINER_RUN_DIR}/mcp_shell_bridge.py",
             )
 
             with concurrency.slot("codex"):

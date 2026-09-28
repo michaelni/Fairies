@@ -205,7 +205,7 @@ class ServeDispatchTests(unittest.TestCase):
 
 
 class RelayDispatchTests(unittest.TestCase):
-    """The codex-container transport: codex_bridge -> relay.py socket ->
+    """The codex-container transport: mcp_shell_bridge -> relay.py socket ->
     relay stdio -> serve_dispatch (the wrapper side), no bind mount / no
     reverse tunnel. Drives the real relay.py as a subprocess, exactly as
     the wrapper will over ``podman exec -i``."""

@@ -483,6 +483,7 @@ def generate_llm_prompt(
 * Use after free.
 * Double free.
 * Infinite loop.
+* violate API rules of an external API.
 ''' * code_issues}\
 * a new bug which would have a significant impact on users, not merely a change in the consequences of an existing bug, nor an unavoidable consequence of an intentional fix
 * Breaks the build in any supported configuration

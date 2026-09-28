@@ -1214,6 +1214,14 @@ def _clipboard_cmd() -> list[str] | None:
     return None
 
 
+def _leading_style(line) -> str | None:
+    """The style of a pane line's first segment; None for a plain
+    string, an empty line or a single (style, text) row."""
+    if not line or isinstance(line, str) or isinstance(line[0], str):
+        return None
+    return line[0][0]
+
+
 def _plain(lines: list) -> str:
     """Pane content back to text for exports. Lines are the same three
     shapes _blit paints: plain strings, one (style, text) row, or a
@@ -2027,9 +2035,7 @@ class UILoop:
         for i in range(rect.h - 1):
             buf.append(t.move_xy(rect.x, rect.y + 1 + i) + lpad)
             line = lines[i] if i < len(lines) else ""
-            if line and not isinstance(line, str) \
-                    and not isinstance(line[0], str) \
-                    and line[0][0] == "diff_commit":
+            if _leading_style(line) == "diff_commit":
                 line = [("bold", "⧉ ")] + line
             shown.append(tui_core.sanitize(_plain([line])))
             # sanitize(): forge/LLM text must not inject escape sequences.

@@ -49,7 +49,7 @@ from common import (LLM_HTTP_TIMEOUT_S, JsonObject, call_with_retry,
                     dump_response_debug_artifacts, load_api_key)
 from llm_prompt import REVIEWER_ROLE
 from llm_review_api import ReviewContext, Reviewer, RoleSpec
-from anthropic_common import ANTHROPIC_API_URL, retryable
+from anthropic_common import ANTHROPIC_API_URL, MessagesError, retryable
 from shell_tool import abort_if_cancelled
 from tool_loop import Conversation, ToolCall, review_prompt, review_tools, run_tool_loop
 
@@ -194,9 +194,13 @@ class _Conversation(Conversation):
 
         def post() -> JsonObject:
             response = self.client.post("/v1/messages", json=request_kwargs)
-            if response.is_error:
+            body = response.json() if response.is_success else {}
+            if not response.is_success or body.get("type") == "error":
                 logger.warning("messages HTTP %d: %s", response.status_code, response.text[:2000])
-            return response.raise_for_status().json()
+                response.raise_for_status()
+                error = body.get("error")
+                raise MessagesError(error if isinstance(error, dict) else {"message": response.text[:2000]})
+            return body
 
         abort_if_cancelled()
         with concurrency.slot(reviewer.name.partition(":")[0]):

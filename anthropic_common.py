@@ -28,7 +28,7 @@
  */
 
 Thin Messages-API glue shared by the Anthropic / GLM / OpenRouter
-reviewer: Anthropic's own endpoint and which HTTP replies
+reviewer: Anthropic's own endpoint and which replies
 ``common.call_with_retry`` retries.
 
 What does NOT belong: prompt text, the review pipeline, or any
@@ -41,14 +41,29 @@ import logging
 
 import httpx
 
+from common import JsonObject
+
 __all__ = [
     "ANTHROPIC_API_URL",
+    "MessagesError",
     "retryable",
 ]
 
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_API_URL = "https://api.anthropic.com"
+
+
+class MessagesError(RuntimeError):
+    """A 2xx Messages reply whose body is an error object instead of a
+    message; ``error`` is the body's ``error`` object (OpenRouter
+    answered HTTP 200 with a ``provider_unavailable`` one on 2026-09-28).
+    """
+
+    def __init__(self, error: JsonObject) -> None:
+        super().__init__(f"{error.get('type')}: {error.get('message')}")
+        self.error = error
+
 
 # z.ai signals two "stop calling, waiting won't help soon" states as an
 # HTTP 429 with these error codes (Anthropic proper uses neither; both
@@ -85,13 +100,16 @@ def _is_quota_exhausted(response: httpx.Response) -> bool:
 def retryable(exc: Exception) -> bool:
     """Whether ``common.call_with_retry`` should retry ``exc``: a Messages
     rate-limit (429) / overloaded (529) / 5xx reply, except z.ai's quota
-    exhaustion.
+    exhaustion, or a ``MessagesError`` of the types the API maps to those
+    statuses (https://platform.claude.com/docs/en/api/errors).
 
     Connection errors and timeouts are not retried: like the OpenAI main
     call, an unpredictable long request is restarted by the outer caller
     -- which has its own deadline -- rather than silently re-issued here,
     where a duplicate would be billed.
     """
+    if isinstance(exc, MessagesError):
+        return exc.error.get("type") in ("rate_limit_error", "api_error", "overloaded_error")
     if not isinstance(exc, httpx.HTTPStatusError):
         return False
     status = exc.response.status_code

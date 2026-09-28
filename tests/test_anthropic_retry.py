@@ -81,6 +81,21 @@ _ZAI_OVERLOADED_BODY = {
                    "try again later][20260703094815abf86bff2a734721]",
     },
 }
+# Real body observed from OpenRouter (2026-09-28), as HTTP 200.
+OPENROUTER_EMPTY_BODY = {
+    "type": "error",
+    "error": {
+        "type": "api_error",
+        "error_type": "provider_unavailable",
+        "message": "Provider returned an empty response",
+    },
+    "content": None,
+    "id": None,
+    "model": None,
+    "role": None,
+    "stop_reason": None,
+    "usage": None,
+}
 
 
 def _response(status: int, body: dict | str) -> httpx.Response:
@@ -161,6 +176,18 @@ class RetryTests(unittest.TestCase):
                           _status_error(529, _ZAI_OVERLOADED_BODY), "ok"])
         self.assertEqual("ok", _retry(func))
         self.assertEqual(3, func.calls)
+
+    def test_error_body_of_transient_type_is_retried(self) -> None:
+        func = _Scripted([anthropic_common.MessagesError(OPENROUTER_EMPTY_BODY["error"]), "ok"])
+        self.assertEqual("ok", _retry(func))
+        self.assertEqual(2, func.calls)
+
+    def test_error_body_of_request_type_is_not_retried(self) -> None:
+        func = _Scripted([anthropic_common.MessagesError(
+            {"type": "invalid_request_error", "message": "max_tokens: too large"})])
+        with self.assertRaises(anthropic_common.MessagesError):
+            _retry(func)
+        self.assertEqual(1, func.calls)
 
 
 if __name__ == "__main__":

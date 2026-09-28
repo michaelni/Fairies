@@ -39,6 +39,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import httpx
 
@@ -46,10 +47,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import common  # noqa: E402
 import podman_host  # noqa: E402
 from llm_review_api import ReviewContext  # noqa: E402
 import anthropic_reviewer  # noqa: E402
 import llm_prompt  # noqa: E402
+from test_anthropic_retry import OPENROUTER_EMPTY_BODY  # noqa: E402
 
 
 def _reply(content: list[dict]) -> dict:
@@ -208,6 +211,25 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         self.assertEqual("approve", review.classification)
         # submit_review only (no shell tool) when the context has no shell.
         self.assertEqual(1, len(client.calls[0]["tools"]))
+
+    def test_error_body_with_http_200_is_retried(self) -> None:
+        client = _ScriptedClient([
+            OPENROUTER_EMPTY_BODY,
+            _reply([dict(type="tool_use", id="t1", name="submit_review",
+                             input={"classification": "approve", "message": "",
+                                    "head_vs_branch_diff_evidence": False})]),
+        ])
+        reviewer = anthropic_reviewer.AnthropicReviewer(
+            "stealth/space-bunny-alpha", name="openrouter:stealth/space-bunny-alpha",
+            base_url="https://openrouter.ai/api", api_key_env="OPENROUTER_API_KEY",
+        )
+        reviewer._client = lambda: client  # type: ignore[method-assign]
+
+        with mock.patch.object(common.time, "sleep"):
+            review = reviewer.review(_ctx(None))
+
+        self.assertEqual("approve", review.classification)
+        self.assertEqual(2, len(client.calls))
 
     def test_triager_role_via_submit_review(self) -> None:
         from llm_prompt import make_triager_role

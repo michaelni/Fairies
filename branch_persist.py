@@ -404,9 +404,15 @@ def collect_declared_branches(
     *,
     repo_specs: Sequence[RepoSpec],
     base_shas: dict[str, Sequence[str]],
+    inherited: Sequence[JsonObject] = (),
 ) -> list[CollectedBranch]:
     """Pack the verdict's declared branches out of the containers' fairy
     remotes into self-contained records.
+
+    ``inherited`` are the records ``add_to_container_remote`` put on every
+    container's remotes before the model ran; a branch tip that is neither
+    a seed nor inherited is the model's own push, and only that container
+    is packed. Declaring an inherited branch unchanged re-declares it.
 
     ``declared`` and ``pull_requests`` are the role's sanitized lists
     (``llm_review_api``); a pull request implies its branch. Every
@@ -456,7 +462,7 @@ def collect_declared_branches(
                 diff_base_sha=None))
             logger.info("collected deletion of %r from %r", branch, repo)
         else:
-            found = None
+            holders = []
             for handle, handle_seeds in seeded_handles:
                 if repo not in handle_seeds:
                     continue
@@ -466,13 +472,22 @@ def collect_declared_branches(
                     # this handle's own seeds: another machine's mirror
                     # may have differing fairy/* tips whose objects this
                     # container does not hold
-                    found = (handle, handle_seeds[repo], refs[branch])
-                    break
-            if found is None:
+                    holders.append((handle, handle_seeds[repo], refs[branch]))
+            if not holders:
                 logger.warning("declared branch %r is on no fairy remote of "
                                "%r; dropped", branch, repo)
                 continue
-            handle, seeds, sha = found
+            inherited_tip = next((r["sha"] for r in inherited
+                                  if (r["repo"], r["branch"]) == (repo, branch)),
+                                 None)
+            pushed = [h for h in holders
+                      if h[2] not in (h[1].get(branch), inherited_tip)]
+            if len({h[2] for h in pushed}) > 1:
+                logger.warning("declared branch %r of %r was pushed with "
+                               "differing tips to %d containers; dropped",
+                               branch, repo, len(pushed))
+                continue
+            handle, seeds, sha = (pushed or holders)[0]
             old_sha = seeds.get(branch)
             if sha == old_sha:
                 logger.info("declared branch %r of %r matches the published "

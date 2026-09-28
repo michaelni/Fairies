@@ -1633,6 +1633,7 @@ def main() -> int:
             pull_requests,
             repo_specs=persist_repos,
             base_shas=persist_base_shas,
+            inherited=inherited_branches,
         )
         records = [cb.record() for cb in collected]
         if args.commit_author:

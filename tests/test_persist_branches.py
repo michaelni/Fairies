@@ -443,6 +443,57 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
         self.assertEqual(records[0].old_sha, "2" * 40)
         self.assertEqual(bundle_negatives, [("2" * 40,)])
 
+    def test_the_pushed_tip_wins_over_the_inherited_one(self) -> None:
+        """The drafts' branches are put on every container of the next
+        stage; the model's push lands on one of them (observed: a combiner
+        amended a draft's commit on its second container while the first
+        still held the draft tip, which got collected)."""
+        handle2 = podman_host.ContainerHandle(
+            "cid456", "img", None, podman_host.RemoteHost("fairy@h"))
+        draft_tip, amended_tip = "d" * 40, "a" * 40
+        inherited = [{"repo": "ffmpeg", "branch": "fix", "sha": draft_tip}]
+        bundled_from: list[str] = []
+
+        def fake_cgit(handle, repo_path, *args, **kwargs):
+            if args[0] == "for-each-ref":
+                return _cmd(stdout=b"")
+            if args[:2] == ("bundle", "create"):
+                bundled_from.append(handle.container_id)
+                return _cmd(stdout=b"BUNDLE")
+            raise AssertionError(args)
+
+        def collect(second_tip):
+            with mock.patch.object(
+                    branch_persist, "_list_fake_refs",
+                    side_effect=lambda handle, repo: {
+                        "fix": second_tip if handle is handle2 else draft_tip}), \
+                    mock.patch.object(branch_persist, "_container_git",
+                                      side_effect=fake_cgit):
+                return branch_persist.collect_declared_branches(
+                    [(HANDLE, {"ffmpeg": {}}), (handle2, {"ffmpeg": {}})],
+                    [{"repo": "ffmpeg", "branch": "fix", "action": "push"}],
+                    [], repo_specs=[_repo_spec()], base_shas={},
+                    inherited=inherited)
+
+        self.assertEqual(collect(amended_tip)[0].sha, amended_tip)
+        self.assertEqual(bundled_from, ["cid456"])
+        self.assertEqual(collect(draft_tip)[0].sha, draft_tip)
+
+    def test_differing_pushes_to_two_containers_are_dropped(self) -> None:
+        handle2 = podman_host.ContainerHandle(
+            "cid456", "img", None, podman_host.RemoteHost("fairy@h"))
+        with mock.patch.object(
+                branch_persist, "_list_fake_refs",
+                side_effect=lambda handle, repo: {
+                    "fix": ("a" if handle is handle2 else "b") * 40}), \
+                mock.patch.object(branch_persist, "_container_git",
+                                  side_effect=AssertionError):
+            records = branch_persist.collect_declared_branches(
+                [(HANDLE, {"ffmpeg": {}}), (handle2, {"ffmpeg": {}})],
+                [{"repo": "ffmpeg", "branch": "fix", "action": "push"}],
+                [], repo_specs=[_repo_spec()], base_shas={})
+        self.assertEqual(records, [])
+
     def test_the_container_remotes_tracking_refs_are_no_negatives(self) -> None:
         """A branch the model pushed or fetched at the container remote
         is tracked under refs/remotes/fairy/ like a forge branch; thinning

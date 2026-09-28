@@ -27,7 +27,9 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-CliContainer: ``podman exec`` argv construction over RemoteHost ssh."""
+CliContainer: ``podman exec`` argv construction over RemoteHost ssh, and
+the harness the CLI reviewer tests share: FakeCliContainer, a role,
+machines and make_ctx."""
 
 import io
 import threading
@@ -44,8 +46,98 @@ import cli_container
 from cli_container import CliContainer, CliShellRelay
 from test_podman_host import ContainerStateHarness
 from common import EXIT_REVIEW_STOPPED_BY_HALT_FILE
+from llm_review_api import ReviewContext, RoleSpec
 
 HOST = podman_host.RemoteHost("fairy@box", identity="/id")
+
+MACHINES = (
+    podman_host.parse_shell_host("fairy@h1"),
+    podman_host.parse_shell_host("arm64=fairy@h2"),
+)
+
+ROLE = RoleSpec(
+    name="review",
+    schema={"name": "review", "strict": True, "schema": {
+        "type": "object",
+        "properties": {"classification": {"type": "string"},
+                       "message": {"type": "string"}},
+        "required": ["classification", "message"],
+    }},
+    user_texts=lambda ctx: ["Review the following PR.", "Trailing note."],
+    validate=lambda obj: dict(obj),
+)
+
+
+def make_ctx(**kwargs) -> ReviewContext:
+    defaults = dict(
+        request={"pull_request": {"number": 7, "title": "t"}},
+        patch_text="the patch", patch_truncated=False, source_bundle=None,
+        source_files=[], source_notes=[], reviewer_username="fairy",
+        ci_triage_mode=False, repo_roots=[], repo_mount_paths=["/work/ffmpeg"],
+        machines=MACHINES,
+        open_shell=lambda label: (
+            mock.Mock(spec=podman_host.ContainerShellSession), ""),
+    )
+    defaults.update(kwargs)
+    return ReviewContext(**defaults)
+
+
+class FakeCliContainer:
+    """Stand-in for CliContainer: records podman-cp'd files and the CLI
+    argv, returns canned run output / last message. ``on_run`` fires inside
+    run() for concurrency-slot tests."""
+
+    def __init__(self, run_result, last_message, on_run=None,
+                 refreshed_auth=None, credential_name="auth.json",
+                 later_run_results=()):
+        self._run_result = run_result
+        self._later_run_results = list(later_run_results)  # answers to the execs after the first, in order
+        self._last_message = last_message
+        self.on_run = on_run
+        # harness knob: read_file(<credential>) returns this instead of the copied credential
+        self._refreshed_auth = refreshed_auth
+        self._credential_name = credential_name
+        self.copied = {}       # basename -> local text content
+        self.run_cmds = []     # every exec'd argv, in order
+        self.cmd = None
+        self.input_text = None
+        self.env = None
+        self.stopped = False
+        self.read_file_calls = []  # (path, kwargs) per read_file
+
+    def start(self):
+        return self
+
+    def put_file(self, local, dest_dir, **kw):
+        p = Path(local)
+        try:
+            self.copied[p.name] = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            self.copied[p.name] = None
+
+    def run(self, cmd, *, input_text=None, env=None, timeout_s=None):
+        self.run_cmds.append(cmd)
+        if len(self.run_cmds) > 1:
+            return self._later_run_results.pop(0)
+        self.cmd = cmd
+        self.input_text = input_text
+        self.env = env
+        if self.on_run is not None:
+            self.on_run()
+        return self._run_result
+
+    def read_file(self, path, **kw):
+        if self.stopped:
+            raise RuntimeError("container not started")
+        self.read_file_calls.append((path, kw))
+        if path.endswith(self._credential_name):
+            if self._refreshed_auth is not None:
+                return self._refreshed_auth
+            return self.copied.get(self._credential_name)
+        return self._last_message
+
+    def stop(self):
+        self.stopped = True
 
 
 class ExecArgvTests(unittest.TestCase):

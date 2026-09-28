@@ -46,6 +46,7 @@ import codex_reviewer
 import concurrency
 import podman_host
 import review_pipeline
+from test_cli_container import MACHINES, ROLE, FakeCliContainer, make_ctx
 from cli_reviewer import CliAuthFailed, CliUsageLimit
 from codex_reviewer import (
     CodexReviewer,
@@ -55,13 +56,7 @@ from codex_reviewer import (
     summarize_codex_events,
 )
 from llm_review_api import (BadModelOutput, BranchCollectionFailed,
-                            ProviderContentFlagged,
-                            ReviewContext, RoleSpec)
-
-MACHINES = (
-    podman_host.parse_shell_host("fairy@h1"),
-    podman_host.parse_shell_host("arm64=fairy@h2"),
-)
+                            ProviderContentFlagged)
 
 CODEX_HOST = podman_host.parse_shell_host("fairy@codexbox")
 
@@ -83,85 +78,6 @@ def _codex_home_ready(**files) -> str:
     carrying the test model."""
     return _codex_home_with_auth(
         **{"models_cache.json": _CATALOG_JSON, **files})
-
-
-class _FakeCodexContainer:
-    """Stand-in for CliContainer: records podman-cp'd files and the codex
-    argv, returns canned run output / last message. ``on_run`` fires inside
-    run() for concurrency-slot tests."""
-
-    def __init__(self, run_result, last_message, on_run=None,
-                 refreshed_auth=None):
-        self._run_result = run_result
-        self._last_message = last_message
-        self.on_run = on_run
-        # harness knob: read_file(auth.json) returns this instead of the copied auth
-        self._refreshed_auth = refreshed_auth
-        self.copied = {}       # basename -> local text content
-        self.run_cmds = []     # every exec'd argv, in order
-        self.cmd = None
-        self.input_text = None
-        self.env = None
-        self.stopped = False
-        self.read_file_calls = []  # (path, kwargs) per read_file
-
-    def start(self):
-        return self
-
-    def put_file(self, local, dest_dir, **kw):
-        p = Path(local)
-        try:
-            self.copied[p.name] = p.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            self.copied[p.name] = None
-
-    def run(self, cmd, *, input_text=None, env=None, timeout_s=None):
-        self.run_cmds.append(cmd)
-        self.cmd = cmd
-        self.input_text = input_text
-        self.env = env
-        if self.on_run is not None:
-            self.on_run()
-        return self._run_result
-
-    def read_file(self, path, **kw):
-        if self.stopped:
-            raise RuntimeError("codex container not started")
-        self.read_file_calls.append((path, kw))
-        if path.endswith("auth.json"):
-            if self._refreshed_auth is not None:
-                return self._refreshed_auth
-            return self.copied.get("auth.json")
-        return self._last_message
-
-    def stop(self):
-        self.stopped = True
-
-ROLE = RoleSpec(
-    name="review",
-    schema={"name": "review", "strict": True, "schema": {
-        "type": "object",
-        "properties": {"classification": {"type": "string"},
-                       "message": {"type": "string"}},
-        "required": ["classification", "message"],
-    }},
-    user_texts=lambda ctx: ["Review the following PR.", "Trailing note."],
-    validate=lambda obj: dict(obj),
-)
-
-
-def _ctx(**kwargs) -> ReviewContext:
-    defaults = dict(
-        request={"pull_request": {"number": 7, "title": "t"}},
-        patch_text="the patch", patch_truncated=False, source_bundle=None,
-        source_files=[], source_notes=[], reviewer_username="fairy",
-        ci_triage_mode=False, repo_roots=[], repo_mount_paths=["/work/ffmpeg"],
-        machines=MACHINES,
-        open_shell=lambda label: (
-            mock.Mock(spec=podman_host.ContainerShellSession), ""),
-    )
-    defaults.update(kwargs)
-    return ReviewContext(**defaults)
 
 
 class BuildCommandTests(unittest.TestCase):
@@ -256,7 +172,7 @@ class WebSearchModeTests(unittest.TestCase):
                                  codex_host=CODEX_HOST, web_search=web_search)
         with mock.patch.object(cli_reviewer, "generate_llm_prompt",
                                return_value="DEV") as gen:
-            reviewer._build_prompt(_ctx(), False)
+            reviewer._build_prompt(make_ctx(), False)
         return gen.call_args.kwargs["features"]
 
     def test_web_search_feature_tracks_mode(self) -> None:
@@ -298,7 +214,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         reviewer = reviewer or self._reviewer()
         proc = subprocess.CompletedProcess(
             [], returncode, stdout=jsonl, stderr=stderr)
-        self.container = _FakeCodexContainer(
+        self.container = FakeCliContainer(
             proc, last_message, on_run=on_run, refreshed_auth=refreshed_auth)
         with mock.patch.object(cli_reviewer, "CliContainer",
                                return_value=self.container), \
@@ -306,7 +222,7 @@ class CodexReviewerRunTests(unittest.TestCase):
             relay.return_value.start.return_value = relay.return_value
             relay.return_value.opened_sessions.return_value = \
                 getattr(self, "_relay_sessions", [])
-            return reviewer.run(ctx or _ctx())
+            return reviewer.run(ctx or make_ctx())
 
     def test_validated_result_from_last_message(self) -> None:
         result = self._run()
@@ -332,7 +248,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         """One request/response JSONL per run, like openai:/anthropic:, not
         loose prompt/events/stderr files."""
         debug_dir = tempfile.mkdtemp(prefix="codex-dbg-")
-        ctx = _ctx()
+        ctx = make_ctx()
         self._run(reviewer=self._reviewer(debug_dir=debug_dir),
                   jsonl=self._REAL_EVENTS, stderr=self._REAL_STDERR, ctx=ctx)
         (path,) = Path(debug_dir).iterdir()
@@ -468,7 +384,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
-        ctx = _ctx(report_poisoned=poisoned.append)
+        ctx = make_ctx(report_poisoned=poisoned.append)
         with self.assertRaises(CliAuthFailed):
             self._run(ctx=ctx, jsonl=self._DEAD_REFRESH_TOKEN_EVENT,
                       last_message=None, returncode=1)
@@ -476,7 +392,7 @@ class CodexReviewerRunTests(unittest.TestCase):
 
     def test_cancel_killed_run_skips_poisoning(self) -> None:
         poisoned = []
-        ctx = _ctx(report_poisoned=poisoned.append)
+        ctx = make_ctx(report_poisoned=poisoned.append)
         self._relay_sessions = ["a session codex had opened"]
         with mock.patch.object(cli_reviewer.shell_tool, "cancelled",
                                return_value=True):
@@ -540,7 +456,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self._relay_sessions = [s1, s2]
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
-        ctx = _ctx(report_poisoned=poisoned.append)
+        ctx = make_ctx(report_poisoned=poisoned.append)
         with self.assertRaises(RuntimeError):
             self._run(ctx=ctx, last_message=None)
         self.assertEqual([s1, s2], poisoned)
@@ -553,7 +469,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         def collect(sessions, declared, pull_requests):
             raise RuntimeError("bundle create failed")
 
-        ctx = _ctx(report_poisoned=poisoned.append, collect_branches=collect)
+        ctx = make_ctx(report_poisoned=poisoned.append, collect_branches=collect)
         with self.assertRaises(BranchCollectionFailed):
             self._run(ctx=ctx)
         self.assertEqual([], poisoned)  # fairy's packing failed, not codex
@@ -562,7 +478,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
-        ctx = _ctx(report_poisoned=poisoned.append)
+        ctx = make_ctx(report_poisoned=poisoned.append)
         with self.assertRaises(BadModelOutput):
             self._run(ctx=ctx, last_message="not json")
         self.assertEqual([], poisoned)  # codex ran fine; not suspect
@@ -571,7 +487,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
-        ctx = _ctx(report_poisoned=poisoned.append)
+        ctx = make_ctx(report_poisoned=poisoned.append)
         jsonl = json.dumps({"type": "turn.failed",
                             "error": {"type": "usage_limit_reached"}})
         with self.assertRaises(CliUsageLimit):
@@ -596,7 +512,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
-        ctx = _ctx(report_poisoned=poisoned.append)
+        ctx = make_ctx(report_poisoned=poisoned.append)
         with self.assertRaises(ProviderContentFlagged):
             self._run(ctx=ctx, jsonl=self._REAL_REFUSAL,
                       last_message=None, returncode=1)
@@ -615,7 +531,7 @@ class CodexReviewerRunTests(unittest.TestCase):
         self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
-        ctx = _ctx(report_poisoned=poisoned.append)
+        ctx = make_ctx(report_poisoned=poisoned.append)
         with mock.patch.object(cli_reviewer.shell_tool, "_halted", True):
             with self.assertRaises(RuntimeError):
                 self._run(ctx=ctx, last_message=None)
@@ -624,14 +540,14 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.assertEqual([], poisoned)
 
     def test_shellless_context_omits_mcp(self) -> None:
-        self._run(ctx=_ctx(open_shell=None))
+        self._run(ctx=make_ctx(open_shell=None))
         self.assertFalse(any("mcp_servers" in c for c in self.container.cmd))
 
     def test_no_codex_host_is_error(self) -> None:
         reviewer = CodexReviewer("gpt-5.6-sol", name="codex:gpt-5.6-sol",
                                  role=ROLE, codex_home=_codex_home_with_auth())
         with self.assertRaisesRegex(RuntimeError, "requires --codex-host"):
-            reviewer.run(_ctx())
+            reviewer.run(make_ctx())
 
     def test_missing_auth_is_error(self) -> None:
         home = tempfile.mkdtemp(prefix="codex-home-noauth-")  # no auth.json
@@ -662,7 +578,7 @@ class CodexReviewerRunTests(unittest.TestCase):
                 active -= 1
 
         def make_fake(*a, **k):
-            return _FakeCodexContainer(
+            return FakeCliContainer(
                 subprocess.CompletedProcess([], 0, stdout="", stderr=""),
                 '{"classification": "approve", "message": "ok"}', on_run=busy)
 
@@ -675,7 +591,7 @@ class CodexReviewerRunTests(unittest.TestCase):
                                        side_effect=make_fake), \
                         mock.patch.object(cli_reviewer, "CliShellRelay") as relay:
                     relay.return_value.start.return_value = relay.return_value
-                    threads = [threading.Thread(target=reviewer.run, args=(_ctx(),))
+                    threads = [threading.Thread(target=reviewer.run, args=(make_ctx(),))
                                for _ in range(3)]
                     for t in threads:
                         t.start()

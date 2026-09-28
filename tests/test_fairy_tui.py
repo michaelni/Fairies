@@ -1417,7 +1417,33 @@ class DetailTests(DbCase):
             text = fairy_tui._plain(ui.detail_lines(90))
         self.assertIn("fairy", text)
         self.assertIn("mentioned this from o/other#24049 the other one (closes)", text)
-        self.assertIn("fixed by this", text)
+        self.assertNotIn("fixed by this", text)
+
+    def test_clicking_a_mention_header_unfolds_its_text(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
+            {"kind": "cross_reference", "author": "fairy", "number": 24049,
+             "repository": "o/other", "title": "the other one",
+             "action": "none", "body": "the other review, at length",
+             "created_at": "2026-07-19T09:00:00Z"}]))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.paint()
+        rect, gutter, rows = ui._shown["br"]
+        header = next(i for i, r in enumerate(rows) if r.startswith("▸ fairy"))
+        self.assertNotIn("at length", "\n".join(rows))
+        sent: list[str] = []
+        with mock.patch.object(ui, "_to_clipboard",
+                               side_effect=lambda t, d: sent.append(t)):
+            ui._copy_click("br", rect.x + gutter + rows[header].index("#24049"),
+                           rect.y + 1 + header)
+            ui.paint()
+            rows = ui._shown["br"][2]
+            self.assertIn("▾ fairy", rows[header])
+            self.assertIn("the other review, at length", rows[header + 1])
+            ui._copy_click("br", rect.x + gutter, rect.y + 1 + header)
+            ui.paint()
+        self.assertNotIn("at length", "\n".join(ui._shown["br"][2]))
+        self.assertEqual(sent, [])
 
     def test_a_commit_reference_line_names_the_commit(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[

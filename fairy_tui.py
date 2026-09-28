@@ -1133,6 +1133,7 @@ def _styles(t: blessed.Terminal) -> dict:
             "sc_done": c(135),                "sc_dim": c(244),
             "sc_rebased": c(208),
             "sampled": c(114),
+            "mention_fold": mix(t.bold, c(244)),
             "cursor": t.reverse,
             # log-pane levels; palette mirrors common._ColorFormatter
             "log_debug": t.dim_bright_black,  "log_warn": t.bold_yellow,
@@ -1180,6 +1181,7 @@ def _styles(t: blessed.Terminal) -> dict:
         "sc_done": t.magenta,   "sc_dim": t.bright_black,
         "sc_rebased": t.bold_yellow,
         "sampled": t.green,
+        "mention_fold": t.bold,
         "cursor": t.reverse,
         "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
         "log_err": t.bold_red,
@@ -1277,6 +1279,7 @@ class UILoop:
         # pane -> the line sequence last painted into it; [] and {}
         # ask it where its patches and hunks start
         self._painted: dict[str, list] = {}
+        self.unfolded_mentions: set[tuple[str, str, filedb.TicketId, int]] = set()
         self._clip_cmd = _clipboard_cmd()
         self.styles = _styles(term)
         self.needs_poll = Event()  # set by the filesystem watcher
@@ -1577,6 +1580,7 @@ class UILoop:
             separator = [("sampled", (
                 f"── sampled {'for the review ' if review else ''}"
                 f"{_when(data.get('expected_updated_at'))} ──")[:width])]
+            mentions = 0
             for i, c in enumerate(disc):
                 if i == separator_at:
                     tail += [[], separator]
@@ -1606,11 +1610,19 @@ class UILoop:
                     if c.get("path"):
                         what += f"  {c['path']}" \
                             + (f":{c['line']}" if c.get("line") is not None else "")
-                tail.append([])
-                tail.append([("h4", str(c.get("author") or "?")),
-                             ("label", f"  {what}  {when}"[:width])])
-                if c.get("body"):
-                    tail += tui_core.render_markdown(str(c["body"]), width)
+                header = [("h4", str(c.get("author") or "?")),
+                          ("label", f"  {what}  {when}"[:width])]
+                body = c.get("body")
+                if c.get("kind") == "cross_reference":
+                    unfolded = (item.repo, item.kind, item.number,
+                                mentions) in self.unfolded_mentions
+                    mentions += 1
+                    header = [("mention_fold", "▾ " if unfolded else "▸ ")] + header
+                    if not unfolded:
+                        body = None
+                tail += [[], header]
+                if body:
+                    tail += tui_core.render_markdown(str(body), width)
                 for att in c.get("attachment_urls") or []:
                     tail.append([("link", str(att)[:width])])
             if separator_at == len(disc):
@@ -2539,11 +2551,32 @@ class UILoop:
             return
         if not (0 <= row < len(rows)) or col < 0:
             return
+        if self._toggle_mention_at(pane, row):
+            return
         token = tui_core.token_at(rows[row], col)
         if token is not None:
             self._to_clipboard(token, repr(token))
             return
         self._copy_patch_at(pane, row)
+
+    def _toggle_mention_at(self, pane: str, row: int) -> bool:
+        """Fold or unfold the mention whose ▸/▾ header sits on the
+        pane's visible ``row``; False when the row is no such header.
+        ``unfolded_mentions`` keys each by the item and the mention's
+        ordinal in the discussion."""
+        content = self._painted.get(pane) or []
+        clicked = self.scroll[pane] + row
+        if _leading_style(next(iter(content[clicked:clicked + 1]), None)) \
+                != "mention_fold":
+            return False
+        item = self._cursor_item()
+        if item is None:
+            return False
+        n = sum(_leading_style(line) == "mention_fold"
+                for line in content[:clicked])
+        self.unfolded_mentions ^= {(item.repo, item.kind, item.number, n)}
+        self.model.dirty.set()
+        return True
 
     def _copy_patch_at(self, pane: str, row: int) -> None:
         """The patch whose commit header sits on the pane's visible

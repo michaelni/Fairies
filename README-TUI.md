@@ -192,6 +192,9 @@ ticket is adopted.
 - **⧉ in the message pane's title:** a click there copies the whole
   raw markdown review message (what `o` edits) — ready to paste into
   a mail or forge comment.
+- **▸ on a mention** (the discussion's "mentioned this from ..."
+  entries): the mentioning text stays folded until a click on the
+  header row shows it; a second click folds it again.
 - **Dividers** drag.
 
 ## What the TUI never does

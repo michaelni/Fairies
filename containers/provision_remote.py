@@ -148,16 +148,17 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def ensure_codex_image(
+def ensure_cli_image(
     *,
     host: RemoteHost,
+    dockerfile: Path,
     binaries: dict[str, Path],
     tag: str,
     rebuild: bool,
 ) -> None:
-    """Build the thin codex image on the remote, staging the pinned binaries.
+    """Build a thin CLI image on the remote, staging the pinned binaries.
 
-    ``binaries`` maps each name Containerfile.codex ``COPY``s to the file
+    ``binaries`` maps each name ``dockerfile`` ``COPY``s to the file
     staged under it; the Containerfile is staged alongside (podman
     requires it inside the context). Rebuilds only when the Containerfile
     or a binary changed (label tracks all)."""
@@ -165,16 +166,16 @@ def ensure_codex_image(
         if not path.is_file():
             raise RuntimeError(f"{name}: {path} is not a file")
     want = hashlib.sha256(
-        CODEX_DOCKERFILE.read_bytes()
+        dockerfile.read_bytes()
         + "".join(_sha256_file(path) for path in binaries.values()).encode()
     ).hexdigest()
     have = image_label(tag, CONTAINERFILE_LABEL, host=host)
     stale = have != want
     if stale and have is not None:
-        logger.info("codex image %s is stale; rebuilding", tag)
-    with tempfile.TemporaryDirectory(prefix="fairy-codex-ctx-") as ctx_str:
+        logger.info("image %s is stale; rebuilding", tag)
+    with tempfile.TemporaryDirectory(prefix="fairy-cli-ctx-") as ctx_str:
         ctx = Path(ctx_str)
-        shutil.copy2(CODEX_DOCKERFILE, ctx / "Containerfile.codex")
+        shutil.copy2(dockerfile, ctx / dockerfile.name)
         for name, path in binaries.items():
             try:  # avoid a full copy when the temp dir shares the filesystem
                 os.link(path, ctx / name)
@@ -182,14 +183,14 @@ def ensure_codex_image(
                 shutil.copy2(path, ctx / name)
         build_image_if_needed(
             image_tag=tag,
-            dockerfile=ctx / "Containerfile.codex",
+            dockerfile=ctx / dockerfile.name,
             context_dir=ctx,
             force=rebuild or stale,
             labels={CONTAINERFILE_LABEL: want},
             host=host,
             build_timeout_s=3600.0,
         )
-    logger.info("codex image ready tag=%s", tag)
+    logger.info("image ready tag=%s", tag)
 
 
 def seed_mirrors(repo_roots: list[Path], host: RemoteHost, mirror_root: str) -> None:
@@ -270,8 +271,9 @@ def main(argv: list[str] | None = None) -> int:
         context_dir=args.context.resolve(), rebuild=args.rebuild,
     )
     if args.codex_bin is not None:
-        ensure_codex_image(
-            host=host, tag=args.codex_tag, rebuild=args.rebuild,
+        ensure_cli_image(
+            host=host, dockerfile=CODEX_DOCKERFILE, tag=args.codex_tag,
+            rebuild=args.rebuild,
             binaries={"codex": args.codex_bin.resolve(),
                       "codex-code-mode-host": args.codex_code_mode_host_bin.resolve()},
         )

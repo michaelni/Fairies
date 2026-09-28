@@ -55,15 +55,7 @@ import tempfile
 import time
 
 from codex_catalog import harden_codex_catalog, resolve_codex_home
-from cli_container import (
-    CONTAINER_CODEX_HOME,
-    DEFAULT_CODEX_IMAGE,
-    CONTAINER_RUN_DIR,
-    RELAY_SOCKET_PATH,
-    CliContainer,
-    CliShellRelay,
-    persist_refreshed_auth,
-)
+from cli_container import CliContainer, CliShellRelay, persist_refreshed_auth
 import concurrency
 from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
@@ -77,6 +69,7 @@ import shell_tool
 __all__ = [
     "CODEX_EFFORTS",
     "CODEX_WEB_SEARCH_MODES",
+    "DEFAULT_CODEX_IMAGE",
     "CodexAuthFailed",
     "CodexReviewer",
     "CodexTurnFailed",
@@ -87,6 +80,12 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
+
+# Under /work = the image WORKDIR.
+CONTAINER_RUN_DIR = "/work/.codex-run"
+CONTAINER_CODEX_HOME = "/work/.codex-home"
+RELAY_SOCKET_PATH = f"{CONTAINER_RUN_DIR}/shell.sock"
 
 # The union across models; an unsupported pairing still fails server-side.
 # 2026-07-17: gpt-5.6 rejected codex's documented "minimal" with
@@ -439,6 +438,7 @@ class CodexReviewer(Reviewer):
                     machine_labels=machine_labels,
                     open_shell=ctx.open_shell,
                     max_timeout_s=self.exec_timeout_s,
+                    socket_path=RELAY_SOCKET_PATH,
                 ).start()
 
             cmd = build_codex_exec_command(
@@ -482,7 +482,8 @@ class CodexReviewer(Reviewer):
                 elapsed = time.monotonic() - started
                 # Codex may have rotated the OAuth tokens mid-run, and --rm is
                 # about to discard the container's copy.
-                persist_refreshed_auth(container, auth_local)
+                persist_refreshed_auth(
+                    container, f"{CONTAINER_CODEX_HOME}/auth.json", auth_local)
 
             usage, error_text = summarize_codex_events(proc.stdout)
             logger.info(

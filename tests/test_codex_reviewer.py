@@ -41,7 +41,6 @@ from unittest import mock
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import cli_container
 import codex_reviewer
 import concurrency
 import podman_host
@@ -365,7 +364,7 @@ class CodexReviewerRunTests(unittest.TestCase):
                                           "CODEX_API_KEY": "sk-y"}):
             self._run()
         self.assertEqual(
-            {"CODEX_HOME": cli_container.CONTAINER_CODEX_HOME},
+            {"CODEX_HOME": codex_reviewer.CONTAINER_CODEX_HOME},
             self.container.env,
         )
 

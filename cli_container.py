@@ -78,14 +78,6 @@ from shell_socket import serve_dispatch
 
 logger = logging.getLogger(__name__)
 
-# Under /work = the image WORKDIR.
-CONTAINER_RUN_DIR = "/work/.codex-run"
-CONTAINER_CODEX_HOME = "/work/.codex-home"
-RELAY_SOCKET_PATH = f"{CONTAINER_RUN_DIR}/shell.sock"
-
-DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
-
-
 class CliContainer:
     """One ephemeral CLI container on a remote podman host.
 
@@ -239,35 +231,34 @@ MAX_AUTH_BYTES = 256 * 1024
 
 
 def persist_refreshed_auth(
-    container: CliContainer, auth_local: Path,
+    container: CliContainer, container_path: str, auth_local: Path,
 ) -> None:
-    """Copy a mid-run token refresh back to the host auth.json.
+    """Copy a mid-run token refresh back to the host credential file.
 
-    Best-effort: reads the container's copy, and if it is valid JSON
-    that differs from the host file, atomically replaces it (0600),
-    keeping the replaced credentials as ``auth.json.bak`` (0600).
+    Best-effort: reads ``container_path``, and if it is a JSON object
+    that differs from ``auth_local``, atomically replaces the host file
+    (0600), keeping the replaced credentials as ``<name>.bak`` (0600).
     A read/parse failure just logs -- the run already succeeded, so a
     stale host token surfaces as an auth error on a later run rather
     than failing this one.
     """
     try:
-        refreshed = container.read_file(
-            f"{CONTAINER_CODEX_HOME}/auth.json", max_bytes=MAX_AUTH_BYTES)
+        refreshed = container.read_file(container_path, max_bytes=MAX_AUTH_BYTES)
     except Exception:
-        logger.warning("codex: could not read back auth.json for refresh "
-                       "persistence", exc_info=True)
+        logger.warning("could not read back %s for refresh persistence",
+                       container_path, exc_info=True)
         return
     if not refreshed:
         return
     try:
         parsed = json.loads(refreshed)
     except ValueError:
-        logger.warning("codex: refreshed auth.json is not valid JSON; "
-                       "not persisting")
+        logger.warning("refreshed %s is not valid JSON; not persisting",
+                       container_path)
         return
     if not isinstance(parsed, dict):
-        logger.warning("codex: refreshed auth.json is not a JSON object; "
-                       "not persisting")
+        logger.warning("refreshed %s is not a JSON object; not persisting",
+                       container_path)
         return
     current = auth_local.read_text(encoding="utf-8") \
         if auth_local.is_file() else ""
@@ -286,8 +277,8 @@ def persist_refreshed_auth(
     tmp = auth_local.with_name(auth_local.name + ".tmp")
     write_0600(tmp, refreshed)
     os.replace(tmp, auth_local)
-    logger.info("codex: persisted refreshed auth.json from container "
-                "(previous kept as auth.json.bak)")
+    logger.info("persisted refreshed %s from container (previous kept as "
+                "%s.bak)", auth_local, auth_local.name)
 
 
 class CliShellRelay:
@@ -308,7 +299,7 @@ class CliShellRelay:
         machine_labels: Sequence[str],
         open_shell: Callable[[str], tuple[ContainerShellSession, str]],
         max_timeout_s: float,
-        socket_path: str = RELAY_SOCKET_PATH,
+        socket_path: str,
     ) -> None:
         self.container = container
         self.relay_container_path = relay_container_path

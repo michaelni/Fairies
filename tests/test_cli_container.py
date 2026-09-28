@@ -67,7 +67,7 @@ class ExecArgvTests(unittest.TestCase):
     def test_interactive_and_env_flags(self) -> None:
         argv = self._container().exec_argv(
             ["codex", "exec", "-"], interactive=True,
-            env={"CODEX_HOME": cli_container.CONTAINER_CODEX_HOME},
+            env={"CODEX_HOME": "/work/.codex-home"},
         )
         self.assertEqual(
             "podman exec -i -e CODEX_HOME=/work/.codex-home abc123 "
@@ -197,7 +197,7 @@ class RelayReadinessTests(unittest.TestCase):
         return CliShellRelay(
             c, relay_container_path="/work/.codex-run/relay.py",
             machine_labels=("x86_64",), open_shell=lambda label: (None, ""),
-            max_timeout_s=60.0)
+            max_timeout_s=60.0, socket_path="/work/.codex-run/shell.sock")
 
     def _start_with_stderr(self, stderr_bytes):
         relay = self._relay()
@@ -238,7 +238,7 @@ class RelayCancelTests(unittest.TestCase):
         relay = CliShellRelay(
             container, relay_container_path="/work/.codex-run/relay.py",
             machine_labels=("x86_64",), open_shell=lambda label: (None, ""),
-            max_timeout_s=60.0)
+            max_timeout_s=60.0, socket_path="/work/.codex-run/shell.sock")
         relay._proc = _FakeProc(b"")
         with mock.patch.object(cli_container, "serve_dispatch",
                                side_effect=dispatch_effect):

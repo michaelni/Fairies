@@ -104,7 +104,7 @@ from llm_review_api import (
     ReviewContext,
     Reviewer,
 )
-from cli_container import DEFAULT_CODEX_IMAGE
+from codex_reviewer import DEFAULT_CODEX_IMAGE
 import branch_persist
 import review_pipeline
 from review_pipeline import make_reviewer, review_pr, run_triage, vet_review
@@ -1434,7 +1434,7 @@ def main() -> int:
         openai_container_pool.logger,
         podman_host.logger,
         podman_repos.logger,
-        # By name, not module attribute: the anthropic and codex modules
+        # By name, not module attribute: the anthropic and gemini modules
         # are imported lazily (only when such a model is requested) and
         # fetching a logger from the registry does not import the module.
         logging.getLogger("shell_tool"),

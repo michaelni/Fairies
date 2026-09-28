@@ -87,6 +87,10 @@ import sys
 import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import git_util  # noqa: E402
 
 STATUS_COLOR = {"merged": "32", "maybe": "33", "part": "36",
                 "open": "31", "closed": "35", "oos": "90"}
@@ -102,36 +106,6 @@ def git_lines(*args):
     return out.splitlines() if out else []
 
 
-PATCH_GEN = ["git", "diff-tree", "--stdin", "-C", "-M", "--root", "-p", "-r",
-             "--no-ext-diff", "--no-color"]
-
-
-def patch_id_chunk(shas):
-    """{sha: patch-id} for shas, via `git diff-tree --stdin | git patch-id`.
-
-    diff-tree reads the commits from stdin and emits each diff in one process,
-    so patches are generated in a single batched stream rather than per commit;
-    -C -M give the same copy/rename detection a porcelain diff would. Each rev
-    needs a trailing newline or diff-tree drops the last one. Commits without a
-    diff (e.g. merges) are simply absent from the result.
-    """
-    gen = subprocess.Popen(PATCH_GEN, text=True, stdin=subprocess.PIPE,
-                           stdout=subprocess.PIPE)
-    pid = subprocess.Popen(["git", "patch-id", "--stable"],
-                           stdin=gen.stdout, stdout=subprocess.PIPE, text=True)
-    gen.stdout.close()
-    threading.Thread(target=lambda: (gen.stdin.write("".join(s + "\n" for s in shas)),
-                                     gen.stdin.close()), daemon=True).start()
-    out = {}
-    for line in pid.stdout:
-        parts = line.split()
-        if len(parts) == 2:
-            out[parts[1]] = parts[0]
-    pid.wait()
-    gen.wait()
-    return out
-
-
 def patch_ids(shas, jobs=None):
     """{sha: patch-id} for many commits, computed in parallel.
 
@@ -143,7 +117,8 @@ def patch_ids(shas, jobs=None):
     jobs = max(1, jobs or os.cpu_count() or 1)
     out = {}
     with ThreadPoolExecutor(jobs) as ex:
-        for part in ex.map(patch_id_chunk, [shas[i::jobs] for i in range(jobs)]):
+        for part in ex.map(lambda chunk: git_util.git_patch_ids(Path("."), chunk),
+                           [shas[i::jobs] for i in range(jobs)]):
             out.update(part)
     return out
 

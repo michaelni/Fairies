@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import threading
 from pathlib import Path
 from typing import Sequence
 
@@ -161,6 +162,31 @@ def git_diff(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
     histogram/minimal settings as git_format_patch_series."""
     return _git_stdout(repo_root, "diff", "--diff-algorithm=histogram",
                        "--minimal", base_sha, head_sha)
+
+
+def git_patch_ids(repo_root: Path, shas: Sequence[str]) -> dict[str, str]:
+    """``{sha: patch-id}`` for ``shas``: ``git diff-tree --stdin`` feeds
+    every commit's diff to one ``git patch-id --stable``. A commit
+    without a diff, a merge for one, is absent from the result."""
+    diffs = subprocess.Popen(
+        ["git", "-C", str(repo_root), "diff-tree", "--stdin", "-C", "-M",
+         "--root", "-p", "-r", "--no-ext-diff", "--no-color"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    ids = subprocess.Popen(["git", "-C", str(repo_root), "patch-id", "--stable"],
+                           stdin=diffs.stdout, stdout=subprocess.PIPE, text=True)
+    diffs.stdout.close()
+    # diff-tree reads its commits from stdin while its output flows on
+    # through patch-id; feeding stdin from this thread would deadlock
+    # once a pipe fills
+    threading.Thread(target=lambda: (
+        diffs.stdin.write("".join(f"{sha}\n" for sha in shas).encode()),
+        diffs.stdin.close()), daemon=True).start()
+    out = {sha: patch_id for patch_id, sha in (line.split() for line in ids.stdout)}
+    ids.wait()
+    if diffs.wait() != 0:
+        raise RuntimeError(f"git diff-tree in {repo_root} failed: "
+                           f"exit status {diffs.returncode}")
+    return out
 
 
 def git_range_diff(repo_root: Path, old_sha: str, new_sha: str) -> bytes:

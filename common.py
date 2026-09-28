@@ -77,6 +77,10 @@ EXIT_TURN_FAILED = 5
 EXIT_REVIEW_CANCELLED = 6
 EXIT_REVIEW_STOPPED_BY_HALT_FILE = 7
 
+# Per-request timeout of the reviewers' https clients, far above the
+# longest single model call observed (135s).
+LLM_HTTP_TIMEOUT_S = 900.0
+
 
 def format_turn_failure(exc: BaseException) -> str:
     """The wrapper's stdout line alongside EXIT_TURN_FAILED; the two

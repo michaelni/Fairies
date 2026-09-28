@@ -45,7 +45,8 @@ import logging
 import httpx
 
 import concurrency
-from common import JsonObject, call_with_retry, dump_response_debug_artifacts, load_api_key
+from common import (LLM_HTTP_TIMEOUT_S, JsonObject, call_with_retry,
+                    dump_response_debug_artifacts, load_api_key)
 from llm_prompt import REVIEWER_ROLE
 from llm_review_api import ReviewContext, Reviewer, RoleSpec
 from anthropic_common import ANTHROPIC_API_URL, retryable
@@ -138,7 +139,7 @@ class AnthropicReviewer(Reviewer):
         api_key = load_api_key(self.api_key_env)
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is not set (env or .env)")
-        return httpx.Client(base_url=self.base_url, timeout=900.0, headers={
+        return httpx.Client(base_url=self.base_url, timeout=LLM_HTTP_TIMEOUT_S, headers={
             "x-api-key": api_key, "anthropic-version": "2023-06-01"})
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:

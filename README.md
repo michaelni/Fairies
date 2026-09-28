@@ -219,8 +219,9 @@ or via the pipeline, which injects `--podman --shell-host` for you:
 
 Add `--podman-ssh-identity KEY` if the key is not offered by your ssh agent /
 `~/.ssh/config`. A non-standard ssh port goes in the host spec, e.g.
-`--podman-host fairy@HOST,port=17022` (same for `--shell-host` and
-`--codex-host`); provision such a host with `provision_remote.py --port`.
+`--podman-host fairy@HOST,port=17022` (same for `--shell-host`,
+`--codex-host` and `--agy-host`); provision such a host with
+`provision_remote.py --port`.
 The LLM's shell runs over a single persistent
 `ssh DEST podman exec -i` pipe into an in-container agent
 (`containers/fairy_agent.py`) speaking a small JSON protocol, so there is no
@@ -262,7 +263,7 @@ reviewer). Provider prefixes: `openai:`, `anthropic:`, `zai:`,
 `openrouter:` (any OpenRouter model id, e.g.
 `openrouter:stealth/space-bunny-alpha`, via `OPENROUTER_API_KEY`),
 `gemini:` (Google's Gemini API via `GEMINI_API_KEY`),
-`codex:`. Each reviewer gets its own isolated container shell; the
+`codex:`, `agy:`. Each reviewer gets its own isolated container shell; the
 model reviewers run concurrently (`--concurrency PROVIDER:COUNT` caps how
 many calls one provider gets at a time, across every fairy process on the
 machine). A local-GPU backend is TODO -- PRs very welcome.
@@ -302,6 +303,31 @@ as much disabled as possible in a separate container. Codex's own egress
 is limited to the OpenAI API + token refresh. There is no direct connection
 between the codex and review containers. Cap concurrent passes with
 `--concurrency codex:N`.
+
+### Antigravity backend
+
+`agy:MODEL[@EFFORT]` (e.g. `agy:claude-opus-4-6-thinking@high`; efforts
+`low`, `medium`, `high`, `max`; `agy models` lists the models the
+subscription offers) runs the pass through Google's Antigravity CLI in
+headless mode, on the subscription of the Google account it is logged in
+as. Like codex it runs in an ephemeral container on `--agy-host`, never on
+the wrapper host; an `agy:` spec without `--agy-host` is a hard error at
+startup. Through the pipeline, pass `--agy-host` and `--agy-home` in the
+configurator's `--prs` section.
+
+Build the thin agy image once with `provision_remote.py --agy-bin` (bakes
+a pinned agy binary from `containers/Containerfile.agy`; `--agy-bin` is
+the in-container path, `--agy-image` its tag). Log in once with an
+interactive `agy` as fairy's own account and keep the
+`antigravity-oauth-token` it writes under `~/.gemini/antigravity-cli` in
+`--agy-home DIR` on the wrapper host: it is `podman cp`'d into the
+container per run, and a token agy rejects is set aside as
+`antigravity-oauth-token.invalid` until a human logs in again.
+
+The security model is codex's: agy's own shell, file and web tools stay
+auto-denied, the MCP shell into the review containers is the only tool
+granted, and agy's egress is Google's API. Cap concurrent passes with
+`--concurrency agy:N`.
 
 ### Static data and vector stores
 

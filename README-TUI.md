@@ -97,13 +97,16 @@ colors follow the letter's meaning: green good/confirmed, red
 blocking/negative, yellow caution, cyan/blue informational, purple
 settled, gray inert.
 
-An open PR shows three columns:
+An open PR shows four columns:
 
 | col | codes |
 |-----|-------|
 | 1 | `a` (cyan) auto-merge is scheduled |
 | 2 | `0`–`9` (green, gray zero) approvals — the latest non-stale review per author |
 | 3 | `0`–`9` (red, gray zero) outstanding change requests |
+| 4 | a push after fairy's review: `r` (orange) rebased, every patch as reviewed · `P` (red) a patch changed, or the mirror cannot tell |
+
+Column 4 is filled on reviewed, outgoing, posted and skipped rows.
 
 A closed PR shows a single code instead: `M` (purple) merged with
 auto-merge scheduled at last sight, `m` (purple) merged — manually,

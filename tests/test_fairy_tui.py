@@ -993,6 +993,25 @@ class StatusColumnTests(DbCase):
         self.model.poll()
         self.assertIn("llm+", self.rows()[0])
 
+    def test_a_push_after_the_review_marks_the_row(self) -> None:
+        for n, head, patch_ids in ((5, "moved", ["p2"]), (6, "moved", ["p1"]),
+                                   (7, "moved", None), (8, "h8", ["p2"])):
+            self.db.push("reviewed", "pr", str(n),
+                         verdict(n, expected_patch_ids=["p1"]))
+            self.db.push("items", "pr", str(n), {
+                "state": "open", "approvals": 0, "change_requests": 0,
+                "head_sha": head, "patch_ids": patch_ids})
+        self.db.push("queued", "pr", "9", dict(verdict(9), prepared={"pr": {}}))
+        self.db.push("items", "pr", "9", {
+            "state": "open", "approvals": 0, "change_requests": 0,
+            "head_sha": "moved", "patch_ids": ["p1"]})
+        self.model.poll()
+        self.assertEqual([r[19:23] for r in self.rows()],
+                         [" 00P", " 00r", " 00P", " 00 ", " 00 "])
+        cells = [seg for row in make_ui(self.model).list_rows()[1:]
+                 for seg in row if seg in (("sc_rebased", "r"), ("sc_bad", "P"))]
+        self.assertEqual(cells, [("sc_rebased", "r"), ("sc_bad", "P")])
+
     def test_without_a_snapshot_the_cluster_is_blank(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()

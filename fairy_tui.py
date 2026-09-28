@@ -188,7 +188,7 @@ def _branch_mark(data: dict) -> tuple[str, str]:
 
 
 STATUS_FIELDS = ("state", "auto_merge", "approvals", "change_requests",
-                 "labels")
+                 "labels", "head_sha", "patch_ids")
 _REPRO_CODES = {"repro/yes": ("sc_good", "Y"),
                 "repro/flaky": ("sc_warn", "F"),
                 "repro/no(env)": ("sc_warn", "n"),
@@ -206,6 +206,20 @@ def _count_col(count, style: str) -> tuple[str, str]:
     if count is None:
         return ("text", " ")
     return (style if count else "sc_dim", str(min(int(count), 9)))
+
+
+def _push_mark(item: Item, snap: dict) -> tuple[str, str]:
+    """The row's push cell: a push after the review that kept every
+    patch (``r``, orange) or changed one (``P``, red); blank while the
+    PR stands at its reviewed head, and on rows without a verdict."""
+    expected = item.data.get("expected_head_sha")
+    if item.state not in ("reviewed", "outgoing", "posted", "skipped") \
+            or expected is None or snap.get("head_sha") in (None, expected):
+        return ("text", " ")
+    if snap.get("patch_ids") is not None \
+            and snap["patch_ids"] == item.data.get("expected_patch_ids"):
+        return ("sc_rebased", "r")
+    return ("sc_bad", "P")
 
 
 def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
@@ -229,7 +243,7 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
             else ("text", " "),
             _count_col(snap.get("approvals"), "sc_good"),
             _count_col(snap.get("change_requests"), "sc_bad"),
-            ("text", " "),
+            _push_mark(item, snap),
         ]
     labels = snap.get("labels") or []
     resolution = next((l.removeprefix("resolution/") for l in labels
@@ -1116,6 +1130,7 @@ def _styles(t: blessed.Terminal) -> dict:
             "sc_good": c(78),                 "sc_bad": c(203),
             "sc_warn": c(179),                "sc_info": c(75),
             "sc_done": c(135),                "sc_dim": c(244),
+            "sc_rebased": c(208),
             "sampled": c(114),
             "cursor": t.reverse,
             # log-pane levels; palette mirrors common._ColorFormatter
@@ -1162,6 +1177,7 @@ def _styles(t: blessed.Terminal) -> dict:
         "sc_good": t.green,     "sc_bad": t.red,
         "sc_warn": t.yellow,    "sc_info": t.cyan,
         "sc_done": t.magenta,   "sc_dim": t.bright_black,
+        "sc_rebased": t.bold_yellow,
         "sampled": t.green,
         "cursor": t.reverse,
         "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,

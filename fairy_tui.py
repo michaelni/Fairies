@@ -2567,7 +2567,7 @@ class UILoop:
             return
         if not (0 <= row < len(rows)) or col < 0:
             return
-        if self._toggle_mention_at(pane, row):
+        if pane == "br" and self._toggle_mention_at(row):
             return
         token = tui_core.token_at(rows[row], col)
         if token is not None:
@@ -2575,13 +2575,13 @@ class UILoop:
             return
         self._copy_patch_at(pane, row)
 
-    def _toggle_mention_at(self, pane: str, row: int) -> bool:
+    def _toggle_mention_at(self, row: int) -> bool:
         """Fold or unfold the mention whose ▸/▾ header sits on the
-        pane's visible ``row``; False when the row is no such header.
-        ``unfolded_mentions`` keys each by the item and the mention's
-        ordinal in the discussion."""
-        content = self._painted.get(pane) or []
-        clicked = self.scroll[pane] + row
+        message pane's visible ``row``; False when the row is no such
+        header. ``unfolded_mentions`` keys each by the item and the
+        mention's ordinal in the discussion."""
+        content = self._painted.get("br") or []
+        clicked = self.scroll["br"] + row
         if _leading_style(next(iter(content[clicked:clicked + 1]), None)) \
                 != "mention_fold":
             return False

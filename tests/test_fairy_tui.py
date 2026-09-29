@@ -1445,6 +1445,18 @@ class DetailTests(DbCase):
         self.assertNotIn("at length", "\n".join(ui._shown["br"][2]))
         self.assertEqual(sent, [])
 
+    def test_a_click_on_a_list_row_still_copies_its_number(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.paint()
+        rect, gutter, rows = ui._shown["tr"]
+        sent: list[str] = []
+        with mock.patch.object(ui, "_to_clipboard",
+                               side_effect=lambda t, d: sent.append(t)):
+            ui._copy_click("tr", rect.x + gutter + rows[0].index("#5"), rect.y + 1)
+        self.assertEqual(sent, ["5"])
+
     def test_a_commit_reference_line_names_the_commit(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
             {"kind": "commit_reference", "author": "michaelni", "sha": "b" * 40,

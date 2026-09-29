@@ -117,12 +117,12 @@ An issue shows four columns:
 
 | col | codes |
 |-----|-------|
-| 1 | `B` (red) bug or regression · `E` (cyan) enhancement |
-| 2 | reproduction: `Y` (green) yes · `F` (yellow) flaky · `n` (yellow) no, needs an environment the analysis lacks · `N` (red) no |
-| 3 | resolution: `d` (yellow) duplicate · `e` (blue) external · `f` (green) fixed · `i` (red) invalid · `w` (gray) wontfix |
-| 4 | `O` (green) open · `C` (purple) closed |
+| 1 | `O` (green) open · `C` (purple) closed |
+| 2 | `B` (red) bug or regression · `E` (cyan) enhancement |
+| 3 | reproduction: `Y` (green) yes · `F` (yellow) flaky · `n` (yellow) no, needs an environment the analysis lacks · `N` (red) no |
+| 4 | resolution: `d` (yellow) duplicate · `e` (blue) external · `f` (green) fixed · `i` (red) invalid · `w` (gray) wontfix |
 
-Columns 1–3 mirror the issue's `bug`/`regression`/`enhancement`,
+Columns 2–4 mirror the issue's `bug`/`regression`/`enhancement`,
 `repro/*` and `resolution/*` labels; an unlabeled aspect stays blank.
 
 **Lenses** (`a` cycles): `relevant` (default — everything except

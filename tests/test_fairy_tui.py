@@ -980,7 +980,7 @@ class StatusColumnTests(DbCase):
                                           "resolution/wontfix"]})
         self.model.poll()
         clusters = [r[19:23] for r in self.rows()]
-        self.assertEqual(clusters, ["BYfO", "EnwC"])
+        self.assertEqual(clusters, ["OBYf", "CEnw"])
 
     def test_forced_reviews_carry_a_plus_through_queued_and_llm(self) -> None:
         self.db.push("queued", "pr", "5", dict(verdict(5), forced=True))

@@ -251,16 +251,16 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
     resolution = next((l.removeprefix("resolution/") for l in labels
                        if l.startswith("resolution/")), None)
     return [
+        ("sc_done", "C") if snap.get("state") == "closed"
+        or reason == agent.REASON_CLOSED
+        else ("sc_good", "O") if snap.get("state") == "open"
+        else ("text", " "),
         ("sc_bad", "B") if {"bug", "regression"} & set(labels)
         else ("sc_info", "E") if "enhancement" in labels else ("text", " "),
         next((_REPRO_CODES[l] for l in _REPRO_CODES if l in labels),
              ("text", " ")),
         ("text", " ") if resolution is None
         else _RESOLUTION_CODES.get(resolution, ("sc_dim", "?")),
-        ("sc_done", "C") if snap.get("state") == "closed"
-        or reason == agent.REASON_CLOSED
-        else ("sc_good", "O") if snap.get("state") == "open"
-        else ("text", " "),
     ]
 
 

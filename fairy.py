@@ -622,9 +622,9 @@ def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--llm-retry-delay",
         type=float,
-        default=5.0,
+        default=30.0,
         help=(
-            "Seconds to sleep between failed LLM attempts (default: 5). "
+            "Seconds to sleep between failed LLM attempts (default: 30). "
             "Applied only between attempts; no delay before the first attempt "
             "or after the final one."
         ),

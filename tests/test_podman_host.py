@@ -192,6 +192,17 @@ class ImageTagExistsTests(unittest.TestCase):
             run.return_value = _completed(1)
             self.assertFalse(lc.image_tag_exists("nope:tag", host=HOST))
 
+    def test_podman_failure_is_not_a_missing_image(self) -> None:
+        stderr = (b'time="2026-09-29T20:10:24+02:00" level=error msg="invalid '
+                  b'internal status, try resetting the pause process with '
+                  b'\\"podman system migrate\\": could not find any running '
+                  b'process: no such process"\n')
+        with mock.patch.object(lc.subprocess, "run") as run:
+            run.return_value = _completed(1, stderr=stderr)
+            with self.assertRaisesRegex(lc.ContainerInfraError,
+                                        "podman system migrate"):
+                lc.image_tag_exists("localhost/x:y", host=HOST)
+
 
 class EnsureIsolatedNetworkTests(unittest.TestCase):
     def test_skips_create_when_network_exists(self) -> None:

@@ -501,8 +501,18 @@ def _podman(host: RemoteHost, *args: str, timeout_s: float = 60.0) -> _CmdResult
 
 
 def image_tag_exists(image_tag: str, *, host: RemoteHost) -> bool:
-    """Return True if ``podman image exists <tag>`` succeeds."""
-    return _podman(host, "image", "exists", image_tag).returncode == 0
+    """Return True if ``podman image exists <tag>`` succeeds.
+
+    A missing image exits 1 silently; anything on stderr is podman or
+    the transport failing and raises ``ContainerInfraError``.
+    """
+    cp = _podman(host, "image", "exists", image_tag)
+    if cp.returncode != 0 and cp.stderr:
+        raise ContainerInfraError(
+            f"podman image exists {image_tag!r} on {host.ssh_dest} failed: "
+            f"{cp.stderr_text}"
+        )
+    return cp.returncode == 0
 
 
 def ensure_isolated_network(name: str, *, host: RemoteHost) -> None:

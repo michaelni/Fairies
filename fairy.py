@@ -2299,7 +2299,8 @@ def invoke_llm_wrapper(
         )
     if cp.returncode != 0:
         raise RuntimeError(
-            f"LLM review command failed with exit code {cp.returncode}; see stderr above"
+            f"LLM review command failed with exit code {cp.returncode}"
+            + f": {cp.stderr}" * bool(cp.stderr)
         )
 
     data = load_json(cp.stdout, context="LLM review command")

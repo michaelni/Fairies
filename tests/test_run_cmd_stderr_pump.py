@@ -94,6 +94,7 @@ class RunCmdStderrPumpTest(unittest.TestCase):
                     if r.getMessage().startswith("[child] ")]
         expected = [f"[child] line-{i:05d}" for i in range(n_lines)]
         self.assertEqual(observed, expected)
+        self.assertEqual(cp.stderr, "line-01999")
 
 
 class GcliTimeoutTests(unittest.TestCase):
@@ -114,11 +115,12 @@ class WireRelayTests(unittest.TestCase):
     def test_wire_lines_keep_their_level_and_time(self) -> None:
         script = (
             "import sys\n"
-            "sys.stderr.write('2026-07-24T10:00:01 E it broke\\n')\n"
-            "sys.stderr.write('plain transcript line\\n')\n")
+            "sys.stderr.write('plain transcript line\\n')\n"
+            "sys.stderr.write('2026-07-24T10:00:01 E it broke\\n\\n')\n")
         with self.assertLogs(forge_gcli.logger, level="DEBUG") as logs:
-            fairy.run_cmd([sys.executable, "-c", script],
-                          stderr_line_prefix="[w] ")
+            cp = fairy.run_cmd([sys.executable, "-c", script],
+                               stderr_line_prefix="[w] ")
+        self.assertEqual(cp.stderr, "it broke")
         wire = next(r for r in logs.records if "it broke" in r.getMessage())
         self.assertEqual(wire.levelno, logging.ERROR)
         self.assertEqual(wire.getMessage(), "[w] it broke")
@@ -142,6 +144,22 @@ class WireRelayTests(unittest.TestCase):
                 allowed_classifications=frozenset({"skip"}),
                 label_allowlist=[])
         self.assertEqual(rc.call_args.kwargs["env"]["FAIRY_LOG_WIRE"], "1")
+
+    def test_a_failed_wrapper_names_its_last_stderr_line(self) -> None:
+        ns = fairy.parse_args(["--owner", "o", "--repo", "r",
+                               "--llm-review-cmd", "wrapper",
+                               "--patch-repo", "p"])
+        failed = subprocess.CompletedProcess(
+            [], 1, stdout="",
+            stderr="RuntimeError: podman image exists 'localhost/fairy-review:latest' "
+                   "on fairy@example.com failed: invalid internal status")
+        with mock.patch.object(fairy, "run_cmd", return_value=failed), \
+                self.assertRaisesRegex(RuntimeError,
+                                       "exit code 1: RuntimeError: podman image"):
+            fairy.invoke_llm_wrapper(
+                ns, {}, number=1,
+                allowed_classifications=frozenset({"skip"}),
+                label_allowlist=[])
 
 
 if __name__ == "__main__":

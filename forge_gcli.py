@@ -232,20 +232,22 @@ _WIRE_LEVELS = {"D": logging.DEBUG, "I": logging.INFO, "W": logging.WARNING,
                 "E": logging.ERROR, "C": logging.CRITICAL}
 
 
-def _relay_line(prefix: str, line: str) -> None:
-    """Re-log one relayed child line; a FAIRY_LOG_WIRE-shaped line keeps
-    its own level (the pane colors by it) and its own time (the record's
-    time IS the child's stamp, so no second timestamp appears)."""
+def _relay_line(prefix: str, line: str) -> str:
+    """Re-log one relayed child line and return its message; a
+    FAIRY_LOG_WIRE-shaped line keeps its own level (the pane colors by
+    it) and its own time (the record's time IS the child's stamp, so no
+    second timestamp appears)."""
     match = _WIRE_LINE.match(line)
     if match is None:
         logger.info("%s%s", prefix, line)
-        return
+        return line
     stamp, letter, message = match.groups()
     record = logger.makeRecord(logger.name, _WIRE_LEVELS[letter], __file__, 0,
                                "%s%s", (prefix, message), None)
     record.created = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%S").timestamp()
     record.msecs = 0.0
     logger.handle(record)
+    return message
 
 
 def run_cmd(
@@ -259,6 +261,9 @@ def run_cmd(
     capture_stderr: bool = True,
     stderr_line_prefix: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """Run ``cmd`` to completion. With ``stderr_line_prefix`` the child's
+    stderr is relayed line by line to the logger under that prefix and
+    the result's ``stderr`` holds only its last non-blank line."""
     if verbose >= verbose_threshold:
         logger.debug("+ %s", shlex.join(cmd))
     if stderr_line_prefix is None:
@@ -292,12 +297,16 @@ def run_cmd(
     # lines, hiding most ``responses.create start/ok`` and triage
     # decision logs from ``fairy.log``.)
     read_fd, write_fd = os.pipe()
+    last_stderr_line = ""
 
     def _pump_stderr() -> None:
+        nonlocal last_stderr_line
         try:
             with os.fdopen(read_fd, "r", encoding="utf-8", errors="replace") as src:
                 for line in src:
-                    _relay_line(stderr_line_prefix, line.rstrip("\n"))
+                    message = _relay_line(stderr_line_prefix, line.rstrip("\n"))
+                    if message.strip():
+                        last_stderr_line = message
         except Exception:  # best-effort: never let the pump crash the review
             logger.exception("stderr pump failed for %s", shlex.join(cmd))
 
@@ -324,6 +333,7 @@ def run_cmd(
         except OSError:
             pass
     pump.join(timeout=2)
+    cp.stderr = last_stderr_line
     return cp
 
 

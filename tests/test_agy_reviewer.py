@@ -245,9 +245,10 @@ class AgyReviewerRunTests(unittest.TestCase):
         self.assertEqual({"permissions": {"allow": ["mcp(shell/*)"]}},
                          json.loads(copied["settings.json"]))
 
-    def test_only_home_reaches_container_env(self) -> None:
+    def test_container_env_is_the_private_home_without_self_update(self) -> None:
         self._run()
-        self.assertEqual({"HOME": agy_reviewer.CONTAINER_HOME}, self.container.env)
+        self.assertEqual({"HOME": agy_reviewer.CONTAINER_HOME,
+                          "AGY_CLI_DISABLE_AUTO_UPDATE": "true"}, self.container.env)
 
     def test_shellless_context_grants_nothing(self) -> None:
         self._run(ctx=make_ctx(open_shell=None))

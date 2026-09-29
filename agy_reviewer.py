@@ -85,6 +85,10 @@ CONTAINER_RUN_DIR = "/work/.agy-run"
 # Outside the workspace: agy's default permissions let the model read
 # workspace files, and this is where its token lives.
 CONTAINER_HOME = "/agy-home"
+# agy 1.2.13 spawns a self-update in the background of every run unless
+# this variable is exactly "true" ("1" does not disable it; observed
+# 2026-09-29); the image pins the binary, so no run may replace it.
+CONTAINER_ENV = {"HOME": CONTAINER_HOME, "AGY_CLI_DISABLE_AUTO_UPDATE": "true"}
 
 # agy 1.2.12 on Linux keeps the OAuth token as a plain file next to its
 # settings under $HOME/.gemini/antigravity-cli and reads MCP servers
@@ -238,7 +242,7 @@ class AgyReviewer(CliReviewer):
                 "allow": [f"mcp({MCP_SERVER}/*)"]}}), encoding="utf-8")
             files = [(mcp_config, f"{CONTAINER_HOME}/{MCP_CONFIG_RELATIVE_DIR}"),
                      (settings, self.credential_dir)]
-        return Staged(cmd, {"HOME": CONTAINER_HOME}, files)
+        return Staged(cmd, CONTAINER_ENV, files)
 
     def _stdin_text(self, prompt: str) -> str:
         return json.dumps({"event": "user",
@@ -293,8 +297,7 @@ class AgyReviewer(CliReviewer):
         cmd = [self.agy_bin, "-p", "/usage", "--output-format", "json"]
         logger.info("agy usage query after a failed run: %s", cmd)
         try:
-            proc = container.run(cmd, env={"HOME": CONTAINER_HOME},
-                                 timeout_s=USAGE_TIMEOUT_S)
+            proc = container.run(cmd, env=CONTAINER_ENV, timeout_s=USAGE_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             logger.warning("agy usage query exceeded %.0fs", USAGE_TIMEOUT_S)
             return None

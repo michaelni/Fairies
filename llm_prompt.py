@@ -1034,12 +1034,12 @@ If you review a commit touching profiles and pixel formats in APV, inspect the R
 
 ''' * ctx.draft}\
 {f'''Message Rules:
-- message {"may be empty only for approve and skip" if ctx.classifies else "must not be empty"}.
+- message {"may be empty only for approve; for skip it is a one or two sentence reason for the operator and is not posted" if ctx.classifies else "must not be empty"}.
 - the message is in Markdown and will be posted to Forgejo
 
 ''' * (pr and verdict)}\
 {'''Message Rules:
-- message may be empty only for skip.
+- for skip, message is a one or two sentence reason for the operator and is not posted; otherwise it must not be empty.
 - the message is in Markdown and will be posted to Forgejo
 - introduce the message as an investigation (after the LLM-... prefix), not as a triage or review.
 ''' * (not pr and verdict)}\

@@ -248,7 +248,7 @@ ISSUE_REPORT_SCHEMA = {
                 "type": "string",
                 "description": (
                     "detailed Markdown comment body to post to Forgejo. "
-                    "May be empty for skip. "
+                    "For skip: a one or two sentence reason for the operator, not posted. "
                     "Do not include HTML or markdown fences."
                 ),
             },

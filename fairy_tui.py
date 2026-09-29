@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import difflib
 import faulthandler
 import json
 import logging
@@ -1555,10 +1556,21 @@ class UILoop:
         if item.state == "posted" and review.get("message"):
             disc = [c for c in disc if not isinstance(c, dict)
                     or c.get("body") != review["message"]]
-        body = shown.get("body") or data.get("body")
+        body = data.get("body") or shown.get("body")
         if body:
             disc = [{"kind": "description", "author": author,
                      "body": body}] + disc
+        # the thread has no entry kind for a description edit; the
+        # sampled and live bodies are its only record (production:
+        # #24761, edited while the review ran, send blocked)
+        if snapshot is not None and data.get("body") \
+                and snapshot.get("body") != data["body"]:
+            disc.append({"kind": "description_edit", "author": author,
+                         "created_at": snapshot.get("updated_at"),
+                         "body": "\n".join(difflib.unified_diff(
+                             str(data["body"]).splitlines(),
+                             str(snapshot.get("body") or "").splitlines(),
+                             "sampled", "edited", lineterm=""))})
 
         def entries_before(when: datetime) -> int:
             return sum(1 for entry in disc if not isinstance(entry, dict)
@@ -1603,6 +1615,8 @@ class UILoop:
                         what += f" ({c['action']})"
                 elif c.get("kind") == "commit_reference":
                     what = f"mentioned this from commit {str(c.get('sha') or '')[:10]}"
+                elif c.get("kind") == "description_edit":
+                    what = "edited the description"
                 elif c.get("kind") == "state":
                     what = str(c.get("state"))
                 else:
@@ -1621,7 +1635,9 @@ class UILoop:
                     if not unfolded:
                         body = None
                 tail += [[], header]
-                if body:
+                if c.get("kind") == "description_edit":
+                    tail += diff_render.render_diff(str(body))
+                elif body:
                     tail += tui_core.render_markdown(str(body), width)
                 for att in c.get("attachment_urls") or []:
                     tail.append([("link", str(att)[:width])])

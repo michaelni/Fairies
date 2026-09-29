@@ -1779,6 +1779,31 @@ class DetailTests(DbCase):
         self.assertLess(text.index("old two"), text.index("sampled"))
         self.assertLess(text.index("sampled"), text.index("new one"))
 
+    def test_description_edit_shows_as_a_diff_after_the_separator(self) -> None:
+        """A description edit moves the forge's updated_at and blocks
+        the send, but shows up nowhere in the thread (production:
+        FFmpeg #24761, edited 00:29 to 00:35 while the review ran)."""
+        self.db.push("reviewed", "pr", "5", verdict(
+            5, body="Put the six files in one directory.\nPinned by sha256.",
+            expected_updated_at="2026-09-29T00:29:28Z",
+            send_blocked="PR updated_at changed"))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "jake",
+            "body": "Put the six [attached](https://example.org/a) files in "
+                    "one directory.\nPinned by sha256.",
+            "updated_at": "2026-09-29T00:35:57Z", "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertIn("discussion (2)", text)
+        self.assertLess(text.index("Put the six files"),
+                        text.index("sampled for the review"))
+        self.assertLess(text.index("sampled for the review"),
+                        text.index("jake  edited the description  "))
+        self.assertIn("-Put the six files in one directory.", text)
+        self.assertIn("+Put the six [attached](https://example.org/a) files",
+                      text)
+
     def test_description_survives_an_emptied_snapshot_body(self) -> None:
         self.db.push("reviewed", "pr", "5",
                      verdict(5, body="the initial message"))

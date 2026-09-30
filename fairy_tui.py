@@ -89,6 +89,7 @@ import git_util
 import tui_core
 import workset
 from common import iso_to_dt, setup_logging, watch_paths
+from llm_output_hacks import names_published_branch
 
 __all__ = ["main"]
 
@@ -1651,26 +1652,29 @@ class UILoop:
         for record in _ticket_branches(data):
             pr = record.get("pr")
             style = "br_pr_mark" if isinstance(pr, dict) else "br_mark"
+            forge_branch = f"{branch_persist.FAIRY_BRANCH_PREFIX}{record.get('branch')}"
+            named = names_published_branch(str(review.get("message") or ""), forge_branch)
             if record.get("mode") == "delete":
-                desc = (f"» {record.get('repo')}: delete "
-                        f"{branch_persist.FAIRY_BRANCH_PREFIX}{record.get('branch')}")
+                desc = f"» {record.get('repo')}: delete {forge_branch}"
                 branch_parts.append([
                     [],
                     [(style, desc[:width])],
-                    [("label", (f"  was {str(record.get('sha'))[:12]}"
-                                "  deleted when the review is sent (y)")[:width])],
+                    [("label", (f"  was {str(record.get('sha'))[:12]}  "
+                                + ("deleted when the review is sent (y)" if named else
+                                   "not named in the message: y leaves it in place")
+                                )[:width])],
                 ])
                 continue
-            desc = (f"» {record.get('repo')}: "
-                    f"{branch_persist.FAIRY_BRANCH_PREFIX}{record.get('branch')}"
-                    f"  {record.get('mode')}")
+            desc = f"» {record.get('repo')}: {forge_branch}  {record.get('mode')}"
             if isinstance(pr, dict):
                 desc += f'  → PR "{pr.get("title")}" into {pr.get("target")}'
             branch_parts.append([
                 [],
                 [(style, desc[:width])],
-                [("label", (f"  {str(record.get('sha'))[:12]}"
-                            "  published when the review is sent (y)")[:width])],
+                [("label", (f"  {str(record.get('sha'))[:12]}  "
+                            + ("published when the review is sent (y)" if named else
+                               "not named in the message: y leaves it unpublished")
+                            )[:width])],
             ])
             if isinstance(pr, dict) and pr.get("body"):
                 branch_parts.append(

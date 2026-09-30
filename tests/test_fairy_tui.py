@@ -1065,7 +1065,7 @@ class BranchMarkerTests(DbCase):
                 for r in ui.list_rows()]
 
     def test_a_deletion_renders_without_a_diff(self) -> None:
-        v = verdict(6)
+        v = verdict(6, msg="Deleted branch `fairy/stale`.")
         v["review"]["branches"] = [{
             "branch": "stale", "mode": "delete", "pr": None, "repo": "r",
             "sha": "c" * 40, "old_sha": "c" * 40, "bundle": "",
@@ -1127,7 +1127,7 @@ class BranchMarkerTests(DbCase):
         self.assertIn("force", text)
         self.assertIn('PR "Fix x" into master', text)
         self.assertIn("Adds the missing bounds check.", text)
-        self.assertIn("published when the review is sent (y)", text)
+        self.assertIn("not named in the message: y leaves it unpublished", text)
         self.assertIn(f"branch commits {'b' * 12}..{'a' * 12}", text)
         self.assertIn("Jane Doe", text)
         patches.assert_called_once()

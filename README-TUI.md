@@ -61,7 +61,10 @@ last row).
   author (`b` switches a force push to the range-diff against the
   published branch it would overwrite); a branch that shares no
   history with the forge is captioned `orphan branch` — `y`
-  publishes them along with the review. The
+  publishes them along with the review. The message names every
+  branch it publishes; delete a branch's mention from the message
+  (`o`) and `y` posts the review without publishing that branch, or
+  opening its PR. The
   thread is kept current
   by the agent's scan, with your `i` notes in it at their time; a
   `── sampled for the review … ──` line marks

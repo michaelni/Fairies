@@ -671,6 +671,12 @@ class CodexHostValidationTests(unittest.TestCase):
         self.assertLessEqual(
             args.max_patch_bytes + args.max_bundle_bytes, 1_048_576 - 200_000)
 
+    def test_agy_run_tightens_its_own_byte_caps(self) -> None:
+        args = self._parse(["--model", "agy:gemini-3.1-pro@high",
+                            "--agy-host", "fairy@agybox"])
+        self.assertEqual(wrapper.AGY_MAX_PATCH_BYTES, args.max_patch_bytes)
+        self.assertEqual(wrapper.AGY_MAX_BUNDLE_BYTES, args.max_bundle_bytes)
+
     def test_codex_caps_only_shrink_never_grow(self) -> None:
         args = self._parse(["--model", "codex:gpt-5.6-terra",
                             "--codex-host", "fairy@codexbox",

@@ -180,6 +180,10 @@ DEFAULT_MAX_PATCH_BYTES = 500_000
 # more than 1,048,576 input chars per turn was observed to be rejected by codex
 CODEX_MAX_PATCH_BYTES = 300_000
 CODEX_MAX_BUNDLE_BYTES = 450_000
+# agy's own input limit is unknown; these are our choice until its
+# behaviour and cost are understood
+AGY_MAX_PATCH_BYTES = 300_000
+AGY_MAX_BUNDLE_BYTES = 450_000
 DEFAULT_MAX_OUTPUT_TOKENS = 40_000
 # 0 means "do not impose a client-side timeout"; the outer caller
 # (e.g. fairy.py via its --llm-timeout) is responsible for
@@ -829,9 +833,12 @@ def parse_args() -> argparse.Namespace:
                 f"{cli} model(s) {', '.join(specs)} require --{cli}-host "
                 f"({cli} runs only in a container there, never on the wrapper host)"
             )
-    if any(s.startswith("codex:") for s in all_specs):
-        args.max_patch_bytes = min(args.max_patch_bytes, CODEX_MAX_PATCH_BYTES)
-        args.max_bundle_bytes = min(args.max_bundle_bytes, CODEX_MAX_BUNDLE_BYTES)
+    for cli, max_patch_bytes, max_bundle_bytes in (
+            ("codex", CODEX_MAX_PATCH_BYTES, CODEX_MAX_BUNDLE_BYTES),
+            ("agy", AGY_MAX_PATCH_BYTES, AGY_MAX_BUNDLE_BYTES)):
+        if any(s.startswith(f"{cli}:") for s in all_specs):
+            args.max_patch_bytes = min(args.max_patch_bytes, max_patch_bytes)
+            args.max_bundle_bytes = min(args.max_bundle_bytes, max_bundle_bytes)
     return args
 
 

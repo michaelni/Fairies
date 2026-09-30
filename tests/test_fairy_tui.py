@@ -446,17 +446,14 @@ class ActTests(DbCase):
             claim.abort()
         self.assertEqual(self.db.find("pr", "5"), "reviewed")
 
-    def test_rerun_writes_a_request_and_respects_in_flight(self) -> None:
-        self.db.push("reviewed", "pr", "5", verdict(5))
-        self.model.poll()
-        self.model.act("rerun")
-        self.assertEqual(self.db.get("requests", "pr", "5"), mock.ANY)
-        self.assertEqual(self.db.get("requests", "pr", "5")["action"], "rerun")
-        self.db.try_pop("requests", "pr", "5")
-        self.db.try_move("reviewed", "queued", "pr", "5")
-        self.model.poll()
-        self.model.act("rerun")
-        self.assertIsNone(self.db.get("requests", "pr", "5"))
+    def test_rerun_writes_a_request_whatever_the_state(self) -> None:
+        for state in ("reviewed", "queued"):
+            self.db.push(state, "pr", "5", verdict(5))
+            self.model.poll()
+            self.model.act("rerun")
+            self.assertEqual(self.db.try_pop("requests", "pr", "5")["action"],
+                             "rerun")
+            self.db.try_pop(state, "pr", "5")
 
     def test_rerun_keeps_the_displaced_verdict(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, msg="keep me"))

@@ -682,9 +682,6 @@ class Model:
                 logger.info("requested one more evaluation of %s (slot s%d)",
                             label, nxt)
             elif action == "rerun":
-                if item.state in ("queued", "llm", "outgoing"):
-                    logger.info("%s is already in flight", label)
-                    return
                 if count >= 10:
                     # fat-finger guard: a stray count must not spawn a
                     # gigantic evaluation batch

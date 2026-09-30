@@ -944,7 +944,9 @@ def ticket_decision(kind: str, number, ticket: dict) -> fairy.Decision | None:
             fairy.LabelChange(str(c.get("label") or ""), str(c.get("op") or ""),
                               str(c.get("reason") or ""), bool(c.get("post")))
             for c in review.get("label_changes") or () if isinstance(c, dict)),
-        branches=fairy.parse_branch_records(review.get("branches")))
+        branches=fairy.branches_named_in(
+            review.get("message", ""),
+            fairy.parse_branch_records(review.get("branches"))))
     if kind == "pr":
         decision = fairy.decision_from_review(
             llm, number=filedb.forge_number(number),

@@ -917,6 +917,13 @@ def name_unpublished_branches(message: str, branches: tuple[JsonObject, ...]) ->
     return message + "\n\n" * bool(notes) + "\n".join(notes)
 
 
+def branches_named_in(message: str, branches: tuple[JsonObject, ...]) -> tuple[JsonObject, ...]:
+    """The records whose forge branch the message names: deleting a
+    branch's mention from the message drops its publication."""
+    return tuple(record for record in branches if names_published_branch(
+        message, f"{branch_persist.FAIRY_BRANCH_PREFIX}{record['branch']}"))
+
+
 def fast_forward_fork_default_branch(
     args: argparse.Namespace,
     spec: BranchPushSpec,

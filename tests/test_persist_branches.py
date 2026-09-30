@@ -1453,7 +1453,8 @@ class TicketRoundTripTests(unittest.TestCase):
     def test_branches_survive_verdict_fields_and_ticket_decision(self) -> None:
         decision = fairy.Decision(
             5, "t", "a", "-", "comment", "llm", None,
-            llm_classification="moderate_issues", llm_message="msg",
+            llm_classification="moderate_issues",
+            llm_message="pushed fairy/pr7-fix-overflow, dropped fairy/pr7-stale",
             branches=(GOOD_RECORD, DELETE_RECORD))
         prepared = SimpleNamespace(
             pr={"updated_at": "2026-08-25T00:00:00Z", "head": {"ref": "b"}},
@@ -1464,6 +1465,13 @@ class TicketRoundTripTests(unittest.TestCase):
                          [GOOD_RECORD, DELETE_RECORD])
         rebuilt = agent.ticket_decision("pr", "5", {"review": fields["review"]})
         self.assertEqual(rebuilt.branches, (GOOD_RECORD, DELETE_RECORD))
+
+    def test_a_branch_edited_out_of_the_message_is_not_published(self) -> None:
+        review = {"classification": "moderate_issues",
+                  "message": "msg\n\nDeleted branch `fairy/pr7-stale`.",
+                  "branches": [GOOD_RECORD, DELETE_RECORD]}
+        rebuilt = agent.ticket_decision("pr", "5", {"review": review})
+        self.assertEqual(rebuilt.branches, (DELETE_RECORD,))
 
 
 if __name__ == "__main__":

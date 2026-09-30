@@ -242,6 +242,59 @@ def _augment_info_with_submodule_changes(
         info["submodule_changes"] = submodule_changes
 
 
+def _pr_user_text(
+    request: JsonObject,
+    lead: str,
+    patch_was_truncated: bool,
+    role_info: JsonObject,
+    ci_heading: str,
+) -> str:
+    """The pull request's metadata, body, discussion and CI status as
+    the user text of one role; ``role_info`` extends the metadata."""
+    pr = request.get("pull_request")
+    if not isinstance(pr, dict):
+        pr = {}
+
+    body = pr.get("body") if isinstance(pr.get("body"), str) else ""
+    discussion = request.get("discussion")
+    if not isinstance(discussion, list):
+        discussion = []
+    reviewer_username = request.get("reviewer_username")
+    if not isinstance(reviewer_username, str):
+        reviewer_username = ""
+    info = {
+        "number": pr.get("number"),
+        "title": pr.get("title"),
+        "author": pr.get("author"),
+        "html_url": pr.get("html_url"),
+        "base_ref": pr.get("base_ref"),
+        "head_ref": pr.get("head_ref"),
+        "head_sha": pr.get("head_sha"),
+        "additions": pr.get("additions"),
+        "deletions": pr.get("deletions"),
+        "changed_files": pr.get("changed_files"),
+        "auto_merge": pr.get("auto_merge"),
+        "reviewer_username": reviewer_username,
+        **role_info,
+        "patch_truncated_by_caller": bool(request.get("patch_truncated")),
+        "patch_truncated_by_wrapper": patch_was_truncated,
+        "discussion_items": len(discussion),
+        "vector_store_repo_heads": request.get("vector_store_repo_heads"),
+    }
+    _augment_info_with_submodule_changes(info, request)
+
+    text = (
+        f"{lead}\n\n"
+        f"Pull request metadata:\n{json.dumps(info, ensure_ascii=False, indent=2)}\n\n"
+        f"Pull request body:\n{body}\n\n"
+        f"Prior pull request discussion:\n{json.dumps(discussion, ensure_ascii=False, indent=2)}\n"
+    )
+    ci = request.get("ci_triage")
+    if isinstance(ci, dict) and ci:
+        text += f"\n{ci_heading}\n{json.dumps(ci, ensure_ascii=False, indent=2)}\n"
+    return text
+
+
 def make_user_text(
     request: JsonObject,
     source_notes: list[str],
@@ -250,116 +303,21 @@ def make_user_text(
     *,
     lead: str = "Review this pull request.",
 ) -> str:
-    pr = request.get("pull_request")
-    if not isinstance(pr, dict):
-        pr = {}
-
-    body = pr.get("body") if isinstance(pr.get("body"), str) else ""
-    discussion = request.get("discussion")
-    if not isinstance(discussion, list):
-        discussion = []
-    reviewer_username = request.get("reviewer_username")
-    if not isinstance(reviewer_username, str):
-        reviewer_username = ""
-    info = {
-        "number": pr.get("number"),
-        "title": pr.get("title"),
-        "author": pr.get("author"),
-        "html_url": pr.get("html_url"),
-        "base_ref": pr.get("base_ref"),
-        "head_ref": pr.get("head_ref"),
-        "head_sha": pr.get("head_sha"),
-        "additions": pr.get("additions"),
-        "deletions": pr.get("deletions"),
-        "changed_files": pr.get("changed_files"),
-        "auto_merge": pr.get("auto_merge"),
-        "reviewer_username": reviewer_username,
-        "patch_truncated_by_caller": bool(request.get("patch_truncated")),
-        "patch_truncated_by_wrapper": patch_was_truncated,
-        "source_files_attached": source_files,
-        "source_notes": source_notes,
-        "discussion_items": len(discussion),
-        "vector_store_repo_heads": request.get("vector_store_repo_heads"),
-    }
-    _augment_info_with_submodule_changes(info, request)
-
-    discussion_text = json.dumps(discussion, ensure_ascii=False, indent=2)
-
-    parts = [
-        f"{lead}\n\n",
-        "Pull request metadata:\n",
-        f"{json.dumps(info, ensure_ascii=False, indent=2)}\n\n",
-        "Pull request body:\n",
-        f"{body}\n\n",
-        "Prior pull request discussion:\n",
-        f"{discussion_text}\n",
-    ]
-    ci = request.get("ci_triage")
-    if isinstance(ci, dict) and ci:
-        parts.extend(
-            [
-                "\nCommit CI status (head has ERROR/FAILURE job(s); "
-                "same payload as triage, JSON):\n",
-                f"{json.dumps(ci, ensure_ascii=False, indent=2)}\n",
-            ]
-        )
-    return "".join(parts)
+    return _pr_user_text(
+        request, lead, patch_was_truncated,
+        {"source_files_attached": source_files, "source_notes": source_notes},
+        "Commit CI status (head has ERROR/FAILURE job(s); "
+        "same payload as triage, JSON):")
 
 
 def make_triage_user_text(request: JsonObject, patch_was_truncated: bool, *,
                           lead: str = "Triage this pull request.") -> str:
     pr = request.get("pull_request")
-    if not isinstance(pr, dict):
-        pr = {}
-
-    body = pr.get("body") if isinstance(pr.get("body"), str) else ""
-    discussion = request.get("discussion")
-    if not isinstance(discussion, list):
-        discussion = []
-    reviewer_username = request.get("reviewer_username")
-    if not isinstance(reviewer_username, str):
-        reviewer_username = ""
-    info = {
-        "number": pr.get("number"),
-        "title": pr.get("title"),
-        "author": pr.get("author"),
-        "html_url": pr.get("html_url"),
-        "base_ref": pr.get("base_ref"),
-        "head_ref": pr.get("head_ref"),
-        "head_sha": pr.get("head_sha"),
-        "additions": pr.get("additions"),
-        "deletions": pr.get("deletions"),
-        "changed_files": pr.get("changed_files"),
-        "auto_merge": pr.get("auto_merge"),
-        "reviewer_username": reviewer_username,
-        "labels": [name for name in (pr.get("labels") or []) if isinstance(name, str) and name],
-        "patch_truncated_by_caller": bool(request.get("patch_truncated")),
-        "patch_truncated_by_wrapper": patch_was_truncated,
-        "discussion_items": len(discussion),
-        "vector_store_repo_heads": request.get("vector_store_repo_heads"),
-    }
-    _augment_info_with_submodule_changes(info, request)
-
-    discussion_text = json.dumps(discussion, ensure_ascii=False, indent=2)
-
-    parts = [
-        f"{lead}\n\n",
-        "Pull request metadata:\n",
-        f"{json.dumps(info, ensure_ascii=False, indent=2)}\n\n",
-        "Pull request body:\n",
-        f"{body}\n\n",
-        "Prior pull request discussion:\n",
-        f"{discussion_text}\n",
-    ]
-    ci = request.get("ci_triage")
-    if isinstance(ci, dict) and ci:
-        parts.extend(
-            [
-                "\nCI failure data from the caller (commit statuses), JSON:\n",
-                f"{json.dumps(ci, ensure_ascii=False, indent=2)}\n",
-            ]
-        )
-    return "".join(parts)
+    labels = pr.get("labels") if isinstance(pr, dict) else None
+    return _pr_user_text(
+        request, lead, patch_was_truncated,
+        {"labels": [name for name in labels or [] if isinstance(name, str) and name]},
+        "CI failure data from the caller (commit statuses), JSON:")
 
 
 def make_issue_user_text(request: JsonObject, *, lead: str = "Analyze this issue.") -> str:

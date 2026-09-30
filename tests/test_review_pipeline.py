@@ -832,6 +832,17 @@ class WrapperWorksetNoteTests(unittest.TestCase):
         self.assertEqual(self._raw()["failed_reviewers"],
                          ["codex:gpt-5.6-sol: content flagged"])
 
+    def test_a_rerun_without_failures_clears_the_earlier_ones(self) -> None:
+        """Regression: PR #24773 on 2026-09-30 kept an interrupted run's
+        failed agy reviewer next to the draft the rerun produced."""
+        pr_review_wrapper.workset_note_drafts(
+            self.args, [], combining=True,
+            failed=["agy:gemini-3.1-pro: agy ended with status 'SUCCESS'"])
+        pr_review_wrapper.workset_note_drafts(
+            self.args, [Review("approve", "d", (), model="agy:gemini-3.1-pro")],
+            combining=True)
+        self.assertEqual([], self._raw()["failed_reviewers"])
+
     def test_notes_work_on_a_stateless_filedb_ticket(self) -> None:
         self.path.write_text('{"title": "t"}\n', encoding="utf-8")
         pr_review_wrapper.workset_note(self.args, "stage", "review")

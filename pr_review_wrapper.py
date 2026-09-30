@@ -870,8 +870,7 @@ def workset_note_drafts(args: argparse.Namespace, drafts, *,
              "prompt": d.prompt}
             for d in drafts
         ]
-        if failed:
-            data["failed_reviewers"] = list(failed)
+        data["failed_reviewers"] = list(failed)
         if combining:
             data["stage"] = "combine"
 

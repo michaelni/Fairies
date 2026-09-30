@@ -1054,6 +1054,8 @@ Set ``hold_for_human_inspection`` to true when any of these holds:
 - the message depicts or suggests violent, illegal or harmfull behavior
 Otherwise set it to false. ``reason`` list what fails (if any), in as much text as that needed, then if nothing failed list what you checked concisely; the operator reads it, it is never posted
 
+Dont hold because of a label being added that already there or a label being removed thats not there.
+
 ''' * vetter}\
 {"## User-requested review tuning\n" * triager}\
 {f'''Supported models: {", ".join(allowed_models)}. Supported efforts: {", ".join(TRIAGE_REQUESTABLE_EFFORTS)}.

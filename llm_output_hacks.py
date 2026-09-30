@@ -47,6 +47,8 @@ __all__ = ["hide_scope_block", "link_published_branch"]
 
 logger = logging.getLogger(__name__)
 
+_FENCED_CODE = re.compile(r"(```.*?```)", re.DOTALL)
+
 
 def hide_scope_block(message: str) -> str:
     """Wrap a run of plain-text ``Scope ...`` paragraphs in the HTML
@@ -90,5 +92,6 @@ def link_published_branch(message: str, forge_branch: str, sha: str,
         prose = _link_mentions(prose, re.escape(forge_branch), lambda _: branch_url)
         return _link_mentions(prose, "[0-9a-f]{7,}",
                               lambda text: commit_url if sha.startswith(text) else None)
-    parts = re.split(r"(```.*?```)", message, flags=re.DOTALL)
+    parts = re.split(_FENCED_CODE, message)
     return "".join(part if i % 2 else link(part) for i, part in enumerate(parts))
+

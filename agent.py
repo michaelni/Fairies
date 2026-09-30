@@ -514,9 +514,11 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 continue  # a persistently failing item must not burn spend every cycle
             error_backoff_h = wait
         if kind == "pr":
+            posted = prior_data if prior == "posted" and prior_data else {}
             prepared = fairy.safe_prepare_pr(
                 ns, item, now=now, self_login=self_login, wip_re=wip_re,
-                cache=cache, discussion_cache_max_age=cache_age)
+                cache=cache, discussion_cache_max_age=cache_age,
+                posted_classification=(posted.get("review") or {}).get("classification"))
         else:
             try:
                 prepared = issue_fairy.prepare_issue(

@@ -2661,7 +2661,12 @@ def prepare_pr(
     wip_re: re.Pattern[str],
     cache: gcli_cache.Cache,
     discussion_cache_max_age: timedelta,
+    posted_classification: str | None = None,
 ) -> Decision | PreparedPR:
+    """``posted_classification`` is the classification of fairy's
+    standing posted verdict on the PR, None without one. On fairy's
+    own PR it is the only record of an approval: the forge refuses
+    the approving review, so fairy posts it as a comment."""
     number = int(pr["number"])
     title = str(pr.get("title") or "")
     author = get_pr_author(pr)
@@ -2951,6 +2956,18 @@ def prepare_pr(
             forced_review=True,
         )
 
+    if author == self_login:
+        own_posts = sum(
+            get_item_author_login(item) == self_login
+            and normalize_review_state(item.get("state")) != "REQUEST_REVIEW"
+            for item in reviews + comments)
+        if posted_classification in ("approve", "minor_issues_approve"):
+            return skip("own pull request, already approved",
+                        last_activity_value=last_activity)
+        if own_posts >= 2:
+            return skip(f"own pull request, already reviewed {own_posts} times",
+                        last_activity_value=last_activity)
+
     # ``states`` and ``has_blocker`` were computed earlier (right after
     # ``last_activity``) so the end-of-run external-approvers summary
     # could see backoff'd / forced-review PRs. Re-use the same value
@@ -3140,6 +3157,7 @@ def safe_prepare_pr(
     wip_re: re.Pattern[str],
     cache: gcli_cache.Cache,
     discussion_cache_max_age: timedelta,
+    posted_classification: str | None = None,
 ) -> PreparedItem:
     try:
         return prepare_pr(
@@ -3150,6 +3168,7 @@ def safe_prepare_pr(
             wip_re=wip_re,
             cache=cache,
             discussion_cache_max_age=discussion_cache_max_age,
+            posted_classification=posted_classification,
         )
     except Exception as exc:
         number = pr.get("number", "?")

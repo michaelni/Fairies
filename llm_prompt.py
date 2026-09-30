@@ -269,6 +269,7 @@ def _pr_user_text(
         "html_url": pr.get("html_url"),
         "base_ref": pr.get("base_ref"),
         "head_ref": pr.get("head_ref"),
+        "head_repo": pr.get("head_repo"),
         "head_sha": pr.get("head_sha"),
         "additions": pr.get("additions"),
         "deletions": pr.get("deletions"),
@@ -281,6 +282,8 @@ def _pr_user_text(
         "discussion_items": len(discussion),
         "vector_store_repo_heads": request.get("vector_store_repo_heads"),
     }
+    if pr.get("fairy_branch"):
+        info["fairy_branch"] = pr["fairy_branch"]
     _augment_info_with_submodule_changes(info, request)
 
     text = (
@@ -732,6 +735,7 @@ You can fetch from it and you can push to it. This lets you publish or persist w
 - Declare {"action": "delete"} for a published branch that is no longer useful; the deletion, too, reaches the forge on approval.
 - Branch names use only letters, digits, '_', '+' and '-'. Use pr1234- as name prefix for a branch related to PR 1234, issue1234- for one related to issue 1234. pr1234-tooling / issue1234-tooling are identifiers for branches with tooling, issue1234-bugfix / issue1234-enhancement are identifiers for branches that resolve issue1234, pr1234-replace is a branch intended to replace pr1234, for example when pr1234-replace fixes the issues brought up in a review of pr1234.
 - To open a pull request from a pushed branch, declare it in the ``pull_requests`` field of your verdict instead: repository, branch, title, body, target branch; it needs no ``branches`` entry.
+- A ``fairy_branch`` in the pull request metadata names the branch of the fairy remote that is the pull request's head: the pull request is yours. Address its review comments by rewriting that branch, pushing it and declaring it with action push; the pull request follows its branch. Do not open a replacement pull request for it.
 - Commits you create carry the trailer ``Assisted-by: Fairy`` as the last line of the commit message.
 - Preserve the authorship of the commits, if there is no prior human authorship for some work then use the author configured in your environment.
 - Tell the user in your message what you pushed or deleted, where, and what it is for.

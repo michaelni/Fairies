@@ -1590,6 +1590,30 @@ def get_pr_head_branch(pr: ApiObject) -> str | None:
     return None
 
 
+def get_pr_head_repo(pr: ApiObject) -> str | None:
+    """``owner/name`` of the repository holding the head branch; None
+    once that fork was deleted."""
+    head = pr.get("head")
+    repo = head.get("repo") if isinstance(head, dict) else None
+    return repo.get("full_name") if isinstance(repo, dict) else None
+
+
+def own_fairy_branch(args: argparse.Namespace, pr: ApiObject) -> JsonObject | None:
+    """The head of a pull request fairy opened, as the ``branches``
+    declaration that updates it: ``{"repo": <--branch-push NAME>,
+    "branch": <name>}`` when the head is ``fairy/<name>`` in the
+    --branch-push fork of the reviewed repository, None otherwise."""
+    branch = get_pr_head_branch(pr) or ""
+    for spec in getattr(args, "branch_push", None) or ():
+        if ((spec.owner, spec.forge_repo) == (args.owner, args.repo)
+                and get_pr_head_repo(pr)
+                == f"{branch_push_head_owner(args, spec)}/{spec.forge_repo}"
+                and branch.startswith(branch_persist.FAIRY_BRANCH_PREFIX)):
+            return {"repo": spec.repo,
+                    "branch": branch[len(branch_persist.FAIRY_BRANCH_PREFIX):]}
+    return None
+
+
 def get_pr_base_sha(pr: ApiObject) -> str | None:
     """Base commit of the PR's patch: the forge-computed merge base
     when present, else the base branch tip -- the same choice
@@ -2413,6 +2437,7 @@ def run_llm_review(
             "html_url": pr.get("html_url") or "",
             "base_ref": ((pr.get("base") or {}).get("ref") if isinstance(pr.get("base"), dict) else "") or "",
             "head_ref": ((pr.get("head") or {}).get("ref") if isinstance(pr.get("head"), dict) else "") or "",
+            "head_repo": get_pr_head_repo(pr) or "",
             "head_sha": head_sha,
             "additions": pr.get("additions"),
             "deletions": pr.get("deletions"),
@@ -2430,6 +2455,8 @@ def run_llm_review(
         payload["triage_label_allowlist"] = label_allowlist
     if ci_triage is not None:
         payload["ci_triage"] = ci_triage
+    if (fairy_branch := own_fairy_branch(args, pr)) is not None:
+        payload["pull_request"]["fairy_branch"] = fairy_branch
     if ignore_triage_skip:
         payload["ignore_triage_skip"] = True
     if force_engage:

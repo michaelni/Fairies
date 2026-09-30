@@ -233,7 +233,8 @@ class AgyReviewerRunTests(unittest.TestCase):
         copied = self.container.copied
         for name in (TOKEN_NAME, "output_schema.json", "mcp_config.json",
                      "settings.json", "mcp_shell_bridge.py",
-                     "shell_bridge_client.py", "relay.py"):
+                     "shell_bridge_client.py", "relay.py", "hooks.json",
+                     agy_reviewer.HOOK_SCRIPT):
             self.assertIn(name, copied)
         (server,) = json.loads(copied["mcp_config.json"])["mcpServers"].values()
         self.assertEqual("python3", server["command"])
@@ -254,6 +255,31 @@ class AgyReviewerRunTests(unittest.TestCase):
         self._run(ctx=make_ctx(open_shell=None))
         self.assertNotIn("mcp_config.json", self.container.copied)
         self.assertNotIn("settings.json", self.container.copied)
+        self.assertIn("hooks.json", self.container.copied)
+        self.assertIn("answer from the text given",
+                      self.container.copied[agy_reviewer.HOOK_SCRIPT])
+        self.assertNotIn("MCP tool shell", self.container.input_text)
+
+    def test_native_tools_hook_denies_with_the_mcp_shell_as_reason(self) -> None:
+        self._run()
+        (group,) = json.loads(self.container.copied["hooks.json"])[
+            "fairy-native-tools"]["PreToolUse"]
+        self.assertRegex("run_command", group["matcher"])
+        self.assertRegex("write_to_file", group["matcher"])
+        self.assertRegex("browser_click_element", group["matcher"])
+        self.assertNotRegex("view_file", group["matcher"])
+        self.assertNotRegex("call_mcp_tool", group["matcher"])
+        (hook,) = group["hooks"]
+        self.assertEqual(f"sh ~/.gemini/config/{agy_reviewer.HOOK_SCRIPT}",
+                         hook["command"])
+        script = self.container.copied[agy_reviewer.HOOK_SCRIPT]
+        self.assertTrue(script.startswith("#!/bin/sh\n"))
+        printed = subprocess.run(["sh", "-c", script], input="{}", capture_output=True,
+                                 text=True, check=True).stdout
+        decision = json.loads(printed)
+        self.assertEqual("deny", decision["decision"])
+        self.assertIn("MCP tool shell", decision["reason"])
+        self.assertIn("MCP tool shell", self.container.input_text)
 
     def test_denied_tool_without_output_ends_the_turn(self) -> None:
         with self.assertRaises(AgyTurnFailed) as caught:

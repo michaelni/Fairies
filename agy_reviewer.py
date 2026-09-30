@@ -33,9 +33,12 @@ servers from, the stream-json output and agy's error strings, on top of
 ``cli_reviewer.CliReviewer`` which runs the pinned agy binary in a
 container on the ``--agy-host``.
 
-agy's own tools (shell, file access, web) stay soft-denied: headless
-mode auto-denies every tool without an allow rule, and the only rule
-written grants the MCP shell into the review containers.
+agy's own tools (shell, file access, web) are denied by a pre-tool
+hook whose reason points the model at the MCP shell into the review
+containers, the only tool granted. The hook matters because headless
+mode's own auto-denial of an unapproved tool ends the run with no
+output, while a hook denial reaches the model as a tool error it can
+recover from (observed on agy 1.2.13, 2026-09-30).
 
 An authentication prompt is a credential failure: the token is set
 aside and a human restores it. agy shows the same prompt with a valid
@@ -97,6 +100,16 @@ TOKEN_NAME = "antigravity-oauth-token"
 SETTINGS_RELATIVE_DIR = ".gemini/antigravity-cli"
 MCP_CONFIG_RELATIVE_DIR = ".gemini/config"
 MCP_SERVER = "shell"
+# Tool names the pre-tool hook denies: run_command and write_to_file were
+# observed on agy 1.2.13; the others are the terminal, file, web and
+# browser step types the binary names. The hook matcher takes plain "|"
+# alternation; the "\|" the docs show never matched (2026-09-30).
+NATIVE_TOOLS_MATCHER = "|".join((
+    "run_command", "send_command_input", "shell_exec", "write_to_file",
+    "delete_directory", "read_url_content", "search_web", "open_browser_url",
+    "browser_.*", "execute_browser_javascript", "run_extension_code",
+))
+HOOK_SCRIPT = "deny_native_tools.sh"
 
 # agy 1.2.12 prints this, waits 60 s for a login code and exits 1 with
 # the result error "authentication failed or timed out" both without a
@@ -225,7 +238,26 @@ class AgyReviewer(CliReviewer):
         cmd = build_agy_command(
             agy_bin=self.agy_bin, model=self.model, effort=self.effort,
             schema_path=f"{CONTAINER_RUN_DIR}/output_schema.json")
-        files = []
+        config_dir = f"{CONTAINER_HOME}/{MCP_CONFIG_RELATIVE_DIR}"
+        reason = (
+            "This terminal is not the review machine and is disabled. Run "
+            f"every command through the MCP tool {MCP_SERVER} (server "
+            f"{MCP_SERVER}), which executes on the review machine."
+            if use_shell else
+            "No commands can be run in this review; answer from the text given."
+        )
+        hook_script = Path(scratch) / HOOK_SCRIPT
+        hook_script.write_text(
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s' "
+            + json.dumps(json.dumps({"decision": "deny", "reason": reason}))
+            + "\n", encoding="utf-8")
+        hooks = Path(scratch) / "hooks.json"
+        hooks.write_text(json.dumps({"fairy-native-tools": {"PreToolUse": [{
+            "matcher": NATIVE_TOOLS_MATCHER,
+            "hooks": [{"type": "command",
+                       "command": f"sh ~/{MCP_CONFIG_RELATIVE_DIR}/{HOOK_SCRIPT}",
+                       "timeout": 10}]}]}}), encoding="utf-8")
+        files = [(hook_script, config_dir), (hooks, config_dir)]
         if use_shell:
             bridge_args = [f"{CONTAINER_RUN_DIR}/{BRIDGE_PATH.name}",
                            "--socket", self.socket_path]
@@ -240,9 +272,14 @@ class AgyReviewer(CliReviewer):
             settings = Path(scratch) / "settings.json"
             settings.write_text(json.dumps({"permissions": {
                 "allow": [f"mcp({MCP_SERVER}/*)"]}}), encoding="utf-8")
-            files = [(mcp_config, f"{CONTAINER_HOME}/{MCP_CONFIG_RELATIVE_DIR}"),
-                     (settings, self.credential_dir)]
+            files += [(mcp_config, config_dir), (settings, self.credential_dir)]
         return Staged(cmd, CONTAINER_ENV, files)
+
+    def _prompt_tail(self, use_shell: bool) -> str:
+        return (
+            f"Your own terminal and file tools are not the review machine; the "
+            f"only way to run commands there is the MCP tool {MCP_SERVER}."
+        ) if use_shell else ""
 
     def _stdin_text(self, prompt: str) -> str:
         return json.dumps({"event": "user",

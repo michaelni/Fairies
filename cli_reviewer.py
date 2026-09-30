@@ -190,6 +190,10 @@ class CliReviewer(Reviewer):
         """Prompt features beyond ``source_bundle`` / ``podman_shell``."""
         return set()
 
+    def _prompt_tail(self, use_shell: bool) -> str:
+        """Backend-specific lines after the role's user texts; "" for none."""
+        return ""
+
     @abstractmethod
     def _stage(self, scratch: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:
@@ -266,6 +270,8 @@ class CliReviewer(Reviewer):
         if ctx.source_bundle is not None:
             parts.append(ctx.source_bundle)
         parts.extend(user_texts[1:])
+        if tail := self._prompt_tail(use_shell):
+            parts.append(tail)
         parts.append(
             "Your final message must be exactly one JSON object matching "
             "the configured output schema -- no surrounding text."

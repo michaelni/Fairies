@@ -36,7 +36,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from llm_output_hacks import hide_scope_block, link_published_branch
+from llm_output_hacks import (
+    hide_scope_block, link_published_branch, names_published_branch,
+)
 
 GPT6_HEAD = """LLM-GPT-6-ASTRA — combined review of 1ce2a4db3060.
 
@@ -128,6 +130,22 @@ class LinkPublishedBranchTests(unittest.TestCase):
             link_published_branch("on fairy/fix-dc21a3ef", "fairy/fix-dc21a3ef",
                                   SHA, "https://forge/b", COMMIT_URL),
             "on [fairy/fix-dc21a3ef](https://forge/b)")
+
+
+class NamesPublishedBranchTests(unittest.TestCase):
+    def test_bare_backticked_bold_and_linked_names_count(self) -> None:
+        for text in ("on fairy/pr23842-test-ref.", "see `fairy/pr23842-test-ref`",
+                     "**fairy/pr23842-test-ref**",
+                     f"[fairy/pr23842-test-ref]({BRANCH_URL})"):
+            with self.subTest(text=text):
+                self.assertTrue(names_published_branch(text, "fairy/pr23842-test-ref"))
+
+    def test_other_branches_urls_and_fenced_code_do_not(self) -> None:
+        for text in ("fairy/pr23842-test-ref-2", "fairy/pr23842-test-reff",
+                     "pr23842-test-ref", BRANCH_URL,
+                     "```\nfairy/pr23842-test-ref\n```"):
+            with self.subTest(text=text):
+                self.assertFalse(names_published_branch(text, "fairy/pr23842-test-ref"))
 
 
 if __name__ == "__main__":

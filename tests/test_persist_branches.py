@@ -990,6 +990,29 @@ class LinkPublishedBranchesTests(unittest.TestCase):
                     f"fairy/{record['branch']}")
 
 
+class NameUnpublishedBranchesTests(unittest.TestCase):
+    PR_RECORD = {**GOOD_RECORD, "branch": "pr7-feature",
+                 "pr": {"title": "t", "body": "b", "target": "master"}}
+
+    def test_unnamed_records_get_a_line_each(self) -> None:
+        self.assertEqual(
+            fairy.name_unpublished_branches(
+                "fixed it", (GOOD_RECORD, self.PR_RECORD, DELETE_RECORD)),
+            "fixed it\n\n"
+            "Pushed branch `fairy/pr7-fix-overflow` at aaaaaaaaaaaa.\n"
+            "Pushed branch `fairy/pr7-feature` at aaaaaaaaaaaa"
+            " and opened a pull request from it.\n"
+            "Deleted branch `fairy/pr7-stale`.")
+
+    def test_named_records_add_nothing(self) -> None:
+        message = "pushed `fairy/pr7-fix-overflow`, dropped fairy/pr7-stale"
+        self.assertEqual(
+            fairy.name_unpublished_branches(message, (GOOD_RECORD, DELETE_RECORD)),
+            message)
+        self.assertEqual(fairy.name_unpublished_branches("no branches", ()),
+                         "no branches")
+
+
 class SendPathBranchTests(unittest.TestCase):
     def test_missing_push_config_blocks_before_posting(self) -> None:
         decision = _branch_decision()

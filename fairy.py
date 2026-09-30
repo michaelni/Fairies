@@ -123,7 +123,7 @@ from forge_gcli import (
     run_cmd,
 )
 from forgejo_export import labels
-from llm_output_hacks import link_published_branch
+from llm_output_hacks import link_published_branch, names_published_branch
 import workset
 
 __all__ = [
@@ -900,6 +900,21 @@ def link_published_branches(
             forge_gcli.branch_page_url(args, ticket_url, owner, spec.forge_repo, forge_branch),
             forge_gcli.commit_page_url(args, ticket_url, owner, spec.forge_repo, record["sha"]))
     return message
+
+
+def name_unpublished_branches(message: str, branches: tuple[JsonObject, ...]) -> str:
+    """Append a line naming each branch record the message does not
+    name, so a review always names every branch it publishes."""
+    notes = []
+    for record in branches:
+        forge_branch = f"{branch_persist.FAIRY_BRANCH_PREFIX}{record['branch']}"
+        if names_published_branch(message, forge_branch):
+            continue
+        notes.append(
+            f"Deleted branch `{forge_branch}`." if record["mode"] == "delete" else
+            f"Pushed branch `{forge_branch}` at {record['sha'][:12]}"
+            + " and opened a pull request from it" * isinstance(record.get("pr"), dict) + ".")
+    return message + "\n\n" * bool(notes) + "\n".join(notes)
 
 
 def fast_forward_fork_default_branch(
@@ -2345,7 +2360,9 @@ def invoke_llm_wrapper(
     branches = parse_branch_records(data.get("branches"))
     return LLMReview(
         classification=classification,
-        message=link_published_branches(args, message.strip(), branches, ticket_url),
+        message=link_published_branches(
+            args, name_unpublished_branches(message.strip(), branches),
+            branches, ticket_url),
         label_changes=label_changes,
         branches=branches,
     )

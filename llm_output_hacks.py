@@ -43,7 +43,7 @@ import logging
 import re
 from typing import Callable
 
-__all__ = ["hide_scope_block", "link_published_branch"]
+__all__ = ["hide_scope_block", "link_published_branch", "names_published_branch"]
 
 logger = logging.getLogger(__name__)
 
@@ -95,3 +95,10 @@ def link_published_branch(message: str, forge_branch: str, sha: str,
     parts = re.split(_FENCED_CODE, message)
     return "".join(part if i % 2 else link(part) for i, part in enumerate(parts))
 
+
+def names_published_branch(message: str, forge_branch: str) -> bool:
+    """Whether the message names the branch (its forge name, e.g.
+    ``fairy/<name>``, bare, backticked or as link text) outside its
+    fenced code blocks."""
+    return any(re.search(rf"(?<![\w/+-]){re.escape(forge_branch)}(?![\w/+-])", prose)
+               for prose in re.split(_FENCED_CODE, message)[::2])

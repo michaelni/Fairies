@@ -590,7 +590,7 @@ class ReuseTests(AgentCase):
         self.assertEqual(self.db.find("pr", "1"), "skipped")
 
     def test_y_press_during_the_slow_prepare_is_not_clobbered(self) -> None:
-        # The IN_FLIGHT check runs before prepare; prepare takes seconds.
+        # The in-flight check runs before prepare; prepare takes seconds.
         # An operator y (reviewed -> outgoing) in that window must not be
         # popped by the requeue routing: the pending send would vanish.
         self.ns.auto_mode = True
@@ -758,6 +758,51 @@ class LifecycleTests(AgentCase):
             self.assertEqual(fairy.prepared_pr_from_dict(
                 t["prepared"]).number, 7)
             self.assertIsNone(self.db.get("requests", "pr", token))
+
+    def test_request_on_a_queued_item_refreshes_it_as_forced(self) -> None:
+        # r on a queued row: the worker takes forced tickets first
+        self.scan([make_pr(1)])
+        self.assertFalse(self.db.get("queued", "pr", "1")["forced"])
+        self.db.push("requests", "pr", "1", {"action": "rerun"})
+        self.scan([make_pr(1)])
+        self.assertTrue(self.db.get("queued", "pr", "1")["forced"])
+        self.assertIsNone(self.db.get("requests", "pr", "1"))
+
+    def test_sample_request_on_a_queued_item_is_answered(self) -> None:
+        # production issue #23141: R on a queued item left the request
+        # unanswered until the base review had run
+        self.scan([make_pr(7)])
+        self.db.push("requests", "pr", "7s1", {"action": "rerun"})
+        self.scan([make_pr(7)])
+        self.assertEqual(self.db.find("pr", "7s1"), "queued")
+        self.assertFalse(self.db.get("queued", "pr", "7")["forced"])
+        self.assertIsNone(self.db.get("requests", "pr", "7s1"))
+
+    def test_a_running_review_serves_the_rerun_request(self) -> None:
+        self.scan([make_pr(1)])
+        claim = self.db.claim("queued", "llm", "pr", "1")
+        self.db.push("requests", "pr", "1", {"action": "rerun"})
+        try:
+            self.scan([make_pr(1)])
+            self.assertEqual(self.db.find("pr", "1"), "llm")
+        finally:
+            claim.abort()
+        self.assertIsNone(self.db.get("requests", "pr", "1"))
+
+    def test_a_sample_request_waits_for_the_running_review(self) -> None:
+        self.scan([make_pr(1)])
+        claim = self.db.claim("queued", "llm", "pr", "1")
+        self.db.push("requests", "pr", "1s1", {"action": "rerun"})
+        try:
+            self.assertEqual(agent.consume_requests(self.db)["pr"], set())
+            self.scan([make_pr(1)])
+            self.assertEqual(self.db.find("pr", "1s1"), "requests")
+        finally:
+            claim.finish("reviewed", verdict_ticket(1))
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.find("pr", "1s1"), "queued")
+        self.assertEqual(self.db.find("pr", "1"), "reviewed")
+        self.assertIsNone(self.db.get("requests", "pr", "1s1"))
 
     def test_skipped_sample_never_requeues(self) -> None:
         # a 3-sample evaluation must not loop into 3 more evaluations

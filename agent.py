@@ -96,10 +96,6 @@ __all__ = ["main", "scan_pass", "send_pass",
 logger = logging.getLogger(__name__)
 
 MIN_BACKOFF_H = 24.0
-# States the agent never touches during a scan: the item is being
-# worked on or awaits the operator/sender.
-IN_FLIGHT = ("queued", "llm", "outgoing")
-
 
 class Halted(BaseException):
     """The scan sighted --halt-keyword and halted the db. Not an
@@ -446,7 +442,12 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
         token = str(number)
         snapshot = _put_snapshot(db, ns, kind, token, item, cache, cache_age)
         prior = db.find(kind, token)
-        if prior in IN_FLIGHT:
+        if prior in ("llm", "outgoing"):
+            if number in forced_ns:
+                logger.info("%s #%d is in flight (%s); that serves the request",
+                            kind, number, prior)
+            continue
+        if prior == "queued" and number not in forced_ns:
             continue
         prior_data = db.get(prior, kind, token) if prior else None
         agent_post_at = _unacknowledged_agent_post_at(prior, prior_data)
@@ -632,11 +633,15 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
 
 
 def consume_requests(db: filedb.Db) -> dict[str, set[filedb.TicketId]]:
-    """Requests force a fresh gate-bypassing ticket; they are deleted
-    only after the ticket exists (at-least-once)."""
+    """The requests a pass can answer now. A request forces a fresh
+    gate-bypassing ticket and is deleted only after the ticket exists
+    (at-least-once). A sample of an item a worker is reviewing or the
+    send pass is posting waits in requests/ until the item settles."""
     forced: dict[str, set[filedb.TicketId]] = {"pr": set(), "issue": set()}
     for kind, number in db.list_state("requests"):
-        forced[kind].add(number)
+        if filedb.is_base(number) or db.find(
+                kind, str(filedb.forge_number(number))) not in ("llm", "outgoing"):
+            forced[kind].add(number)
     return forced
 
 
@@ -827,8 +832,7 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
             each by fetching just the named item."""
             serve_outgoing()
             for kind, ns in sides.items():
-                late = {n for k, n in db.list_state("requests")
-                        if k == kind} - served[kind]
+                late = consume_requests(db)[kind] - served[kind]
                 if not late:
                     continue
                 served[kind] |= late
@@ -1413,7 +1417,7 @@ def main() -> int:
                 one_pass(db, pr_ns, issue_ns, args, full=full)
                 if full:
                     next_full = time.monotonic() + FULL_PASS_S
-            elif db.list_state("requests"):
+            elif any(consume_requests(db).values()):
                 requests_pass(db, pr_ns, issue_ns, args)
             else:
                 send_pass(db, sides, dry_run=args.dry_run)

@@ -351,12 +351,12 @@ the login on the wrapper host: a grok prompt sends the instruction files
 it finds there (`CLAUDE.md`, `AGENTS.md`) to xAI.
 
 A run with a `grok:` reviewer gives every reviewer at most 150 KB of patch
-and 150 KB of source inline, and grok passes run one at a time across all
-fairy processes: a login cannot serve two passes at once.
+and 150 KB of source inline.
 
 The security model is codex's: of grok's own tools only the two that call
 MCP tools remain, they are denied every file, and the MCP shell into the
-review containers is the only tool they can call.
+review containers is the only tool they can call. Cap concurrent passes
+with `--concurrency grok:N`.
 
 ### Static data and vector stores
 

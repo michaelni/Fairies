@@ -49,7 +49,7 @@ human restores it. Every other run without a schema-forced answer is a
 exhausted allowance should instead drop the pass as ``CliUsageLimit``;
 how grok words it has not been observed, so it is retried like the rest.
 
-Passes never overlap (``GrokReviewer.one_at_a_time``).
+``--concurrency grok:N`` caps how many passes run at once.
 """
 
 from __future__ import annotations
@@ -173,10 +173,6 @@ class GrokReviewer(CliReviewer):
     # tokens at that rate
     max_patch_bytes = 150_000
     max_bundle_bytes = 150_000
-    # Each pass refreshes its own copy of the login, and grok's refresh
-    # token is spent once
-    # (https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-login/src/manager/lock.rs).
-    one_at_a_time = True
 
     def _stage(self, scratch: str, prompt: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:

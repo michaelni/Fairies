@@ -160,9 +160,6 @@ class CliReviewer(Reviewer):
         part
     ``login_hint``
         how a human restores a rejected credential
-    ``one_at_a_time``
-        whether the wrapper must keep the backend's passes from
-        overlapping (``--concurrency BACKEND:1``)
 
     ``default_image``, the tag of the backend's image, follows from
     ``backend``.
@@ -185,7 +182,6 @@ class CliReviewer(Reviewer):
     max_patch_bytes: int
     max_bundle_bytes: int
     login_hint: str
-    one_at_a_time = False
 
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)

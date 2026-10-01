@@ -811,10 +811,6 @@ def parse_args() -> argparse.Namespace:
                 f"{cli} model(s) {', '.join(specs)} require --{cli}-host "
                 f"({cli} runs only in a container there, never on the wrapper host)"
             )
-        if specs and reviewer.one_at_a_time:
-            if dict(args.concurrency).get(cli, 1) != 1:
-                p.error(f"--concurrency: {cli} passes must run one at a time")
-            args.concurrency = [*args.concurrency, (cli, 1)]
         if specs:
             args.max_patch_bytes = min(args.max_patch_bytes, reviewer.max_patch_bytes)
             args.max_bundle_bytes = min(args.max_bundle_bytes, reviewer.max_bundle_bytes)

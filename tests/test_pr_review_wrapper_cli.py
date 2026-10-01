@@ -137,21 +137,6 @@ class ModelEnsembleOptionTests(unittest.TestCase):
         self.assertEqual(("/opt/grok", 900.0, "/srv/grok"),
                          (args.grok_bin, args.grok_timeout_seconds, args.grok_home))
         self.assertEqual("localhost/fairy-grok:latest", args.grok_image)
-        self.assertEqual([("grok", 1)], args.concurrency)
-
-    def test_a_backend_that_demands_it_runs_one_pass_at_a_time(self) -> None:
-        with mock.patch.object(wrapper.CLI_BACKENDS["codex"], "one_at_a_time", True):
-            for flag in ("--extra-model", "--fallback-model"):
-                codex = (flag, "codex:gpt-5.6-sol@low", "--combine-model", "openai:gpt-5.4",
-                         "--codex-host", "fairy@codexbox")
-                with self.subTest(flag=flag):
-                    self.assertEqual([("agy", 3), ("codex", 1)],
-                                     parse(*codex, "--concurrency", "agy:3").concurrency)
-                    self.assertEqual(
-                        1, dict(parse(*codex, "--concurrency", "codex:1").concurrency)["codex"])
-                    with self.assertRaises(SystemExit):
-                        parse(*codex, "--concurrency", "codex:2")
-        self.assertEqual([], parse("--combine-model", "openai:gpt-5.4").concurrency)
 
 
 class MainPassPromptTests(unittest.TestCase):

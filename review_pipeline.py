@@ -46,9 +46,8 @@ import re
 from pathlib import Path
 from typing import Callable
 
-from agy_reviewer import AgyReviewer
-from codex_reviewer import CodexReviewer, resolve_web_search
-from grok_reviewer import GrokReviewer
+from cli_backends import CLI_BACKENDS
+from codex_reviewer import resolve_web_search
 from llm_output_hacks import hide_scope_block
 from llm_review_api import (
     ANTHROPIC_ENDPOINTS,
@@ -70,7 +69,6 @@ from openai_reviewer import (
 )
 
 __all__ = [
-    "CLI_BACKENDS",
     "make_reviewer",
     "review_pr",
     "run_triage",
@@ -78,11 +76,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-# The providers that run a CLI coding agent in a container on their own
-# --<provider>-host, with --<provider>-image/-bin/-home/-timeout-seconds.
-CLI_BACKENDS = {"codex": CodexReviewer, "agy": AgyReviewer, "grok": GrokReviewer}
-
 
 _SPEC_OPTION = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*=")
 

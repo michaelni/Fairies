@@ -106,7 +106,8 @@ from llm_review_api import (
 )
 import branch_persist
 import review_pipeline
-from review_pipeline import (CLI_BACKENDS, make_reviewer, review_pr, run_triage,
+from cli_backends import CLI_BACKENDS
+from review_pipeline import (make_reviewer, review_pr, run_triage,
                              vet_review)
 import workset
 import podman_host
@@ -1469,9 +1470,8 @@ def main() -> int:
         logging.getLogger("codex_catalog"),
         logging.getLogger("cli_container"),
         logging.getLogger("cli_reviewer"),
-        logging.getLogger("codex_reviewer"),
-        logging.getLogger("agy_reviewer"),
-        logging.getLogger("grok_reviewer"),
+        *(logging.getLogger(reviewer.__module__)
+          for reviewer in CLI_BACKENDS.values()),
         branch_persist.logger,
         color=args.color,
     )

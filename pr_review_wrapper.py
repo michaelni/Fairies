@@ -816,7 +816,8 @@ def parse_args() -> argparse.Namespace:
         if spec and "=" in spec:
             p.error(f"{flag} {spec!r}: the prompt of this pass is fixed by the flag")
     all_specs = [s for s in (args.model, *args.extra_model, args.combine_model,
-                             args.triage_model, args.vet_model, *args.allowed_model)
+                             args.triage_model, args.vet_model, *args.allowed_model,
+                             args.fallback_model, args.cyber_fallback_model)
                  if s]
     for cli in CLI_BACKENDS:
         specs = [s for s in all_specs if s.startswith(f"{cli}:")]

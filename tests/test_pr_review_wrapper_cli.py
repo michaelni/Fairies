@@ -114,6 +114,15 @@ class ModelEnsembleOptionTests(unittest.TestCase):
                          (args.agy_bin, args.agy_timeout_seconds, args.agy_home))
         self.assertEqual("localhost/fairy-agy:latest", args.agy_image)
 
+    def test_a_fallback_model_is_checked_like_the_other_models(self) -> None:
+        for flag in ("--fallback-model", "--cyber-fallback-model"):
+            with self.subTest(flag=flag):
+                with self.assertRaises(SystemExit):
+                    parse(flag, "codex:gpt-5.6-sol@low")
+                args = parse(flag, "codex:gpt-5.6-sol@low",
+                             "--codex-host", "fairy@codexbox")
+                self.assertEqual(wrapper.CODEX_MAX_PATCH_BYTES, args.max_patch_bytes)
+
 
 class MainPassPromptTests(unittest.TestCase):
     """The optional PROMPT= on --model / --extra-model. main() reads

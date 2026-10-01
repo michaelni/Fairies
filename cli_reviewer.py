@@ -374,7 +374,9 @@ class CliReviewer(Reviewer):
             with concurrency.slot(self.backend):
                 # Not before the wait for the slot: the pass that held it
                 # may have refreshed the credential.
-                container.put_file(self.credential_local, self.credential_dir)
+                credential = Path(scratch) / self.credential_local.name
+                shutil.copy2(self.credential_local, credential)
+                container.put_file(credential, self.credential_dir)
                 logger.info(
                     "%s start role=%s model=%s effort=%s shell=%s host=%s",
                     self.backend, self.role.name, self.model,
@@ -398,7 +400,8 @@ class CliReviewer(Reviewer):
                     # --rm is about to discard the container's copy.
                     persist_refreshed_auth(
                         container, self.credential_container_path,
-                        self.credential_local)
+                        self.credential_local,
+                        copied_in=credential.read_text(encoding="utf-8"))
                 elapsed = time.monotonic() - started
 
             usage, error_text = self._run_summary(proc)

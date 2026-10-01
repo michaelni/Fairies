@@ -574,6 +574,16 @@ class CodexReviewerRunTests(unittest.TestCase):
                       on_run=time_out, refreshed_auth=rotated)
         self.assertEqual(rotated, Path(home, "auth.json").read_text(encoding="utf-8"))
 
+    def test_a_pass_that_did_not_refresh_leaves_a_siblings_refresh_alone(self) -> None:
+        home = _codex_home_ready()
+        siblings = '{"tokens": {"refresh_token": "refreshed by a sibling"}}'
+
+        def sibling_persists():
+            Path(home, "auth.json").write_text(siblings, encoding="utf-8")
+
+        self._run(reviewer=self._reviewer(codex_home=home), on_run=sibling_persists)
+        self.assertEqual(siblings, Path(home, "auth.json").read_text(encoding="utf-8"))
+
     def test_credential_is_copied_in_after_the_wait_for_the_slot(self) -> None:
         """The pass that held the slot may have refreshed the credential
         while this one waited."""

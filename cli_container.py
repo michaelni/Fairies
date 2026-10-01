@@ -232,12 +232,16 @@ MAX_AUTH_BYTES = 256 * 1024
 
 def persist_refreshed_auth(
     container: CliContainer, container_path: str, auth_local: Path,
+    *, copied_in: str,
 ) -> None:
     """Copy a mid-run token refresh back to the host credential file.
 
     Best-effort: reads ``container_path``, and if it is a JSON object
-    that differs from ``auth_local``, atomically replaces the host file
-    (0600), keeping the replaced credentials as ``<name>.bak`` (0600).
+    that differs from ``copied_in``, what the run started from,
+    atomically replaces the host file (0600), keeping the replaced
+    credentials as ``<name>.bak`` (0600). A credential the run left as
+    it was is not written back: the host file may hold a refresh by a
+    concurrent run.
     A read/parse failure just logs -- the run already succeeded, so a
     stale host token surfaces as an auth error on a later run rather
     than failing this one.
@@ -248,7 +252,7 @@ def persist_refreshed_auth(
         logger.warning("could not read back %s for refresh persistence",
                        container_path, exc_info=True)
         return
-    if not refreshed:
+    if not refreshed or refreshed == copied_in:
         return
     try:
         parsed = json.loads(refreshed)

@@ -567,6 +567,16 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
     )
 
 
+_CLI_HOME_HELP = {
+    "codex": "Wrapper-side CODEX_HOME (the bot's `codex login`), forwarded as "
+             "--codex-home to --llm-review-cmd. Default: the wrapper's "
+             "environment / codex's ~/.codex.",
+    "agy": "Wrapper-side directory holding agy's antigravity-oauth-token, "
+           "forwarded as --agy-home to --llm-review-cmd. Default: agy's own "
+           "~/.gemini/antigravity-cli.",
+}
+
+
 def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
     """The side options the worker's review execution reads, shared by
     the PR and issue sides."""
@@ -629,48 +639,19 @@ def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
             "or after the final one."
         ),
     )
-    p.add_argument(
-        "--codex-host",
-        default=None,
-        metavar="[LABEL=]USER@HOST",
-        help=(
-            "podman host that runs the codex container, forwarded as "
-            "--codex-host to --llm-review-cmd. Required for any codex: model "
-            "spec (codex runs only in a container there). Provision it with "
-            "containers/provision_remote.py --codex-bin."
-        ),
-    )
-    p.add_argument(
-        "--codex-home",
-        default=None,
-        metavar="DIR",
-        help=(
-            "Wrapper-side CODEX_HOME (the bot's `codex login`), forwarded as "
-            "--codex-home to --llm-review-cmd. Default: the wrapper's "
-            "environment / codex's ~/.codex."
-        ),
-    )
-    p.add_argument(
-        "--agy-host",
-        default=None,
-        metavar="[LABEL=]USER@HOST",
-        help=(
-            "podman host that runs the Antigravity CLI container, forwarded "
-            "as --agy-host to --llm-review-cmd. Required for any agy: model "
-            "spec (agy runs only in a container there). Provision it with "
-            "containers/provision_remote.py --agy-bin."
-        ),
-    )
-    p.add_argument(
-        "--agy-home",
-        default=None,
-        metavar="DIR",
-        help=(
-            "Wrapper-side directory holding agy's antigravity-oauth-token, "
-            "forwarded as --agy-home to --llm-review-cmd. Default: agy's own "
-            "~/.gemini/antigravity-cli."
-        ),
-    )
+    for cli, home_help in _CLI_HOME_HELP.items():
+        p.add_argument(
+            f"--{cli}-host",
+            default=None,
+            metavar="[LABEL=]USER@HOST",
+            help=(
+                f"podman host that runs the {cli} container, forwarded as "
+                f"--{cli}-host to --llm-review-cmd. Required for any {cli}: model "
+                f"spec ({cli} runs only in a container there). Provision it with "
+                f"containers/provision_remote.py --{cli}-bin."
+            ),
+        )
+        p.add_argument(f"--{cli}-home", default=None, metavar="DIR", help=home_help)
     p.add_argument(
         "--triage-label",
         action="append",
@@ -2278,7 +2259,7 @@ def podman_host_cmd_args(args: argparse.Namespace) -> list[str]:
     hosts = getattr(args, "podman_host", None)
     if hosts:
         cmd += ["--podman", *[f"--shell-host={h}" for h in hosts]]
-    for flag in ("codex_host", "codex_home", "agy_host", "agy_home"):
+    for flag in (f"{cli}_{kind}" for cli in _CLI_HOME_HELP for kind in ("host", "home")):
         value = getattr(args, flag, None)
         if value:
             cmd += [f"--{flag.replace('_', '-')}={value}"]

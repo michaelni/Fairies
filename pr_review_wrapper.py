@@ -567,8 +567,15 @@ def parse_args() -> argparse.Namespace:
              "splice command + output into the prompt. ``{number}`` and "
              "``{base_ref}`` are replaced from the PR metadata. Repeatable.",
     )
-    for cli, default_image in (("codex", DEFAULT_CODEX_IMAGE),
-                               ("agy", DEFAULT_AGY_IMAGE)):
+    for cli, default_image, home_help in (
+            ("codex", DEFAULT_CODEX_IMAGE,
+             "Wrapper-side CODEX_HOME: the auth.json copied into the codex "
+             "container and the models_cache.json used to harden the tool "
+             "catalog. Default: the environment / codex's ~/.codex."),
+            ("agy", DEFAULT_AGY_IMAGE,
+             "Wrapper-side directory holding agy's antigravity-oauth-token, "
+             "copied into the agy container. Default: agy's own "
+             "~/.gemini/antigravity-cli.")):
         p.add_argument(
             f"--{cli}-host",
             metavar="[LABEL=]SSH_DEST",
@@ -599,22 +606,7 @@ def parse_args() -> argparse.Namespace:
             help=f"Kill a {cli} pass after this many seconds; 0 = no "
                  "watchdog (default), a pass runs as long as the model works.",
         )
-    p.add_argument(
-        "--codex-home",
-        default=None,
-        metavar="DIR",
-        help="Wrapper-side CODEX_HOME: the auth.json copied into the codex "
-             "container and the models_cache.json used to harden the tool "
-             "catalog. Default: the environment / codex's ~/.codex.",
-    )
-    p.add_argument(
-        "--agy-home",
-        default=None,
-        metavar="DIR",
-        help="Wrapper-side directory holding agy's antigravity-oauth-token, "
-             "copied into the agy container. Default: agy's own "
-             "~/.gemini/antigravity-cli.",
-    )
+        p.add_argument(f"--{cli}-home", default=None, metavar="DIR", help=home_help)
     p.add_argument(
         "--podman-ssh-identity",
         metavar="KEYFILE",

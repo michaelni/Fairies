@@ -232,6 +232,9 @@ class CodexReviewer(CliReviewer):
         "container and the models_cache.json used to harden the tool "
         "catalog. Default: the environment / codex's ~/.codex.")
     login_hint = "run `codex login` for the deployment's CODEX_HOME"
+    # more than 1,048,576 input chars per turn was observed to be rejected by codex
+    max_patch_bytes = 300_000
+    max_bundle_bytes = 450_000
 
     def __init__(
         self,

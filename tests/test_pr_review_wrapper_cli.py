@@ -121,7 +121,7 @@ class ModelEnsembleOptionTests(unittest.TestCase):
                     parse(flag, "codex:gpt-5.6-sol@low")
                 args = parse(flag, "codex:gpt-5.6-sol@low",
                              "--codex-host", "fairy@codexbox")
-                self.assertEqual(wrapper.CODEX_MAX_PATCH_BYTES, args.max_patch_bytes)
+                self.assertEqual(wrapper.CLI_BACKENDS["codex"].max_patch_bytes, args.max_patch_bytes)
 
     def test_a_grok_model_needs_a_grok_host(self) -> None:
         with self.assertRaises(SystemExit):

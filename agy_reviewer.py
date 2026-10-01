@@ -204,6 +204,10 @@ class AgyReviewer(CliReviewer):
         f"Wrapper-side directory holding agy's {TOKEN_NAME}, copied into "
         f"the agy container. Default: agy's own ~/{SETTINGS_RELATIVE_DIR}.")
     login_hint = f"log in with an interactive `agy` and copy its {TOKEN_NAME} to --agy-home"
+    # agy's own input limit is unknown; these are our choice until its
+    # behaviour and cost are understood
+    max_patch_bytes = 300_000
+    max_bundle_bytes = 450_000
 
     def _stage(self, scratch: str, prompt: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:

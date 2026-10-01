@@ -153,6 +153,9 @@ class CliReviewer(Reviewer):
         that home relative to the user's own, for when none is given
     ``home_help``
         the help of the programs' ``--<backend>-home``
+    ``max_patch_bytes``, ``max_bundle_bytes``
+        the most patch and source a run inlines when the backend takes
+        part
     ``login_hint``
         how a human restores a rejected credential
     ``one_at_a_time``
@@ -176,6 +179,8 @@ class CliReviewer(Reviewer):
     credential_name: str
     default_home: str
     home_help: str
+    max_patch_bytes: int
+    max_bundle_bytes: int
     login_hint: str
     one_at_a_time = False
 

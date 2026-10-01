@@ -166,6 +166,12 @@ class GrokReviewer(CliReviewer):
         f"Wrapper-side directory holding grok's {CREDENTIAL_NAME}, copied "
         f"into the grok container. Default: grok's own ~/{default_home}.")
     login_hint = f"run `grok login` and copy its {CREDENTIAL_NAME} to --grok-home"
+    # The model catalog grok 1.0.44 fetched on 2026-10-01 gives grok-4.7 a
+    # context window of 256000 tokens, and 100 KB of C source cost about
+    # 32000 of them that day; these are our choice, together about 96000
+    # tokens at that rate
+    max_patch_bytes = 150_000
+    max_bundle_bytes = 150_000
     # Each pass refreshes its own copy of the login, and grok's refresh
     # token is spent once
     # (https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-login/src/manager/lock.rs).

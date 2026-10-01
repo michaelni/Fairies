@@ -31,9 +31,8 @@ __pycache__/
 # API keys (openai_common/anthropic_common read it; never versioned).
 /.env
 
-# Pinned codex, agy and grok binaries staged into the Containerfile.codex /
-# Containerfile.agy / Containerfile.grok build context (~330 MB / ~220 MB /
-# ~170 MB; baked into the thin images, not versioned).
+# Pinned codex, agy and grok binaries kept next to Containerfile.cli
+# (~330 MB / ~220 MB / ~170 MB; baked into the thin images, not versioned).
 /containers/codex
 /containers/codex-code-mode-host
 /containers/agy

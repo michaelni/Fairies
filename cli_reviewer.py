@@ -153,6 +153,8 @@ class CliReviewer(Reviewer):
         that home relative to the user's own, for when none is given
     ``home_help``
         the help of the programs' ``--<backend>-home``
+    ``image_binaries``
+        the names its image has in /usr/local/bin, the CLI's first
     ``max_patch_bytes``, ``max_bundle_bytes``
         the most patch and source a run inlines when the backend takes
         part
@@ -179,6 +181,7 @@ class CliReviewer(Reviewer):
     credential_name: str
     default_home: str
     home_help: str
+    image_binaries: tuple[str, ...]
     max_patch_bytes: int
     max_bundle_bytes: int
     login_hint: str

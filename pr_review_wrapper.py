@@ -574,13 +574,13 @@ def parse_args() -> argparse.Namespace:
             default=reviewer.default_image,
             metavar="TAG",
             help=f"Container image for the {cli} pass (default: %(default)s); "
-                 f"build it with containers/Containerfile.{cli}.",
+                 f"build it with containers/provision_remote.py --{cli}-bin.",
         )
         p.add_argument(
             f"--{cli}-bin",
             default=cli,
             help=f"{cli} CLI path INSIDE the {cli} container (default: {cli} on "
-                 f"PATH, as baked by Containerfile.{cli}). Pin the deployed "
+                 "PATH, as baked into the image). Pin the deployed "
                  "version; the backend depends on its flag set.",
         )
         p.add_argument(

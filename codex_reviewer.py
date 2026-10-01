@@ -227,6 +227,7 @@ class CodexReviewer(CliReviewer):
     run_dir = CONTAINER_RUN_DIR
     credential_dir = CONTAINER_CODEX_HOME
     credential_name = "auth.json"
+    image_binaries = ("codex", "codex-code-mode-host")
     home_help = (
         "Wrapper-side CODEX_HOME: the auth.json copied into the codex "
         "container and the models_cache.json used to harden the tool "

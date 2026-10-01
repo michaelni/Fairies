@@ -1,0 +1,34 @@
+# Thin image for a CLI coding-agent reviewer backend (codex, agy, grok).
+#
+# Runs one headless CLI per PR review inside an ephemeral container
+# (`podman run --rm`) on the backend's --<backend>-host, so the CLI never
+# executes on the wrapper host that holds the ssh key and the provider API
+# keys. The only model-reachable capability is the MCP shell into the review
+# containers, via relay.py; that, mcp_shell_bridge.py, shell_bridge_client.py,
+# the credential and what else the backend's reviewer module stages are
+# `podman cp`'d in per run (no bind mounts). How the CLI's own tools are
+# kept from the model is said in that module.
+#
+# The pinned binaries are NOT in git. provision_remote.py stages them into
+# the build context's bin/ and builds one image per backend from this file:
+#     python3 containers/provision_remote.py --ssh DEST --agy-bin /path/to/agy-X.Y.Z
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANG=C.UTF-8
+
+# python3 runs mcp_shell_bridge.py + relay.py (copied in per run);
+# ca-certificates lets the CLI reach its provider's API over TLS. Unlike the
+# review image, the model apt-installs nothing here, so the apt lists are
+# dropped to keep the image lean.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY bin/ /usr/local/bin/
+RUN chmod +x /usr/local/bin/*
+
+WORKDIR /work
+CMD ["sleep", "infinity"]

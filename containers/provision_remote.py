@@ -36,10 +36,9 @@ Given a passwordless ssh destination (``user@host``) it:
    info``), with an actionable hint if the prerequisite is missing;
 2. builds the review image on the remote, rebuilding only when the
    Containerfile changed (tracked via an image label);
-3. with ``--codex-bin`` / ``--agy-bin`` / ``--grok-bin``, also builds
-   the thin codex / agy / grok image (for a host used as
-   ``--codex-host`` / ``--agy-host`` / ``--grok-host``), staging the
-   pinned binaries in;
+3. with the ``--<binary>-bin`` flags of a CLI backend, also builds that
+   backend's thin image (for a host used as its ``--<backend>-host``),
+   staging the pinned binaries in;
 4. seeds a bare mirror per repo so per-review provisioning only has to
    push the PR delta (see podman_repos).
 
@@ -69,6 +68,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import podman_repos  # noqa: E402
+from cli_backends import CLI_BACKENDS  # noqa: E402
 from common import add_color_arg, setup_logging  # noqa: E402
 from podman_host import (  # noqa: E402
     RemoteHost,
@@ -84,11 +84,6 @@ CONTEXT_DIR = REPO_ROOT / "containers"
 DOCKERFILE = CONTEXT_DIR / "Containerfile"
 CONTAINERFILE_LABEL = "fairy.containerfile-sha256"
 
-# Built only when the CLI's --*-bin is given: the binary must be staged
-# into the build context.
-CODEX_DEFAULT_TAG = "localhost/fairy-codex:latest"
-CODEX_DOCKERFILE = CONTEXT_DIR / "Containerfile.codex"
-ONE_BINARY_CLIS = ("agy", "grok")
 
 
 def _run(argv: list[str], *, timeout_s: float = 60.0) -> subprocess.CompletedProcess:
@@ -161,10 +156,10 @@ def ensure_cli_image(
 ) -> None:
     """Build a thin CLI image on the remote, staging the pinned binaries.
 
-    ``binaries`` maps each name ``dockerfile`` ``COPY``s to the file
-    staged under it; the Containerfile is staged alongside (podman
-    requires it inside the context). Rebuilds only when the Containerfile
-    or a binary changed (label tracks all)."""
+    ``binaries`` maps each name the image gets in /usr/local/bin to the
+    file staged for it in the context's bin/; the Containerfile is staged
+    alongside (podman requires it inside the context). Rebuilds only when
+    the Containerfile or a binary changed (label tracks all)."""
     for name, path in binaries.items():
         if not path.is_file():
             raise RuntimeError(f"{name}: {path} is not a file")
@@ -179,11 +174,12 @@ def ensure_cli_image(
     with tempfile.TemporaryDirectory(prefix="fairy-cli-ctx-") as ctx_str:
         ctx = Path(ctx_str)
         shutil.copy2(dockerfile, ctx / dockerfile.name)
+        (ctx / "bin").mkdir()
         for name, path in binaries.items():
             try:  # avoid a full copy when the temp dir shares the filesystem
-                os.link(path, ctx / name)
+                os.link(path, ctx / "bin" / name)
             except OSError:
-                shutil.copy2(path, ctx / name)
+                shutil.copy2(path, ctx / "bin" / name)
         build_image_if_needed(
             image_tag=tag,
             dockerfile=ctx / dockerfile.name,
@@ -204,6 +200,13 @@ def seed_mirrors(repo_roots: list[Path], host: RemoteHost, mirror_root: str) -> 
         logger.info("mirror seeded name=%s -> %s", spec.name, spec.mirror_path)
 
 
+def image_binaries(args: argparse.Namespace, cli: str) -> dict[str, Path | None]:
+    """The file given for each binary of ``cli``'s image, ``None`` for one
+    that was not given."""
+    return {binary: vars(args)[f"{binary.replace('-', '_')}_bin"]
+            for binary in CLI_BACKENDS[cli].image_binaries}
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0] if __doc__ else "")
     p.add_argument("--ssh", required=True, metavar="USER@HOST", help="passwordless ssh destination")
@@ -216,28 +219,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--tag", default=DEFAULT_TAG, help="image tag (default: %(default)s)")
     p.add_argument("--context", type=Path, default=CONTEXT_DIR, help="build context")
     p.add_argument("--file", type=Path, default=DOCKERFILE, help="path to Containerfile")
-    p.add_argument(
-        "--codex-bin", type=Path, default=None, metavar="PATH",
-        help="pinned codex binary; when given, also build the thin codex "
-             "image on this host (for a host used as --codex-host).",
-    )
-    p.add_argument(
-        "--codex-code-mode-host-bin", type=Path, default=None, metavar="PATH",
-        help="pinned codex-code-mode-host binary of the same codex release, "
-             "baked next to --codex-bin",
-    )
-    p.add_argument(
-        "--codex-tag", default=CODEX_DEFAULT_TAG,
-        help="codex image tag (default: %(default)s)",
-    )
-    for cli in ONE_BINARY_CLIS:
+    for cli, reviewer in CLI_BACKENDS.items():
+        for binary in reviewer.image_binaries:
+            p.add_argument(
+                f"--{binary}-bin", type=Path, default=None, metavar="PATH",
+                help=f"pinned {binary} binary; with every binary of the thin "
+                     f"{cli} image given, also build that image on this host "
+                     f"(for a host used as --{cli}-host).",
+            )
         p.add_argument(
-            f"--{cli}-bin", type=Path, default=None, metavar="PATH",
-            help=f"pinned {cli} binary; when given, also build the thin {cli} "
-                 f"image on this host (for a host used as --{cli}-host).",
-        )
-        p.add_argument(
-            f"--{cli}-tag", default=f"localhost/fairy-{cli}:latest",
+            f"--{cli}-tag", default=reviewer.default_image,
             help=f"{cli} image tag (default: %(default)s)",
         )
     p.add_argument(
@@ -247,7 +238,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--rebuild", action="store_true", help="force image rebuild even if current")
     p.add_argument(
         "--reap-older-than", default="60m", metavar="DURATION",
-        help="reap leaked stopped review/codex/agy/grok containers older than this "
+        help="reap leaked stopped review and CLI containers older than this "
              "podman duration (default: %(default)s); running and paused "
              "containers are never touched. Set 'off' to skip.",
     )
@@ -258,8 +249,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--verbose", action="store_true", help="enable debug logging")
     add_color_arg(p)
     args = p.parse_args(argv)
-    if (args.codex_bin is None) != (args.codex_code_mode_host_bin is None):
-        p.error("--codex-bin and --codex-code-mode-host-bin go together")
+    for cli in CLI_BACKENDS:
+        binaries = image_binaries(args, cli)
+        if len({path is None for path in binaries.values()}) > 1:
+            p.error(" and ".join(f"--{binary}-bin" for binary in binaries)
+                    + " go together")
     return args
 
 
@@ -275,8 +269,8 @@ def main(argv: list[str] | None = None) -> int:
     # is never a reap candidate.
     if args.reap_older_than != "off":
         reaped = reap_stale_containers(
-            host, images=[args.tag, args.codex_tag,
-                          *(getattr(args, f"{cli}_tag") for cli in ONE_BINARY_CLIS)],
+            host, images=[args.tag,
+                          *(vars(args)[f"{cli}_tag"] for cli in CLI_BACKENDS)],
             older_than=args.reap_older_than)
         if reaped:
             logger.info("reaped %d stale container(s) on %s", reaped, args.ssh)
@@ -284,19 +278,13 @@ def main(argv: list[str] | None = None) -> int:
         host=host, tag=args.tag, dockerfile=dockerfile,
         context_dir=args.context.resolve(), rebuild=args.rebuild,
     )
-    if args.codex_bin is not None:
-        ensure_cli_image(
-            host=host, dockerfile=CODEX_DOCKERFILE, tag=args.codex_tag,
-            rebuild=args.rebuild,
-            binaries={"codex": args.codex_bin.resolve(),
-                      "codex-code-mode-host": args.codex_code_mode_host_bin.resolve()},
-        )
-    for cli in ONE_BINARY_CLIS:
-        if (cli_bin := getattr(args, f"{cli}_bin")) is not None:
+    for cli in CLI_BACKENDS:
+        binaries = image_binaries(args, cli)
+        if None not in binaries.values():
             ensure_cli_image(
-                host=host, dockerfile=CONTEXT_DIR / f"Containerfile.{cli}",
-                tag=getattr(args, f"{cli}_tag"),
-                rebuild=args.rebuild, binaries={cli: cli_bin.resolve()},
+                host=host, dockerfile=CONTEXT_DIR / "Containerfile.cli",
+                tag=vars(args)[f"{cli}_tag"], rebuild=args.rebuild,
+                binaries={name: path.resolve() for name, path in binaries.items()},
             )
     if args.repo_roots:
         seed_mirrors(args.repo_roots, host, args.mirror_root)

@@ -288,7 +288,7 @@ Through the pipeline, pass `--codex-host` and `--codex-home` in the
 configurator's `--prs` section; they are forwarded to the wrapper
 alongside `--podman-host`/`--shell-host`.
 
-Build the thin codex image once from `containers/Containerfile.codex` (bakes a
+Build the thin codex image once from `containers/Containerfile.cli` (bakes a
 pinned codex binary and its codex-code-mode-host; `--codex-bin` is the codex
 in-container path, `--codex-image` its tag) and `codex login` once as fairy's
 own account. `--codex-home DIR`
@@ -316,7 +316,7 @@ startup. Through the pipeline, pass `--agy-host` and `--agy-home` in the
 configurator's `--prs` section.
 
 Build the thin agy image once with `provision_remote.py --agy-bin` (bakes
-a pinned agy binary from `containers/Containerfile.agy`; `--agy-bin` is
+a pinned agy binary from `containers/Containerfile.cli`; `--agy-bin` is
 the in-container path, `--agy-image` its tag). Log in once with an
 interactive `agy` as fairy's own account and keep the
 `antigravity-oauth-token` it writes under `~/.gemini/antigravity-cli` in
@@ -341,7 +341,7 @@ pipeline, pass `--grok-host` and `--grok-home` in the configurator's
 `--prs` section.
 
 Build the thin grok image once with `provision_remote.py --grok-bin` (bakes
-a pinned grok binary from `containers/Containerfile.grok`; `--grok-bin` is
+a pinned grok binary from `containers/Containerfile.cli`; `--grok-bin` is
 the in-container path, `--grok-image` its tag). Log in once with
 `grok login` as fairy's own account and keep the `auth.json` it writes
 under `~/.grok` in `--grok-home DIR` on the wrapper host: it is

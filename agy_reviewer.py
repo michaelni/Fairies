@@ -200,6 +200,7 @@ class AgyReviewer(CliReviewer):
     credential_dir = f"{CONTAINER_HOME}/{SETTINGS_RELATIVE_DIR}"
     credential_name = TOKEN_NAME
     default_home = SETTINGS_RELATIVE_DIR
+    image_binaries = ("agy",)
     home_help = (
         f"Wrapper-side directory holding agy's {TOKEN_NAME}, copied into "
         f"the agy container. Default: agy's own ~/{SETTINGS_RELATIVE_DIR}.")

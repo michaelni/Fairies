@@ -48,8 +48,8 @@ import subprocess
 import sys
 
 from cli_container import CliContainer
-from cli_reviewer import (BRIDGE_PATH, CliReviewer, CliUsageLimit, Staged,
-                          parse_event_line)
+from cli_reviewer import (BRIDGE_PATH, MCP_TOOL_TIMEOUT_S, CliReviewer,
+                          CliUsageLimit, Staged, parse_event_line)
 from codex_catalog import harden_codex_catalog, resolve_codex_home
 from common import JsonObject
 from llm_prompt import REVIEWER_ROLE
@@ -92,10 +92,6 @@ def resolve_web_search(mode: str) -> str:
     "cached" pass through unchanged.
     """
     return "disabled" if mode == "off" else mode
-
-# Deliberately far above the real per-command cap, which is enforced
-# wrapper-side (exec_shell_call clamps to --podman-exec-timeout).
-MCP_TOOL_TIMEOUT_S = 86_400
 
 # Read-back caps for the untrusted codex container: an oversized file
 # arrives truncated, so its JSON parse fails closed.

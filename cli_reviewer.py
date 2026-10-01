@@ -70,6 +70,7 @@ import shell_tool
 
 __all__ = [
     "BRIDGE_PATH",
+    "MCP_TOOL_TIMEOUT_S",
     "CliAuthFailed",
     "CliReviewer",
     "CliUsageLimit",
@@ -83,6 +84,10 @@ _REPO_DIR = Path(__file__).resolve().parent
 BRIDGE_PATH = _REPO_DIR / "mcp_shell_bridge.py"
 _BRIDGE_CLIENT_PATH = _REPO_DIR / "shell_bridge_client.py"
 _RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
+
+# Deliberately far above the real per-command cap, which is enforced
+# wrapper-side (exec_shell_call clamps to --podman-exec-timeout).
+MCP_TOOL_TIMEOUT_S = 86_400
 
 
 class CliUsageLimit(RuntimeError):

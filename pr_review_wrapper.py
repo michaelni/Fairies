@@ -572,18 +572,7 @@ def parse_args() -> argparse.Namespace:
              "splice command + output into the prompt. ``{number}`` and "
              "``{base_ref}`` are replaced from the PR metadata. Repeatable.",
     )
-    for cli, home_help in (
-            ("codex",
-             "Wrapper-side CODEX_HOME: the auth.json copied into the codex "
-             "container and the models_cache.json used to harden the tool "
-             "catalog. Default: the environment / codex's ~/.codex."),
-            ("agy",
-             "Wrapper-side directory holding agy's antigravity-oauth-token, "
-             "copied into the agy container. Default: agy's own "
-             "~/.gemini/antigravity-cli."),
-            ("grok",
-             "Wrapper-side directory holding grok's auth.json, copied into "
-             "the grok container. Default: grok's own ~/.grok.")):
+    for cli, reviewer in CLI_BACKENDS.items():
         p.add_argument(
             f"--{cli}-host",
             metavar="[LABEL=]SSH_DEST",
@@ -595,7 +584,7 @@ def parse_args() -> argparse.Namespace:
         )
         p.add_argument(
             f"--{cli}-image",
-            default=CLI_BACKENDS[cli].default_image,
+            default=reviewer.default_image,
             metavar="TAG",
             help=f"Container image for the {cli} pass (default: %(default)s); "
                  f"build it with containers/Containerfile.{cli}.",
@@ -614,7 +603,8 @@ def parse_args() -> argparse.Namespace:
             help=f"Kill a {cli} pass after this many seconds; 0 = no "
                  "watchdog (default), a pass runs as long as the model works.",
         )
-        p.add_argument(f"--{cli}-home", default=None, metavar="DIR", help=home_help)
+        p.add_argument(f"--{cli}-home", default=None, metavar="DIR",
+                       help=reviewer.home_help)
     p.add_argument(
         "--podman-ssh-identity",
         metavar="KEYFILE",

@@ -151,6 +151,8 @@ class CliReviewer(Reviewer):
         the credential's file name, there and in the wrapper-side home
     ``default_home``
         that home relative to the user's own, for when none is given
+    ``home_help``
+        the help of the programs' ``--<backend>-home``
     ``login_hint``
         how a human restores a rejected credential
     ``one_at_a_time``
@@ -173,6 +175,7 @@ class CliReviewer(Reviewer):
     credential_dir: str
     credential_name: str
     default_home: str
+    home_help: str
     login_hint: str
     one_at_a_time = False
 

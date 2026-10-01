@@ -200,6 +200,9 @@ class AgyReviewer(CliReviewer):
     credential_dir = f"{CONTAINER_HOME}/{SETTINGS_RELATIVE_DIR}"
     credential_name = TOKEN_NAME
     default_home = SETTINGS_RELATIVE_DIR
+    home_help = (
+        f"Wrapper-side directory holding agy's {TOKEN_NAME}, copied into "
+        f"the agy container. Default: agy's own ~/{SETTINGS_RELATIVE_DIR}.")
     login_hint = f"log in with an interactive `agy` and copy its {TOKEN_NAME} to --agy-home"
 
     def _stage(self, scratch: str, prompt: str, *, use_shell: bool,

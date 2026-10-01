@@ -227,6 +227,10 @@ class CodexReviewer(CliReviewer):
     run_dir = CONTAINER_RUN_DIR
     credential_dir = CONTAINER_CODEX_HOME
     credential_name = "auth.json"
+    home_help = (
+        "Wrapper-side CODEX_HOME: the auth.json copied into the codex "
+        "container and the models_cache.json used to harden the tool "
+        "catalog. Default: the environment / codex's ~/.codex.")
     login_hint = "run `codex login` for the deployment's CODEX_HOME"
 
     def __init__(

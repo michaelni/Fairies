@@ -162,6 +162,9 @@ class GrokReviewer(CliReviewer):
     credential_dir = CONTAINER_GROK_HOME
     credential_name = CREDENTIAL_NAME
     default_home = ".grok"
+    home_help = (
+        f"Wrapper-side directory holding grok's {CREDENTIAL_NAME}, copied "
+        f"into the grok container. Default: grok's own ~/{default_home}.")
     login_hint = f"run `grok login` and copy its {CREDENTIAL_NAME} to --grok-home"
     # Each pass refreshes its own copy of the login, and grok's refresh
     # token is spent once

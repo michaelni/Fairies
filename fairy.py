@@ -86,6 +86,7 @@ from urllib.parse import urlencode, urljoin
 
 import branch_persist
 import ci_log
+from cli_backends import CLI_BACKENDS
 import git_util
 import gcli_cache
 from common import (
@@ -567,18 +568,6 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
     )
 
 
-_CLI_HOME_HELP = {
-    "codex": "Wrapper-side CODEX_HOME (the bot's `codex login`), forwarded as "
-             "--codex-home to --llm-review-cmd. Default: the wrapper's "
-             "environment / codex's ~/.codex.",
-    "agy": "Wrapper-side directory holding agy's antigravity-oauth-token, "
-           "forwarded as --agy-home to --llm-review-cmd. Default: agy's own "
-           "~/.gemini/antigravity-cli.",
-    "grok": "Wrapper-side directory holding grok's auth.json, forwarded as "
-            "--grok-home to --llm-review-cmd. Default: grok's own ~/.grok.",
-}
-
-
 def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
     """The side options the worker's review execution reads, shared by
     the PR and issue sides."""
@@ -641,7 +630,7 @@ def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
             "or after the final one."
         ),
     )
-    for cli, home_help in _CLI_HOME_HELP.items():
+    for cli, reviewer in CLI_BACKENDS.items():
         p.add_argument(
             f"--{cli}-host",
             default=None,
@@ -653,7 +642,9 @@ def add_llm_exec_args(p: argparse.ArgumentParser) -> None:
                 f"containers/provision_remote.py --{cli}-bin."
             ),
         )
-        p.add_argument(f"--{cli}-home", default=None, metavar="DIR", help=home_help)
+        p.add_argument(
+            f"--{cli}-home", default=None, metavar="DIR",
+            help=f"Forwarded as --{cli}-home to --llm-review-cmd. {reviewer.home_help}")
     p.add_argument(
         "--triage-label",
         action="append",
@@ -2261,7 +2252,7 @@ def podman_host_cmd_args(args: argparse.Namespace) -> list[str]:
     hosts = getattr(args, "podman_host", None)
     if hosts:
         cmd += ["--podman", *[f"--shell-host={h}" for h in hosts]]
-    for flag in (f"{cli}_{kind}" for cli in _CLI_HOME_HELP for kind in ("host", "home")):
+    for flag in (f"{cli}_{kind}" for cli in CLI_BACKENDS for kind in ("host", "home")):
         value = getattr(args, flag, None)
         if value:
             cmd += [f"--{flag.replace('_', '-')}={value}"]

@@ -211,6 +211,13 @@ class CliReviewer(Reviewer):
         return [f"{self.run_dir}/{_BRIDGE_PATH.name}", "--socket", self.socket_path,
                 *(arg for label in machine_labels for arg in ("--machine", label))]
 
+    def _schema_file(self, scratch: str) -> Path:
+        """The role's output schema as a file in ``scratch``, for ``_stage``
+        of a CLI that takes the schema as a path."""
+        schema = Path(scratch) / "output_schema.json"
+        schema.write_text(json.dumps(self.role.schema["schema"]), encoding="utf-8")
+        return schema
+
     def _prompt_features(self) -> set[str]:
         """Prompt features beyond ``source_bundle`` / ``podman_shell``."""
         return set()
@@ -316,9 +323,6 @@ class CliReviewer(Reviewer):
         relay: CliShellRelay | None = None
         machine_labels = tuple(m.label for m in ctx.machines)
         try:
-            schema_local = Path(scratch) / "output_schema.json"
-            schema_local.write_text(
-                json.dumps(self.role.schema["schema"]), encoding="utf-8")
             if not self.credential_local.is_file():
                 raise RuntimeError(
                     f"{self.name}: {self.backend} credential "
@@ -329,7 +333,6 @@ class CliReviewer(Reviewer):
                                  machine_labels=machine_labels)
 
             container.start()
-            container.put_file(schema_local, self.run_dir)
             for local, dest_dir in staged.files:
                 container.put_file(local, dest_dir)
             if use_shell:

@@ -311,12 +311,13 @@ class CodexReviewer(CliReviewer):
     def _stage(self, scratch: str, prompt: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:
         catalog_local = self._write_hardened_catalog(scratch)
+        schema_local = self._schema_file(scratch)
         cmd = build_codex_exec_command(
             codex_bin=self.codex_bin,
             model=self.model,
             effort=self.effort,
             scratch_dir=CONTAINER_RUN_DIR,
-            schema_path=f"{CONTAINER_RUN_DIR}/output_schema.json",
+            schema_path=f"{CONTAINER_RUN_DIR}/{schema_local.name}",
             last_message_path=f"{CONTAINER_RUN_DIR}/last_message.json",
             bridge_args=self._bridge_args(machine_labels) if use_shell else None,
             catalog_override_path=f"{CONTAINER_RUN_DIR}/{catalog_local.name}",
@@ -328,7 +329,8 @@ class CodexReviewer(CliReviewer):
         # OPENAI_API_KEY/CODEX_API_KEY are not forwarded by podman
         # exec, so codex cannot rebind to another credential.
         return Staged(cmd, {"CODEX_HOME": CONTAINER_CODEX_HOME}, prompt,
-                      [(catalog_local, CONTAINER_RUN_DIR)])
+                      [(catalog_local, CONTAINER_RUN_DIR),
+                       (schema_local, CONTAINER_RUN_DIR)])
 
     def _run_summary(self, proc: subprocess.CompletedProcess
                      ) -> tuple[JsonObject, str]:

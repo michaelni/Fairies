@@ -233,9 +233,10 @@ class AgyReviewer(CliReviewer):
 
     def _stage(self, scratch: str, prompt: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:
+        schema = self._schema_file(scratch)
         cmd = build_agy_command(
             agy_bin=self.agy_bin, model=self.model, effort=self.effort,
-            schema_path=f"{CONTAINER_RUN_DIR}/output_schema.json")
+            schema_path=f"{CONTAINER_RUN_DIR}/{schema.name}")
         config_dir = f"{CONTAINER_HOME}/{MCP_CONFIG_RELATIVE_DIR}"
         reason = (
             "This terminal is not the review machine and is disabled. Run "
@@ -255,7 +256,8 @@ class AgyReviewer(CliReviewer):
             "hooks": [{"type": "command",
                        "command": f"sh ~/{MCP_CONFIG_RELATIVE_DIR}/{HOOK_SCRIPT}",
                        "timeout": 10}]}]}}), encoding="utf-8")
-        files = [(hook_script, config_dir), (hooks, config_dir)]
+        files = [(schema, CONTAINER_RUN_DIR),
+                 (hook_script, config_dir), (hooks, config_dir)]
         if use_shell:
             mcp_config = Path(scratch) / "mcp_config.json"
             mcp_config.write_text(json.dumps({"mcpServers": {MCP_SERVER: {

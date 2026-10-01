@@ -228,6 +228,7 @@ class GrokReviewerRunTests(unittest.TestCase):
         self.assertEqual("", self.container.input_text)
         self.assertNotIn("the patch", " ".join(self.container.cmd))
         self.assertIn("/work/.grok-run/agent.md", self.container.cmd)
+        self.assertNotIn("output_schema.json", self.container.copied)
         self.assertEqual("/work/.grok-run", self.container.dest_dirs["agent.md"])
 
     def test_no_template_delimiter_of_the_pr_text_is_left_in_the_body(self) -> None:

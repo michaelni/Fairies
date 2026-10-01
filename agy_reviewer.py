@@ -60,7 +60,7 @@ import subprocess
 
 from cli_container import CliContainer
 from cli_reviewer import (BRIDGE_PATH, CliReviewer, CliUsageLimit, Staged,
-                          parse_event_line)
+                          last_event, parse_event_line)
 from common import JsonObject
 from llm_prompt import REVIEWER_ROLE
 from llm_review_api import BadModelOutput, ProviderTurnFailed, RoleSpec
@@ -156,14 +156,12 @@ def summarize_agy_events(jsonl: str) -> tuple[JsonObject, JsonObject | None]:
     """``(usage, result)`` of an ``--output-format stream-json`` run: the
     token usage and the payload of the last ``result`` event, ``None``
     when the run never produced one. Tolerant of unknown event shapes."""
-    for line in reversed(jsonl.splitlines()):
-        event = parse_event_line(line)
-        if event is not None and event.get("event") == "result" \
-                and isinstance(event.get("result"), dict):
-            result = event["result"]
-            usage = result.get("usage")
-            return (usage if isinstance(usage, dict) else {}), result
-    return {}, None
+    event = last_event(jsonl, lambda e: e.get("event") == "result"
+                       and isinstance(e.get("result"), dict))
+    if event is None:
+        return {}, None
+    usage = event["result"].get("usage")
+    return (usage if isinstance(usage, dict) else {}), event["result"]
 
 
 def exhausted_bucket(usage_json: str, model: str) -> JsonObject | None:

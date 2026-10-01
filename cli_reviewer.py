@@ -57,6 +57,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from typing import Callable
 
 from cli_container import CliContainer, CliShellRelay, persist_refreshed_auth
 import concurrency
@@ -75,6 +76,7 @@ __all__ = [
     "CliReviewer",
     "CliUsageLimit",
     "Staged",
+    "last_event",
     "parse_event_line",
 ]
 
@@ -120,6 +122,16 @@ def parse_event_line(line: str) -> JsonObject | None:
     except json.JSONDecodeError:
         return None
     return event if isinstance(event, dict) else None
+
+
+def last_event(jsonl: str,
+               wanted: Callable[[JsonObject], bool]) -> JsonObject | None:
+    """The last JSONL event ``wanted`` accepts, or ``None``."""
+    for line in reversed(jsonl.splitlines()):
+        event = parse_event_line(line)
+        if event is not None and wanted(event):
+            return event
+    return None
 
 
 class CliReviewer(Reviewer):

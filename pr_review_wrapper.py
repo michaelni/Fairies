@@ -185,6 +185,12 @@ CODEX_MAX_BUNDLE_BYTES = 450_000
 # behaviour and cost are understood
 AGY_MAX_PATCH_BYTES = 300_000
 AGY_MAX_BUNDLE_BYTES = 450_000
+# The model catalog grok 1.0.44 fetched on 2026-10-01 gives grok-4.7 a
+# context window of 256000 tokens, and 100 KB of C source cost about
+# 32000 of them that day; these are our choice, together about 96000
+# tokens at that rate
+GROK_MAX_PATCH_BYTES = 150_000
+GROK_MAX_BUNDLE_BYTES = 150_000
 DEFAULT_MAX_OUTPUT_TOKENS = 40_000
 # 0 means "do not impose a client-side timeout"; the outer caller
 # (e.g. fairy.py via its --llm-timeout) is responsible for
@@ -836,7 +842,8 @@ def parse_args() -> argparse.Namespace:
             args.concurrency = [*args.concurrency, (cli, 1)]
     for cli, max_patch_bytes, max_bundle_bytes in (
             ("codex", CODEX_MAX_PATCH_BYTES, CODEX_MAX_BUNDLE_BYTES),
-            ("agy", AGY_MAX_PATCH_BYTES, AGY_MAX_BUNDLE_BYTES)):
+            ("agy", AGY_MAX_PATCH_BYTES, AGY_MAX_BUNDLE_BYTES),
+            ("grok", GROK_MAX_PATCH_BYTES, GROK_MAX_BUNDLE_BYTES)):
         if any(s.startswith(f"{cli}:") for s in all_specs):
             args.max_patch_bytes = min(args.max_patch_bytes, max_patch_bytes)
             args.max_bundle_bytes = min(args.max_bundle_bytes, max_bundle_bytes)

@@ -30,7 +30,7 @@
 
 In-container relay for a CLI backend's shell tool.
 
-The CLI (codex, agy) runs inside its own container and spawns ``mcp_shell_bridge.py``
+The CLI (codex, agy, grok) runs inside its own container and spawns ``mcp_shell_bridge.py``
 as its MCP shell server; that bridge connects (as a
 ``shell_socket.ShellDispatchClient``) to a container-local unix socket.
 This relay *serves* that socket and pipes it, line for line, to its own

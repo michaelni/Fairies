@@ -29,7 +29,7 @@
 
 Wrapper-side shell dispatch for the CLI backends.
 
-The CLI (codex, agy) runs inside a container on its podman host and spawns
+The CLI (codex, agy, grok) runs inside a container on its podman host and spawns
 ``mcp_shell_bridge.py`` as its MCP shell server; the bridge connects to a
 container-local socket served by ``relay.py``, which the wrapper drives
 over a ``podman exec -i`` stdio channel (see ``cli_container``). This

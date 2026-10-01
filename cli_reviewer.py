@@ -27,7 +27,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-The ``Reviewer`` shared by the CLI coding-agent backends (codex, agy).
+The ``Reviewer`` shared by the CLI coding-agent backends (codex, agy, grok).
 
 One pass of a ``RoleSpec`` is one CLI process in an ephemeral container
 on the backend's podman host (see ``cli_container``): the role prompt

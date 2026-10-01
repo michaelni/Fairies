@@ -29,7 +29,7 @@
 
 MCP stdio server bridging a CLI coding agent to the shell dispatch.
 
-Runs inside the CLI container. The CLI (codex, agy) spawns this script
+Runs inside the CLI container. The CLI (codex, agy, grok) spawns this script
 per run as the MCP server its reviewer module configured, and
 speaks MCP -- JSON-RPC 2.0, newline-delimited over stdin/stdout -- to it.
 This bridge is a dumb pipe: it advertises the one canonical ``shell``

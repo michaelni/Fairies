@@ -27,7 +27,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Run one pass of a CLI coding agent (codex, agy) inside an ephemeral
+Run one pass of a CLI coding agent (codex, agy, grok) inside an ephemeral
 container on a remote podman host, so the CLI never executes on the
 wrapper host (which holds the ssh key and the provider API keys).
 

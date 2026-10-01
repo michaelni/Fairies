@@ -2069,10 +2069,12 @@ class UILoop:
             shown.append(tui_core.sanitize(_plain([line])))
             # sanitize(): forge/LLM text must not inject escape sequences.
             if isinstance(line, str):
-                buf.append(tui_core.sanitize(line)[:w].ljust(rect.w - len(lpad)))
+                buf.append(t.ljust(t.truncate(tui_core.sanitize(line), w),
+                                   rect.w - len(lpad)))
             elif line and isinstance(line[0], str):
                 style, text = line
-                text = tui_core.sanitize(text)[:w].ljust(rect.w - len(lpad))
+                text = t.ljust(t.truncate(tui_core.sanitize(text), w),
+                               rect.w - len(lpad))
                 fn = self.styles.get(style)
                 buf.append(fn(text) if fn else text)
             else:
@@ -2085,10 +2087,10 @@ class UILoop:
         for style, text in segs:
             if used >= width:
                 break
-            text = tui_core.sanitize(text)[:width - used]
+            text = self.term.truncate(tui_core.sanitize(text), width - used)
             fn = self.styles.get(style)
             out.append(fn(text) if fn else text)
-            used += len(text)
+            used += self.term.length(text)
         return "".join(out) + " " * ((pad_to or width) - used)
 
     def _poll_loop(self) -> None:

@@ -2895,6 +2895,18 @@ class PaintSmokeTests(DbCase):
         self.assertTrue(buf[1].endswith(" "))          # gutter after divider
         self.assertEqual(buf[2], "https://x/y" + " " * 8)  # 18 wide + right gutter
 
+    def test_wide_characters_fill_two_columns_each(self) -> None:
+        ui = make_ui(self.model)
+        for rect_w, painted in ((20, "宽字符 wide" + " " * 8),
+                                (8, "宽字符 "),
+                                (7, "宽字  ")):
+            for line in ("宽字符 wide", ("log_debug", "宽字符 wide"),
+                         [("text", "宽字"), ("bold", "符 wide")]):
+                with self.subTest(rect_w=rect_w, line=line):
+                    buf: list = []
+                    ui._blit(buf, tui_core.Rect(10, 0, rect_w, 2), "br", [line])
+                    self.assertEqual(ui.term.strip_seqs(buf[2]), painted)
+
     def test_click_copies_url_via_osc52(self) -> None:
         stream = io.StringIO()
         ui = make_ui(self.model, stream)

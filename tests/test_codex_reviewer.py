@@ -562,6 +562,18 @@ class CodexReviewerRunTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CodexReviewer("m", name="codex:m", role=ROLE, effort="minimal")
 
+    def test_refreshed_auth_is_persisted_from_a_pass_that_timed_out(self) -> None:
+        home = _codex_home_ready()
+        rotated = '{"tokens": {"refresh_token": "rotated"}}'
+
+        def time_out():
+            raise subprocess.TimeoutExpired([], 1)
+
+        with self.assertRaisesRegex(RuntimeError, "codex-timeout-seconds"):
+            self._run(reviewer=self._reviewer(codex_home=home, run_timeout_s=1),
+                      on_run=time_out, refreshed_auth=rotated)
+        self.assertEqual(rotated, Path(home, "auth.json").read_text(encoding="utf-8"))
+
     def test_credential_is_copied_in_after_the_wait_for_the_slot(self) -> None:
         """The pass that held the slot may have refreshed the credential
         while this one waited."""

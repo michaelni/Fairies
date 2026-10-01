@@ -362,12 +362,13 @@ class CliReviewer(Reviewer):
                         f"--{self.backend}-timeout-seconds "
                         f"({self.run_timeout_s:.0f}s)"
                     )
+                finally:
+                    # The CLI may have rotated the OAuth tokens mid-run, and
+                    # --rm is about to discard the container's copy.
+                    persist_refreshed_auth(
+                        container, self.credential_container_path,
+                        self.credential_local)
                 elapsed = time.monotonic() - started
-                # The CLI may have rotated the OAuth tokens mid-run, and
-                # --rm is about to discard the container's copy.
-                persist_refreshed_auth(
-                    container, self.credential_container_path,
-                    self.credential_local)
 
             usage, error_text = self._run_summary(proc)
             logger.info(

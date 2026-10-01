@@ -252,7 +252,9 @@ class TriageSkipOverrideTests(unittest.TestCase):
         )
         self.assertFalse(main_pass_reached)
         self.assertEqual(exit_code, 0)
-        self.assertEqual(json.loads(out)["classification"], "skip")
+        self.assertEqual(json.loads(out), {
+            "classification": "skip",
+            "message": "triager: already approved on this head"})
 
     def test_skip_overridden_with_flag(self) -> None:
         _exit_code, out, main_pass_reached = _run_wrapper_with_stubbed_triage(
@@ -260,6 +262,23 @@ class TriageSkipOverrideTests(unittest.TestCase):
         )
         self.assertTrue(main_pass_reached)
         self.assertEqual(out, "")
+
+
+class MainPassSkipStageTests(unittest.TestCase):
+    def test_only_a_skip_message_names_the_stage_that_chose_it(self) -> None:
+        for classification, model_args, message in (
+                ("skip", [], "reviewer: nothing new"),
+                ("skip", ["--combine-model", "openai:gpt-5.4"], "combiner: nothing new"),
+                ("moderate_issues", [], "nothing new")):
+            with self.subTest(classification=classification, model_args=model_args):
+                _exit_code, out, _reached = _run_wrapper_with_stubbed_triage(
+                    _fixture_request(),
+                    {"route": "engage", "reason": "worth a look", "label_changes": []},
+                    review_pr_stub=lambda ctx, reviewers, combiner, **kw: Review(
+                        classification, "nothing new", model="openai:gpt-5.4"),
+                    model_args=["--model", "openai:gpt-5.4", *model_args],
+                )
+                self.assertEqual(json.loads(out)["message"], message)
 
 
 class CiTriageEngageTests(unittest.TestCase):

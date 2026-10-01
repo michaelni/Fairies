@@ -51,7 +51,9 @@ title, body, author, html_url, labels, created_at) instead of
 Output JSON keys:
   - classification: a CLASSIFICATIONS member (--task pr) or an
     ISSUE_REPORT_CLASSIFICATIONS member (--task issue); see llm_review_api
-  - message: review/analysis message, may be empty for approve and skip
+  - message: review/analysis message, may be empty for approve; for skip
+    the reason, led by the stage that chose it (``triager: ``,
+    ``reviewer: `` or ``combiner: ``)
 
 The wrapper enriches the review with source code context from a local git
 checkout. When a source bundle is enabled it includes the touched files as
@@ -1918,7 +1920,7 @@ def main() -> int:
                     # the operator sees WHY, not just "skip". Skip messages
                     # are never posted to the forge.
                     emit_review_stdout(
-                        "skip", str(triage_result.get("reason") or ""),
+                        "skip", f"triager: {triage_result.get('reason') or ''}",
                         label_changes=triage_label_changes,
                     )
                     return 0
@@ -2098,8 +2100,11 @@ def main() -> int:
                            "reason": "openai container unhealthy during the vet stage"}
             workset_note(args, "vetting", vetting)
 
+        message = review.message
+        if review.classification == "skip":
+            message = f"{'combiner' if combiner is not None else 'reviewer'}: {message}"
         emit_review_stdout(
-            review.classification, review.message,
+            review.classification, message,
             label_changes=list(review.label_changes),
             branches=list(review.branches),
         )

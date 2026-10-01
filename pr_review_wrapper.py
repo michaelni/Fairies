@@ -1680,7 +1680,8 @@ def main() -> int:
     uploaded_file_ids: list[str] = []
     try:
         for host in {m.host for m in machines} | {
-                s.host for s in (args.codex_host, args.agy_host) if s}:
+                s.host for cli in CLI_BACKENDS
+                if (s := getattr(args, f"{cli}_host"))}:
             podman_host.reap_orphaned_containers(host)
         if args.podman:
             if not repo_roots:

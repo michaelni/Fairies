@@ -36,9 +36,10 @@ Given a passwordless ssh destination (``user@host``) it:
    info``), with an actionable hint if the prerequisite is missing;
 2. builds the review image on the remote, rebuilding only when the
    Containerfile changed (tracked via an image label);
-3. with ``--codex-bin`` / ``--agy-bin``, also builds the thin codex /
-   agy image (for a host used as ``--codex-host`` / ``--agy-host``),
-   staging the pinned binaries in;
+3. with ``--codex-bin`` / ``--agy-bin`` / ``--grok-bin``, also builds
+   the thin codex / agy / grok image (for a host used as
+   ``--codex-host`` / ``--agy-host`` / ``--grok-host``), staging the
+   pinned binaries in;
 4. seeds a bare mirror per repo so per-review provisioning only has to
    push the PR delta (see podman_repos).
 
@@ -87,7 +88,7 @@ CONTAINERFILE_LABEL = "fairy.containerfile-sha256"
 # into the build context.
 CODEX_DEFAULT_TAG = "localhost/fairy-codex:latest"
 CODEX_DOCKERFILE = CONTEXT_DIR / "Containerfile.codex"
-ONE_BINARY_CLIS = ("agy",)
+ONE_BINARY_CLIS = ("agy", "grok")
 
 
 def _run(argv: list[str], *, timeout_s: float = 60.0) -> subprocess.CompletedProcess:
@@ -246,7 +247,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--rebuild", action="store_true", help="force image rebuild even if current")
     p.add_argument(
         "--reap-older-than", default="60m", metavar="DURATION",
-        help="reap leaked stopped review/codex/agy containers older than this "
+        help="reap leaked stopped review/codex/agy/grok containers older than this "
              "podman duration (default: %(default)s); running and paused "
              "containers are never touched. Set 'off' to skip.",
     )

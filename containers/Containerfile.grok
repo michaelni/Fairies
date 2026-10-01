@@ -1,0 +1,36 @@
+# Thin image for the Grok Build CLI (grok) reviewer backend.
+#
+# Runs one headless `grok` per PR review inside an ephemeral container
+# (`podman run --rm`) on the --grok-host, so grok never executes on the
+# wrapper host that holds the ssh key and the provider API keys. The only
+# model-reachable capability is the MCP shell into the review containers,
+# via relay.py; that, mcp_shell_bridge.py, shell_bridge_client.py,
+# auth.json, grok's config.toml and the agent definition that carries the
+# prompt are `podman cp`'d in per run (no bind mounts). Of grok's own
+# tools only those that call MCP tools remain (see grok_reviewer).
+#
+# The pinned grok binary (~170 MB) is NOT in git. Stage it into the build
+# context before building:
+#     cp /path/to/grok-X.Y.Z containers/grok                           # gitignored
+#     python3 containers/provision_remote.py --ssh DEST --grok-bin containers/grok
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC \
+    LANG=C.UTF-8
+
+# python3 runs mcp_shell_bridge.py + relay.py (copied in per run);
+# ca-certificates lets grok reach xAI's API over TLS. Unlike the
+# review image, the model apt-installs nothing here, so the apt lists are
+# dropped to keep the image lean.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# The pinned binary, staged into the build context (see header).
+COPY grok /usr/local/bin/
+RUN chmod +x /usr/local/bin/grok
+
+WORKDIR /work
+CMD ["sleep", "infinity"]

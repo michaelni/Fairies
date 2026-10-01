@@ -45,11 +45,10 @@ import logging
 import os
 from pathlib import Path
 import subprocess
-import sys
 
 from cli_container import CliContainer
-from cli_reviewer import (BRIDGE_PATH, MCP_TOOL_TIMEOUT_S, CliReviewer,
-                          CliUsageLimit, Staged, parse_event_line)
+from cli_reviewer import (MCP_TOOL_TIMEOUT_S, CliReviewer, CliUsageLimit,
+                          Staged, parse_event_line)
 from codex_catalog import harden_codex_catalog, resolve_codex_home
 from common import JsonObject
 from llm_prompt import REVIEWER_ROLE
@@ -123,16 +122,15 @@ def build_codex_exec_command(
     scratch_dir: str,
     schema_path: str,
     last_message_path: str,
-    socket_path: str | None,
-    machine_labels: tuple[str, ...],
+    bridge_args: list[str] | None,
     web_search: str = "cached",
     verbosity: str | None = None,
     reasoning_summary: str | None = None,
     catalog_override_path: str | None = None,
-    bridge_python: str = sys.executable,
-    bridge_path: str = str(BRIDGE_PATH),
 ) -> list[str]:
     """The full ``codex exec`` argv for one pass; prompt arrives on stdin.
+    ``bridge_args`` is what python3 runs as the MCP shell, ``None`` for
+    none.
 
     Kept a pure function of its inputs so tests can pin the exact
     security-relevant flag set without spawning anything.
@@ -165,14 +163,10 @@ def build_codex_exec_command(
         cmd += ["-c", f"model_catalog_json={catalog_override_path}"]
     if effort:
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
-    if socket_path:
-        bridge_args = ["--socket", socket_path]
-        for label in machine_labels:
-            bridge_args += ["--machine", label]
+    if bridge_args:
         cmd += [
-            "-c", f'mcp_servers.shell.command="{bridge_python}"',
-            "-c", "mcp_servers.shell.args="
-                  + json.dumps([bridge_path, *bridge_args]),
+            "-c", 'mcp_servers.shell.command="python3"',
+            "-c", "mcp_servers.shell.args=" + json.dumps(bridge_args),
             # "approve" generates no approval request; exec mode auto-cancels
             # any that are generated.
             "-c", 'mcp_servers.shell.default_tools_approval_mode="approve"',
@@ -324,14 +318,11 @@ class CodexReviewer(CliReviewer):
             scratch_dir=CONTAINER_RUN_DIR,
             schema_path=f"{CONTAINER_RUN_DIR}/output_schema.json",
             last_message_path=f"{CONTAINER_RUN_DIR}/last_message.json",
-            socket_path=self.socket_path if use_shell else None,
-            machine_labels=machine_labels,
+            bridge_args=self._bridge_args(machine_labels) if use_shell else None,
             catalog_override_path=f"{CONTAINER_RUN_DIR}/{catalog_local.name}",
             web_search=self.web_search,
             verbosity=self.verbosity,
             reasoning_summary=self.reasoning_summary,
-            bridge_python="python3",
-            bridge_path=f"{CONTAINER_RUN_DIR}/{BRIDGE_PATH.name}",
         )
         # The container env carries only CODEX_HOME; the wrapper's
         # OPENAI_API_KEY/CODEX_API_KEY are not forwarded by podman

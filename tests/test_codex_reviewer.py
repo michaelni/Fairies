@@ -86,8 +86,9 @@ class BuildCommandTests(unittest.TestCase):
             codex_bin="codex", model="gpt-5.6-sol", effort="xhigh",
             scratch_dir="/tmp/s", schema_path="/tmp/s/schema.json",
             last_message_path="/tmp/s/last.json",
-            socket_path="/run/fairy/shell.sock",
-            machine_labels=("x86_64", "arm64"),
+            bridge_args=["/run/fairy/mcp_shell_bridge.py",
+                         "--socket", "/run/fairy/shell.sock",
+                         "--machine", "x86_64", "--machine", "arm64"],
         )
         defaults.update(kwargs)
         return build_codex_exec_command(**defaults)
@@ -138,8 +139,8 @@ class BuildCommandTests(unittest.TestCase):
              if a == "--machine"],
         )
 
-    def test_no_mcp_config_without_socket(self) -> None:
-        cmd = self._cmd(socket_path=None)
+    def test_no_mcp_config_without_bridge(self) -> None:
+        cmd = self._cmd(bridge_args=None)
         self.assertFalse(any("mcp_servers" in c for c in cmd))
 
     def test_effort_flag_only_when_set(self) -> None:

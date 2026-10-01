@@ -69,7 +69,6 @@ from podman_host import ShellHostSpec
 import shell_tool
 
 __all__ = [
-    "BRIDGE_PATH",
     "MCP_TOOL_TIMEOUT_S",
     "CliAuthFailed",
     "CliReviewer",
@@ -82,7 +81,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _REPO_DIR = Path(__file__).resolve().parent
-BRIDGE_PATH = _REPO_DIR / "mcp_shell_bridge.py"
+_BRIDGE_PATH = _REPO_DIR / "mcp_shell_bridge.py"
 _BRIDGE_CLIENT_PATH = _REPO_DIR / "shell_bridge_client.py"
 _RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
 
@@ -205,7 +204,7 @@ class CliReviewer(Reviewer):
 
     def _bridge_args(self, machine_labels: tuple[str, ...]) -> list[str]:
         """What ``python3`` runs as the CLI's MCP server (see ``_stage``)."""
-        return [f"{self.run_dir}/{BRIDGE_PATH.name}", "--socket", self.socket_path,
+        return [f"{self.run_dir}/{_BRIDGE_PATH.name}", "--socket", self.socket_path,
                 *(arg for label in machine_labels for arg in ("--machine", label))]
 
     def _prompt_features(self) -> set[str]:
@@ -331,7 +330,7 @@ class CliReviewer(Reviewer):
             for local, dest_dir in staged.files:
                 container.put_file(local, dest_dir)
             if use_shell:
-                for local in (BRIDGE_PATH, _BRIDGE_CLIENT_PATH, _RELAY_PATH):
+                for local in (_BRIDGE_PATH, _BRIDGE_CLIENT_PATH, _RELAY_PATH):
                     container.put_file(local, self.run_dir)
                 relay = CliShellRelay(
                     container,

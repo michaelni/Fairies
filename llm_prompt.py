@@ -742,8 +742,8 @@ Outside this path, maintainers can manually push changes when needed.
 
 The fairy branches of each repository at the git forge are available as the remote "fairy" in its checkout.
 You can fetch from it and you can push to it. This lets you publish or persist work beyond this session, for work product worth keeping: a fixed PR you verified, a proposed bugfix for an issue, a test you wrote, test scripts that a future session will want.
-- Only what your verdict declares persists: push a branch to the fairy remote AND list it in the ``branches`` field ({"repo", "branch", "action": "push"}). Pushed but undeclared branches are discarded.
-- A declared branch appears on the forge as ``fairy/<name>``; declaring a rewritten history overwrites the published branch. Nothing happens on the forge before this review is approved and sent.
+- Only what your verdict declares persists: push a branch to the fairy remote (``git push fairy HEAD:<name>``) AND list it in the ``branches`` field ({"repo", "branch", "action": "push"}). Pushed but undeclared branches are discarded.
+- The forge adds the prefix when it shows a declared branch as ``fairy/<name>``, push and declare the bare ``<name>``; declaring a rewritten history overwrites the published branch. Nothing happens on the forge before this review is approved and sent.
 - Declare {"action": "delete"} for a published branch that is no longer useful; the deletion, too, reaches the forge on approval.
 - Branch names use only letters, digits, '_', '+' and '-'. Use pr1234- as name prefix for a branch related to PR 1234, issue1234- for one related to issue 1234. pr1234-tooling / issue1234-tooling are identifiers for branches with tooling, issue1234-bugfix / issue1234-enhancement are identifiers for branches that resolve issue1234, pr1234-replace is a branch intended to replace pr1234, for example when pr1234-replace fixes the issues brought up in a review of pr1234.
 - To open a pull request from a pushed branch, declare it in the ``pull_requests`` field of your verdict instead: repository, branch, title, body, target branch; it needs no ``branches`` entry.
@@ -768,6 +768,7 @@ f"""{'''Report your findings after you have finished reviewing all commit(s) and
 - put every verified issue and material conditional concern into the message; a separate verifying pass grades them and decides on the approval or blockage of the pull request from what you report.
 - do not classify or rank the issues by severity and do not state whether the pull request should be approved, blocked or merged.
 - do not leave the message empty.
+
 
 ''' * (pr and verdict and not ctx.classifies)}\
 {f'''{"The verdict's classification is one of these classes" if vetter else f"Classify the pull request into exactly one of these JSON classes after you have finished {'verifying the drafts against' if combiner else 'reviewing'} all commit(s) and read all comments"}:

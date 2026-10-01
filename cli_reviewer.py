@@ -149,6 +149,9 @@ class CliReviewer(Reviewer):
         the container directory the credential file is copied into
     ``login_hint``
         how a human restores a rejected credential
+    ``one_at_a_time``
+        whether the wrapper must keep the backend's passes from
+        overlapping (``--concurrency BACKEND:1``)
 
     ``run(ctx)`` raises ``CliUsageLimit`` on an exhausted plan window,
     ``CliAuthFailed`` after setting the host credential aside as
@@ -162,6 +165,7 @@ class CliReviewer(Reviewer):
     run_dir: str
     credential_dir: str
     login_hint: str
+    one_at_a_time = False
 
     def __init__(
         self,

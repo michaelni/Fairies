@@ -819,13 +819,17 @@ def parse_args() -> argparse.Namespace:
                              args.triage_model, args.vet_model, *args.allowed_model,
                              args.fallback_model, args.cyber_fallback_model)
                  if s]
-    for cli in CLI_BACKENDS:
+    for cli, reviewer in CLI_BACKENDS.items():
         specs = [s for s in all_specs if s.startswith(f"{cli}:")]
         if specs and getattr(args, f"{cli}_host") is None:
             p.error(
                 f"{cli} model(s) {', '.join(specs)} require --{cli}-host "
                 f"({cli} runs only in a container there, never on the wrapper host)"
             )
+        if specs and reviewer.one_at_a_time:
+            if dict(args.concurrency).get(cli, 1) != 1:
+                p.error(f"--concurrency: {cli} passes must run one at a time")
+            args.concurrency = [*args.concurrency, (cli, 1)]
     for cli, max_patch_bytes, max_bundle_bytes in (
             ("codex", CODEX_MAX_PATCH_BYTES, CODEX_MAX_BUNDLE_BYTES),
             ("agy", AGY_MAX_PATCH_BYTES, AGY_MAX_BUNDLE_BYTES)):

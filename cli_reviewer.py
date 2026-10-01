@@ -325,7 +325,6 @@ class CliReviewer(Reviewer):
                                  machine_labels=machine_labels)
 
             container.start()
-            container.put_file(self.credential_local, self.credential_dir)
             container.put_file(schema_local, self.run_dir)
             for local, dest_dir in staged.files:
                 container.put_file(local, dest_dir)
@@ -342,6 +341,9 @@ class CliReviewer(Reviewer):
                 ).start()
 
             with concurrency.slot(self.backend):
+                # Not before the wait for the slot: the pass that held it
+                # may have refreshed the credential.
+                container.put_file(self.credential_local, self.credential_dir)
                 logger.info(
                     "%s start role=%s model=%s effort=%s shell=%s host=%s",
                     self.backend, self.role.name, self.model,

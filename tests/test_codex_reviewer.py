@@ -30,6 +30,7 @@
 CodexReviewer: command construction, event parsing, run() behavior."""
 
 import argparse
+import contextlib
 import json
 import os
 import subprocess
@@ -560,6 +561,20 @@ class CodexReviewerRunTests(unittest.TestCase):
         # rejects it (see CODEX_EFFORTS); it must not validate here.
         with self.assertRaises(ValueError):
             CodexReviewer("m", name="codex:m", role=ROLE, effort="minimal")
+
+    def test_credential_is_copied_in_after_the_wait_for_the_slot(self) -> None:
+        """The pass that held the slot may have refreshed the credential
+        while this one waited."""
+        home = _codex_home_ready()
+
+        @contextlib.contextmanager
+        def slot_after_a_refresh(provider):
+            Path(home, "auth.json").write_text('{"tokens": "refreshed"}', encoding="utf-8")
+            yield
+
+        with mock.patch.object(concurrency, "slot", slot_after_a_refresh):
+            self._run(reviewer=self._reviewer(codex_home=home))
+        self.assertEqual('{"tokens": "refreshed"}', self.container.copied["auth.json"])
 
     def test_codex_exec_takes_a_concurrency_slot(self) -> None:
         # an assert in a worker never fails the test -- assert peak on the main thread

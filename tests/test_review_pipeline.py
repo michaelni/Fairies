@@ -177,7 +177,7 @@ class MakeReviewerTests(unittest.TestCase):
 
     def test_unknown_provider_rejected(self) -> None:
         with self.assertRaises(SystemExit):
-            review_pipeline.make_reviewer("grok:x", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
+            review_pipeline.make_reviewer("nosuch:x", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False)
 
     def test_effort_suffix_and_default_effort(self) -> None:
         r = review_pipeline.make_reviewer("openai:gpt-5.5@xhigh", args=_args(), resources=None, role=REVIEWER_ROLE, verbose=False, default_effort="high")

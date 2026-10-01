@@ -574,6 +574,8 @@ _CLI_HOME_HELP = {
     "agy": "Wrapper-side directory holding agy's antigravity-oauth-token, "
            "forwarded as --agy-home to --llm-review-cmd. Default: agy's own "
            "~/.gemini/antigravity-cli.",
+    "grok": "Wrapper-side directory holding grok's auth.json, forwarded as "
+            "--grok-home to --llm-review-cmd. Default: grok's own ~/.grok.",
 }
 
 
@@ -2252,9 +2254,9 @@ def flex_fallback_extra_args(cmd_str: str) -> list[str]:
 
 def podman_host_cmd_args(args: argparse.Namespace) -> list[str]:
     """Extra --llm-review-cmd flags that route LLM shell work into
-    containers on the podman host(s), and the codex / agy container host
-    when such a model is used. Empty unless --podman-host / --codex-host /
-    --agy-host is set."""
+    containers on the podman host(s), and the codex / agy / grok container
+    host when such a model is used. Empty unless --podman-host or one of
+    these hosts is set."""
     cmd: list[str] = []
     hosts = getattr(args, "podman_host", None)
     if hosts:

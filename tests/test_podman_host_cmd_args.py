@@ -94,6 +94,15 @@ class PodmanHostCmdArgsTests(unittest.TestCase):
             fairy.podman_host_cmd_args(args),
         )
 
+    def test_forwards_grok_host_and_home_from_the_command_line(self) -> None:
+        args = fairy.make_parser().parse_args(
+            ["--owner", "o", "--repo", "r",
+             "--grok-host", "fairy@grokbox", "--grok-home", "/srv/fairy/grok"])
+        self.assertEqual(
+            ["--grok-host=fairy@grokbox", "--grok-home=/srv/fairy/grok"],
+            fairy.podman_host_cmd_args(args),
+        )
+
     def test_no_codex_flags_when_unset(self) -> None:
         args = SimpleNamespace(
             podman_host=["fairy@x86box"], codex_host=None, codex_home=None)

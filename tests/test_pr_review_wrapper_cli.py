@@ -123,6 +123,22 @@ class ModelEnsembleOptionTests(unittest.TestCase):
                              "--codex-host", "fairy@codexbox")
                 self.assertEqual(wrapper.CODEX_MAX_PATCH_BYTES, args.max_patch_bytes)
 
+    def test_a_grok_model_needs_a_grok_host(self) -> None:
+        with self.assertRaises(SystemExit):
+            parse("--extra-model", "grok:grok-4.7",
+                  "--combine-model", "openai:gpt-5.4",
+                  "--agy-host", "fairy@agybox")
+        args = parse("--extra-model", "grok:grok-4.7",
+                     "--combine-model", "openai:gpt-5.4",
+                     "--grok-host", "fairy@grokbox", "--grok-bin", "/opt/grok",
+                     "--grok-timeout-seconds", "900", "--grok-home", "/srv/grok")
+        self.assertEqual("fairy@grokbox", args.grok_host.host.ssh_dest)
+        self.assertIsNone(args.agy_host)
+        self.assertEqual(("/opt/grok", 900.0, "/srv/grok"),
+                         (args.grok_bin, args.grok_timeout_seconds, args.grok_home))
+        self.assertEqual("localhost/fairy-grok:latest", args.grok_image)
+        self.assertEqual([("grok", 1)], args.concurrency)
+
     def test_a_backend_that_demands_it_runs_one_pass_at_a_time(self) -> None:
         with mock.patch.object(wrapper.CLI_BACKENDS["codex"], "one_at_a_time", True):
             for flag in ("--extra-model", "--fallback-model"):

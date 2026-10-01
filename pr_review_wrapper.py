@@ -106,6 +106,7 @@ from llm_review_api import (
 )
 from agy_reviewer import DEFAULT_AGY_IMAGE
 from codex_reviewer import DEFAULT_CODEX_IMAGE
+from grok_reviewer import DEFAULT_GROK_IMAGE
 import branch_persist
 import review_pipeline
 from review_pipeline import (CLI_BACKENDS, make_reviewer, review_pr, run_triage,
@@ -575,7 +576,10 @@ def parse_args() -> argparse.Namespace:
             ("agy", DEFAULT_AGY_IMAGE,
              "Wrapper-side directory holding agy's antigravity-oauth-token, "
              "copied into the agy container. Default: agy's own "
-             "~/.gemini/antigravity-cli.")):
+             "~/.gemini/antigravity-cli."),
+            ("grok", DEFAULT_GROK_IMAGE,
+             "Wrapper-side directory holding grok's auth.json, copied into "
+             "the grok container. Default: grok's own ~/.grok.")):
         p.add_argument(
             f"--{cli}-host",
             metavar="[LABEL=]SSH_DEST",
@@ -1463,6 +1467,7 @@ def main() -> int:
         logging.getLogger("cli_reviewer"),
         logging.getLogger("codex_reviewer"),
         logging.getLogger("agy_reviewer"),
+        logging.getLogger("grok_reviewer"),
         branch_persist.logger,
         color=args.color,
     )

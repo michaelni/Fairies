@@ -99,6 +99,7 @@ class FakeCliContainer:
         self._credential_name = credential_name
         self.copied = {}       # basename -> local text content
         self.run_cmds = []     # every exec'd argv, in order
+        self.dest_dirs = {}
         self.cmd = None
         self.input_text = None
         self.env = None
@@ -110,6 +111,7 @@ class FakeCliContainer:
 
     def put_file(self, local, dest_dir, **kw):
         p = Path(local)
+        self.dest_dirs[p.name] = dest_dir
         try:
             self.copied[p.name] = p.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):

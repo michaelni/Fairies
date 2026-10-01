@@ -48,6 +48,7 @@ from typing import Callable
 
 from agy_reviewer import AgyReviewer
 from codex_reviewer import CodexReviewer, resolve_web_search
+from grok_reviewer import GrokReviewer
 from llm_output_hacks import hide_scope_block
 from llm_review_api import (
     ANTHROPIC_ENDPOINTS,
@@ -80,7 +81,7 @@ logger = logging.getLogger(__name__)
 
 # The providers that run a CLI coding agent in a container on their own
 # --<provider>-host, with --<provider>-image/-bin/-home/-timeout-seconds.
-CLI_BACKENDS = {"codex": CodexReviewer, "agy": AgyReviewer}
+CLI_BACKENDS = {"codex": CodexReviewer, "agy": AgyReviewer, "grok": GrokReviewer}
 
 
 _SPEC_OPTION = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*=")
@@ -121,10 +122,11 @@ def make_reviewer(
 
     Options select a credential other than the deployment default, so
     one spec can name e.g. the same codex model on a different login:
-    ``codex-home=DIR`` / ``agy-home=DIR`` override --codex-home /
-    --agy-home, ``api-key-env=VAR`` (anthropic/zai/openrouter/gemini)
-    overrides the provider's key variable. A reviewer built with an
-    option carries a ``+`` name suffix so logs tell the credentials apart.
+    ``codex-home=DIR`` / ``agy-home=DIR`` / ``grok-home=DIR`` override
+    --codex-home / --agy-home / --grok-home, ``api-key-env=VAR``
+    (anthropic/zai/openrouter/gemini) overrides the provider's key
+    variable. A reviewer built with an option carries a ``+`` name suffix
+    so logs tell the credentials apart.
 
     ``openai:<m>`` -> OpenAIReviewer reusing the shared
     OpenAI resources (``resources`` must not be None for this provider).
@@ -133,17 +135,18 @@ def make_reviewer(
     endpoint (``ANTHROPIC_ENDPOINTS``). ``gemini:<m>`` -> GeminiReviewer
     on Google's Gemini API (``GEMINI_API_KEY``). ``codex:<m>`` ->
     CodexReviewer driving the pinned codex CLI, ``agy:<m>`` ->
-    AgyReviewer driving the pinned Antigravity CLI. The Anthropic and
+    AgyReviewer driving the pinned Antigravity CLI, ``grok:<m>`` ->
+    GrokReviewer driving the pinned Grok Build CLI. The Anthropic and
     Gemini modules are imported only when actually requested.
 
     ``@effort`` sets that reviewer's effort: an OpenAI reasoning effort,
     an Anthropic/GLM thinking effort (``ANTHROPIC_EFFORTS``), a Gemini
     thinking level (``GEMINI_EFFORTS``), a codex
-    ``model_reasoning_effort`` (``CODEX_EFFORTS``) or an agy ``--effort``
-    (``AGY_EFFORTS``). When the spec has no
-    ``@effort``, ``default_effort`` applies (``None`` keeps the provider
-    default). This is the only way to set effort -- there is no shared
-    main-pass effort flag; efforts live on the model specs.
+    ``model_reasoning_effort`` (``CODEX_EFFORTS``), an agy ``--effort``
+    (``AGY_EFFORTS``) or a grok ``--effort`` (``GROK_EFFORTS``). When the
+    spec has no ``@effort``, ``default_effort`` applies (``None`` keeps
+    the provider default). This is the only way to set effort -- there is
+    no shared main-pass effort flag; efforts live on the model specs.
 
     ``service_tier`` (OpenAI only) is used verbatim; ``None`` sends no
     tier. Leaving it unset inherits ``--service-tier``.
@@ -162,7 +165,7 @@ def make_reviewer(
     provider, sep, model = spec_body.partition(":")
     if not sep:
         raise SystemExit(
-            f"--model {spec!r}: missing provider prefix (use openai:/anthropic:/zai:/openrouter:/gemini:/codex:/agy:)"
+            f"--model {spec!r}: missing provider prefix (use openai:/anthropic:/zai:/openrouter:/gemini:/codex:/agy:/grok:)"
         )
     if not model:
         raise SystemExit(f"--model {spec!r}: missing model name after {provider!r}:")
@@ -242,7 +245,7 @@ def make_reviewer(
             )
         except ValueError as exc:  # invalid @effort suffix
             raise SystemExit(f"--model {spec!r}: {exc}")
-    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai/openrouter/gemini/codex/agy)")
+    raise SystemExit(f"--model {spec!r}: unknown provider {provider!r} (use openai/anthropic/zai/openrouter/gemini/codex/agy/grok)")
 
 
 def run_triage(triager: Reviewer, ctx: ReviewContext) -> dict[str, object] | None:

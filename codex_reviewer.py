@@ -51,15 +51,12 @@ from cli_reviewer import (MCP_TOOL_TIMEOUT_S, CliReviewer, CliUsageLimit,
                           Staged, parse_event_line)
 from codex_catalog import harden_codex_catalog, resolve_codex_home
 from common import JsonObject
-from llm_prompt import REVIEWER_ROLE
 from llm_review_api import (BadModelOutput, ProviderContentFlagged,
-                            ProviderTurnFailed, RoleSpec)
-from podman_host import ShellHostSpec
+                            ProviderTurnFailed)
 
 __all__ = [
     "CODEX_EFFORTS",
     "CODEX_WEB_SEARCH_MODES",
-    "DEFAULT_CODEX_IMAGE",
     "CodexReviewer",
     "CodexTurnFailed",
     "build_codex_exec_command",
@@ -67,8 +64,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_CODEX_IMAGE = "localhost/fairy-codex:latest"
 
 # Under /work = the image WORKDIR.
 CONTAINER_RUN_DIR = "/work/.codex-run"
@@ -231,38 +226,23 @@ class CodexReviewer(CliReviewer):
     efforts = CODEX_EFFORTS
     run_dir = CONTAINER_RUN_DIR
     credential_dir = CONTAINER_CODEX_HOME
+    credential_name = "auth.json"
     login_hint = "run `codex login` for the deployment's CODEX_HOME"
 
     def __init__(
         self,
         model: str,
         *,
-        name: str,
-        role: RoleSpec = REVIEWER_ROLE,
-        codex_bin: str = "codex",
-        codex_home: str | None = None,
-        codex_host: ShellHostSpec | None = None,
-        codex_image: str = DEFAULT_CODEX_IMAGE,
-        exec_timeout_s: float = 600.0,
-        effort: str | None = None,
+        home: str | None = None,
         web_search: str = "cached",
         verbosity: str | None = None,
         reasoning_summary: str | None = None,
-        run_timeout_s: float = 0.0,
-        verbose: bool = False,
-        debug_dir: str | None = None,
+        **cli_reviewer_args: object,
     ) -> None:
         if web_search not in CODEX_WEB_SEARCH_MODES:
             raise ValueError(
                 f"web_search {web_search!r} not in {CODEX_WEB_SEARCH_MODES}")
-        super().__init__(
-            model, name=name, role=role, host=codex_host, image=codex_image,
-            credential_local=Path(resolve_codex_home(codex_home)) / "auth.json",
-            exec_timeout_s=exec_timeout_s, effort=effort,
-            run_timeout_s=run_timeout_s, verbose=verbose, debug_dir=debug_dir,
-        )
-        self.codex_bin = codex_bin
-        self.codex_home = codex_home
+        super().__init__(model, home=resolve_codex_home(home), **cli_reviewer_args)
         self.web_search = web_search
         self.verbosity = verbosity
         self.reasoning_summary = reasoning_summary
@@ -275,7 +255,7 @@ class CodexReviewer(CliReviewer):
         pass's model: codex never runs without the view_image /
         apply_patch hardening. See ``harden_codex_catalog``.
         """
-        catalog = _load_codex_catalog(self.codex_home)
+        catalog = _load_codex_catalog(str(self.credential_local.parent))
         if not isinstance(catalog, dict):
             raise RuntimeError(
                 f"{self.name}: no codex model catalog cache; refusing to "
@@ -313,7 +293,7 @@ class CodexReviewer(CliReviewer):
         catalog_local = self._write_hardened_catalog(scratch)
         schema_local = self._schema_file(scratch)
         cmd = build_codex_exec_command(
-            codex_bin=self.codex_bin,
+            codex_bin=self.cli_bin,
             model=self.model,
             effort=self.effort,
             scratch_dir=CONTAINER_RUN_DIR,

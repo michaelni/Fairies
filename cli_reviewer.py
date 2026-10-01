@@ -147,11 +147,18 @@ class CliReviewer(Reviewer):
         the container directory for per-run files (schema, bridge, relay)
     ``credential_dir``
         the container directory the credential file is copied into
+    ``credential_name``
+        the credential's file name, there and in the wrapper-side home
+    ``default_home``
+        that home relative to the user's own, for when none is given
     ``login_hint``
         how a human restores a rejected credential
     ``one_at_a_time``
         whether the wrapper must keep the backend's passes from
         overlapping (``--concurrency BACKEND:1``)
+
+    ``default_image``, the tag of the backend's image, follows from
+    ``backend``.
 
     ``run(ctx)`` raises ``CliUsageLimit`` on an exhausted plan window,
     ``CliAuthFailed`` after setting the host credential aside as
@@ -164,8 +171,14 @@ class CliReviewer(Reviewer):
     efforts: tuple[str, ...]
     run_dir: str
     credential_dir: str
+    credential_name: str
+    default_home: str
     login_hint: str
     one_at_a_time = False
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        cls.default_image = f"localhost/fairy-{cls.backend}:latest"
 
     def __init__(
         self,
@@ -173,9 +186,10 @@ class CliReviewer(Reviewer):
         *,
         name: str,
         role: RoleSpec = REVIEWER_ROLE,
-        host: ShellHostSpec | None,
-        image: str,
-        credential_local: Path,
+        cli_bin: str | None = None,
+        home: str | None = None,
+        host: ShellHostSpec | None = None,
+        image: str | None = None,
         exec_timeout_s: float = 600.0,
         effort: str | None = None,
         run_timeout_s: float = 0.0,
@@ -190,8 +204,11 @@ class CliReviewer(Reviewer):
         # None means the CLI is unavailable (there is no local backend);
         # run() rejects it.
         self.host = host
-        self.image = image
-        self.credential_local = credential_local
+        self.cli_bin = cli_bin or self.backend
+        self.image = image or self.default_image
+        self.credential_local = (
+            Path(home) if home else Path.home() / self.default_home
+        ) / self.credential_name
         self.exec_timeout_s = exec_timeout_s
         self.effort = effort
         self.run_timeout_s = run_timeout_s  # 0 disables the watchdog

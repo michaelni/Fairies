@@ -191,8 +191,8 @@ class GrokReviewerRunTests(unittest.TestCase):
 
     def _reviewer(self, *, grok_home=None, **kw):
         return GrokReviewer("grok-4.7", name="grok:grok-4.7", role=ROLE,
-                            grok_host=GROK_HOST,
-                            grok_home=grok_home or _grok_home(), **kw)
+                            host=GROK_HOST,
+                            home=grok_home or _grok_home(), **kw)
 
     def _run(self, *, stdout=_REAL_STREAM, stderr="", returncode=0,
              ctx=None, reviewer=None, refreshed_credential=None, recorded=None):
@@ -355,7 +355,7 @@ class GrokReviewerRunTests(unittest.TestCase):
         self.assertIsNone(self.container.cmd)
 
     def test_no_grok_host_is_error(self) -> None:
-        reviewer = GrokReviewer("m", name="grok:m", role=ROLE, grok_home=_grok_home())
+        reviewer = GrokReviewer("m", name="grok:m", role=ROLE, home=_grok_home())
         with self.assertRaisesRegex(RuntimeError, "requires --grok-host"):
             reviewer.run(make_ctx())
 
@@ -381,7 +381,7 @@ class FactoryTests(unittest.TestCase):
         self.assertIsInstance(reviewer, GrokReviewer)
         self.assertEqual("grok:grok-4.7", reviewer.name)
         self.assertEqual("xhigh", reviewer.effort)
-        self.assertEqual("grok-pinned", reviewer.grok_bin)
+        self.assertEqual("grok-pinned", reviewer.cli_bin)
         self.assertEqual(GROK_HOST, reviewer.host)
         self.assertEqual("img:test", reviewer.image)
 

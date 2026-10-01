@@ -206,7 +206,7 @@ class MakeReviewerTests(unittest.TestCase):
             "codex:gpt-5.6-sol@high:codex-home=/second-home",
             args=_codex_args(), resources=None, role=REVIEWER_ROLE,
             verbose=False)
-        self.assertEqual("/second-home", r.codex_home)
+        self.assertEqual("/second-home", str(r.credential_local.parent))
         self.assertEqual("high", r.effort)
         self.assertEqual("codex:gpt-5.6-sol+second-home", r.name)
 
@@ -227,7 +227,7 @@ class MakeReviewerTests(unittest.TestCase):
             "codex:gpt-5.6-sol:codex-home=C:\\codex-home",
             args=_codex_args(), resources=None, role=REVIEWER_ROLE,
             verbose=False)
-        self.assertEqual("C:\\codex-home", r.codex_home)
+        self.assertEqual("C:\\codex-home", str(r.credential_local.parent))
 
     def test_unknown_option_rejected(self) -> None:
         with self.assertRaises(SystemExit):
@@ -612,7 +612,7 @@ class AttachTurnFallbacksTests(unittest.TestCase):
             r, args=args, resources=None, verbosity="high", failure_fails_run=True)
         cyber, fb = r.fallbacks
         self.assertEqual("codex:gpt-5.6-sol+second-home", cyber.name)
-        self.assertEqual("/second-home", cyber.codex_home)
+        self.assertEqual("/second-home", str(cyber.credential_local.parent))
         self.assertTrue(cyber.flag_only)
         self.assertFalse(fb.flag_only)
         self.assertEqual("zai:glm-4.6", fb.name)

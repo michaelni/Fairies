@@ -104,9 +104,6 @@ from llm_review_api import (
     ReviewContext,
     Reviewer,
 )
-from agy_reviewer import DEFAULT_AGY_IMAGE
-from codex_reviewer import DEFAULT_CODEX_IMAGE
-from grok_reviewer import DEFAULT_GROK_IMAGE
 import branch_persist
 import review_pipeline
 from review_pipeline import (CLI_BACKENDS, make_reviewer, review_pr, run_triage,
@@ -574,16 +571,16 @@ def parse_args() -> argparse.Namespace:
              "splice command + output into the prompt. ``{number}`` and "
              "``{base_ref}`` are replaced from the PR metadata. Repeatable.",
     )
-    for cli, default_image, home_help in (
-            ("codex", DEFAULT_CODEX_IMAGE,
+    for cli, home_help in (
+            ("codex",
              "Wrapper-side CODEX_HOME: the auth.json copied into the codex "
              "container and the models_cache.json used to harden the tool "
              "catalog. Default: the environment / codex's ~/.codex."),
-            ("agy", DEFAULT_AGY_IMAGE,
+            ("agy",
              "Wrapper-side directory holding agy's antigravity-oauth-token, "
              "copied into the agy container. Default: agy's own "
              "~/.gemini/antigravity-cli."),
-            ("grok", DEFAULT_GROK_IMAGE,
+            ("grok",
              "Wrapper-side directory holding grok's auth.json, copied into "
              "the grok container. Default: grok's own ~/.grok.")):
         p.add_argument(
@@ -597,7 +594,7 @@ def parse_args() -> argparse.Namespace:
         )
         p.add_argument(
             f"--{cli}-image",
-            default=default_image,
+            default=CLI_BACKENDS[cli].default_image,
             metavar="TAG",
             help=f"Container image for the {cli} pass (default: %(default)s); "
                  f"build it with containers/Containerfile.{cli}.",

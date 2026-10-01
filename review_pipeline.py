@@ -237,9 +237,10 @@ def make_reviewer(
         try:
             return CLI_BACKENDS[provider](
                 model, name=name,
-                **{f"{provider}_{flag}": getattr(args, f"{provider}_{flag}")
-                   for flag in ("bin", "host", "image")},
-                **{f"{provider}_home": cli_home or getattr(args, f"{provider}_home")},
+                cli_bin=getattr(args, f"{provider}_bin"),
+                home=cli_home or getattr(args, f"{provider}_home"),
+                host=getattr(args, f"{provider}_host"),
+                image=getattr(args, f"{provider}_image"),
                 run_timeout_s=getattr(args, f"{provider}_timeout_seconds"),
                 **cli_kwargs,
             )

@@ -191,8 +191,8 @@ class AgyReviewerRunTests(unittest.TestCase):
 
     def _reviewer(self, *, agy_home=None, **kw):
         return AgyReviewer("gemini-3.1-pro-high", name="agy:gemini-3.1-pro-high",
-                           role=ROLE, agy_host=AGY_HOST,
-                           agy_home=agy_home or _agy_home(), **kw)
+                           role=ROLE, host=AGY_HOST,
+                           home=agy_home or _agy_home(), **kw)
 
     def _run(self, *, stdout=_REAL_STREAM, stderr="", returncode=0,
              ctx=None, reviewer=None, refreshed_token=None,
@@ -367,7 +367,7 @@ class AgyReviewerRunTests(unittest.TestCase):
         self.assertIsNone(self.container.cmd)
 
     def test_no_agy_host_is_error(self) -> None:
-        reviewer = AgyReviewer("m", name="agy:m", role=ROLE, agy_home=_agy_home())
+        reviewer = AgyReviewer("m", name="agy:m", role=ROLE, home=_agy_home())
         with self.assertRaisesRegex(RuntimeError, "requires --agy-host"):
             reviewer.run(make_ctx())
 
@@ -393,7 +393,7 @@ class FactoryTests(unittest.TestCase):
         self.assertIsInstance(reviewer, AgyReviewer)
         self.assertEqual("agy:claude-opus-4-6-thinking", reviewer.name)
         self.assertEqual("max", reviewer.effort)
-        self.assertEqual("agy-pinned", reviewer.agy_bin)
+        self.assertEqual("agy-pinned", reviewer.cli_bin)
         self.assertEqual(AGY_HOST, reviewer.host)
         self.assertEqual("img:test", reviewer.image)
 
@@ -401,7 +401,6 @@ class FactoryTests(unittest.TestCase):
         reviewer = review_pipeline.make_reviewer(
             "agy:gemini-3.1-pro-high:agy-home=/second-home", args=self._args(),
             resources=None, role=ROLE, verbose=False)
-        self.assertEqual("/second-home", reviewer.agy_home)
         self.assertEqual(Path("/second-home", TOKEN_NAME), reviewer.credential_local)
         self.assertEqual("agy:gemini-3.1-pro-high+second-home", reviewer.name)
 

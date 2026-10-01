@@ -166,12 +166,12 @@ class WebSearchModeTests(unittest.TestCase):
 
     def test_invalid_mode_rejected(self) -> None:
         with self.assertRaises(ValueError):
-            CodexReviewer("m", name="codex:m", role=ROLE, codex_host=CODEX_HOST,
+            CodexReviewer("m", name="codex:m", role=ROLE, host=CODEX_HOST,
                           web_search="sometimes")
 
     def _prompt_features(self, web_search):
         reviewer = CodexReviewer("m", name="codex:m", role=ROLE,
-                                 codex_host=CODEX_HOST, web_search=web_search)
+                                 host=CODEX_HOST, web_search=web_search)
         with mock.patch.object(cli_reviewer, "generate_llm_prompt",
                                return_value="DEV") as gen:
             reviewer._build_prompt(make_ctx(), False)
@@ -207,8 +207,8 @@ class CodexReviewerRunTests(unittest.TestCase):
     def _reviewer(self, *, codex_home=None, **kw):
         return CodexReviewer(
             "gpt-5.6-sol", name="codex:gpt-5.6-sol", role=ROLE,
-            codex_host=CODEX_HOST,
-            codex_home=codex_home or _codex_home_ready(), **kw)
+            host=CODEX_HOST,
+            home=codex_home or _codex_home_ready(), **kw)
 
     def _run(self, *, jsonl="", stderr="", returncode=0,
              last_message='{"classification": "approve", "message": "ok"}',
@@ -547,7 +547,7 @@ class CodexReviewerRunTests(unittest.TestCase):
 
     def test_no_codex_host_is_error(self) -> None:
         reviewer = CodexReviewer("gpt-5.6-sol", name="codex:gpt-5.6-sol",
-                                 role=ROLE, codex_home=_codex_home_with_auth())
+                                 role=ROLE, home=_codex_home_with_auth())
         with self.assertRaisesRegex(RuntimeError, "requires --codex-host"):
             reviewer.run(make_ctx())
 
@@ -649,7 +649,7 @@ class FactoryTests(unittest.TestCase):
         self.assertIsInstance(reviewer, CodexReviewer)
         self.assertEqual("codex:gpt-5.6-sol", reviewer.name)
         self.assertEqual("xhigh", reviewer.effort)
-        self.assertEqual("codex-pinned", reviewer.codex_bin)
+        self.assertEqual("codex-pinned", reviewer.cli_bin)
         self.assertEqual(CODEX_HOST, reviewer.host)
         self.assertEqual("disabled", reviewer.web_search)  # --web-search off
 

@@ -62,13 +62,10 @@ import subprocess
 from cli_container import CliContainer
 from cli_reviewer import MCP_TOOL_TIMEOUT_S, CliReviewer, Staged, last_event
 from common import JsonObject
-from llm_prompt import REVIEWER_ROLE
-from llm_review_api import ProviderTurnFailed, RoleSpec
-from podman_host import ShellHostSpec
+from llm_review_api import ProviderTurnFailed
 
 __all__ = [
     "CREDENTIAL_NAME",
-    "DEFAULT_GROK_IMAGE",
     "GrokReviewer",
     "GrokTurnFailed",
     "build_grok_command",
@@ -76,8 +73,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_GROK_IMAGE = "localhost/fairy-grok:latest"
 
 # The reasoning_efforts of the model catalog grok 1.0.44 fetched on
 # 2026-10-01, united across its models; that day grok rejected xhigh for
@@ -165,36 +160,13 @@ class GrokReviewer(CliReviewer):
     # Under /work = the image WORKDIR.
     run_dir = "/work/.grok-run"
     credential_dir = CONTAINER_GROK_HOME
+    credential_name = CREDENTIAL_NAME
+    default_home = ".grok"
     login_hint = f"run `grok login` and copy its {CREDENTIAL_NAME} to --grok-home"
     # Each pass refreshes its own copy of the login, and grok's refresh
     # token is spent once
     # (https://github.com/xai-org/grok-build/blob/2bdd1d6a6369de0e8c68132ea4539e9abd9e14a8/crates/codegen/xai-grok-login/src/manager/lock.rs).
     one_at_a_time = True
-
-    def __init__(
-        self,
-        model: str,
-        *,
-        name: str,
-        role: RoleSpec = REVIEWER_ROLE,
-        grok_bin: str = "grok",
-        grok_home: str | None = None,
-        grok_host: ShellHostSpec | None = None,
-        grok_image: str = DEFAULT_GROK_IMAGE,
-        exec_timeout_s: float = 600.0,
-        effort: str | None = None,
-        run_timeout_s: float = 0.0,
-        verbose: bool = False,
-        debug_dir: str | None = None,
-    ) -> None:
-        super().__init__(
-            model, name=name, role=role, host=grok_host, image=grok_image,
-            credential_local=(Path(grok_home) if grok_home
-                              else Path.home() / ".grok") / CREDENTIAL_NAME,
-            exec_timeout_s=exec_timeout_s, effort=effort,
-            run_timeout_s=run_timeout_s, verbose=verbose, debug_dir=debug_dir,
-        )
-        self.grok_bin = grok_bin
 
     def _stage(self, scratch: str, prompt: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:
@@ -213,7 +185,7 @@ class GrokReviewer(CliReviewer):
             encoding="utf-8")
         staged = Staged(
             build_grok_command(
-                grok_bin=self.grok_bin, model=self.model, effort=self.effort,
+                grok_bin=self.cli_bin, model=self.model, effort=self.effort,
                 schema=self.role.schema["schema"],
                 agent_path=f"{self.run_dir}/{AGENT_NAME}"),
             {"GROK_HOME": CONTAINER_GROK_HOME,

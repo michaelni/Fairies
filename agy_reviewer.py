@@ -62,12 +62,9 @@ from cli_container import CliContainer
 from cli_reviewer import (CliReviewer, CliUsageLimit, Staged, last_event,
                           parse_event_line)
 from common import JsonObject
-from llm_prompt import REVIEWER_ROLE
-from llm_review_api import BadModelOutput, ProviderTurnFailed, RoleSpec
-from podman_host import ShellHostSpec
+from llm_review_api import BadModelOutput, ProviderTurnFailed
 
 __all__ = [
-    "DEFAULT_AGY_IMAGE",
     "TOKEN_NAME",
     "AgyReviewer",
     "AgyTurnFailed",
@@ -77,8 +74,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_AGY_IMAGE = "localhost/fairy-agy:latest"
 
 # agy 1.2.12 --help
 AGY_EFFORTS = ("low", "medium", "high", "max")
@@ -203,39 +198,15 @@ class AgyReviewer(CliReviewer):
     efforts = AGY_EFFORTS
     run_dir = CONTAINER_RUN_DIR
     credential_dir = f"{CONTAINER_HOME}/{SETTINGS_RELATIVE_DIR}"
+    credential_name = TOKEN_NAME
+    default_home = SETTINGS_RELATIVE_DIR
     login_hint = f"log in with an interactive `agy` and copy its {TOKEN_NAME} to --agy-home"
-
-    def __init__(
-        self,
-        model: str,
-        *,
-        name: str,
-        role: RoleSpec = REVIEWER_ROLE,
-        agy_bin: str = "agy",
-        agy_home: str | None = None,
-        agy_host: ShellHostSpec | None = None,
-        agy_image: str = DEFAULT_AGY_IMAGE,
-        exec_timeout_s: float = 600.0,
-        effort: str | None = None,
-        run_timeout_s: float = 0.0,
-        verbose: bool = False,
-        debug_dir: str | None = None,
-    ) -> None:
-        super().__init__(
-            model, name=name, role=role, host=agy_host, image=agy_image,
-            credential_local=(Path(agy_home) if agy_home
-                              else Path.home() / SETTINGS_RELATIVE_DIR) / TOKEN_NAME,
-            exec_timeout_s=exec_timeout_s, effort=effort,
-            run_timeout_s=run_timeout_s, verbose=verbose, debug_dir=debug_dir,
-        )
-        self.agy_bin = agy_bin
-        self.agy_home = agy_home
 
     def _stage(self, scratch: str, prompt: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:
         schema = self._schema_file(scratch)
         cmd = build_agy_command(
-            agy_bin=self.agy_bin, model=self.model, effort=self.effort,
+            agy_bin=self.cli_bin, model=self.model, effort=self.effort,
             schema_path=f"{CONTAINER_RUN_DIR}/{schema.name}")
         config_dir = f"{CONTAINER_HOME}/{MCP_CONFIG_RELATIVE_DIR}"
         reason = (
@@ -327,7 +298,7 @@ class AgyReviewer(CliReviewer):
     def _exhausted_bucket(self, container: CliContainer) -> JsonObject | None:
         """``exhausted_bucket`` of a ``/usage`` query in the run's container;
         ``None`` when the query does not answer in time."""
-        cmd = [self.agy_bin, "-p", "/usage", "--output-format", "json"]
+        cmd = [self.cli_bin, "-p", "/usage", "--output-format", "json"]
         logger.info("agy usage query after a failed run: %s", cmd)
         try:
             proc = container.run(cmd, env=CONTAINER_ENV, timeout_s=USAGE_TIMEOUT_S)

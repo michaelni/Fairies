@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 
 # The providers that run a CLI coding agent in a container on their own
 # --<provider>-host, with --<provider>-image/-bin/-home/-timeout-seconds.
-CLI_BACKENDS = ("codex", "agy")
+CLI_BACKENDS = {"codex": CodexReviewer, "agy": AgyReviewer}
 
 
 _SPEC_OPTION = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*=")
@@ -225,27 +225,19 @@ def make_reviewer(
             ),
         )
         name = f"{provider}:{model}" + (f"+{Path(cli_home).name}" if cli_home else "")
+        if provider == "codex":
+            cli_kwargs.update(
+                web_search=resolve_web_search(args.web_search),
+                verbosity=verbosity if verbosity is not None else args.verbosity,
+                reasoning_summary=args.reasoning_summary,
+            )
         try:
-            if provider == "codex":
-                return CodexReviewer(
-                    model, name=name,
-                    codex_bin=args.codex_bin,
-                    codex_home=cli_home or args.codex_home,
-                    codex_host=args.codex_host,
-                    codex_image=args.codex_image,
-                    web_search=resolve_web_search(args.web_search),
-                    verbosity=verbosity if verbosity is not None else args.verbosity,
-                    reasoning_summary=args.reasoning_summary,
-                    run_timeout_s=args.codex_timeout_seconds,
-                    **cli_kwargs,
-                )
-            return AgyReviewer(
+            return CLI_BACKENDS[provider](
                 model, name=name,
-                agy_bin=args.agy_bin,
-                agy_home=cli_home or args.agy_home,
-                agy_host=args.agy_host,
-                agy_image=args.agy_image,
-                run_timeout_s=args.agy_timeout_seconds,
+                **{f"{provider}_{flag}": getattr(args, f"{provider}_{flag}")
+                   for flag in ("bin", "host", "image")},
+                **{f"{provider}_home": cli_home or getattr(args, f"{provider}_home")},
+                run_timeout_s=getattr(args, f"{provider}_timeout_seconds"),
                 **cli_kwargs,
             )
         except ValueError as exc:  # invalid @effort suffix

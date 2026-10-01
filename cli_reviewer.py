@@ -31,8 +31,8 @@ The ``Reviewer`` shared by the CLI coding-agent backends (codex, agy).
 
 One pass of a ``RoleSpec`` is one CLI process in an ephemeral container
 on the backend's podman host (see ``cli_container``): the role prompt
-goes in on stdin with the patch and source bundle inlined, the CLI
-drives the model, the review-container shell reaches it as an MCP tool
+goes in on stdin or as a file, with the patch and source bundle inlined,
+the CLI drives the model, the review-container shell reaches it as an MCP tool
 through ``mcp_shell_bridge.py`` -> ``relay.py`` -> ``serve_dispatch``,
 and the schema-forced final object comes back for ``role.validate``.
 
@@ -42,8 +42,7 @@ persistence, the concurrency slot, the debug dump, the poison and
 cleanup paths, and the exceptions the pipeline treats as clean
 provider-side stops. What does NOT belong here: a CLI's command line,
 its output format and its error strings -- a backend supplies those
-through ``_stage``, ``_stdin_text``, ``_run_summary`` and
-``_final_object``.
+through ``_stage``, ``_run_summary`` and ``_final_object``.
 """
 
 from __future__ import annotations
@@ -104,11 +103,12 @@ class CliAuthFailed(RuntimeError):
 @dataclass(frozen=True)
 class Staged:
     """What ``_stage`` prepared for one run: the CLI argv, the container
-    env of that process, and local files to copy in as ``(file,
-    container directory)`` before it starts."""
+    env of that process, what it reads on stdin, and local files to copy
+    in as ``(file, container directory)`` before it starts."""
 
     cmd: list[str]
     env: dict[str, str]
+    stdin_text: str
     files: list[tuple[Path, str]] = field(default_factory=list)
 
 
@@ -217,20 +217,17 @@ class CliReviewer(Reviewer):
         return ""
 
     @abstractmethod
-    def _stage(self, scratch: str, *, use_shell: bool,
+    def _stage(self, scratch: str, prompt: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:
         """Prepare the run before the container starts.
 
-        ``scratch`` is a local directory for files to copy in. With
+        ``scratch`` is a local directory for files to copy in; ``prompt``
+        reaches the CLI on stdin or in one of those files. With
         ``use_shell`` the CLI must be configured to spawn
         ``{run_dir}/mcp_shell_bridge.py --socket {socket_path}
         --machine L...`` as its MCP server; the base copies the bridge,
         its client and the relay into ``run_dir``.
         """
-
-    def _stdin_text(self, prompt: str) -> str:
-        """What the CLI reads on stdin for ``prompt``."""
-        return prompt
 
     @abstractmethod
     def _run_summary(self, proc: subprocess.CompletedProcess
@@ -325,7 +322,7 @@ class CliReviewer(Reviewer):
                     f"{self.credential_local.name} not found at "
                     f"{self.credential_local} ({self.login_hint})"
                 )
-            staged = self._stage(scratch, use_shell=use_shell,
+            staged = self._stage(scratch, prompt, use_shell=use_shell,
                                  machine_labels=machine_labels)
 
             container.start()
@@ -354,7 +351,7 @@ class CliReviewer(Reviewer):
                 started = time.monotonic()
                 try:
                     proc = container.run(
-                        staged.cmd, input_text=self._stdin_text(prompt),
+                        staged.cmd, input_text=staged.stdin_text,
                         env=staged.env,
                         timeout_s=self.run_timeout_s or None,
                     )

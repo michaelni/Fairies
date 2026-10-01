@@ -133,7 +133,7 @@ def build_agy_command(
     schema_path: str,
 ) -> list[str]:
     """The headless ``agy`` argv for one pass; the prompt arrives on stdin
-    as one stream-json user message (see ``AgyReviewer._stdin_text``).
+    as one stream-json user message (see ``AgyReviewer._stage``).
 
     Kept a pure function of its inputs so tests can pin the exact flag
     set without spawning anything.
@@ -231,7 +231,7 @@ class AgyReviewer(CliReviewer):
         self.agy_bin = agy_bin
         self.agy_home = agy_home
 
-    def _stage(self, scratch: str, *, use_shell: bool,
+    def _stage(self, scratch: str, prompt: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:
         cmd = build_agy_command(
             agy_bin=self.agy_bin, model=self.model, effort=self.effort,
@@ -268,17 +268,16 @@ class AgyReviewer(CliReviewer):
             settings.write_text(json.dumps({"permissions": {
                 "allow": [f"mcp({MCP_SERVER}/*)"]}}), encoding="utf-8")
             files += [(mcp_config, config_dir), (settings, self.credential_dir)]
-        return Staged(cmd, CONTAINER_ENV, files)
+        return Staged(
+            cmd, CONTAINER_ENV,
+            json.dumps({"event": "user", "message": {"content": prompt}}) + "\n",
+            files)
 
     def _prompt_tail(self, use_shell: bool) -> str:
         return (
             f"Your own terminal and file tools are not the review machine; the "
             f"only way to run commands there is the MCP tool {MCP_SERVER}."
         ) if use_shell else ""
-
-    def _stdin_text(self, prompt: str) -> str:
-        return json.dumps({"event": "user",
-                           "message": {"content": prompt}}) + "\n"
 
     def _run_summary(self, proc: subprocess.CompletedProcess
                      ) -> tuple[JsonObject, str]:

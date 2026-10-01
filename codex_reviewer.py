@@ -314,7 +314,7 @@ class CodexReviewer(CliReviewer):
     def _prompt_features(self) -> set[str]:
         return {"web_search"} if self.web_search != "disabled" else set()
 
-    def _stage(self, scratch: str, *, use_shell: bool,
+    def _stage(self, scratch: str, prompt: str, *, use_shell: bool,
                machine_labels: tuple[str, ...]) -> Staged:
         catalog_local = self._write_hardened_catalog(scratch)
         cmd = build_codex_exec_command(
@@ -336,7 +336,7 @@ class CodexReviewer(CliReviewer):
         # The container env carries only CODEX_HOME; the wrapper's
         # OPENAI_API_KEY/CODEX_API_KEY are not forwarded by podman
         # exec, so codex cannot rebind to another credential.
-        return Staged(cmd, {"CODEX_HOME": CONTAINER_CODEX_HOME},
+        return Staged(cmd, {"CODEX_HOME": CONTAINER_CODEX_HOME}, prompt,
                       [(catalog_local, CONTAINER_RUN_DIR)])
 
     def _run_summary(self, proc: subprocess.CompletedProcess

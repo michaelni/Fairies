@@ -2907,6 +2907,17 @@ class PaintSmokeTests(DbCase):
                     ui._blit(buf, tui_core.Rect(10, 0, rect_w, 2), "br", [line])
                     self.assertEqual(ui.term.strip_seqs(buf[2]), painted)
 
+    def test_wide_search_text_keeps_the_status_line_on_its_row(self) -> None:
+        for cols in (100, 400):
+            with self.subTest(cols=cols):
+                stream = io.StringIO()
+                ui = make_ui(self.model, stream, cols)
+                ui.search_mode, ui.search_buf = True, "宽字符"
+                ui.paint()
+                status = stream.getvalue().rpartition(
+                    ui.term.move_xy(0, ui.term.height - 1))[2]
+                self.assertEqual(ui.term.length(status), cols)
+
     def test_click_copies_url_via_osc52(self) -> None:
         stream = io.StringIO()
         ui = make_ui(self.model, stream)

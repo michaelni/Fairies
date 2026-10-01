@@ -1973,12 +1973,13 @@ class UILoop:
             note = f" /{self.search_buf}▏" + note
         elif self.count_buf:
             note = f" {self.count_buf}x " + note
-        if len(note) + len(self._status_plain) > w:
-            status = (note + self._status_plain)[:w].ljust(w)
+        used = t.length(note) + len(self._status_plain)
+        if used > w:
+            status = t.ljust(t.truncate(note + self._status_plain, w), w)
         else:
             mark = self.styles.get("st_reviewed") or (lambda s: s)
             status = ((mark(note) if nact else note) + self._status_styled
-                      + " " * (w - len(note) - len(self._status_plain)))
+                      + " " * (w - used))
         buf.append(t.move_xy(0, h - 1) + status)
         print("".join(buf), end="", flush=True, file=t.stream)
 

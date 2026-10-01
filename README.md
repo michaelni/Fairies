@@ -220,8 +220,8 @@ or via the pipeline, which injects `--podman --shell-host` for you:
 Add `--podman-ssh-identity KEY` if the key is not offered by your ssh agent /
 `~/.ssh/config`. A non-standard ssh port goes in the host spec, e.g.
 `--podman-host fairy@HOST,port=17022` (same for `--shell-host`,
-`--codex-host` and `--agy-host`); provision such a host with
-`provision_remote.py --port`.
+`--codex-host`, `--agy-host` and `--grok-host`); provision such a host
+with `provision_remote.py --port`.
 The LLM's shell runs over a single persistent
 `ssh DEST podman exec -i` pipe into an in-container agent
 (`containers/fairy_agent.py`) speaking a small JSON protocol, so there is no
@@ -263,7 +263,7 @@ reviewer). Provider prefixes: `openai:`, `anthropic:`, `zai:`,
 `openrouter:` (any OpenRouter model id, e.g.
 `openrouter:stealth/space-bunny-alpha`, via `OPENROUTER_API_KEY`),
 `gemini:` (Google's Gemini API via `GEMINI_API_KEY`),
-`codex:`, `agy:`. Each reviewer gets its own isolated container shell; the
+`codex:`, `agy:`, `grok:`. Each reviewer gets its own isolated container shell; the
 model reviewers run concurrently (`--concurrency PROVIDER:COUNT` caps how
 many calls one provider gets at a time, across every fairy process on the
 machine). A local-GPU backend is TODO -- PRs very welcome.
@@ -328,6 +328,35 @@ The security model is codex's: agy's own shell, file and web tools stay
 auto-denied, the MCP shell into the review containers is the only tool
 granted, and agy's egress is Google's API. Cap concurrent passes with
 `--concurrency agy:N`.
+
+### Grok Build backend
+
+`grok:MODEL[@EFFORT]` (e.g. `grok:grok-4.7@high`; efforts `low`, `medium`,
+`high`, `xhigh`; `grok models` lists the models the subscription offers)
+runs the pass through xAI's Grok Build CLI in headless mode, on the
+subscription of the account it is logged in as. Like codex it runs in an
+ephemeral container on `--grok-host`, never on the wrapper host; a `grok:`
+spec without `--grok-host` is a hard error at startup. Through the
+pipeline, pass `--grok-host` and `--grok-home` in the configurator's
+`--prs` section.
+
+Build the thin grok image once with `provision_remote.py --grok-bin` (bakes
+a pinned grok binary from `containers/Containerfile.grok`; `--grok-bin` is
+the in-container path, `--grok-image` its tag). Log in once with
+`grok login` as fairy's own account and keep the `auth.json` it writes
+under `~/.grok` in `--grok-home DIR` on the wrapper host: it is
+`podman cp`'d into the container per run, and a login grok rejects is set
+aside as `auth.json.invalid` until a human logs in again. Run nothing but
+the login on the wrapper host: a grok prompt sends the instruction files
+it finds there (`CLAUDE.md`, `AGENTS.md`) to xAI.
+
+A run with a `grok:` reviewer gives every reviewer at most 150 KB of patch
+and 150 KB of source inline, and grok passes run one at a time across all
+fairy processes: a login cannot serve two passes at once.
+
+The security model is codex's: of grok's own tools only the two that call
+MCP tools remain, they are denied every file, and the MCP shell into the
+review containers is the only tool they can call.
 
 ### Static data and vector stores
 

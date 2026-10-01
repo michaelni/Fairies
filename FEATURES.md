@@ -59,6 +59,7 @@ for additional development workflows being added over time.
 
 - openAI codex (subscription)
 - Google Antigravity CLI (subscription)
+- xAI Grok Build CLI (subscription)
 - opanAI respones API (API credits)
 - Anthropic API
 - Z.ai
@@ -76,7 +77,7 @@ for additional development workflows being added over time.
 - arbitrary number of podman containers
 - trivial to deploy, you need a ssh login (no root, no sudo) and podman, fairy sets up her own containers
 - containers can be behind NAT, you just need a single ssh connection to reach them
-- codex / agy and the reviewer can be on seperate hw, seperate architecture, seperate accounts, seperate networks, they never have a direct connection between each other
+- codex / agy / grok and the reviewer can be on seperate hw, seperate architecture, seperate accounts, seperate networks, they never have a direct connection between each other
 - can run on the same machiene as fairy, or in the cloud, a VM, or on seperate physical hw, x86, arm, riscv5, anything
 - sub second full text search (including non text documents like pdfs)
 
@@ -88,6 +89,6 @@ for additional development workflows being added over time.
 
 ## security
 
-- codex and agy run in their own podman container
+- codex, agy and grok run in their own podman container
 - each reviewer runs in its own podman container
 

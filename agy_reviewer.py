@@ -59,8 +59,8 @@ from pathlib import Path
 import subprocess
 
 from cli_container import CliContainer
-from cli_reviewer import (BRIDGE_PATH, CliReviewer, CliUsageLimit, Staged,
-                          last_event, parse_event_line)
+from cli_reviewer import (CliReviewer, CliUsageLimit, Staged, last_event,
+                          parse_event_line)
 from common import JsonObject
 from llm_prompt import REVIEWER_ROLE
 from llm_review_api import BadModelOutput, ProviderTurnFailed, RoleSpec
@@ -257,13 +257,10 @@ class AgyReviewer(CliReviewer):
                        "timeout": 10}]}]}}), encoding="utf-8")
         files = [(hook_script, config_dir), (hooks, config_dir)]
         if use_shell:
-            bridge_args = [f"{CONTAINER_RUN_DIR}/{BRIDGE_PATH.name}",
-                           "--socket", self.socket_path]
-            for label in machine_labels:
-                bridge_args += ["--machine", label]
             mcp_config = Path(scratch) / "mcp_config.json"
             mcp_config.write_text(json.dumps({"mcpServers": {MCP_SERVER: {
-                "command": "python3", "args": bridge_args}}}), encoding="utf-8")
+                "command": "python3",
+                "args": self._bridge_args(machine_labels)}}}), encoding="utf-8")
             # The grant must name server and tool (or "*"): a bare server
             # name is accepted and never matches
             # (https://github.com/google-antigravity/antigravity-cli/issues/916).

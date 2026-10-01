@@ -203,6 +203,11 @@ class CliReviewer(Reviewer):
     def credential_container_path(self) -> str:
         return f"{self.credential_dir}/{self.credential_local.name}"
 
+    def _bridge_args(self, machine_labels: tuple[str, ...]) -> list[str]:
+        """What ``python3`` runs as the CLI's MCP server (see ``_stage``)."""
+        return [f"{self.run_dir}/{BRIDGE_PATH.name}", "--socket", self.socket_path,
+                *(arg for label in machine_labels for arg in ("--machine", label))]
+
     def _prompt_features(self) -> set[str]:
         """Prompt features beyond ``source_bundle`` / ``podman_shell``."""
         return set()

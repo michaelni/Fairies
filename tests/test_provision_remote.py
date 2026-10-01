@@ -109,11 +109,23 @@ class EnsureImageTests(unittest.TestCase):
 
 
 class CliImageOptionTests(unittest.TestCase):
-    def test_agy_bin_builds_its_image_alone(self) -> None:
-        args = pr.parse_args(["--ssh", "fairy@h", "--agy-bin", "/stage/agy"])
-        self.assertEqual(Path("/stage/agy"), args.agy_bin)
-        self.assertEqual(pr.AGY_DEFAULT_TAG, args.agy_tag)
-        self.assertIsNone(args.codex_bin)
+    def test_a_one_binary_cli_builds_its_image_alone(self) -> None:
+        for cli in pr.ONE_BINARY_CLIS:
+            with self.subTest(cli=cli), \
+                    mock.patch.object(pr, "check_reachable"), \
+                    mock.patch.object(pr, "reap_stale_containers", return_value=0) as reap, \
+                    mock.patch.object(pr, "ensure_image"), \
+                    mock.patch.object(pr, "ensure_cli_image") as build:
+                pr.main(["--ssh", "fairy@h", f"--{cli}-bin", f"/stage/{cli}"])
+                build.assert_called_once()
+                built = build.call_args.kwargs
+                self.assertTrue(built["dockerfile"].is_file())
+                self.assertEqual(f"Containerfile.{cli}", built["dockerfile"].name)
+                self.assertEqual(f"localhost/fairy-{cli}:latest", built["tag"])
+                self.assertEqual({cli: Path(f"/stage/{cli}").resolve()}, built["binaries"])
+                self.assertLessEqual(
+                    {f"localhost/fairy-{each}:latest" for each in pr.ONE_BINARY_CLIS},
+                    set(reap.call_args.kwargs["images"]))
 
     def test_codex_bin_needs_its_code_mode_host(self) -> None:
         with self.assertRaises(SystemExit):

@@ -78,9 +78,10 @@ def _link_mentions(message: str, pattern: str,
     inside a link or URL stay."""
     def link(match: re.Match[str]) -> str:
         text = match.group(2)
-        url = url_of(text)
+        url = text and url_of(text)
         return match.group(0) if url is None else f"[{text}]({url})"
-    return re.sub(rf"(?<![\w/\[`+-])(`?)({pattern})\1(?![\w/\]`+-])", link, message)
+    return re.sub(rf"\[[^\[\]\n]*\]\([^)\s]*\)|(?<![\w/\[`+-])(`?)({pattern})\1(?![\w/\]`+-])",
+                  link, message)
 
 
 def _by_forge_name(prose: str, forge_branch: str) -> str:

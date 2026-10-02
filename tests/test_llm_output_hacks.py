@@ -114,8 +114,15 @@ class LinkPublishedBranchTests(unittest.TestCase):
 
     def test_existing_links_and_urls_are_untouched(self) -> None:
         text = (f"[fairy/pr23842-test-ref]({BRANCH_URL}) and [dc21a3ef]({COMMIT_URL})"
-                f" and {COMMIT_URL}")
+                f" and {COMMIT_URL} and [the fairy/pr23842-test-ref branch]({BRANCH_URL})")
         self.assertEqual(linked(text), text)
+
+    def test_bracket_ahead_of_a_link_is_not_part_of_it(self) -> None:
+        self.assertEqual(
+            linked("video at [48, 53418363) on fairy/pr23842-test-ref."
+                   " MOV's [packet-selection logic](https://forge/mov)"),
+            f"video at [48, 53418363) on [fairy/pr23842-test-ref]({BRANCH_URL})."
+            " MOV's [packet-selection logic](https://forge/mov)")
 
     def test_other_branches_and_hashes_are_untouched(self) -> None:
         text = "fairy/pr23842-test-ref-2, fairy/pr23842-test-reff, dc21a3, dc21a3ef5d6f"

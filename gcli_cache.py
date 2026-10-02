@@ -254,15 +254,14 @@ def get(
 
     valid_here = {f for (k, f) in FETCH if k == kind}
     to_fetch = missing | (EDIT_PRONE & valid_here if missing & EDIT_PRONE else set())
-    ordered = [f for f in _FETCH_ORDER if f in to_fetch]
     logger.info("gcli_cache miss %s %s/%s #%d: fetching %s",
-                kind, owner, repo, n, ordered)
+                kind, owner, repo, n, sorted(to_fetch))
 
     t0 = live_updated_at
     got: dict[str, tuple[dict, ...]] = {}
     for attempt in range(1, MAX_REFETCH_ATTEMPTS + 1):
         got = {}
-        for name in ordered:
+        for name in [f for f in _FETCH_ORDER if f in to_fetch]:
             reviews = list(got.get("reviews", ())) if name == "review_comments" else None
             got[name] = _fetch_field(args, kind, owner, repo, n, name, reviews)
         t1 = refetch(args, kind, owner, repo, n)
@@ -271,7 +270,7 @@ def get(
         logger.info("gcli_cache: %s #%d updated_at %s -> %s; retry %d/%d",
                     kind, n, t0.isoformat(), t1.isoformat(),
                     attempt, MAX_REFETCH_ATTEMPTS)
-        t0 = t1
+        t0, to_fetch = t1, to_fetch | set(fields)
     else:
         logger.warning("gcli_cache: %s #%d updated_at still moving after %d attempts",
                        kind, n, MAX_REFETCH_ATTEMPTS)

@@ -552,6 +552,19 @@ class StableFetchTests(unittest.TestCase):
         self.assertEqual(entry.updated_at, moved)
         self.assertEqual(entry.fields["timeline"], ({"attempt": 2},))
 
+    def test_a_move_refetches_the_fields_served_from_the_cache(self) -> None:
+        """FFmpeg #23512: the timeline was cached, the trio past max_age;
+        updated_at moved and the timeline was dropped, never fetched."""
+        moved = utc("2026-05-21T10:05:00Z")
+        cache = Cache()
+        _seed_entry(cache, {"timeline": ({"old": True},)},
+                    comments_fetched_at=None)
+        fetchers = patch_fetch(self, **{"pulls.timeline": [[{"new": True}]]})
+        result = call_get(cache, "pulls", fetchers,
+                          make_refetch([moved, moved]),
+                          ("timeline", "issue_comments"))
+        self.assertEqual(result["timeline"], ({"new": True},))
+
     def test_continuous_advance_exhausts_attempts(self) -> None:
         moving = [utc(f"2026-05-21T10:0{i}:00Z")
                   for i in range(1, MAX_REFETCH_ATTEMPTS + 2)]

@@ -83,13 +83,21 @@ def _link_mentions(message: str, pattern: str,
     return re.sub(rf"(?<![\w/\[`+-])(`?)({pattern})\1(?![\w/\]`+-])", link, message)
 
 
+def _by_forge_name(prose: str, forge_branch: str) -> str:
+    """``prose`` with a backticked ``<name>`` spelled as its forge
+    branch ``forge_branch``, a ``<prefix>/<name>``."""
+    return prose.replace(f"`{forge_branch.rpartition('/')[2]}`", f"`{forge_branch}`")
+
+
 def link_published_branch(message: str, forge_branch: str, sha: str,
                           branch_url: str, commit_url: str) -> str:
     """Link the mentions of a published branch (its forge name, e.g.
-    ``fairy/<name>``) and of its tip commit (any abbreviation of
+    ``fairy/<name>``, or a backticked ``<name>``, linked under the
+    forge name) and of its tip commit (any abbreviation of
     ``sha``) to their forge pages; fenced code blocks stay verbatim."""
     def link(prose: str) -> str:
-        prose = _link_mentions(prose, re.escape(forge_branch), lambda _: branch_url)
+        prose = _link_mentions(_by_forge_name(prose, forge_branch),
+                               re.escape(forge_branch), lambda _: branch_url)
         return _link_mentions(prose, "[0-9a-f]{7,}",
                               lambda text: commit_url if sha.startswith(text) else None)
     parts = re.split(_FENCED_CODE, message)
@@ -98,7 +106,8 @@ def link_published_branch(message: str, forge_branch: str, sha: str,
 
 def names_published_branch(message: str, forge_branch: str) -> bool:
     """Whether the message names the branch (its forge name, e.g.
-    ``fairy/<name>``, bare, backticked or as link text) outside its
-    fenced code blocks."""
-    return any(re.search(rf"(?<![\w/+-]){re.escape(forge_branch)}(?![\w/+-])", prose)
+    ``fairy/<name>``, bare, backticked or as link text, or a backticked
+    ``<name>``) outside its fenced code blocks."""
+    return any(re.search(rf"(?<![\w/+-]){re.escape(forge_branch)}(?![\w/+-])",
+                         _by_forge_name(prose, forge_branch))
                for prose in re.split(_FENCED_CODE, message)[::2])

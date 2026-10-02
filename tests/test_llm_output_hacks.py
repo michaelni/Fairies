@@ -90,6 +90,8 @@ Scope combiner: Verified the specified commit, supplied discussion, related #210
 SHA = "dc21a3ef5d6ecf45c7248bac4b2a6c8d1381dc20"
 BRANCH_URL = "https://forge/Forgejo_Fairy/FFmpeg/src/branch/fairy/pr23842-test-ref"
 COMMIT_URL = f"https://forge/Forgejo_Fairy/FFmpeg/commit/{SHA}"
+PUSHED_NAME_MESSAGE = ("I pushed `issue24248-bugfix` to the FFmpeg fairy remote for the"
+                       " proposed PR. I also pushed `issue24248-tooling` to the fairy remote.")
 
 
 def linked(message: str) -> str:
@@ -131,8 +133,20 @@ class LinkPublishedBranchTests(unittest.TestCase):
                                   SHA, "https://forge/b", COMMIT_URL),
             "on [fairy/fix-dc21a3ef](https://forge/b)")
 
+    def test_backticked_pushed_name_links_as_the_forge_name(self) -> None:
+        self.assertEqual(
+            link_published_branch(PUSHED_NAME_MESSAGE, "fairy/issue24248-bugfix",
+                                  SHA, "https://forge/b", COMMIT_URL),
+            "I pushed [fairy/issue24248-bugfix](https://forge/b) to the FFmpeg"
+            " fairy remote for the proposed PR. I also pushed `issue24248-tooling`"
+            " to the fairy remote.")
+
 
 class NamesPublishedBranchTests(unittest.TestCase):
+    def test_backticked_pushed_name_counts(self) -> None:
+        self.assertTrue(
+            names_published_branch(PUSHED_NAME_MESSAGE, "fairy/issue24248-tooling"))
+
     def test_bare_backticked_bold_and_linked_names_count(self) -> None:
         for text in ("on fairy/pr23842-test-ref.", "see `fairy/pr23842-test-ref`",
                      "**fairy/pr23842-test-ref**",

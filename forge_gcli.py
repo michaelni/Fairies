@@ -96,6 +96,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -1027,25 +1028,28 @@ def project_timeline_event(event: dict) -> dict:
     A cross-reference entry carries the keys of
     ``_cross_reference_fields``; a commit-reference entry carries the
     mentioning commit under ``ref_commit_sha``."""
-    projected = {
-        "type": event.get("type"),
+    kind = event.get("type")
+    return {
+        "type": kind,
         "id": event.get("id"),
         "user": norm_user(event.get("user")),
         "created_at": event.get("created_at"),
         "body": event.get("body") or "",
+        **_FORGEJO_TYPED_KEYS.get(kind, lambda e: {})(event),
     }
-    if projected["type"] == PUSH_EVENT:
-        projected.update(_push_fields(projected["body"]))
-    elif projected["type"] == REVIEW_REQUEST_EVENT:
-        projected["assignee"] = norm_user(event.get("assignee"))
-        projected["removed_assignee"] = bool(event.get("removed_assignee"))
-    elif projected["type"] in CROSS_REFERENCE_EVENTS:
-        projected.update(_cross_reference_fields(
-            projected["type"], event["ref_issue"], event.get("ref_action"),
-            (event.get("ref_comment") or {}).get("body")))
-    elif projected["type"] in COMMIT_REFERENCE_EVENTS:
-        projected["ref_commit_sha"] = event.get("ref_commit_sha")
-    return projected
+
+
+_FORGEJO_TYPED_KEYS: dict[str, Callable[[dict], dict]] = {
+    PUSH_EVENT: lambda e: _push_fields(e.get("body") or ""),
+    REVIEW_REQUEST_EVENT: lambda e: {
+        "assignee": norm_user(e.get("assignee")),
+        "removed_assignee": bool(e.get("removed_assignee"))},
+    **dict.fromkeys(CROSS_REFERENCE_EVENTS, lambda e: _cross_reference_fields(
+        e["type"], e["ref_issue"], e.get("ref_action"),
+        (e.get("ref_comment") or {}).get("body"))),
+    **dict.fromkeys(COMMIT_REFERENCE_EVENTS, lambda e: {
+        "ref_commit_sha": e.get("ref_commit_sha")}),
+}
 
 
 def _cross_reference_fields(kind: str, mentioning_item: dict,
@@ -1093,9 +1097,28 @@ _GITHUB_COMMIT_EVENT = "committed"
 # michaelni/testrepo #2, where the marker's ``commit_id`` was the same
 # sha as the single preceding ``committed`` entry.
 _GITHUB_FORCE_PUSH_EVENT = "head_ref_force_pushed"
-# GitHub's state changes, https://docs.github.com/en/rest/issues/timeline
-_GITHUB_STATE_EVENTS = {"closed": CLOSE_EVENT, "reopened": REOPEN_EVENT,
-                        "merged": MERGE_EVENT}
+
+
+def _removal_pair(added: str, removed: str, key: str,
+                  fields: Callable[[dict], dict]) -> dict[str, Callable[[dict], dict]]:
+    """Two GitHub event kinds that differ only in ``key`` being False or True."""
+    return {added: lambda e: {**fields(e), key: False},
+            removed: lambda e: {**fields(e), key: True}}
+
+
+# The typed keys of a GitHub timeline event, folded into the Forgejo
+# names and shapes; https://docs.github.com/en/rest/issues/timeline
+_GITHUB_TYPED_KEYS: dict[str, Callable[[dict], dict]] = {
+    **_removal_pair("review_requested", "review_request_removed", "removed_assignee",
+                    lambda e: {"type": REVIEW_REQUEST_EVENT,
+                               "assignee": norm_user(e.get("requested_reviewer"))}),
+    "cross-referenced": lambda e: _cross_reference_fields(
+        e["event"], e["source"]["issue"], None, None),
+    "referenced": lambda e: {"ref_commit_sha": e.get("commit_id")},
+    "closed": lambda e: {"type": CLOSE_EVENT},
+    "reopened": lambda e: {"type": REOPEN_EVENT},
+    "merged": lambda e: {"type": MERGE_EVENT},
+}
 
 
 def _github_commit_author(event: dict) -> dict | None:
@@ -1179,22 +1202,8 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
             flush(marker=event)
             continue
         flush()
-        if kind in ("review_requested", "review_request_removed"):
-            out.append({**_project_github_event(event),
-                        "type": REVIEW_REQUEST_EVENT,
-                        "assignee": norm_user(event.get("requested_reviewer")),
-                        "removed_assignee": kind == "review_request_removed"})
-            continue
-        if kind in CROSS_REFERENCE_EVENTS:
-            out.append({**_project_github_event(event), **_cross_reference_fields(
-                kind, event["source"]["issue"], None, None)})
-            continue
-        if kind in COMMIT_REFERENCE_EVENTS:
-            out.append({**_project_github_event(event),
-                        "ref_commit_sha": event.get("commit_id")})
-            continue
         out.append({**_project_github_event(event),
-                    "type": _GITHUB_STATE_EVENTS.get(kind, kind)})
+                    **_GITHUB_TYPED_KEYS.get(kind, lambda e: {})(event)})
     flush()
     return out
 

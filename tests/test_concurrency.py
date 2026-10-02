@@ -36,6 +36,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -86,6 +87,27 @@ class SlotTest(unittest.TestCase):
         concurrency.configure([])
         with concurrency.slot("codex"):
             pass
+
+    def test_a_wait_is_logged_once(self):
+        self.addCleanup(concurrency.configure, [])
+        concurrency.configure([("prov", 1)])
+        with tempfile.TemporaryDirectory() as lock_root, mock.patch.object(
+                concurrency, "default_cache_path", lambda name: Path(lock_root) / name):
+            holder = concurrency.slot("prov")
+            holder.__enter__()
+            rescans = iter(range(3))
+
+            def release_on_third_rescan(_delay):
+                if next(rescans) == 2:
+                    holder.__exit__(None, None, None)
+
+            with mock.patch.object(concurrency.time, "sleep", release_on_third_rescan), \
+                    self.assertLogs(concurrency.logger, "INFO") as logs:
+                with concurrency.slot("prov"):
+                    pass
+        messages = [record.getMessage() for record in logs.records]
+        self.assertEqual(["prov: all 1 slots busy, waiting"], messages[:-1])
+        self.assertRegex(messages[-1], "^prov slot 0/1 acquired after ")
 
     def test_cap_holds_across_processes(self):
         repo = str(Path(__file__).resolve().parent.parent)

@@ -120,6 +120,7 @@ def slot(provider: str) -> Iterator[None]:
                 handle.close()
                 logger.debug("%s slot %d released", provider, index)
             return
+        if not waited:
+            logger.info("%s: all %d slots busy, waiting", provider, limit)
         waited = True
-        logger.debug("%s: all %d slots busy, rescanning", provider, limit)
         time.sleep(random.uniform(*_RESCAN_DELAY_S))

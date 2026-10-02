@@ -793,6 +793,8 @@ The prior discussion is a chronological list. Every item carries its
 - ``review_request``, ``review_request_withdrawn``: ``author`` asked
   ``reviewer`` for a review, or took the request back. A request
   naming the current reviewer identity is a direct invitation.
+- ``label_added``, ``label_removed``: ``author`` added or removed
+  ``label``.
 - ``state``: ``author`` closed, reopened or merged the pull request.
 - ``mentioned_in_description``, ``mentioned_in_comment``,
   ``mentioned``: ``author`` mentioned this item from issue or pull

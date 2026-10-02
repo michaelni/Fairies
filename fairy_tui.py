@@ -1252,6 +1252,8 @@ _MENTION_KINDS = ("mentioned_in_description", "mentioned_in_comment", "mentioned
 _THREAD_LINES: dict[str, Callable[[dict], str]] = {
     "review_request": lambda c: f"requested a review from {c.get('reviewer')}",
     "review_request_withdrawn": lambda c: f"withdrew the review request for {c.get('reviewer')}",
+    "label_added": lambda c: f"added the label {c.get('label')}",
+    "label_removed": lambda c: f"removed the label {c.get('label')}",
     "mentioned_in_description": lambda c: f"mentioned this in the description of {_item_ref(c)}" + _closing(c),
     "mentioned_in_comment": lambda c: f"mentioned this in a comment on {_item_ref(c)}" + _closing(c),
     "mentioned": lambda c: f"mentioned this from {_item_ref(c)}",

@@ -97,7 +97,7 @@ class EventProjectionTests(unittest.TestCase):
                    _github("testrepo_pr2_forcepush_timeline.json")}
         self.assertEqual(by_type["commented"]["user"]["login"],
                          "forgejo-fairy[bot]")
-        self.assertEqual(by_type["labeled"]["user"]["login"],
+        self.assertEqual(by_type["label"]["user"]["login"],
                          "forgejo-fairy[bot]")
         # A commit carries a git identity, which has a name but no login.
         push = [e for e in _github("testrepo_pr4_timeline.json")
@@ -138,8 +138,9 @@ class PushGroupingTests(unittest.TestCase):
         # The commit is stamped 19:12:10, the force-push happened at
         # 19:39:47; the activity gate must see the later one, and the
         # pusher rather than the commit's author.
-        item = fairy.timeline_events(
-            _github("testrepo_pr2_forcepush_timeline.json"))[0]
+        item, = [i for i in fairy.timeline_events(
+            _github("testrepo_pr2_forcepush_timeline.json"))
+            if i["kind"] == "push"]
         self.assertEqual(item["created_at"], "2026-07-28T19:39:47Z")
         self.assertEqual(item["author"], "michaelni")
         self.assertTrue(item["is_force_push"])
@@ -211,6 +212,17 @@ class ReviewRequestProjectionTests(unittest.TestCase):
             [(i["author"], i["state"])
              for i in fairy.timeline_events(got) if i["kind"] == "state"],
             [("forgejo-fairy[bot]", "closed")])
+
+    def test_label_changes_fold_into_the_forgejo_shape(self) -> None:
+        """Real capture: testrepo PR #2, where the fairy app added and
+        removed ``bug`` twice (``labeled`` / ``unlabeled``)."""
+        items = fairy.timeline_events(
+            _github("testrepo_pr2_forcepush_timeline.json"))
+        self.assertEqual(
+            [(i["author"], i["label"], i["kind"]) for i in items
+             if i["kind"].startswith("label_")],
+            [("forgejo-fairy[bot]", "bug", "label_added"),
+             ("forgejo-fairy[bot]", "bug", "label_removed")] * 2)
 
     def test_a_team_request_projects_to_no_assignee(self) -> None:
         got = _timeline("github", [

@@ -57,7 +57,7 @@ import forge_gcli
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 MAX_REFETCH_ATTEMPTS = 3
 EDIT_PRONE = frozenset({"issue_comments", "reviews", "review_comments"})
 

@@ -1476,6 +1476,17 @@ class DetailTests(DbCase):
         self.assertIn("michaelni", text)
         self.assertIn("requested a review from fairy", text)
 
+    def test_a_label_line_names_the_label(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
+            {"kind": "label_added", "author": "ffmpeg-devel", "label": "swscale",
+             "created_at": "2026-07-19T09:00:00Z"},
+            {"kind": "label_removed", "author": "michaelni", "label": "new",
+             "created_at": "2026-07-19T09:01:00Z"}]))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("ffmpeg-devel  added the label swscale", text)
+        self.assertIn("michaelni  removed the label new", text)
+
     def test_a_state_line_names_who_closed_the_item(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
             {"kind": "state", "author": "michaelni", "state": "closed",

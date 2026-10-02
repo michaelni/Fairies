@@ -164,7 +164,8 @@ def prepare(args: argparse.Namespace, issue: dict[str, object], *,
             comments: list | None = None) -> object:
     if comments is None:
         comments = load_fixture("ffmpeg_issue_23738_comments.json")
-    timeline = load_fixture("ffmpeg_issue_23738_timeline.json")
+    timeline = [forge_gcli.project_timeline_event(e)
+                for e in load_fixture("ffmpeg_issue_23738_timeline.json")]
     return issue_fairy.prepare_issue(
         args, issue,
         now=now,

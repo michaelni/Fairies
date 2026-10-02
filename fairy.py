@@ -1642,6 +1642,9 @@ _TIMELINE_ITEMS: dict[str, Callable[[ApiObject], tuple[str, dict] | None]] = {
     forge_gcli.REVIEW_REQUEST_EVENT: _either(
         "removed_assignee", "review_request_withdrawn", "review_request",
         lambda entry: {"reviewer": _timeline_name(entry.get("assignee"))}),
+    forge_gcli.LABEL_EVENT: _either(
+        "removed_label", "label_removed", "label_added",
+        lambda entry: {"label": entry["label"]}),
     **dict.fromkeys(CROSS_REFERENCE_EVENTS, _mention),
     **dict.fromkeys(COMMIT_REFERENCE_EVENTS, lambda entry: ("mentioned_in_commit", {
         "sha": entry["ref_commit_sha"], "body": entry["body"]})),
@@ -1973,8 +1976,9 @@ def build_llm_discussion(
     push events into a single chronologically-sorted list for the LLM.
 
     ``timeline`` is the raw ``/issues/{n}/timeline`` payload; its
-    ``pull_push``, ``review_request``, cross-reference, commit-reference
-    and state-change entries are consumed (see ``timeline_events``).
+    ``pull_push``, ``review_request``, ``label``, cross-reference,
+    commit-reference and state-change entries are consumed (see
+    ``timeline_events``).
     Passing ``None`` (or omitting it) yields a comments-only discussion.
     The push items carry ``kind="push"`` plus ``head_sha`` /
     ``is_force_push`` so the triage LLM can tell unambiguously that

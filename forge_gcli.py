@@ -114,6 +114,7 @@ __all__ = [
     "KIND_PR",
     "PUSH_EVENT",
     "REVIEW_REQUEST_EVENT",
+    "LABEL_EVENT",
     "CROSS_REFERENCE_EVENTS",
     "COMMIT_REFERENCE_EVENTS",
     "CLOSE_EVENT",
@@ -947,6 +948,7 @@ PUSH_EVENT = "pull_push"
 AUTO_MERGE_SCHEDULE_EVENT = "pull_scheduled_merge"
 AUTO_MERGE_CANCEL_EVENT = "pull_cancel_scheduled_merge"
 REVIEW_REQUEST_EVENT = "review_request"
+LABEL_EVENT = "label"
 # Where the mention of a cross reference sits, by event type. Forgejo
 # names the mentioning item's kind and whether the mention is in its
 # description or in a comment on it; GitHub's ``cross-referenced``
@@ -1023,7 +1025,8 @@ def project_timeline_event(event: dict) -> dict:
     out: the common ones and, per ``_FORGEJO_TYPED_KEYS``, the kind's
     own. Forgejo/Gitea put the requester of a review request under
     ``user`` and the requestee under ``assignee`` (captured on FFmpeg
-    #23197)."""
+    #23197), and write the content "1" for a label added and none for
+    one removed (models/issues/issue_label.go)."""
     kind = event.get("type")
     return {
         "type": kind,
@@ -1040,6 +1043,9 @@ _FORGEJO_TYPED_KEYS: dict[str, Callable[[dict], dict]] = {
     REVIEW_REQUEST_EVENT: lambda e: {
         "assignee": norm_user(e.get("assignee")),
         "removed_assignee": bool(e.get("removed_assignee"))},
+    LABEL_EVENT: lambda e: {
+        "label": (e.get("label") or {}).get("name"),
+        "removed_label": e.get("body") != "1"},
     **dict.fromkeys(CROSS_REFERENCE_EVENTS, lambda e: _cross_reference_fields(
         e["type"], e["ref_issue"], e.get("ref_action"),
         (e.get("ref_comment") or {}).get("body"))),
@@ -1102,6 +1108,9 @@ _GITHUB_TYPED_KEYS: dict[str, Callable[[dict], dict]] = {
     **_removal_pair("review_requested", "review_request_removed", "removed_assignee",
                     lambda e: {"type": REVIEW_REQUEST_EVENT,
                                "assignee": norm_user(e.get("requested_reviewer"))}),
+    **_removal_pair("labeled", "unlabeled", "removed_label",
+                    lambda e: {"type": LABEL_EVENT,
+                               "label": (e.get("label") or {}).get("name")}),
     "cross-referenced": lambda e: _cross_reference_fields(
         e["event"], e["source"]["issue"], None, None),
     "referenced": lambda e: {"ref_commit_sha": e.get("commit_id")},
@@ -1165,6 +1174,9 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
     message is the event ``referenced`` with the commit under
     ``commit_id`` (https://docs.github.com/en/rest/using-the-rest-api/issue-event-types);
     it keeps its name and gets the Forgejo ``ref_commit_sha`` key.
+    Label changes are the events ``labeled`` / ``unlabeled`` with the
+    label under ``label`` (captured on testrepo PR #2); folded into the
+    Forgejo ``label`` shape.
     """
     out: list[dict] = []
     run: list[dict] = []

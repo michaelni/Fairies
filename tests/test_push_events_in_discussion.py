@@ -124,7 +124,6 @@ class PushEventsFromTimelineTests(unittest.TestCase):
     def test_non_push_events_are_ignored(self) -> None:
         timeline = [
             {"type": "comment", "created_at": "2026-04-01T00:00:00Z"},
-            {"type": "label",   "created_at": "2026-04-02T00:00:00Z"},
             {"type": "review",  "created_at": "2026-04-03T00:00:00Z"},
         ]
         self.assertEqual(fairy.timeline_events(_project(timeline)), [])
@@ -197,14 +196,20 @@ class BuildLlmDiscussionWithTimelineTests(unittest.TestCase):
         kinds = [(i["kind"], i.get("created_at") or i.get("submitted_at"))
                  for i in items]
         # Expected order: initial push and the review request (same
-        # second, 2026-05-21) -> bot comment (2026-05-25 01:52) ->
-        # force-push (2026-05-25 21:46).
+        # second, 2026-05-21) -> labels -> bot comment (2026-05-25
+        # 01:52) -> labels -> force-push (2026-05-25 21:46).
         self.assertEqual(
             kinds,
             [
                 ("push",           PR_23197_INITIAL_PUSH_AT),
                 ("review_request", PR_23197_INITIAL_PUSH_AT),
+                ("label_added",    "2026-05-21T21:23:51Z"),
+                ("label_added",    "2026-05-21T21:23:51Z"),
                 ("comment",        "2026-05-25T01:52:46Z"),
+                ("label_added",    "2026-05-25T01:52:47Z"),
+                ("label_added",    "2026-05-25T01:52:47Z"),
+                ("label_added",    "2026-05-25T01:52:47Z"),
+                ("label_removed",  "2026-05-25T01:52:56Z"),
                 ("push",           PR_23197_FORCE_PUSH_AT),
             ],
         )
@@ -258,6 +263,19 @@ class ReviewRequestEventsTests(unittest.TestCase):
             [(d["author"], d["reviewer"]) for d in disc
              if d["kind"] == "review_request"],
             [("michaelni", "kaweno")])
+
+    def test_pr_23197_yields_the_label_changes(self) -> None:
+        """Real capture: the labeler added ``new`` and removed it again."""
+        timeline = _load_timeline("ffmpeg_pr_23197_timeline.json")
+        self.assertEqual(
+            [(i["author"], i["label"], i["kind"])
+             for i in fairy.timeline_events(timeline) if i["kind"].startswith("label_")],
+            [("ffmpeg-devel", "avfilter", "label_added"),
+             ("ffmpeg-devel", "new", "label_added"),
+             ("Forgejo_Fairy", "kogeduha/bug", "label_added"),
+             ("Forgejo_Fairy", "important", "label_added"),
+             ("Forgejo_Fairy", "ciwezeme caso", "label_added"),
+             ("ffmpeg-devel", "new", "label_removed")])
 
     def test_a_bare_verdict_is_kept_bare_noise_is_not(self) -> None:
         reviews = [

@@ -1036,10 +1036,11 @@ def review_unaffected_since(snapshot: dict | None, sampled_at: str | None,
                             expected_body: str | None) -> bool:
     """Whether everything that arrived on a PR after a review sampled
     it at ``sampled_at`` leaves the review standing, per the PR's items/
-    ``snapshot``: review requests, label changes and pushes that kept
-    the series -- at least one of them, an update with nothing recorded
-    behind it is unexplained -- and the description still
-    ``expected_body``. The series is kept
+    ``snapshot``: nothing of ``VOIDING_KINDS`` (new words, a state or
+    target-branch change), no timeline entry the discussion does not
+    carry, pushes only if they kept the series -- and at least one
+    entry, an update with nothing recorded behind it is unexplained --
+    and the description still ``expected_body``. The series is kept
     while the head is still ``expected_head_sha`` or the patch-ids
     still ``expected_patch_ids`` (None when unknown). False when
     ``snapshot`` or ``sampled_at`` is unknown."""
@@ -1050,10 +1051,8 @@ def review_unaffected_since(snapshot: dict | None, sampled_at: str | None,
              if discussion_time(entry) > sampled}
     types = {event["type"] for event in snapshot["events"]
              if discussion_time(event) > sampled}
-    return (bool(kinds) and kinds <= {"push", "review_request", "review_request_withdrawn",
-                                      "label_added", "label_removed"}
-            and types <= {PUSH_EVENT, forge_gcli.REVIEW_REQUEST_EVENT,
-                          forge_gcli.LABEL_EVENT}
+    return (bool(kinds) and not kinds & VOIDING_KINDS
+            and types <= _STANDING_EVENTS
             and snapshot["body"] == expected_body
             and (snapshot["head_sha"] == expected_head_sha
                  or expected_patch_ids is not None
@@ -1756,6 +1755,15 @@ _TIMELINE_ITEMS: dict[str, Callable[[ApiObject], tuple[str, dict] | None]] = {
         "state": STATE_EVENTS[entry["type"]],
         **{key: entry[key] for key in ("commit_id", "state_reason") if entry.get(key)}})),
 }
+
+
+# Discussion kinds after which a review no longer stands: new words, a
+# state change or a changed target. A push is judged by the series it
+# left; every other kind is housekeeping the posted verdict names.
+VOIDING_KINDS = frozenset({"comment", "review", "review_comment", "state",
+                           "target_branch_changed"})
+_STANDING_EVENTS = (frozenset(_TIMELINE_ITEMS) - frozenset(STATE_EVENTS)
+                    - {forge_gcli.TARGET_BRANCH_EVENT})
 
 
 def timeline_events(timeline: list[ApiObject]) -> list[DiscussionItem]:

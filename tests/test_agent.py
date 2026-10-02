@@ -1032,11 +1032,15 @@ LABEL = {"type": "label", "created_at": "2026-07-20T00:00:00Z",
          "removed_label": False}
 MILESTONE = {"type": "milestone", "created_at": "2026-07-20T00:00:00Z",
              "user": {"login": "a"}, "body": "", "milestone": "9.1", "old_milestone": None}
+RETARGET = {"type": "change_target_branch", "created_at": "2026-07-20T00:00:00Z",
+            "user": {"login": "a"}, "body": "", "old_ref": "master", "new_ref": "release"}
 
 
 class UnaffectingChangeSendTests(SendCase):
-    """Review requests and label changes after the review leave the
-    verdict sendable; anything else beside them still blocks."""
+    """Housekeeping after the review -- review requests, label,
+    assignee and milestone changes and the like -- leaves the verdict
+    sendable; new words, a state change or a retarget beside them still
+    block."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -1060,10 +1064,18 @@ class UnaffectingChangeSendTests(SendCase):
         self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
                          "PR updated_at changed")
 
-    def test_a_milestone_beside_a_label_change_blocks(self) -> None:
-        self.send_updated([LABEL, MILESTONE]).assert_not_called()
+    def test_a_milestone_change_posts(self) -> None:
+        self.send_updated([LABEL, MILESTONE]).assert_called_once()
+
+    def test_a_retarget_beside_a_label_change_blocks(self) -> None:
+        self.send_updated([LABEL, RETARGET]).assert_not_called()
         self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
                          "PR updated_at changed")
+
+    def test_a_timeline_entry_the_discussion_drops_blocks(self) -> None:
+        self.send_updated([LABEL, {"type": "start_tracking", "user": {"login": "a"},
+                                   "created_at": "2026-07-20T00:00:00Z", "body": ""}]
+                          ).assert_not_called()
 
     def test_a_label_change_before_the_review_explains_nothing(self) -> None:
         self.send_updated([dict(LABEL, created_at="2026-07-19T09:00:00Z")]

@@ -1061,16 +1061,22 @@ def _cross_reference_fields(kind: str, mentioning_item: dict,
                      mention sits in the item's description
     """
     return {
-        "ref_issue": {
-            "number": mentioning_item.get("number"),
-            "title": mentioning_item.get("title"),
-            "state": mentioning_item.get("state"),
-            "repository": (mentioning_item.get("repository") or {}).get("full_name"),
-            "is_pull": bool(mentioning_item.get("pull_request")),
-        },
+        "ref_issue": _item_summary(mentioning_item),
         "ref_origin": _CROSS_REFERENCE_ORIGIN[kind],
         "ref_action": action,
         "ref_comment": comment_body,
+    }
+
+
+def _item_summary(item: dict) -> dict:
+    """Number, title, state, repository full name and issue/pull kind of
+    a forge issue object."""
+    return {
+        "number": item.get("number"),
+        "title": item.get("title"),
+        "state": item.get("state"),
+        "repository": (item.get("repository") or {}).get("full_name"),
+        "is_pull": bool(item.get("pull_request")),
     }
 
 

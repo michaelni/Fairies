@@ -1069,6 +1069,24 @@ class UnaffectingChangeSendTests(SendCase):
         self.send_updated([dict(LABEL, created_at="2026-07-19T09:00:00Z")]
                           ).assert_not_called()
 
+    def test_an_allowlisted_label_change_is_noted_in_the_post(self) -> None:
+        self.ns.triage_labels = ["swscale"]
+        submit = self.send_updated([LABEL, dict(LABEL, label="new")])
+        note = ("m\n\nThis review did not see the label changes made after "
+                "it started: +swscale")
+        self.assertEqual(submit.call_args.args[1].llm_message, note)
+        self.assertEqual(self.db.get("posted", "pr", "1")["review"]["message"],
+                         note)
+
+    def test_a_label_change_the_review_saw_is_not_noted(self) -> None:
+        self.ns.triage_labels = ["swscale"]
+        seen = {"kind": "label_added", "author": "carol", "label": "swscale",
+                "created_at": LABEL["created_at"]}
+        self.db.push("outgoing", "pr", "1",
+                     verdict_ticket(1, discussion=[seen]))
+        submit = self.send_updated([LABEL])
+        self.assertEqual(submit.call_args.args[1].llm_message, "m")
+
     def test_a_standing_verdict_survives_a_label_change_in_auto_mode(self) -> None:
         self.ns.auto_mode = True
         self.thread.return_value = ([], [], [], [LABEL], {})

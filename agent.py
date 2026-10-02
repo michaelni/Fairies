@@ -1000,6 +1000,23 @@ def staleness_reason(ns: argparse.Namespace, kind: str, item: dict,
     return issue_fairy.check_issue_still_unchanged(ns, item, decision)
 
 
+def _unseen_label_note(ns: argparse.Namespace, ticket: dict,
+                       snapshot: dict | None) -> str:
+    """The closing line telling a verdict's readers which --triage-label
+    labels changed after its review sampled the item, "" when none did."""
+    sampled = iso_to_dt(ticket.get("expected_updated_at"))
+    if snapshot is None or sampled is None:
+        return ""
+    changes = [("-" if entry["kind"] == "label_removed" else "+") + entry["label"]
+               for entry in snapshot["discussion"]
+               if entry["kind"] in ("label_added", "label_removed")
+               and entry["label"] in ns.triage_labels
+               and fairy.discussion_time(entry) > sampled
+               and entry not in ticket.get("discussion", ())]
+    return (f"\n\nThis review did not see the label changes made after it "
+            f"started: {', '.join(changes)}" if changes else "")
+
+
 def post_decision(ns: argparse.Namespace, kind: str, item: dict,
                   decision: fairy.Decision, *, cache,
                   counts: dict[str, int]) -> str | None:
@@ -1058,9 +1075,13 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
         reason = None if ticket.pop("force_post", None) \
             else staleness_reason(ns, kind, item, decision, snapshot)
         if reason is None:
+            if decision.action in fairy.ACTIONABLE_DECISIONS:
+                decision = dataclasses_replace(decision, llm_message=(
+                    decision.llm_message + _unseen_label_note(ns, ticket, snapshot)))
             reason = post_decision(ns, kind, item, decision, cache=cache,
                                    counts=counts)
         if reason is None:
+            ticket["review"]["message"] = decision.llm_message
             claim.finish("posted", dict(
                 ticket, posted_at=datetime.now(timezone.utc).isoformat()))
             logger.info("%s #%s posted: %s", kind, number,

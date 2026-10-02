@@ -188,7 +188,9 @@ class IssueScanCase(unittest.TestCase):
                 mock.patch.object(forge_gcli, "self_login", return_value="fairy"), \
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=gcli_cache.Cache()), \
-                mock.patch.object(agent.gcli_cache, "save_cache"):
+                mock.patch.object(agent.gcli_cache, "save_cache"), \
+                mock.patch.object(agent, "_fetch_thread",
+                                  return_value=([], [], [], [])):
             agent.scan_pass(self.db, None, ns, now=NOW)
         return prepare
 

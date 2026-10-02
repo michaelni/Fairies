@@ -246,6 +246,8 @@ class ScanCase(unittest.TestCase):
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=gcli_cache.Cache()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"), \
+                mock.patch.object(agent, "_fetch_thread",
+                                  return_value=([], [], [], [])), \
                 mock.patch.object(fairy, "get_pr_discussion",
                                   return_value=([], [], [])), \
                 mock.patch.object(fairy, "get_pr_timeline", return_value=[]), \

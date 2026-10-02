@@ -1145,91 +1145,35 @@ def get_pr(args: argparse.Namespace, pr_number: int) -> ApiObject:
     return data
 
 
-def get_pr_discussion(
-    args: argparse.Namespace,
-    pr: ApiObject,
-    *,
-    cache: gcli_cache.Cache,
-    cache_max_age: timedelta,
-) -> tuple[list[ApiObject], list[ApiObject], list[ApiObject]]:
-    """Return ``(reviews, comments, review_comments)`` for ``pr`` via the cache.
-
-    Thin adapter over ``gcli_cache.get`` kept as a named
-    call site so the LLM-decision path reads "fetch the discussion"
-    instead of spelling out the field triple. The cache module owns
-    the freshness logic (``updated_at``-keyed plus a TTL on the
-    edit-prone trio); this function only converts the returned
-    tuples to lists for the call-site shape.
-    """
-    pr_number = int(pr["number"])
-    live_updated_at = iso_to_dt(pr.get("updated_at"))
-    if live_updated_at is None:
-        raise RuntimeError(
-            f"PR #{pr_number} is missing or has unparseable updated_at; "
-            f"refusing to cache against an unknown freshness key"
-        )
-    fields = gcli_cache.get(
-        cache, args, "pulls", args.owner, args.repo, pr_number, live_updated_at,
-        "reviews", "issue_comments", "review_comments",
-        max_age=cache_max_age,
-    )
-    return (
-        list(fields["reviews"]),
-        list(fields["issue_comments"]),
-        list(fields["review_comments"]),
-    )
-
-
 def get_pr_thread(
     args: argparse.Namespace,
     pr: ApiObject,
     *,
     cache: gcli_cache.Cache,
     cache_max_age: timedelta,
-) -> tuple[list[ApiObject], list[ApiObject], list[ApiObject], list[ApiObject]]:
-    """``(reviews, comments, review_comments, timeline)`` for ``pr`` in
-    one ``gcli_cache.get``: the four fields share one entry stamp and
-    one ``updated_at`` refetch, where separate discussion and timeline
-    calls pay two -- and, on a changed PR, drop and refetch each
-    other's fields as non-refetched siblings."""
+) -> tuple[ApiObject, tuple[list[ApiObject], list[ApiObject], list[ApiObject], list[ApiObject]]]:
+    """``pr``, as of their stamp, and its ``(reviews, comments,
+    review_comments, timeline)`` in one ``gcli_cache.get``: the four
+    fields share one entry stamp and one ``updated_at`` refetch, where
+    separate discussion and timeline calls pay two -- and, on a changed
+    PR, drop and refetch each other's fields as non-refetched siblings."""
     pr_number = int(pr["number"])
-    live_updated_at = iso_to_dt(pr.get("updated_at"))
-    if live_updated_at is None:
+    if iso_to_dt(pr.get("updated_at")) is None:
         raise RuntimeError(
             f"PR #{pr_number} is missing or has unparseable updated_at; "
             f"refusing to cache against an unknown freshness key"
         )
-    fields = gcli_cache.get(
-        cache, args, "pulls", args.owner, args.repo, pr_number,
-        live_updated_at, "reviews", "issue_comments", "review_comments",
+    pr, fields = gcli_cache.get(
+        cache, args, "pulls", args.owner, args.repo, pr,
+        "reviews", "issue_comments", "review_comments",
         "timeline", max_age=cache_max_age,
     )
-    return (
+    return pr, (
         list(fields["reviews"]),
         list(fields["issue_comments"]),
         list(fields["review_comments"]),
         list(fields["timeline"]),
     )
-
-
-def get_pr_timeline(
-    args: argparse.Namespace,
-    pr: ApiObject,
-    *,
-    cache: gcli_cache.Cache,
-    cache_max_age: timedelta,
-) -> list[ApiObject]:
-    """Timeline events for ``pr`` via the cache; [] when ``updated_at``
-    is unusable. A failed fetch raises -- the caller decides whether
-    the timeline is optional."""
-    live_updated_at = iso_to_dt(pr.get("updated_at"))
-    if live_updated_at is None:
-        return []
-    fields = gcli_cache.get(
-        cache, args, "pulls", args.owner, args.repo, int(pr["number"]),
-        live_updated_at, "timeline", max_age=cache_max_age,
-    )
-    return list(fields["timeline"])
 
 
 def list_commit_statuses(args: argparse.Namespace, ref: str) -> list[ApiObject]:
@@ -2657,15 +2601,20 @@ def prepare_pr(
     now: datetime,
     self_login: str | None,
     wip_re: re.Pattern[str],
-    cache: gcli_cache.Cache,
-    discussion_cache_max_age: timedelta,
+    thread: tuple[list, list, list, list] | None,
     posted_classification: str | None = None,
 ) -> Decision | PreparedPR:
-    """``posted_classification`` is the classification of fairy's
-    standing posted verdict on the PR, None without one. On fairy's
-    own PR it is the only record of an approval: the forge refuses
-    the approving review, so fairy posts it as a comment."""
+    """``thread`` is ``pr``'s (reviews, comments, review comments,
+    timeline), fetched at ``pr``'s ``updated_at``; None when it could
+    not be fetched, which fails the prepare. ``posted_classification``
+    is the classification of fairy's standing posted verdict on the PR,
+    None without one. On fairy's own PR it is the only record of an
+    approval: the forge refuses the approving review, so fairy posts it
+    as a comment."""
     number = int(pr["number"])
+    if thread is None:
+        raise RuntimeError("the thread could not be fetched")
+    reviews, comments, review_comments, timeline = thread
     title = str(pr.get("title") or "")
     author = get_pr_author(pr)
 
@@ -2679,29 +2628,12 @@ def prepare_pr(
     # documented precedence.
     is_forced = number in args.force_review_prs
 
-    # Timeline fetches go through ``gcli_cache.get``: it serves a
-    # cached copy when ``pr.updated_at`` matches and transparently
-    # refetches when it advances, so both consumers (auto-merge
-    # detection via ``auto_merge_state_from_timeline``, LLM-discussion
-    # enrichment via ``timeline_events``) see the same single
-    # live copy without an extra in-process memo.
-    def get_timeline() -> list[ApiObject]:
-        try:
-            return get_pr_timeline(args, pr, cache=cache,
-                                   cache_max_age=discussion_cache_max_age)
-        except Exception as exc:
-            logger.warning(
-                "LLM discussion enrichment: failed to fetch timeline for "
-                "PR #%d: %s", number, exc,
-            )
-            return []
-
     auto_merge: str | None = None
 
     def get_auto_merge() -> str:
         nonlocal auto_merge
         if auto_merge is None:
-            auto_merge = get_auto_merge_info(args, pr, timeline=get_timeline())
+            auto_merge = get_auto_merge_info(args, pr, timeline=timeline)
         return auto_merge
 
     # Closure-bound: ``external_approvers`` is computed once in this
@@ -2743,12 +2675,6 @@ def prepare_pr(
             approved_at=approved_at,
         )
 
-    reviews, comments, review_comments = get_pr_discussion(
-        args,
-        pr,
-        cache=cache,
-        cache_max_age=discussion_cache_max_age,
-    )
     ignore_after = args.simulate_past
     reviews = filter_activity_after(
         reviews,
@@ -2784,12 +2710,12 @@ def prepare_pr(
     # re-pushed PR is reconsidered instead of being frozen at fairy's last
     # comment by the "no activity since prior non-approval" gate below
     # (FFmpeg #22961 and the wider cohort sat skipped after silent
-    # force-pushes). ``get_timeline`` is the same single live copy the
+    # force-pushes). ``timeline`` is the same single live copy the
     # auto-merge / LLM-discussion consumers already read.
     latest_push = max_dt([
         first_dt(item, "created_at")
         for item in timeline_events(
-            filter_activity_after(get_timeline(), ignore_after, "created_at"))
+            filter_activity_after(timeline, ignore_after, "created_at"))
         if item["kind"] == "push"
     ])
     if latest_push is not None and (last_activity is None or latest_push > last_activity):
@@ -2943,7 +2869,7 @@ def prepare_pr(
             auto_merge=auto_merge_value,
             last_activity=last_activity,
             base_reason=base_reason,
-            discussion=build_llm_discussion(reviews, comments, review_comments, get_timeline()),
+            discussion=build_llm_discussion(reviews, comments, review_comments, timeline),
             reviewer_username=self_login,
             ci_triage=ci_triage_payload,
             cancelled_ci_contexts=cancelled_ctxs,
@@ -3119,7 +3045,7 @@ def prepare_pr(
             auto_merge=get_auto_merge(),
             last_activity=last_activity,
             base_reason=base_reason,
-            discussion=build_llm_discussion(reviews, comments, review_comments, get_timeline()),
+            discussion=build_llm_discussion(reviews, comments, review_comments, timeline),
             reviewer_username=self_login,
             ci_triage=ci_payload,
             cancelled_ci_contexts=cancelled_ctxs,
@@ -3140,7 +3066,7 @@ def prepare_pr(
         auto_merge=get_auto_merge(),
         last_activity=last_activity,
         base_reason=base_reason,
-        discussion=build_llm_discussion(reviews, comments, review_comments, get_timeline()),
+        discussion=build_llm_discussion(reviews, comments, review_comments, timeline),
         reviewer_username=self_login,
         external_approvers=external_approvers,
     )
@@ -3153,8 +3079,7 @@ def safe_prepare_pr(
     now: datetime,
     self_login: str | None,
     wip_re: re.Pattern[str],
-    cache: gcli_cache.Cache,
-    discussion_cache_max_age: timedelta,
+    thread: tuple[list, list, list, list] | None,
     posted_classification: str | None = None,
 ) -> PreparedItem:
     try:
@@ -3164,8 +3089,7 @@ def safe_prepare_pr(
             now=now,
             self_login=self_login,
             wip_re=wip_re,
-            cache=cache,
-            discussion_cache_max_age=discussion_cache_max_age,
+            thread=thread,
             posted_classification=posted_classification,
         )
     except Exception as exc:

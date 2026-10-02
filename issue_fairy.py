@@ -209,21 +209,21 @@ def get_issue_discussion(
     *,
     cache: gcli_cache.Cache,
     cache_max_age: timedelta,
-) -> tuple[list[ApiObject], list[ApiObject]]:
-    """Return ``(comments, timeline)`` for ``issue`` via the cache."""
+) -> tuple[ApiObject, tuple[list[ApiObject], list[ApiObject]]]:
+    """Return ``issue`` and its ``(comments, timeline)`` via the cache,
+    the issue as of the stamp they were fetched at."""
     number = int(issue["number"])
-    live_updated_at = iso_to_dt(issue.get("updated_at"))
-    if live_updated_at is None:
+    if iso_to_dt(issue.get("updated_at")) is None:
         raise RuntimeError(
             f"issue #{number} is missing or has unparseable updated_at; "
             f"refusing to cache against an unknown freshness key"
         )
-    fields = gcli_cache.get(
-        cache, args, "issues", args.owner, args.repo, number, live_updated_at,
+    issue, fields = gcli_cache.get(
+        cache, args, "issues", args.owner, args.repo, issue,
         "issue_comments", "timeline",
         max_age=cache_max_age,
     )
-    return list(fields["issue_comments"]), list(fields["timeline"])
+    return issue, (list(fields["issue_comments"]), list(fields["timeline"]))
 
 
 def prepare_issue(
@@ -232,10 +232,16 @@ def prepare_issue(
     *,
     now: datetime,
     self_login: str | None,
-    cache: gcli_cache.Cache,
-    discussion_cache_max_age: timedelta,
+    thread: tuple[list, list, list, list] | None,
 ) -> Decision | PreparedIssue:
+    """``thread`` is ``issue``'s (reviews, comments, review comments,
+    timeline), without reviews or review comments, fetched at
+    ``issue``'s ``updated_at``; None when it could not be fetched, which
+    fails the prepare."""
     number = int(issue["number"])
+    if thread is None:
+        raise RuntimeError("the thread could not be fetched")
+    _, comments, _, timeline = thread
     title = str(issue.get("title") or "")
     author = get_pr_author(issue)
 
@@ -246,10 +252,6 @@ def prepare_issue(
     # (e.g. re-checking a fixed regression); everything below the force
     # check is a cron-mode heuristic.
     is_forced = number in args.force_review_issues
-
-    comments, timeline = get_issue_discussion(
-        args, issue, cache=cache, cache_max_age=discussion_cache_max_age,
-    )
 
     # Like fairy.py, last_activity deliberately comes from the discussion
     # only, not ``issue.updated_at``: label/milestone/assignee edits bump

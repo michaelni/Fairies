@@ -190,13 +190,11 @@ def save_cache(path: Path, cache: Cache) -> None:
     logger.debug("gcli_cache save %s: %d entries", path, len(cache.entries))
 
 
-def _fetch_updated_at(args, kind: str, owner: str, repo: str, n: int) -> datetime:
+def _fetch_item(args, kind: str, owner: str, repo: str, n: int) -> dict:
     path = forge_gcli.build_repo_path(owner, repo, f"/{kind}/{n}")
     data = forge_gcli.gcli_api(args, path)
-    if isinstance(data, dict):
-        parsed = iso_to_dt(data.get("updated_at"))
-        if parsed is not None:
-            return parsed
+    if isinstance(data, dict) and iso_to_dt(data.get("updated_at")) is not None:
+        return data
     raise RuntimeError(f"gcli_cache: bad updated_at for {kind} #{n} ({path})")
 
 
@@ -214,14 +212,16 @@ def get(
     kind: str,
     owner: str,
     repo: str,
-    n: int,
-    live_updated_at: datetime,
+    item: dict,
     *fields: str,
     max_age: timedelta,
     now: datetime | None = None,
-    refetch: Callable = _fetch_updated_at,
-) -> dict[str, tuple[dict, ...]]:
-    """Return ``fields`` for one PR or issue.
+    refetch: Callable = _fetch_item,
+) -> tuple[dict, dict[str, tuple[dict, ...]]]:
+    """Return one PR or issue and its ``fields``, the item as of the
+    stamp the fields were fetched at: ``item`` itself on a cache hit,
+    the loop's last read of it otherwise. ``item``'s ``updated_at``
+    must parse.
 
     Cache hits (matching ``updated_at`` and, for edit-prone fields,
     within ``max_age``) are served directly. Misses go through the
@@ -236,6 +236,8 @@ def get(
         raise ValueError(f"gcli_cache: unknown {kind} fields {bad}")
     if now is None:
         now = datetime.now(timezone.utc)
+    n = int(item["number"])
+    live_updated_at = iso_to_dt(item["updated_at"])
     key = entry_key(args, kind, owner, repo, n)
     old = cache.entries.get(key)
 
@@ -251,7 +253,7 @@ def get(
     if not missing:
         logger.debug("gcli_cache hit %s %s/%s #%d: %s",
                      kind, owner, repo, n, list(fields))
-        return {f: old.fields[f] for f in fields}
+        return item, {f: old.fields[f] for f in fields}
 
     valid_here = {f for (k, f) in FETCH if k == kind}
     to_fetch = missing | (EDIT_PRONE & valid_here if missing & EDIT_PRONE else set())
@@ -265,7 +267,8 @@ def get(
         for name in [f for f in _FETCH_ORDER if f in to_fetch]:
             reviews = list(got.get("reviews", ())) if name == "review_comments" else None
             got[name] = _fetch_field(args, kind, owner, repo, n, name, reviews)
-        t1 = refetch(args, kind, owner, repo, n)
+        item = refetch(args, kind, owner, repo, n)
+        t1 = iso_to_dt(item["updated_at"])
         if t1 == t0:
             break
         logger.info("gcli_cache: %s #%d updated_at %s -> %s; retry %d/%d",
@@ -285,4 +288,4 @@ def get(
     if to_fetch & EDIT_PRONE:
         stamp = now
     cache.entries[key] = Entry(t0, now, stamp, merged)
-    return {f: merged[f] for f in fields}
+    return item, {f: merged[f] for f in fields}

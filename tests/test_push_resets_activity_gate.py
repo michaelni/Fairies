@@ -50,7 +50,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -59,7 +59,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import gcli_cache  # noqa: E402
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 
@@ -117,20 +116,13 @@ def _call(*, timeline: list[dict], min_age_days: float = 0.25,
         "updated_at": PUSH_AT,
     }
     with patch.object(
-        fairy, "get_pr_discussion",
-        return_value=(reviews, [FAIRY_COMMENT], []),
-    ), patch.object(
-        fairy.gcli_cache, "get",
-        return_value={"timeline": [forge_gcli.project_timeline_event(e)
-                                  for e in timeline]},
-    ), patch.object(
         fairy, "list_commit_statuses", return_value=[],
     ):
         return fairy.prepare_pr(
             args, pr, now=NOW, self_login=SELF,
             wip_re=fairy.compile_wip_regex([]),
-            cache=gcli_cache.Cache(),
-            discussion_cache_max_age=timedelta(hours=1),
+            thread=(reviews, [FAIRY_COMMENT], [],
+                    [forge_gcli.project_timeline_event(e) for e in timeline]),
         )
 
 

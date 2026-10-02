@@ -165,16 +165,12 @@ def prepare(args: argparse.Namespace, issue: dict[str, object], *,
     if comments is None:
         comments = load_fixture("ffmpeg_issue_23738_comments.json")
     timeline = load_fixture("ffmpeg_issue_23738_timeline.json")
-    with mock.patch.object(
-        issue_fairy, "get_issue_discussion", return_value=(comments, timeline),
-    ):
-        return issue_fairy.prepare_issue(
-            args, issue,
-            now=now,
-            self_login=self_login,
-            cache=mock.Mock(),
-            discussion_cache_max_age=timedelta(hours=24),
-        )
+    return issue_fairy.prepare_issue(
+        args, issue,
+        now=now,
+        self_login=self_login,
+        thread=([], comments, [], timeline),
+    )
 
 
 class PrepareIssueGateTests(unittest.TestCase):

@@ -188,7 +188,9 @@ class ScanClosedAgentTests(AgentCase):
 
     def test_closed_snapshots_skip_the_edit_ttl(self) -> None:
         closed = {**make_pr(2), "state": "closed", "merged": True}
-        with mock.patch.object(agent, "_put_snapshot") as snap:
+        with mock.patch.object(agent, "_put_snapshot",
+                               side_effect=lambda db, ns, kind, token, item, *a:
+                               (item, None, None)) as snap:
             self.scan_with_closed([closed], [{**make_pr(1), "state": "open"}])
         ages = {c.args[4]["number"]: c.args[6] for c in snap.call_args_list}
         self.assertEqual(ages[2], timedelta.max)
@@ -225,8 +227,8 @@ class ScanClosedAgentTests(AgentCase):
 
     def test_a_failed_snapshot_is_listed_again_by_the_full_pass(self) -> None:
         with mock.patch.object(agent, "_put_snapshot",
-                               side_effect=lambda db, ns, kind, token, *a:
-                               token != "3"):
+                               side_effect=lambda db, ns, kind, token, item, *a:
+                               (item, None, None if token == "3" else {})):
             self.scan_with_closed([entry(2, "2026-07-25T00:00:00Z"),
                                    entry(3, "2026-07-23T00:00:00Z"),
                                    entry(4, "2026-07-22T00:00:00Z")], [])

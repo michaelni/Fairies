@@ -100,9 +100,11 @@ class AgentCase(unittest.TestCase):
         self.db = filedb.Db(Path(tmp.name))
         self.ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.prepare = mock.Mock(side_effect=lambda ns, pr, **kw: prepared_for(pr))
-        patcher = mock.patch.object(agent, "_fetch_thread",
-                                    return_value=([], [], [], []))
-        self.thread = patcher.start()
+        self.thread = mock.Mock(return_value=([], [], [], []))
+        patcher = mock.patch.object(agent, "_fetch_thread", side_effect=lambda
+                                    ns, kind, item, *rest:
+                                    (item, self.thread(ns, kind, item, *rest)))
+        self.fetch_thread = patcher.start()
         self.addCleanup(patcher.stop)
 
     def scan(self, prs: list[dict], fetch=None, *, full: bool = True,
@@ -977,6 +979,28 @@ class RebaseSendTests(RebasedSeriesCase):
                          "PR head changed")
 
 
+class MovedItemTests(AgentCase):
+    def test_the_scan_goes_on_with_the_item_its_thread_was_fetched_at(self) -> None:
+        moved = dict(make_pr(1), updated_at="2026-07-19T10:00:10Z")
+        self.fetch_thread.side_effect = lambda ns, kind, item, *rest: (
+            moved, ([], [], [], []))
+        self.scan([make_pr(1)])
+        self.assertIs(self.prepare.call_args.args[1], moved)
+        self.assertEqual(self.db.get("queued", "pr", "1")["expected_updated_at"],
+                         moved["updated_at"])
+        self.assertEqual(self.db.get("items", "pr", "1")["updated_at"],
+                         moved["updated_at"])
+
+
+class ThreadFetchFailureTests(AgentCase):
+    def test_a_failed_thread_fetch_fails_the_prepare(self) -> None:
+        self.thread.side_effect = RuntimeError("forge down")
+        self.prepare.side_effect = fairy.safe_prepare_pr
+        self.scan([make_pr(1)])
+        self.assertEqual(self.db.get("error", "pr", "1")["error"],
+                         "the thread could not be fetched")
+
+
 class RebaseReuseTests(RebasedSeriesCase):
     """Auto mode, where a stale verdict is requeued rather than left
     to the operator."""
@@ -1598,11 +1622,12 @@ class DiscussionWiringTests(unittest.TestCase):
             .read_text(encoding="utf-8"))
         ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
         cache = object()
+        pr = {"number": 1}
         with mock.patch.object(fairy, "get_pr_thread",
-                               return_value=([], comments, [], [])) as fetch:
-            got = agent._fetch_thread(ns, "pr", {"number": 1}, cache,
+                               return_value=(pr, ([], comments, [], []))) as fetch:
+            got = agent._fetch_thread(ns, "pr", pr, cache,
                                       timedelta(hours=24))
-        self.assertEqual(got, ([], comments, [], []))
+        self.assertEqual(got, (pr, ([], comments, [], [])))
         self.assertIs(fetch.call_args.kwargs["cache"], cache)
         self.assertEqual(fetch.call_args.kwargs["cache_max_age"],
                          timedelta(hours=24))
@@ -1612,14 +1637,14 @@ class DiscussionWiringTests(unittest.TestCase):
         updated_at refetch per PR; the thread fetch must stay a single
         get carrying all four fields."""
         ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
-        with mock.patch.object(fairy.gcli_cache, "get", return_value={
-                "reviews": (), "issue_comments": (),
-                "review_comments": (), "timeline": ()}) as get:
+        with mock.patch.object(fairy.gcli_cache, "get", side_effect=lambda
+                               cache, args, kind, owner, repo, item, *fields,
+                               **kw: (item, dict.fromkeys(fields, ()))) as get:
             agent._fetch_thread(
                 ns, "pr", {"number": 1, "updated_at": "2026-08-23T00:00:00Z"},
                 object(), timedelta(hours=24))
         get.assert_called_once()
-        self.assertEqual(set(get.call_args.args[7:]),
+        self.assertEqual(set(get.call_args.args[6:]),
                          {"reviews", "issue_comments", "review_comments",
                           "timeline"})
 
@@ -1631,11 +1656,12 @@ class DiscussionWiringTests(unittest.TestCase):
             (self.FIXTURES / "ffmpeg_issue_23738_timeline.json")
             .read_text(encoding="utf-8"))
         ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
+        issue = {"number": 1}
         with mock.patch.object(issue_fairy, "get_issue_discussion",
-                               return_value=(comments, timeline)):
-            got = agent._fetch_thread(ns, "issue", {"number": 1}, object(),
+                               return_value=(issue, (comments, timeline))):
+            got = agent._fetch_thread(ns, "issue", issue, object(),
                                       timedelta(hours=24))
-        self.assertEqual(got, ([], comments, [], timeline))
+        self.assertEqual(got, (issue, ([], comments, [], timeline)))
 
 
 class BackoffMathTests(unittest.TestCase):

@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -56,7 +56,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import agent  # noqa: E402
-import gcli_cache  # noqa: E402
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 
@@ -102,15 +101,11 @@ def _call(review: dict, *, min_age_days: float = 30) -> object:
         "title": "avdevice/gdigrab: fix -show_region 1 overlay window",
         "head": {"sha": "c9f8d93bf1"},
     }
-    with patch.object(
-        fairy, "get_pr_discussion", return_value=([review], [], []),
-    ):
-        return fairy.prepare_pr(
-            args, pr, now=NOW, self_login=SELF,
-            wip_re=fairy.compile_wip_regex([]),
-            cache=gcli_cache.Cache(),
-            discussion_cache_max_age=timedelta(hours=1),
-        )
+    return fairy.prepare_pr(
+        args, pr, now=NOW, self_login=SELF,
+        wip_re=fairy.compile_wip_regex([]),
+        thread=([review], [], [], []),
+    )
 
 
 class StaleApprovalRereviewTests(unittest.TestCase):

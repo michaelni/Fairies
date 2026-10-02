@@ -130,13 +130,9 @@ class ForceReviewIssueTests(unittest.TestCase):
     (prepare) and on the way out (the pre-post staleness guard)."""
 
     def prepare(self, flags: str, issue: dict):
-        with mock.patch.object(issue_fairy, "get_issue_discussion",
-                               return_value=([], [])):
-            return issue_fairy.prepare_issue(
-                issue_ns("--llm-review-cmd wrapper " + flags), issue,
-                now=NOW, self_login="fairy",
-                cache=gcli_cache.Cache(),
-                discussion_cache_max_age=timedelta(hours=1))
+        return issue_fairy.prepare_issue(
+            issue_ns("--llm-review-cmd wrapper " + flags), issue,
+            now=NOW, self_login="fairy", thread=([], [], [], []))
 
     def test_a_closed_issue_is_analyzed_when_named(self) -> None:
         result = self.prepare("--force-review 5", make_issue(5, "closed"))
@@ -189,8 +185,9 @@ class IssueScanCase(unittest.TestCase):
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=gcli_cache.Cache()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"), \
-                mock.patch.object(agent, "_fetch_thread",
-                                  return_value=([], [], [], [])):
+                mock.patch.object(agent, "_fetch_thread", side_effect=lambda
+                                  ns, kind, item, *rest: (item, ([], [], [], []))
+                                  ) as self.fetch_thread:
             agent.scan_pass(self.db, None, ns, now=NOW)
         return prepare
 
@@ -214,14 +211,14 @@ class IssueCacheDefaultTests(unittest.TestCase):
 
 
 class IssueDiscussionCacheMaxAgeTests(IssueScanCase):
-    """--discussion-cache-max-age-hours is the TTL the issue scan hands
-    the gates for the cached comments."""
+    """--discussion-cache-max-age-hours is the TTL of the issue scan's
+    fetch of the cached comments."""
 
     def ttl_for(self, flags: str) -> timedelta:
-        prepare = self.scan(issue_ns(flags), [make_issue(5)])
-        return prepare.call_args.kwargs["discussion_cache_max_age"]
+        self.scan(issue_ns(flags), [make_issue(5)])
+        return self.fetch_thread.call_args.args[4]
 
-    def test_the_flag_sets_the_ttl_the_gates_see(self) -> None:
+    def test_the_flag_sets_the_ttl_of_the_fetch(self) -> None:
         self.assertEqual(self.ttl_for("--discussion-cache-max-age-hours 2"),
                          timedelta(hours=2))
 

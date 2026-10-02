@@ -110,7 +110,8 @@ class CountingFetcher:
 
 
 def make_refetch(stream: list[datetime]):
-    """Build a ``refetch`` mock that yields ``stream`` then repeats last."""
+    """Build a ``refetch`` mock that yields items stamped ``stream``
+    then repeats the last."""
     state = {"i": 0}
     calls: list[int] = []
 
@@ -118,7 +119,7 @@ def make_refetch(stream: list[datetime]):
         calls.append(state["i"])
         i = min(state["i"], len(stream) - 1)
         state["i"] += 1
-        return stream[i]
+        return {"number": n, "updated_at": stream[i].isoformat()}
     reader.calls = calls  # type: ignore[attr-defined]
     return reader
 
@@ -156,7 +157,8 @@ def call_get(cache, kind, fetchers, refetch, names, *,
              n=1, owner="o", repo="r", live=LIVE, now=NOW, max_age=MAX_AGE,
              args=ARGS):
     return get(
-        cache, args, kind, owner, repo, n, live,
+        cache, args, kind, owner, repo,
+        {"number": n, "updated_at": live.isoformat()},
         *names, max_age=max_age, now=now, refetch=refetch,
     )
 
@@ -403,7 +405,7 @@ class GetEndToEndTests(unittest.TestCase):
         # share a single comments_fetched_at stamp.
         cache = Cache()
         fetchers = patch_fetch(self)
-        result = call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("reviews",))
+        _, result = call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("reviews",))
         self.assertEqual(set(result), {"reviews"})
         for k in EDIT_PRONE:
             self.assertEqual(len(fetchers[("pulls", k)].calls), 1,
@@ -423,7 +425,7 @@ class GetEndToEndTests(unittest.TestCase):
             "review_comments": (),
         }, comments_fetched_at=NOW - timedelta(hours=1))
         fetchers = patch_fetch(self)
-        result = call_get(cache, "pulls", fetchers, make_refetch([LIVE]),
+        _, result = call_get(cache, "pulls", fetchers, make_refetch([LIVE]),
                           ("timeline", "issue_comments", "reviews"))
         self.assertEqual(set(result), {"timeline", "issue_comments", "reviews"})
         for key, f in fetchers.items():
@@ -487,12 +489,20 @@ class GetEndToEndTests(unittest.TestCase):
                  ("timeline",), live=utc("2026-05-22T00:00:00Z"))
         self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 1)
 
+    def test_a_hit_returns_the_callers_item(self) -> None:
+        cache = Cache()
+        _seed_entry(cache, {"timeline": ({"x": 1},)})
+        caller = {"number": 1, "updated_at": LIVE.isoformat()}
+        item, _ = get(cache, ARGS, "pulls", "o", "r", caller, "timeline",
+                      max_age=MAX_AGE, now=NOW, refetch=make_refetch([LIVE]))
+        self.assertIs(item, caller)
+
     def test_immutable_field_ignores_ttl(self) -> None:
         cache = Cache()
         _seed_entry(cache, {"timeline": ({"x": 1},)},
                     comments_fetched_at=None)
         fetchers = patch_fetch(self)
-        result = call_get(cache, "pulls", fetchers, make_refetch([LIVE]),
+        _, result = call_get(cache, "pulls", fetchers, make_refetch([LIVE]),
                           ("timeline",), now=NOW + timedelta(days=100))
         self.assertEqual(result["timeline"], ({"x": 1},))
         self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 0)
@@ -545,8 +555,9 @@ class StableFetchTests(unittest.TestCase):
         fetchers = patch_fetch(self, **{
             "pulls.timeline": [[{"attempt": 1}], [{"attempt": 2}]],
         })
-        call_get(cache, "pulls", fetchers, make_refetch([moved, moved]),
-                 ("timeline",))
+        item, _ = call_get(cache, "pulls", fetchers,
+                           make_refetch([moved, moved]), ("timeline",))
+        self.assertEqual(item["updated_at"], moved.isoformat())
         self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 2)
         entry = cache.entries[entry_key(ARGS, "pulls", "o", "r", 1)]
         self.assertEqual(entry.updated_at, moved)
@@ -560,9 +571,9 @@ class StableFetchTests(unittest.TestCase):
         _seed_entry(cache, {"timeline": ({"old": True},)},
                     comments_fetched_at=None)
         fetchers = patch_fetch(self, **{"pulls.timeline": [[{"new": True}]]})
-        result = call_get(cache, "pulls", fetchers,
-                          make_refetch([moved, moved]),
-                          ("timeline", "issue_comments"))
+        _, result = call_get(cache, "pulls", fetchers,
+                             make_refetch([moved, moved]),
+                             ("timeline", "issue_comments"))
         self.assertEqual(result["timeline"], ({"new": True},))
 
     def test_continuous_advance_exhausts_attempts(self) -> None:

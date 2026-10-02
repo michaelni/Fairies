@@ -55,7 +55,6 @@ import gcli_cache  # noqa: E402
 
 NOW = datetime(2026, 5, 26, tzinfo=timezone.utc)
 LIVE_ISO = "2026-05-25T12:00:00Z"
-LIVE = datetime(2026, 5, 25, 12, 0, tzinfo=timezone.utc)
 MAX_AGE = timedelta(hours=24)
 
 
@@ -143,7 +142,7 @@ class GetItemFieldsTests(unittest.TestCase):
 
     def test_success_returns_fields_and_no_warnings(self) -> None:
         with patch.object(gcli_cache, "get") as gc:
-            gc.return_value = {
+            gc.return_value = _item(), {
                 "timeline": ({"type": "label", "id": 1},),
                 "issue_comments": ({"id": 1, "body": "hi"},),
                 "reviews": (),
@@ -151,7 +150,7 @@ class GetItemFieldsTests(unittest.TestCase):
                 "commits": ({"sha": "abc"},),
                 "files": (),
             }
-            fields, warnings = forgejo_export.get_item_fields(
+            _, fields, warnings = forgejo_export.get_item_fields(
                 _args(), gcli_cache.Cache(), _item(), "pulls",
                 forgejo_export.PR_FIELDS,
                 now=NOW, cache_max_age=MAX_AGE,
@@ -160,9 +159,7 @@ class GetItemFieldsTests(unittest.TestCase):
         self.assertEqual(fields["issue_comments"], [{"id": 1, "body": "hi"}])
         self.assertEqual(fields["commits"], [{"sha": "abc"}])
         self.assertEqual(fields["files"], [])
-        # Sanity: gcli_cache.get was invoked with the parsed datetime,
-        # not the ISO string, so the staleness check works.
-        self.assertEqual(gc.call_args.args[6], LIVE)
+        self.assertEqual(gc.call_args.args[5], _item())
         self.assertEqual(gc.call_args.kwargs["max_age"], MAX_AGE)
         self.assertEqual(gc.call_args.kwargs["now"], NOW)
 
@@ -170,7 +167,7 @@ class GetItemFieldsTests(unittest.TestCase):
         # No updated_at -> cannot gate the cache -> we'd refetch every
         # run forever. Better to skip with a warning than fake freshness.
         with patch.object(gcli_cache, "get") as gc:
-            fields, warnings = forgejo_export.get_item_fields(
+            _, fields, warnings = forgejo_export.get_item_fields(
                 _args(), gcli_cache.Cache(), _item(updated_at=None), "pulls",
                 forgejo_export.PR_FIELDS,
                 now=NOW, cache_max_age=MAX_AGE,
@@ -184,7 +181,7 @@ class GetItemFieldsTests(unittest.TestCase):
     def test_fetch_failure_returns_empty_fields_and_warning(self) -> None:
         # A failed sub-fetch must not abort the whole export run.
         with patch.object(gcli_cache, "get", side_effect=RuntimeError("boom")):
-            fields, warnings = forgejo_export.get_item_fields(
+            _, fields, warnings = forgejo_export.get_item_fields(
                 _args(), gcli_cache.Cache(), _item(number=7), "issues",
                 forgejo_export.ISSUE_FIELDS,
                 now=NOW, cache_max_age=MAX_AGE,
@@ -193,6 +190,20 @@ class GetItemFieldsTests(unittest.TestCase):
         self.assertIn("issues #7", warnings[0])
         self.assertIn("boom", warnings[0])
         self.assertEqual(fields, {"timeline": [], "issue_comments": []})
+
+
+    def test_the_item_comes_back_as_of_its_fields(self) -> None:
+        moved = _item(updated_at="2026-05-21T10:05:00Z")
+        with patch.object(gcli_cache, "get", return_value=(
+                moved, {"timeline": (), "issue_comments": ({"id": 1},)})):
+            item, fields, warnings = forgejo_export.get_item_fields(
+                _args(), gcli_cache.Cache(), _item(), "issues",
+                forgejo_export.ISSUE_FIELDS,
+                now=NOW, cache_max_age=MAX_AGE,
+            )
+        self.assertIs(item, moved)
+        self.assertEqual(fields["issue_comments"], [{"id": 1}])
+        self.assertEqual(warnings, [])
 
 
 class TimelineRenderTests(unittest.TestCase):

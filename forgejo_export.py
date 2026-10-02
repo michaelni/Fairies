@@ -207,30 +207,30 @@ def get_item_fields(
     *,
     now: datetime,
     cache_max_age: timedelta,
-) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
+) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]], list[str]]:
     """Fetch ``field_names`` for one PR/issue through gcli_cache.
 
-    Returns ``(fields, warnings)``. ``fields`` maps each name to a
+    Returns ``(item, fields, warnings)``, ``item`` as of the stamp the
+    fields were fetched at. ``fields`` maps each name to a
     list of dicts; empty lists when ``gcli_cache`` raised. Warnings
     are collapsed (one entry per failed item) since the cache fetches
     the whole field set atomically.
     """
     num = int(item["number"])
-    live_updated_at = iso_to_dt(item.get("updated_at"))
-    if live_updated_at is None:
+    if iso_to_dt(item.get("updated_at")) is None:
         msg = f"{kind} #{num}: missing updated_at, cannot gate cache"
         LOG.warning("%s", msg)
-        return {name: [] for name in field_names}, [msg]
+        return item, {name: [] for name in field_names}, [msg]
     try:
-        result = gcli_cache.get(
-            cache, args, kind, args.owner, args.repo, num, live_updated_at,
+        item, result = gcli_cache.get(
+            cache, args, kind, args.owner, args.repo, item,
             *field_names, max_age=cache_max_age, now=now,
         )
     except Exception as exc:
         msg = f"{kind} #{num}: {compact_ws(str(exc))[:400]}"
         LOG.warning("%s", msg)
-        return {name: [] for name in field_names}, [msg]
-    return {name: list(result[name]) for name in field_names}, []
+        return item, {name: [] for name in field_names}, [msg]
+    return item, {name: list(result[name]) for name in field_names}, []
 
 
 def ensure_clean_target(target: Path, *, gcli_account: str | None, forge_type: str, owner: str, repo: str, git: str) -> None:
@@ -752,21 +752,19 @@ def main() -> int:
 
     fetched_issues: list[tuple[dict[str, Any], dict[str, list[dict[str, Any]]], list[str]]] = []
     for issue in real_issues:
-        fields, warnings = get_item_fields(
+        fetched_issues.append(get_item_fields(
             args, caches["issues"], issue, "issues", ISSUE_FIELDS,
             now=now, cache_max_age=cache_max_age,
-        )
-        fetched_issues.append((issue, fields, warnings))
+        ))
 
     fetched_pulls: list[
         tuple[dict[str, Any], dict[str, list[dict[str, Any]]], list[str]]
     ] = []
     for pr in pulls:
-        fields, warnings = get_item_fields(
+        fetched_pulls.append(get_item_fields(
             args, caches["pulls"], pr, "pulls", PR_FIELDS,
             now=now, cache_max_age=cache_max_age,
-        )
-        fetched_pulls.append((pr, fields, warnings))
+        ))
 
     for path, cache in cache_by_path.items():
         gcli_cache.save_cache(path, cache)

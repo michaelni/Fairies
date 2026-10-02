@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import sys
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -48,7 +48,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import fairy  # noqa: E402
-import gcli_cache  # noqa: E402
 
 SELF = "Forgejo_Fairy"
 NOW = datetime(2026, 10, 2, 12, 0, tzinfo=timezone.utc)
@@ -89,17 +88,13 @@ def _call(comments: list[dict], *, posted_classification: str | None = None,
         min_age_days=0.25,
     )
     with (
-        patch.object(fairy, "get_pr_discussion",
-                     return_value=([], comments, [])),
-        patch.object(fairy, "get_pr_timeline", return_value=[]),
         patch.object(fairy, "get_auto_merge_info", return_value="no"),
         patch.object(fairy, "list_commit_statuses", return_value=[]),
     ):
         return fairy.prepare_pr(
             args, PR, now=NOW, self_login=SELF,
             wip_re=fairy.compile_wip_regex([]),
-            cache=gcli_cache.Cache(),
-            discussion_cache_max_age=timedelta(hours=1),
+            thread=([], comments, [], []),
             posted_classification=posted_classification)
 
 

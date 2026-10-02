@@ -155,17 +155,18 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
 
 
 def _fetch_thread(ns: argparse.Namespace, kind: str, item: dict, cache,
-                  cache_age: timedelta) -> tuple[list, list, list, list]:
+                  cache_age: timedelta) -> tuple[dict, tuple[list, list, list, list]]:
     """The item's (reviews, comments, review comments, timeline) --
     ``build_llm_discussion``'s argument order -- through the same cache
     the gates read; fetched first in the pass, so a prepare of the same
-    item hits the cache. Issues have no reviews or review comments."""
+    item hits the cache. Issues have no reviews or review comments.
+    Returned after the item, as of its thread."""
     if kind == "pr":
         return fairy.get_pr_thread(ns, item, cache=cache,
                                    cache_max_age=cache_age)
-    comments, timeline = issue_fairy.get_issue_discussion(
+    item, (comments, timeline) = issue_fairy.get_issue_discussion(
         ns, item, cache=cache, cache_max_age=cache_age)
-    return [], comments, [], timeline
+    return item, ([], comments, [], timeline)
 
 
 def _fetch_pr_head(ns: argparse.Namespace, number: int,
@@ -222,20 +223,22 @@ def _patch_ids(db: filedb.Db, ns: argparse.Namespace, kind: str,
 
 def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                   token: filedb.TicketId, item: dict, cache,
-                  cache_age: timedelta) -> dict | None:
+                  cache_age: timedelta) -> tuple[dict, tuple | None, dict | None]:
     """Refresh the item's filedb snapshot: its fields, discussion and
     forge status -- for a PR the "open"/"closed"/"merged" state, the
     auto-merge schedule, the approval and change-request counts
     (latest non-stale review per author) and the series' patch-ids,
     for an issue the "open"/"closed" state and its labels. A failure
-    costs freshness, never the scan of the item; returns the snapshot
-    written, None when it could not be refreshed. Raises Halted, after
-    halting the db, when the item's body, a comment, a review or a
-    review comment carries --halt-keyword; the reason names the poster
-    and links the post."""
+    costs freshness, never the scan of the item; returns the item, as of
+    its thread, the thread, None when it could not be fetched, and the
+    snapshot written, None when it could not be refreshed. Raises
+    Halted, after halting the db, when the item's body, a comment, a
+    review or a review comment carries --halt-keyword; the reason names
+    the poster and links the post."""
+    thread = None
     try:
-        reviews, comments, review_comments, timeline = _fetch_thread(
-            ns, kind, item, cache, cache_age)
+        item, thread = _fetch_thread(ns, kind, item, cache, cache_age)
+        reviews, comments, review_comments, timeline = thread
         if kind == "pr":
             base_sha = fairy.get_pr_base_sha(item)
             head_sha = fairy.get_pr_head_sha(item)
@@ -282,7 +285,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     except Exception as exc:
         logger.warning("%s #%s: item snapshot not refreshed: %s",
                        kind, token, exc)
-        return None
+        return item, thread, None
     if ns.halt_keyword:
         for post in (item, *comments, *reviews, *review_comments):
             if ns.halt_keyword in str(post.get("body") or ""):
@@ -291,7 +294,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                           f"{post.get('html_url') or snapshot['html_url']}")
                 halt_marker.halt(halt_marker.path(db.root, ns.halt_file), reason)
                 raise Halted(reason)
-    return snapshot
+    return item, thread, snapshot
 
 
 def _refresh_activity(db: filedb.Db, state: str, kind: str,
@@ -411,8 +414,8 @@ def snapshot_closed(db: filedb.Db, ns: argparse.Namespace, kind: str,
             continue
         stored = db.get(filedb.ITEM_STATE, kind, token)
         if not (stored and stored.get("updated_at") == item.get("updated_at")) \
-                and not _put_snapshot(db, ns, kind, token, item, cache,
-                                      timedelta.max):
+                and _put_snapshot(db, ns, kind, token, item, cache,
+                                  timedelta.max)[2] is None:
             failed.append(str(item["updated_at"]))
     return min(failed, key=iso_to_dt, default=None)
 
@@ -440,7 +443,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
         serve_operator()
         number = int(item["number"])
         token = str(number)
-        snapshot = _put_snapshot(db, ns, kind, token, item, cache, cache_age)
+        item, thread, snapshot = _put_snapshot(db, ns, kind, token, item, cache,
+                                               cache_age)
         prior = db.find(kind, token)
         if prior in ("llm", "outgoing"):
             if number in forced_ns:
@@ -518,13 +522,12 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             posted = prior_data if prior == "posted" and prior_data else {}
             prepared = fairy.safe_prepare_pr(
                 ns, item, now=now, self_login=self_login, wip_re=wip_re,
-                cache=cache, discussion_cache_max_age=cache_age,
+                thread=thread,
                 posted_classification=(posted.get("review") or {}).get("classification"))
         else:
             try:
                 prepared = issue_fairy.prepare_issue(
-                    ns, item, now=now, self_login=self_login,
-                    cache=cache, discussion_cache_max_age=cache_age)
+                    ns, item, now=now, self_login=self_login, thread=thread)
             except Exception as exc:
                 logger.error("issue #%d: prepare failed: %s", number, exc)
                 # an error/ ticket gives the failure a row, a summary
@@ -674,8 +677,9 @@ def ingest_item(db: filedb.Db, ns: argparse.Namespace, kind: str,
     forge_number = filedb.forge_number(number)
     item = fairy.get_pr(ns, forge_number) if kind == "pr" \
         else issue_fairy.get_issue(ns, forge_number)
-    snapshot = _put_snapshot(db, ns, kind, str(forge_number), item, cache,
-                             timedelta(hours=ns.discussion_cache_max_age_hours))
+    item, _, snapshot = _put_snapshot(
+        db, ns, kind, str(forge_number), item, cache,
+        timedelta(hours=ns.discussion_cache_max_age_hours))
     return item, snapshot
 
 

@@ -45,7 +45,7 @@ import re
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -54,7 +54,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import gcli_cache  # noqa: E402
 import fairy  # noqa: E402
 import issue_fairy  # noqa: E402
 import workset  # noqa: E402
@@ -68,7 +67,8 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
           workset_dir: Path | None = None,
           now: datetime | None = None,
           llm_review_cmd: str | None = None,
-          self_login: str | None = None) -> object:
+          self_login: str | None = None,
+          thread: tuple = ([], [], [], [])) -> object:
     args = SimpleNamespace(
         force_skip_prs=force_skip,
         force_review_prs=force_review,
@@ -85,16 +85,13 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
     )
     return fairy.prepare_pr(
         args, pr, now=now, self_login=self_login, wip_re=WIP_RE,
-        cache=gcli_cache.Cache(),
-        discussion_cache_max_age=timedelta(hours=1),
+        thread=thread,
     )
 
 
 class ForceReviewBypassesGatesTests(unittest.TestCase):
     def setUp(self) -> None:
-        for name, value in (("get_pr_discussion", ([], [], [])),
-                            ("get_pr_timeline", []),
-                            ("get_auto_merge_info", "no"),
+        for name, value in (("get_auto_merge_info", "no"),
                             ("get_pr_head_ref", None)):
             patcher = patch.object(fairy, name, return_value=value)
             patcher.start()
@@ -154,9 +151,8 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
         # not the label-edit-prone pr.updated_at
         pr = {"number": 1, "state": "open", "mergeable": False, "title": "x",
               "updated_at": "2026-08-30T00:00:00Z"}
-        with patch.object(fairy, "get_pr_discussion", return_value=(
-                [], [{"created_at": "2026-08-01T00:00:00Z", "body": "hi"}], [])):
-            decision = _call(pr)
+        decision = _call(pr, thread=([], [{"created_at": "2026-08-01T00:00:00Z",
+                                           "body": "hi"}], [], []))
         self.assertEqual(decision.reason, "has conflicts with the target branch")
         self.assertEqual(decision.last_activity,
                          datetime(2026, 8, 1, tzinfo=timezone.utc))
@@ -187,14 +183,12 @@ class RequestedReviewOverridesWipGateTests(unittest.TestCase):
 
     def _prepare(self, pr: dict, *, reviews: tuple = (), comments: tuple = ()) -> object:
         with (
-            patch.object(fairy, "get_pr_discussion",
-                         return_value=(list(reviews), list(comments), [])),
-            patch.object(fairy, "get_pr_timeline", return_value=[]),
             patch.object(fairy, "get_auto_merge_info", return_value="no"),
             patch.object(fairy, "get_pr_head_ref", return_value=None),
         ):
             return _call(pr, llm_review_cmd="./wrapper",
-                         self_login="Forgejo_Fairy")
+                         self_login="Forgejo_Fairy",
+                         thread=(list(reviews), list(comments), [], []))
 
     def test_request_and_mention_reach_a_wip_pr(self) -> None:
         pr = {"number": 24737, "state": "open", "mergeable": True,
@@ -229,9 +223,6 @@ class ForcedReviewIgnoresTriageSkipTests(unittest.TestCase):
     def test_forced_prepare_sets_ignore_triage_skip(self) -> None:
         pr = {"number": 7, "state": "open", "mergeable": True, "title": "ok"}
         with (
-            patch.object(fairy, "get_pr_discussion",
-                         return_value=([], [], [])),
-            patch.object(fairy, "get_pr_timeline", return_value=[]),
             patch.object(fairy, "get_auto_merge_info", return_value="no"),
             patch.object(fairy, "get_pr_head_ref", return_value=None),
         ):

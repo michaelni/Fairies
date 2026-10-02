@@ -96,12 +96,7 @@ class PrepareCase(unittest.TestCase):
     def prepare(self, flags: str, comments: list | None = None,
                 self_login: str | None = None, statuses: list | None = None,
                 pr: dict | None = None, reviews: list | None = None):
-        with mock.patch.object(
-                fairy, "get_pr_discussion",
-                return_value=(reviews or [], comments or [HUMAN_COMMENT], [])), \
-                mock.patch.object(fairy.gcli_cache, "get",
-                                  return_value={"timeline": []}), \
-                mock.patch.object(fairy, "list_commit_statuses",
+        with mock.patch.object(fairy, "list_commit_statuses",
                                   return_value=FAILING_CI if statuses is None
                                   else statuses), \
                 mock.patch.object(fairy, "get_auto_merge_info",
@@ -110,8 +105,7 @@ class PrepareCase(unittest.TestCase):
             return fairy.prepare_pr(
                 pr_ns(flags), pr or open_pr(), now=NOW, self_login=self_login,
                 wip_re=fairy.compile_wip_regex([]),
-                cache=gcli_cache.Cache(),
-                discussion_cache_max_age=timedelta(hours=1))
+                thread=(reviews or [], comments or [HUMAN_COMMENT], [], []))
 
 
 class RedCiRoutingTests(PrepareCase):
@@ -246,11 +240,9 @@ class ScanCase(unittest.TestCase):
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=gcli_cache.Cache()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"), \
-                mock.patch.object(agent, "_fetch_thread",
-                                  return_value=([], [], [], [])), \
-                mock.patch.object(fairy, "get_pr_discussion",
-                                  return_value=([], [], [])), \
-                mock.patch.object(fairy, "get_pr_timeline", return_value=[]), \
+                mock.patch.object(agent, "_fetch_thread", side_effect=lambda
+                                  ns, kind, item, *rest: (item, ([], [], [], []))
+                                  ) as self.fetch_thread, \
                 (mock.patch.object(fairy, "safe_prepare_pr", prepare)
                  if prepare is not None else contextlib.nullcontext()):
             agent.scan_pass(self.db, ns, None, now=NOW)
@@ -290,16 +282,16 @@ class CacheDefaultTests(unittest.TestCase):
 
 
 class DiscussionCacheMaxAgeTests(ScanCase):
-    """--discussion-cache-max-age-hours is the TTL the scan hands the
-    gates for the cached reviews/comments trio."""
+    """--discussion-cache-max-age-hours is the TTL of the scan's fetch of
+    the cached reviews/comments trio."""
 
     def ttl_for(self, flags: str) -> timedelta:
         prepare = mock.Mock(side_effect=lambda ns, pr, **kw: fairy.Decision(
             pr["number"], "t", "dev", "-", "skip", "no activity", None))
         self.scan(pr_ns(flags), [open_pr(1)], prepare=prepare)
-        return prepare.call_args.kwargs["discussion_cache_max_age"]
+        return self.fetch_thread.call_args.args[4]
 
-    def test_the_flag_sets_the_ttl_the_gates_see(self) -> None:
+    def test_the_flag_sets_the_ttl_of_the_fetch(self) -> None:
         self.assertEqual(self.ttl_for("--discussion-cache-max-age-hours 6"),
                          timedelta(hours=6))
 

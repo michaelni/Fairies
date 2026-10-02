@@ -582,8 +582,28 @@ class CopyAndOpenShellTests(unittest.TestCase):
             lc.copy_into_container(handle, Path("/x/agent.py"), "/work/.fairy")
         self.assertEqual(_ssh("podman exec cid mkdir -p /work/.fairy"),
                          run.call_args.args[0])
-        self.assertEqual(["tar", "-C", "/x", "-cf", "-", "agent.py"], popen_argvs[0])
+        self.assertEqual(["tar", "-b", "1", "-C", "/x", "-cf", "-", "agent.py"], popen_argvs[0])
         self.assertEqual(_ssh("podman cp - cid:/work/.fairy"), popen_argvs[1])
+
+    def test_copied_tar_stream_ends_at_the_end_of_archive_marker(self) -> None:
+        handle = lc.ContainerHandle(container_id="cid", image="i", network=None, host=HOST)
+        real_popen = subprocess.Popen
+        with tempfile.TemporaryDirectory() as scratch:
+            local = Path(scratch) / "agent.md"
+            local.write_bytes(b"x" * 30000)
+            stream = Path(scratch) / "stream.tar"
+
+            def popen(argv, **kw):
+                if argv[0] != "tar":
+                    argv = [sys.executable, "-c",
+                            "import sys; open(sys.argv[1], 'wb').write(sys.stdin.buffer.read())",
+                            str(stream)]
+                return real_popen(argv, **kw)
+
+            with mock.patch.object(lc.subprocess, "run", return_value=_completed(0)), \
+                    mock.patch.object(lc.subprocess, "Popen", side_effect=popen):
+                lc.copy_into_container(handle, local, "/work/.grok-run")
+            self.assertEqual(512 + 59 * 512 + 2 * 512, stream.stat().st_size)
 
     def test_copy_raises_when_cp_fails_every_attempt(self) -> None:
         handle = lc.ContainerHandle(container_id="cid", image="i", network=None, host=HOST)

@@ -995,7 +995,11 @@ def copy_into_container(
             f"mkdir -p {dest_dir} in container failed: "
             f"{cp.stderr_text}"
         )
-    tar_argv = ["tar", "-C", str(local_path.parent), "-cf", "-", local_path.name]
+    # Without -b 1 tar pads the stream to 10240 bytes, and podman 4.9.3 cp
+    # failed with "io: read/write on closed pipe" on every try at each of
+    # 7 file sizes whose padding reached past a 32768 byte offset of the
+    # stream; with -b 1 none of 131 sizes failed (observed 2026-10-02).
+    tar_argv = ["tar", "-b", "1", "-C", str(local_path.parent), "-cf", "-", local_path.name]
     cp_argv = handle.host.argv(["podman", "cp", "-", f"{handle.container_id}:{dest_dir}"])
     logger.info("copy into container id=%s file=%s -> %s",
                 handle.container_id[:12], local_path, dest_dir)

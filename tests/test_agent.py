@@ -1084,11 +1084,27 @@ class UnaffectingChangeSendTests(SendCase):
     def test_an_allowlisted_label_change_is_noted_in_the_post(self) -> None:
         self.ns.triage_labels = ["swscale"]
         submit = self.send_updated([LABEL, dict(LABEL, label="new")])
-        note = ("m\n\nThis review did not see the label changes made after "
+        note = ("m\n\nThis review did not see the changes made after "
                 "it started: +swscale")
         self.assertEqual(submit.call_args.args[1].llm_message, note)
         self.assertEqual(self.db.get("posted", "pr", "1")["review"]["message"],
                          note)
+
+    def test_every_housekeeping_change_is_noted_in_the_post(self) -> None:
+        at = "2026-07-20T00:00:00Z"
+        submit = self.send_updated([
+            MILESTONE,
+            {"type": "assignees", "created_at": at, "user": {"login": "a"}, "body": "",
+             "assignee": {"login": "bob"}, "assignee_team": None, "removed_assignee": False},
+            {"type": "change_title", "created_at": at, "user": {"login": "a"}, "body": "",
+             "old_title": "x", "new_title": "y"},
+            {"type": "pin", "created_at": at, "user": {"login": "a"}, "body": ""},
+            {"type": "pull_scheduled_merge", "created_at": at, "user": {"login": "a"},
+             "body": ""}])
+        self.assertEqual(
+            submit.call_args.args[1].llm_message,
+            "m\n\nThis review did not see the changes made after it started: "
+            "milestone 9.1, assigned bob, title now \"y\", pinned, auto merge scheduled")
 
     def test_a_label_change_the_review_saw_is_not_noted(self) -> None:
         self.ns.triage_labels = ["swscale"]

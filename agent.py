@@ -1000,20 +1000,46 @@ def staleness_reason(ns: argparse.Namespace, kind: str, item: dict,
     return issue_fairy.check_issue_still_unchanged(ns, item, decision)
 
 
-def _unseen_label_note(ns: argparse.Namespace, ticket: dict,
-                       snapshot: dict | None) -> str:
-    """The closing line telling a verdict's readers which --triage-label
-    labels changed after its review sampled the item, "" when none did."""
+# How the closing line of a posted verdict words a change its review
+# did not see, by discussion kind. Labels are named only when they are
+# ones the model may set itself, a labeler's standard ones go unmentioned.
+_UNSEEN_CHANGE_WORDS: dict[str, Callable[[dict], str]] = {
+    "label_added": lambda e: "+" + e["label"],
+    "label_removed": lambda e: "-" + e["label"],
+    "assigned": lambda e: "assigned " + e["assignee"],
+    "unassigned": lambda e: "unassigned " + e["assignee"],
+    "milestone_set": lambda e: f"milestone {e['milestone']}",
+    "milestone_changed": lambda e: f"milestone {e['new_milestone']}",
+    "milestone_removed": lambda e: f"milestone {e['milestone']} removed",
+    "title_changed": lambda e: f"title now \"{e['new_title']}\"",
+    "dependency_added": lambda e: f"dependency on {e['repository']}#{e['number']}",
+    "dependency_removed": lambda e: f"dependency on {e['repository']}#{e['number']} dropped",
+    "head_branch_deleted": lambda e: "head branch deleted",
+    "locked": lambda e: "locked",
+    "review_dismissed": lambda e: "a review dismissed",
+    "due_date_set": lambda e: f"due {e['date']}",
+    "due_date_changed": lambda e: f"due {e['new_date']}",
+    "due_date_removed": lambda e: "due date removed",
+    **{kind: (lambda e, kind=kind: kind.replace("_", " "))
+       for kind in fairy.FIELDLESS_KINDS.values()},
+}
+
+
+def _unseen_changes_note(ns: argparse.Namespace, ticket: dict,
+                         snapshot: dict | None) -> str:
+    """The closing line telling a verdict's readers what changed on the
+    item after its review sampled it, "" when nothing did."""
     sampled = iso_to_dt(ticket.get("expected_updated_at"))
     if snapshot is None or sampled is None:
         return ""
-    changes = [("-" if entry["kind"] == "label_removed" else "+") + entry["label"]
+    changes = [_UNSEEN_CHANGE_WORDS[entry["kind"]](entry)
                for entry in snapshot["discussion"]
-               if entry["kind"] in ("label_added", "label_removed")
-               and entry["label"] in ns.triage_labels
+               if entry["kind"] in _UNSEEN_CHANGE_WORDS
+               and (not entry["kind"].startswith("label_")
+                    or entry["label"] in ns.triage_labels)
                and fairy.discussion_time(entry) > sampled
                and entry not in ticket.get("discussion", ())]
-    return (f"\n\nThis review did not see the label changes made after it "
+    return (f"\n\nThis review did not see the changes made after it "
             f"started: {', '.join(changes)}" if changes else "")
 
 
@@ -1077,7 +1103,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
         if reason is None:
             if decision.action in fairy.ACTIONABLE_DECISIONS:
                 decision = dataclasses_replace(decision, llm_message=(
-                    decision.llm_message + _unseen_label_note(ns, ticket, snapshot)))
+                    decision.llm_message + _unseen_changes_note(ns, ticket, snapshot)))
             reason = post_decision(ns, kind, item, decision, cache=cache,
                                    counts=counts)
         if reason is None:

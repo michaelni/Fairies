@@ -124,6 +124,19 @@ class LinkPublishedBranchTests(unittest.TestCase):
             f"video at [48, 53418363) on [fairy/pr23842-test-ref]({BRANCH_URL})."
             " MOV's [packet-selection logic](https://forge/mov)")
 
+    def test_code_span_holding_a_mention_is_linked_as_a_whole(self) -> None:
+        for span, url in (("`git log fairy/pr23842-test-ref -3`", BRANCH_URL),
+                          ("`git show 57ac82e08a73 dc21a3ef`", COMMIT_URL),
+                          ("`git log fairy/pr23842-test-ref dc21a3ef`", BRANCH_URL),
+                          ("``git log `fairy/pr23842-test-ref` ``", BRANCH_URL)):
+            with self.subTest(span=span):
+                self.assertEqual(linked(f"run {span} now"), f"run [{span}]({url}) now")
+
+    def test_other_code_spans_and_linked_ones_are_untouched(self) -> None:
+        text = ("`git log master`, [`git log fairy/pr23842-test-ref`](https://forge/log),"
+                " [`a[0]` on ` fairy/pr23842-test-ref here](https://forge/log)")
+        self.assertEqual(linked(text), text)
+
     def test_other_branches_and_hashes_are_untouched(self) -> None:
         text = "fairy/pr23842-test-ref-2, fairy/pr23842-test-reff, dc21a3, dc21a3ef5d6f"
         self.assertEqual(linked(text), text)

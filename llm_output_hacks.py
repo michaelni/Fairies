@@ -71,16 +71,28 @@ def hide_scope_block(message: str) -> str:
     return "\n".join(lines[:start] + ["<!--", *scope, "-->"] + lines[end:])
 
 
+def _code_span(ticks: str) -> str:
+    """Pattern of a markdown code span within a line, its backtick
+    string captured as the group named ``ticks``."""
+    end = rf"(?<!`)(?P={ticks})(?!`)"
+    return rf"(?<!`)(?P<{ticks}>`+)(?!`)(?:(?!{end}).)+{end}"
+
+
 def _link_mentions(message: str, pattern: str,
                    url_of: Callable[[str], str | None]) -> str:
     """Turn every bare or backticked match of ``pattern`` that
-    ``url_of`` knows a page for into a markdown link; matches already
-    inside a link or URL stay."""
+    ``url_of`` knows a page for, and every code span holding such a
+    match, into a markdown link; matches already inside a link or URL
+    stay."""
+    mention = rf"(?<![\w/\[`+-])(?P<tick>`?)(?P<mention>{pattern})(?P=tick)(?![\w/\]`+-])"
+
     def link(match: re.Match[str]) -> str:
-        text = match.group(2)
-        url = text and url_of(text)
-        return match.group(0) if url is None else f"[{text}]({url})"
-    return re.sub(rf"\[[^\[\]\n]*\]\([^)\s]*\)|(?<![\w/\[`+-])(`?)({pattern})\1(?![\w/\]`+-])",
+        mentions = [match] if match["mention"] else re.finditer(
+            mention, (match["code"] or "").strip("`"))
+        url = next(filter(None, (url_of(found["mention"]) for found in mentions)), None)
+        return match[0] if url is None else f"[{match['mention'] or match[0]}]({url})"
+    link_text = rf"(?:{_code_span('text_ticks')}|(?!{_code_span('lone_ticks')})[^\[\]\n])*"
+    return re.sub(rf"\[{link_text}\]\([^)\s]*\)|{mention}|(?P<code>{_code_span('ticks')})",
                   link, message)
 
 
@@ -95,7 +107,8 @@ def link_published_branch(message: str, forge_branch: str, sha: str,
     """Link the mentions of a published branch (its forge name, e.g.
     ``fairy/<name>``, or a backticked ``<name>``, linked under the
     forge name) and of its tip commit (any abbreviation of
-    ``sha``) to their forge pages; fenced code blocks stay verbatim."""
+    ``sha``) to their forge pages. A code span holding a mention is
+    linked as a whole; fenced code blocks stay verbatim."""
     def link(prose: str) -> str:
         prose = _link_mentions(_by_forge_name(prose, forge_branch),
                                re.escape(forge_branch), lambda _: branch_url)

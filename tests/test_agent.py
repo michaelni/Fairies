@@ -857,7 +857,7 @@ class LifecycleTests(AgentCase):
 def verdict_ticket(n: int, classification: str = "moderate_issues",
                    msg: str = "m", labels: list | None = None,
                    **fields) -> dict:
-    t = {"title": f"t{n}", "author": "a", "skip_backoff_h": 24,
+    t = {"title": f"t{n}", "author": "a", "body": "", "skip_backoff_h": 24,
          "review": {"classification": classification, "message": msg,
                     "label_changes": labels or []},
          "expected_updated_at": "2026-07-19T10:00:00Z",
@@ -1022,6 +1022,60 @@ class RebaseReuseTests(RebasedSeriesCase):
                      verdict_ticket(1, expected_patch_ids=["p1"]))
         self.scan([self.pushed()])
         self.assertEqual(self.db.find("pr", "1"), "queued")
+
+
+REVIEW_REQUEST = {"type": "review_request", "created_at": "2026-07-20T00:00:00Z",
+                  "user": {"login": "a"}, "body": "",
+                  "assignee": {"login": "bob"}, "removed_assignee": False}
+LABEL = {"type": "label", "created_at": "2026-07-20T00:00:00Z",
+         "user": {"login": "carol"}, "body": "1", "label": "swscale",
+         "removed_label": False}
+MILESTONE = {"type": "milestone", "created_at": "2026-07-20T00:00:00Z",
+             "user": {"login": "a"}, "body": "", "milestone": "9.1", "old_milestone": None}
+
+
+class UnaffectingChangeSendTests(SendCase):
+    """Review requests and label changes after the review leave the
+    verdict sendable; anything else beside them still blocks."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.db.push("outgoing", "pr", "1", verdict_ticket(1))
+
+    def send_updated(self, timeline: list[dict], **changed) -> mock.Mock:
+        self.thread.return_value = ([], [], [], timeline, {})
+        with mock.patch.object(fairy, "submit_decision_action",
+                               return_value=None) as submit:
+            self.send(pr_ns=self.ns, changed={"updated_at": "later", **changed})
+        return submit
+
+    def test_a_review_request_posts(self) -> None:
+        self.send_updated([REVIEW_REQUEST]).assert_called_once()
+
+    def test_a_label_change_posts(self) -> None:
+        self.send_updated([LABEL]).assert_called_once()
+
+    def test_a_description_edit_beside_a_label_change_blocks(self) -> None:
+        self.send_updated([LABEL], body="edited").assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR updated_at changed")
+
+    def test_a_milestone_beside_a_label_change_blocks(self) -> None:
+        self.send_updated([LABEL, MILESTONE]).assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR updated_at changed")
+
+    def test_a_label_change_before_the_review_explains_nothing(self) -> None:
+        self.send_updated([dict(LABEL, created_at="2026-07-19T09:00:00Z")]
+                          ).assert_not_called()
+
+    def test_a_standing_verdict_survives_a_label_change_in_auto_mode(self) -> None:
+        self.ns.auto_mode = True
+        self.thread.return_value = ([], [], [], [LABEL], {})
+        self.db.push("reviewed", "pr", "2", verdict_ticket(2))
+        self.scan([dict(make_pr(2), updated_at="later")])
+        self.assertEqual(self.db.find("pr", "2"), "reviewed")
+        self.prepare.assert_not_called()
 
 
 class SendTests(SendCase):

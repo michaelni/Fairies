@@ -173,12 +173,12 @@ __all__ = [
     "make_parser",
     "manual_action_description",
     "max_dt",
-    "only_rebased_since",
     "parse_args",
     "post_label_explanations",
     "prepared_pr_from_dict",
     "prepared_to_dict",
     "reactions_by_content",
+    "review_unaffected_since",
     "reviewed_patch_ids",
     "safe_apply_llm_review_to_prepared",
     "safe_prepare_pr",
@@ -255,6 +255,7 @@ class Decision:
     expected_pr_updated_at: str | None = None
     expected_head_sha: str | None = None
     expected_patch_ids: tuple[str, ...] | None = None
+    expected_body: str | None = None
     # Names of commit-status contexts whose latest state needs a
     # human to act in the Forgejo UI. Both fields are propagated to
     # the end-of-run summary which lists affected PRs grouped by
@@ -1029,20 +1030,34 @@ def branch_publication_block(
     return None
 
 
-def only_rebased_since(snapshot: dict | None, sampled_at: str | None,
-                       expected_patch_ids: Sequence[str] | None) -> bool:
+def review_unaffected_since(snapshot: dict | None, sampled_at: str | None,
+                            expected_head_sha: str | None,
+                            expected_patch_ids: Sequence[str] | None,
+                            expected_body: str | None) -> bool:
     """Whether everything that arrived on a PR after a review sampled
-    it at ``sampled_at`` is pushes that kept the series' patch-ids at
-    ``expected_patch_ids``, per the PR's items/ ``snapshot``: the head
-    moved, the patches did not. False whenever one of the three is
-    unknown."""
+    it at ``sampled_at`` leaves the review standing, per the PR's items/
+    ``snapshot``: review requests, label changes and pushes that kept
+    the series -- at least one of them, an update with nothing recorded
+    behind it is unexplained -- and the description still
+    ``expected_body``. The series is kept
+    while the head is still ``expected_head_sha`` or the patch-ids
+    still ``expected_patch_ids`` (None when unknown). False when
+    ``snapshot`` or ``sampled_at`` is unknown."""
     sampled = iso_to_dt(sampled_at)
-    return (snapshot is not None and sampled is not None
-            and expected_patch_ids is not None
-            and snapshot.get("patch_ids") == list(expected_patch_ids)
-            and all(entry.get("kind") == "push"
-                    for entry in snapshot.get("discussion") or ()
-                    if discussion_time(entry) > sampled))
+    if snapshot is None or sampled is None:
+        return False
+    kinds = {entry["kind"] for entry in snapshot["discussion"]
+             if discussion_time(entry) > sampled}
+    types = {event["type"] for event in snapshot["events"]
+             if discussion_time(event) > sampled}
+    return (bool(kinds) and kinds <= {"push", "review_request", "review_request_withdrawn",
+                                      "label_added", "label_removed"}
+            and types <= {PUSH_EVENT, forge_gcli.REVIEW_REQUEST_EVENT,
+                          forge_gcli.LABEL_EVENT}
+            and snapshot["body"] == expected_body
+            and (snapshot["head_sha"] == expected_head_sha
+                 or expected_patch_ids is not None
+                 and snapshot["patch_ids"] == list(expected_patch_ids)))
 
 
 def check_pr_still_unchanged(
@@ -1064,13 +1079,14 @@ def check_pr_still_unchanged(
         return "PR is no longer open"
     head_moved = (decision.expected_head_sha is not None
                   and get_pr_head_sha(current) != decision.expected_head_sha)
-    rebased = head_moved and only_rebased_since(
-        snapshot, decision.expected_pr_updated_at, decision.expected_patch_ids)
-    if head_moved and not rebased:
+    unaffected = review_unaffected_since(
+        snapshot, decision.expected_pr_updated_at, decision.expected_head_sha,
+        decision.expected_patch_ids, decision.expected_body)
+    if head_moved and not unaffected:
         return "PR head changed"
     if (decision.expected_pr_updated_at is not None
             and current.get("updated_at") != decision.expected_pr_updated_at
-            and not rebased):
+            and not unaffected):
         return "PR updated_at changed"
     return None
 

@@ -228,8 +228,9 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     """Refresh the item's filedb snapshot: its fields, discussion and
     forge status -- for a PR the "open"/"closed"/"merged" state, the
     auto-merge schedule, the approval and change-request counts
-    (latest non-stale review per author) and the series' patch-ids,
-    for an issue the "open"/"closed" state and its labels. A failure
+    (latest non-stale review per author), the series' patch-ids and the
+    type and time of each timeline event, for an issue the
+    "open"/"closed" state and its labels. A failure
     costs freshness, never the scan of the item; returns the item, as of
     its thread, the thread, None when it could not be fetched, and the
     snapshot written, None when it could not be refreshed. Raises
@@ -258,6 +259,8 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                 "base_sha": base_sha,
                 "head_sha": head_sha,
                 "patch_ids": _patch_ids(db, ns, kind, token, base_sha, head_sha),
+                "events": [{"type": event["type"], "created_at": event["created_at"]}
+                           for event in timeline],
             }
         else:
             status = {
@@ -464,13 +467,13 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # carry label changes: they sit in reviewed/ awaiting the
             # operator, and a re-queue would burn an LLM run and yank
             # the row out from under the cursor every scan.
-            if kind == "pr" and prior_data.get("expected_head_sha") \
-                    != fairy.get_pr_head_sha(item):
-                stands = fairy.only_rebased_since(
+            stands = prior_data.get("expected_updated_at") == item.get("updated_at")
+            if kind == "pr" and (not stands or prior_data.get("expected_head_sha")
+                                 != fairy.get_pr_head_sha(item)):
+                stands = fairy.review_unaffected_since(
                     snapshot, prior_data.get("expected_updated_at"),
-                    prior_data.get("expected_patch_ids"))
-            else:
-                stands = prior_data.get("expected_updated_at") == item.get("updated_at")
+                    prior_data.get("expected_head_sha"),
+                    prior_data.get("expected_patch_ids"), prior_data.get("body"))
             if stands:
                 continue  # standing verdict; reuse
         if prior == "cancelled" and number not in forced_ns and prior_data \
@@ -974,7 +977,8 @@ def ticket_decision(kind: str, number, ticket: dict) -> fairy.Decision | None:
         expected_pr_updated_at=ticket.get("expected_updated_at"),
         expected_head_sha=ticket.get("expected_head_sha"),
         expected_patch_ids=(None if ticket.get("expected_patch_ids") is None
-                            else tuple(ticket["expected_patch_ids"])))
+                            else tuple(ticket["expected_patch_ids"])),
+        expected_body=ticket.get("body"))
 
 
 def postable(decision: fairy.Decision | None) -> bool:
@@ -988,8 +992,9 @@ def staleness_reason(ns: argparse.Namespace, kind: str, item: dict,
                      snapshot: dict | None) -> str | None:
     """Why ``decision`` must not be posted onto ``item`` as it is now:
     the item moved since the review, or is no longer open. A PR's
-    ``snapshot`` (its refreshed items/ record) tells a push that only
-    rebased the series, which does not count as moving."""
+    ``snapshot`` (its refreshed items/ record) tells pushes that only
+    rebased the series, review requests and label changes, which do not
+    count as moving."""
     if kind == "pr":
         return fairy.check_pr_still_unchanged(ns, item, decision, snapshot)
     return issue_fairy.check_issue_still_unchanged(ns, item, decision)

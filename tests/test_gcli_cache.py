@@ -507,6 +507,11 @@ class GetEndToEndTests(unittest.TestCase):
         self.assertEqual(result["timeline"], ({"x": 1},))
         self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 0)
 
+    def test_an_item_without_updated_at_raises(self) -> None:
+        with self.assertRaises(RuntimeError):
+            get(Cache(), ARGS, "pulls", "o", "r", {"number": 1}, "timeline",
+                max_age=MAX_AGE, now=NOW)
+
     def test_unknown_field_raises(self) -> None:
         with self.assertRaises(ValueError) as ctx:
             call_get(Cache(), "pulls", patch_fetch(self), make_refetch([LIVE]),

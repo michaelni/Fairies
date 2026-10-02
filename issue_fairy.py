@@ -49,7 +49,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 import gcli_cache
-from common import attachment_urls, iso_to_dt, parse_side_args
+from common import attachment_urls, parse_side_args
 import forge_gcli
 from forge_gcli import (
     KIND_ISSUE,
@@ -212,12 +212,6 @@ def get_issue_discussion(
 ) -> tuple[ApiObject, tuple[list[ApiObject], list[ApiObject]]]:
     """Return ``issue`` and its ``(comments, timeline)`` via the cache,
     the issue as of the stamp they were fetched at."""
-    number = int(issue["number"])
-    if iso_to_dt(issue.get("updated_at")) is None:
-        raise RuntimeError(
-            f"issue #{number} is missing or has unparseable updated_at; "
-            f"refusing to cache against an unknown freshness key"
-        )
     issue, fields = gcli_cache.get(
         cache, args, "issues", args.owner, args.repo, issue,
         "issue_comments", "timeline",

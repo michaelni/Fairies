@@ -45,7 +45,6 @@ import gcli_cache
 from common import (
     add_color_arg,
     attachment_urls,
-    iso_to_dt,
     setup_logging,
 )
 from forge_gcli import add_forge_repo_args, norm_user
@@ -217,10 +216,6 @@ def get_item_fields(
     the whole field set atomically.
     """
     num = int(item["number"])
-    if iso_to_dt(item.get("updated_at")) is None:
-        msg = f"{kind} #{num}: missing updated_at, cannot gate cache"
-        LOG.warning("%s", msg)
-        return item, {name: [] for name in field_names}, [msg]
     try:
         item, result = gcli_cache.get(
             cache, args, kind, args.owner, args.repo, item,

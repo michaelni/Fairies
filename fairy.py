@@ -1157,12 +1157,6 @@ def get_pr_thread(
     fields share one entry stamp and one ``updated_at`` refetch, where
     separate discussion and timeline calls pay two -- and, on a changed
     PR, drop and refetch each other's fields as non-refetched siblings."""
-    pr_number = int(pr["number"])
-    if iso_to_dt(pr.get("updated_at")) is None:
-        raise RuntimeError(
-            f"PR #{pr_number} is missing or has unparseable updated_at; "
-            f"refusing to cache against an unknown freshness key"
-        )
     pr, fields = gcli_cache.get(
         cache, args, "pulls", args.owner, args.repo, pr,
         "reviews", "issue_comments", "review_comments",

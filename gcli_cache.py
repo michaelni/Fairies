@@ -220,16 +220,16 @@ def get(
 ) -> tuple[dict, dict[str, tuple[dict, ...]]]:
     """Return one PR or issue and its ``fields``, the item as of the
     stamp the fields were fetched at: ``item`` itself on a cache hit,
-    the loop's last read of it otherwise. ``item``'s ``updated_at``
-    must parse.
+    the loop's last read of it otherwise. Raises RuntimeError when
+    ``item`` has no parseable ``updated_at`` or it is still moving after
+    MAX_REFETCH_ATTEMPTS fetches.
 
     Cache hits (matching ``updated_at`` and, for edit-prone fields,
     within ``max_age``) are served directly. Misses go through the
     stable-fetch loop; if any edit-prone field is missed the rest of
     the trio is fetched too so they share a stamp. When ``updated_at``
     advanced, non-refetched siblings are dropped (next request
-    refetches them). Raises RuntimeError when ``updated_at`` is still
-    moving after MAX_REFETCH_ATTEMPTS fetches.
+    refetches them).
     """
     bad = [f for f in fields if (kind, f) not in FETCH]
     if bad:
@@ -237,7 +237,11 @@ def get(
     if now is None:
         now = datetime.now(timezone.utc)
     n = int(item["number"])
-    live_updated_at = iso_to_dt(item["updated_at"])
+    live_updated_at = iso_to_dt(item.get("updated_at"))
+    if live_updated_at is None:
+        raise RuntimeError(f"gcli_cache: {kind} #{n} is missing or has unparseable "
+                           f"updated_at; refusing to cache against an unknown "
+                           f"freshness key")
     key = entry_key(args, kind, owner, repo, n)
     old = cache.entries.get(key)
 

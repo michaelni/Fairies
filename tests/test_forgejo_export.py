@@ -166,15 +166,13 @@ class GetItemFieldsTests(unittest.TestCase):
     def test_missing_updated_at_returns_empty_fields_and_warning(self) -> None:
         # No updated_at -> cannot gate the cache -> we'd refetch every
         # run forever. Better to skip with a warning than fake freshness.
-        with patch.object(gcli_cache, "get") as gc:
-            _, fields, warnings = forgejo_export.get_item_fields(
-                _args(), gcli_cache.Cache(), _item(updated_at=None), "pulls",
-                forgejo_export.PR_FIELDS,
-                now=NOW, cache_max_age=MAX_AGE,
-            )
-        self.assertEqual(gc.call_count, 0)
+        _, fields, warnings = forgejo_export.get_item_fields(
+            _args(), gcli_cache.Cache(), _item(updated_at=None), "pulls",
+            forgejo_export.PR_FIELDS,
+            now=NOW, cache_max_age=MAX_AGE,
+        )
         self.assertEqual(len(warnings), 1)
-        self.assertIn("missing updated_at", warnings[0])
+        self.assertIn("missing or has unparseable updated_at", warnings[0])
         self.assertEqual(set(fields), set(forgejo_export.PR_FIELDS))
         self.assertTrue(all(v == [] for v in fields.values()))
 

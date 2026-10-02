@@ -97,7 +97,7 @@ class OwnFairyBranchTests(unittest.TestCase):
 
 
 class PayloadTests(unittest.TestCase):
-    def _payload(self, args: SimpleNamespace) -> dict:
+    def _payload(self, args: SimpleNamespace, pr: dict = PR) -> dict:
         captured: dict[str, str] = {}
 
         def fake_run_cmd(_cmd, *, input_text: str, **_kw):
@@ -113,9 +113,33 @@ class PayloadTests(unittest.TestCase):
                          return_value=("patch", False)),
             patch.object(fairy, "run_cmd", side_effect=fake_run_cmd),
         ):
-            fairy.run_llm_review(args, PR, "no", [], "Forgejo_Fairy",
+            fairy.run_llm_review(args, pr, "no", [], "Forgejo_Fairy",
                                  reactions={"rocket": ["michaelni"]})
         return json.loads(captured["input_text"])
+
+    def test_the_standing_reaches_the_payload(self) -> None:
+        """Shapes as FFmpeg PR #24846 carries them: user objects under
+        ``assignees`` and ``requested_reviewers`` (null where the forge
+        could not load one), a milestone object, ``is_locked`` and
+        ``draft`` flags."""
+        pr = self._payload(_args(), {
+            **PR, "assignees": [{"login": "michaelni"}, None],
+            "requested_reviewers": [{"login": "alice"}, None, {"login": "bob"}],
+            "milestone": {"title": "FFmpeg 9.1 branching"},
+            "is_locked": True, "draft": True})["pull_request"]
+        self.assertEqual(
+            {k: pr[k] for k in ("assignees", "requested_reviewers", "milestone",
+                                "locked", "draft")},
+            {"assignees": ["michaelni"], "requested_reviewers": ["alice", "bob"],
+             "milestone": "FFmpeg 9.1 branching", "locked": True, "draft": True})
+
+    def test_a_bare_pull_request_has_empty_standing(self) -> None:
+        pr = self._payload(_args())["pull_request"]
+        self.assertEqual(
+            {k: pr[k] for k in ("assignees", "requested_reviewers", "milestone",
+                                "locked", "draft")},
+            {"assignees": [], "requested_reviewers": [], "milestone": None,
+             "locked": False, "draft": False})
 
     def test_the_descriptions_reactions_reach_the_payload(self) -> None:
         pr = self._payload(_args())["pull_request"]

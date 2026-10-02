@@ -1544,6 +1544,11 @@ class UILoop:
             if data.get("head_branch"):
                 byline += [("label", "   branch "),
                            ("text", str(data["head_branch"])[:width])]
+            if shown.get("assignees"):
+                byline += [("label", "   assignee "),
+                           ("text", ", ".join(map(str, shown["assignees"])))]
+            if shown.get("milestone"):
+                byline += [("label", "   milestone "), ("text", str(shown["milestone"]))]
             head.append(byline)
         if item.error:
             head += tui_core.wrap([("log_err", str(item.error))], width,

@@ -147,6 +147,7 @@ __all__ = [
     "list_issue_comments",
     "list_item_reactions",
     "attach_reactions",
+    "item_locked",
     "list_issue_timeline",
     "list_pr_commits",
     "list_pr_files",
@@ -944,6 +945,12 @@ def list_pr_review_comments(
                 pr_number, review_id, exc,
             )
     return out
+
+
+def item_locked(item: dict) -> bool:
+    """Whether the discussion of a PR or issue is locked; Forgejo spells
+    the flag ``is_locked``, GitHub ``locked``."""
+    return bool(item.get("is_locked") or item.get("locked"))
 
 
 def list_item_reactions(args: argparse.Namespace, owner: str, repo: str,

@@ -276,6 +276,11 @@ def _pr_user_text(
         "changed_files": pr.get("changed_files"),
         "auto_merge": pr.get("auto_merge"),
         "reactions": pr.get("reactions"),
+        "assignees": pr.get("assignees"),
+        "requested_reviewers": pr.get("requested_reviewers"),
+        "milestone": pr.get("milestone"),
+        "draft": pr.get("draft"),
+        "locked": pr.get("locked"),
         "reviewer_username": reviewer_username,
         **role_info,
         "patch_truncated_by_caller": bool(request.get("patch_truncated")),
@@ -345,6 +350,10 @@ def make_issue_user_text(request: JsonObject, *, lead: str = "Analyze this issue
         "reviewer_username": reviewer_username,
         "labels": [name for name in (issue.get("labels") or []) if isinstance(name, str) and name],
         "reactions": issue.get("reactions"),
+        "assignees": issue.get("assignees"),
+        "milestone": issue.get("milestone"),
+        "due_date": issue.get("due_date"),
+        "locked": issue.get("locked"),
         # includes attachments not linked from the body text; download by url
         "attachment_urls": issue.get("attachment_urls") or [],
         "discussion_items": len(discussion),
@@ -835,7 +844,9 @@ The prior discussion is a chronological list. Every item carries its
   item; ``body`` is the forge's rendering of that commit.
 
 ``reactions``, on the metadata and on items, list who reacted how to
-that statement: ``+1`` agrees, ``-1`` disagrees.
+that statement: ``+1`` agrees, ``-1`` disagrees. Weigh a statement by
+who stands behind it; the metadata's ``assignees`` are responsible for
+the item and its ``requested_reviewers`` were asked to review it.
 
 the reviewer/our messages/replies/posts/reviews are the ones where the author field matches the reviewer_username
 Others may quote our replies as part of their messages, this is not activity from us.

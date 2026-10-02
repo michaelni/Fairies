@@ -124,7 +124,7 @@ from forge_gcli import (
     post_issue_comment,
     run_cmd,
 )
-from forgejo_export import labels
+from forgejo_export import labels, milestone
 from llm_output_hacks import link_published_branch, names_published_branch
 import workset
 
@@ -165,6 +165,7 @@ __all__ = [
     "get_pr_thread",
     "invoke_llm_wrapper",
     "item_body_mentions_user",
+    "item_standing",
     "label_names",
     "list_open_prs",
     "llm_skip_reason",
@@ -1511,6 +1512,23 @@ def build_ci_triage_payload(
     }
 
 
+def item_standing(item: ApiObject) -> dict:
+    """Who a PR or issue is assigned to, its milestone and whether its
+    discussion is locked: ``assignees`` by login, ``milestone`` title or
+    None, ``locked``."""
+    return {
+        "assignees": _logins(item.get("assignees")),
+        "milestone": milestone(item),
+        "locked": forge_gcli.item_locked(item),
+    }
+
+
+def _logins(users: object) -> list[str]:
+    """The logins in a forge user list, skipping the null a forge puts
+    where it could not load the user."""
+    return [user["login"] for user in users or () if isinstance(user, dict) and user.get("login")]
+
+
 def get_pr_author(pr: ApiObject) -> str:
     user = pr.get("user") or {}
     for key in ("login", "username", "full_name"):
@@ -2466,6 +2484,9 @@ def run_llm_review(
             "auto_merge": auto_merge,
             "labels": labels(pr),
             "reactions": reactions or {},
+            **item_standing(pr),
+            "requested_reviewers": _logins(pr.get("requested_reviewers")),
+            "draft": bool(pr.get("draft")),
         },
         "patch": patch_text,
         "patch_truncated": patch_truncated,

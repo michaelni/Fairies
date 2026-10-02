@@ -1328,11 +1328,14 @@ class ItemSnapshotScanTests(SendCase):
         self.thread.return_value = ([], [
             {"user": {"login": "carol"}, "body": "ping",
              "created_at": "2026-07-19T10:00:00Z"}], [], [], {"+1": ["dave"]})
-        self.scan([make_pr(1)])
+        self.scan([{**make_pr(1), "assignees": [{"login": "michaelni"}],
+                    "milestone": {"title": "9.1"}}])
         snap = self.db.get("items", "pr", "1")
         self.assertEqual(snap["title"], "t1")
         self.assertEqual(snap["author"], "a")
         self.assertEqual(snap["reactions"], {"+1": ["dave"]})
+        self.assertEqual((snap["assignees"], snap["milestone"], snap["locked"]),
+                         (["michaelni"], "9.1", False))
         self.assertEqual([(c["kind"], c["author"], c["body"])
                           for c in snap["discussion"]],
                          [("comment", "carol", "ping")])

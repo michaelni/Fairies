@@ -276,6 +276,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
         snapshot = {
             "title": str(item.get("title") or ""),
             "author": fairy.get_pr_author(item),
+            **fairy.item_standing(item),
             "reactions": reactions,
             "body": str(item.get("body") or ""),
             "html_url": str(item.get("html_url") or ""),

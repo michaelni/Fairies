@@ -1497,6 +1497,15 @@ class DetailTests(DbCase):
         text = self._detail_text()
         self.assertLess(text.index("the ask"), text.index("+1 dave"))
 
+    def test_the_byline_names_assignees_and_milestone(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("items", "pr", "5", {
+            "title": "t", "author": "a", "assignees": ["michaelni", "dowu"],
+            "milestone": "9.1", "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.assertIn("assignee michaelni, dowu   milestone 9.1", self._detail_text())
+
     def test_reactions_render_under_the_body(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
             {"kind": "comment", "author": "a", "body": "a claim",

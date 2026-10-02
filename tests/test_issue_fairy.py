@@ -447,6 +447,26 @@ class AttachmentTests(unittest.TestCase):
         self.assertEqual(attachments[3]["url"], self.ZIP_URL)
         self.assertIn(self.ZIP_URL, llm_prompt.make_issue_user_text(payload))
 
+    def test_the_standing_reaches_the_payload(self) -> None:
+        issue = {**load_fixture("ffmpeg_issue_20572.json"),
+                 "assignees": [{"login": "michaelni"}],
+                 "milestone": {"title": "9.1"}, "due_date": "2026-12-01T00:00:00Z"}
+        p = issue_fairy.PreparedIssue(
+            issue=issue, number=20572, title=issue["title"],
+            author=issue["user"]["login"],
+            last_activity=None, base_reason="stale enough for analysis",
+            discussion=[], reviewer_username="fairy",
+        )
+        with mock.patch.object(
+            issue_fairy, "invoke_llm_wrapper", return_value=LLMReview("skip", ""),
+        ) as invoke:
+            issue_fairy.run_llm_issue(make_args(), p, None)
+        got = invoke.call_args.args[1]["issue"]
+        self.assertEqual(
+            {k: got[k] for k in ("assignees", "milestone", "due_date", "locked")},
+            {"assignees": ["michaelni"], "milestone": "9.1",
+             "due_date": "2026-12-01T00:00:00Z", "locked": False})
+
     def test_attachment_only_comment_survives_discussion(self) -> None:
         comments = load_fixture("ffmpeg_issue_23738_comments.json")
         comment = dict(comments[0], body="", assets=[self.ZIP])

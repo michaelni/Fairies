@@ -571,9 +571,11 @@ class StableFetchTests(unittest.TestCase):
         cache = Cache()
         fetchers = patch_fetch(self)
         refetch = make_refetch(moving)
-        call_get(cache, "pulls", fetchers, refetch, ("timeline",))
+        with self.assertRaises(RuntimeError):
+            call_get(cache, "pulls", fetchers, refetch, ("timeline",))
         self.assertEqual(len(fetchers[("pulls", "timeline")].calls), MAX_REFETCH_ATTEMPTS)
         self.assertEqual(len(refetch.calls), MAX_REFETCH_ATTEMPTS)
+        self.assertEqual(cache.entries, {})
 
     def test_reviews_fetched_before_review_comments(self) -> None:
         # review_comments consumes the freshly-fetched reviews list;

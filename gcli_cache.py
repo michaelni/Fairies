@@ -228,7 +228,8 @@ def get(
     stable-fetch loop; if any edit-prone field is missed the rest of
     the trio is fetched too so they share a stamp. When ``updated_at``
     advanced, non-refetched siblings are dropped (next request
-    refetches them).
+    refetches them). Raises RuntimeError when ``updated_at`` is still
+    moving after MAX_REFETCH_ATTEMPTS fetches.
     """
     bad = [f for f in fields if (kind, f) not in FETCH]
     if bad:
@@ -272,8 +273,8 @@ def get(
                     attempt, MAX_REFETCH_ATTEMPTS)
         t0, to_fetch = t1, to_fetch | set(fields)
     else:
-        logger.warning("gcli_cache: %s #%d updated_at still moving after %d attempts",
-                       kind, n, MAX_REFETCH_ATTEMPTS)
+        raise RuntimeError(f"gcli_cache: {kind} #{n} updated_at still moving "
+                           f"after {MAX_REFETCH_ATTEMPTS} attempts")
 
     keep_siblings = old is not None and old.updated_at == t0
     merged = dict(got)

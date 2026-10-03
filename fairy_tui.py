@@ -284,6 +284,13 @@ _FILTER_STATES = {
     "actionable": ("reviewed", INVALID, "merge-ready", "ci-blocked",
                    "awaiting-approver", "error"),
 }
+
+
+def _ticket_order(key: tuple[str, str, filedb.TicketId]) -> tuple:
+    repo, kind, number = key
+    return repo, kind, filedb.forge_number(number), number
+
+
 _SORT_KEYS = {
     "status": lambda it: _SORT_STATES[it.state],
     # repo mode orders by the short name the list column displays, or
@@ -492,7 +499,8 @@ class Model:
                             "polls; dropping the row", key[1], key[0],
                             key[2], misses)
                 removed.append(key)
-        updates.sort(key=lambda u: u[0])  # presorted: each insort below appends
+        # presorted: each insort below appends
+        updates.sort(key=lambda u: _ticket_order(u[0]))
         if not updates and not removed and not status_updates \
                 and requested == self.requested:
             return
@@ -505,7 +513,7 @@ class Model:
                 if item is None:
                     item = Item(*key, state)
                     self.items[key] = item
-                    bisect.insort(self.order, key)
+                    bisect.insort(self.order, key, key=_ticket_order)
                 if error:
                     item.state, item.error = INVALID, error
                 else:

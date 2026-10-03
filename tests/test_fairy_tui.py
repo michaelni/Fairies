@@ -720,6 +720,12 @@ class SortTests(DbCase):
         # reviewed first; arrival order preserved within equal status.
         self.assertEqual(self._numbers(), ["2", "4", "1", "3"])
 
+    def test_tickets_of_an_item_stay_together_in_forge_number_order(self) -> None:
+        for token in ("123", "1230", "123s1", "99"):
+            self.db.push("queued", "pr", token, verdict(filedb.forge_number(token)))
+        self.model.poll()
+        self.assertEqual(self._numbers(), ["99", "123", "123s1", "1230"])
+
     def test_repo_and_number_modes(self) -> None:
         # "z/AA" sorts last by raw owner/repo but its displayed short
         # name "AA" sorts first: repo mode must follow the column.

@@ -1404,7 +1404,7 @@ class DetailTests(DbCase):
 
     def test_a_cross_reference_line_names_the_mentioning_item(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
-            {"kind": "cross_reference", "author": "fairy", "number": 24049,
+            {"kind": "mentioned_in_comment", "author": "fairy", "number": 24049,
              "repository": "o/other", "title": "the other one",
              "action": "closes", "body": "fixed by this",
              "created_at": "2026-07-19T09:00:00Z"}]))
@@ -1413,12 +1413,12 @@ class DetailTests(DbCase):
         with self.model.lock:
             text = fairy_tui._plain(ui.detail_lines(90))
         self.assertIn("fairy", text)
-        self.assertIn("mentioned this from o/other#24049 the other one (closes)", text)
+        self.assertIn("mentioned this in a comment on o/other#24049 the other one (closes)", text)
         self.assertNotIn("fixed by this", text)
 
     def test_clicking_a_mention_header_unfolds_its_text(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
-            {"kind": "cross_reference", "author": "fairy", "number": 24049,
+            {"kind": "mentioned_in_comment", "author": "fairy", "number": 24049,
              "repository": "o/other", "title": "the other one",
              "action": "none", "body": "the other review, at length",
              "created_at": "2026-07-19T09:00:00Z"}]))
@@ -1456,7 +1456,7 @@ class DetailTests(DbCase):
 
     def test_a_commit_reference_line_names_the_commit(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
-            {"kind": "commit_reference", "author": "michaelni", "sha": "b" * 40,
+            {"kind": "mentioned_in_commit", "author": "michaelni", "sha": "b" * 40,
              "body": "the fix", "created_at": "2026-07-19T09:00:00Z"}]))
         self.model.poll()
         ui = make_ui(self.model)
@@ -1468,8 +1468,7 @@ class DetailTests(DbCase):
     def test_a_review_request_line_names_requester_and_reviewer(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
             {"kind": "review_request", "author": "michaelni",
-             "reviewer": "fairy", "removed": False,
-             "created_at": "2026-07-19T09:00:00Z"}]))
+             "reviewer": "fairy", "created_at": "2026-07-19T09:00:00Z"}]))
         self.model.poll()
         ui = make_ui(self.model)
         with self.model.lock:

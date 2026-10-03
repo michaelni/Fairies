@@ -1617,43 +1617,50 @@ def _push_fields(entry: ApiObject) -> dict | None:
 STATE_EVENTS = {CLOSE_EVENT: "closed", REOPEN_EVENT: "reopened",
                 MERGE_EVENT: "merged"}
 
-_TIMELINE_ITEMS: dict[str, tuple[str, Callable[[ApiObject], dict | None]]] = {
-    PUSH_EVENT: ("push", _push_fields),
-    forge_gcli.REVIEW_REQUEST_EVENT: ("review_request", lambda entry: {
-        "reviewer": _timeline_name(entry.get("assignee")),
-        "removed": bool(entry.get("removed_assignee"))}),
-    **dict.fromkeys(CROSS_REFERENCE_EVENTS, ("cross_reference", lambda entry: {
-        **entry["ref_issue"], "origin": entry["ref_origin"],
-        "action": entry["ref_action"], "body": entry["ref_comment"]})),
-    **dict.fromkeys(COMMIT_REFERENCE_EVENTS, ("commit_reference", lambda entry: {
+def _either(flag: str, when_set: str, when_clear: str,
+            fields: Callable[[ApiObject], dict]) -> Callable[[ApiObject], tuple[str, dict]]:
+    """An entry whose ``flag`` tells a removal from an addition."""
+    return lambda entry: (when_set if entry.get(flag) else when_clear, fields(entry))
+
+
+_MENTION_KINDS = {"description": "mentioned_in_description",
+                  "comment": "mentioned_in_comment", None: "mentioned"}
+
+
+def _mention(entry: ApiObject) -> tuple[str, dict]:
+    return _MENTION_KINDS[entry["ref_origin"]], {
+        **entry["ref_issue"],
+        **({"action": entry["ref_action"]} if entry["ref_action"] is not None else {}),
+        **({"body": entry["ref_comment"]} if entry["ref_origin"] == "comment" else {})}
+
+
+# Forge timeline entry -> the discussion kind and fields it becomes,
+# None for an entry that cannot be read.
+_TIMELINE_ITEMS: dict[str, Callable[[ApiObject], tuple[str, dict] | None]] = {
+    PUSH_EVENT: lambda entry: (
+        ("push", fields) if (fields := _push_fields(entry)) is not None else None),
+    forge_gcli.REVIEW_REQUEST_EVENT: _either(
+        "removed_assignee", "review_request_withdrawn", "review_request",
+        lambda entry: {"reviewer": _timeline_name(entry.get("assignee"))}),
+    **dict.fromkeys(CROSS_REFERENCE_EVENTS, _mention),
+    **dict.fromkeys(COMMIT_REFERENCE_EVENTS, lambda entry: ("mentioned_in_commit", {
         "sha": entry["ref_commit_sha"], "body": entry["body"]})),
-    **dict.fromkeys(STATE_EVENTS, ("state", lambda entry: {
+    **dict.fromkeys(STATE_EVENTS, lambda entry: ("state", {
         "state": STATE_EVENTS[entry["type"]]})),
 }
 
 
 def timeline_events(timeline: list[ApiObject]) -> list[DiscussionItem]:
-    """The push, review request, cross-reference, commit-reference and
-    close / reopen / merge entries of an issue timeline as discussion
-    items of kind ``push``, ``review_request``, ``cross_reference``,
-    ``commit_reference`` and ``state``: who did it, when, and the
-    kind's own fields. A push carries its head SHA, force flag and
-    commit count; a review request the requested reviewer and whether
-    the request was withdrawn; a cross reference the mentioning issue
-    or pull request (``repository``, ``number``, ``title``, ``state``,
-    ``is_pull``), its ``origin`` (description or comment, None when the
-    forge does not say), the mentioning comment's text as ``body`` and
-    Forgejo's closes/reopens intent as ``action``; a commit reference
-    the commit's ``sha`` and the forge's rendering of it as ``body``
-    (Forgejo: repository and subject; GitHub: empty); a state change
-    the new state."""
+    """The typed entries of an issue timeline as discussion items: the
+    kind, who did it, when, and the kind's own fields as the triage
+    prompt in ``llm_prompt`` describes them to the model."""
     items: list[DiscussionItem] = []
     for entry in timeline:
-        kind, fields = _TIMELINE_ITEMS.get(entry.get("type"), (None, None))
-        extra = fields(entry) if kind else None
-        if extra is not None:
+        item = _TIMELINE_ITEMS.get(entry.get("type"), lambda entry: None)(entry)
+        if item is not None:
+            kind, fields = item
             items.append({"kind": kind, "author": _timeline_name(entry.get("user")),
-                          **extra, "created_at": entry.get("created_at")})
+                          **fields, "created_at": entry.get("created_at")})
     return items
 
 

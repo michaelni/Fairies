@@ -68,6 +68,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1236,6 +1237,30 @@ def _plain(lines: list) -> str:
     return "\n".join(one(x) for x in lines)
 
 
+def _item_ref(c: dict) -> str:
+    return f"{c.get('repository')}#{c.get('number')} {c.get('title')}"
+
+
+def _closing(c: dict) -> str:
+    return f" ({c['action']})" if c.get("action") in ("closes", "reopens") else ""
+
+
+_MENTION_KINDS = ("mentioned_in_description", "mentioned_in_comment", "mentioned")
+
+# The thread line of a discussion item, by kind; pushes and the
+# comment kinds are worded in place.
+_THREAD_LINES: dict[str, Callable[[dict], str]] = {
+    "review_request": lambda c: f"requested a review from {c.get('reviewer')}",
+    "review_request_withdrawn": lambda c: f"withdrew the review request for {c.get('reviewer')}",
+    "mentioned_in_description": lambda c: f"mentioned this in the description of {_item_ref(c)}" + _closing(c),
+    "mentioned_in_comment": lambda c: f"mentioned this in a comment on {_item_ref(c)}" + _closing(c),
+    "mentioned": lambda c: f"mentioned this from {_item_ref(c)}",
+    "mentioned_in_commit": lambda c: f"mentioned this from commit {str(c.get('sha') or '')[:10]}",
+    "description_edit": lambda c: "edited the description",
+    "state": lambda c: str(c.get("state")),
+}
+
+
 class UILoop:
     def __init__(self, term: blessed.Terminal, model: Model, ring: tui_core.RingBuffer,
                  save_dir: Path, tail: LogTail,
@@ -1603,20 +1628,8 @@ class UILoop:
                 if c.get("kind") == "push":
                     what = ("force-pushed" if c.get("is_force_push") else "pushed") \
                         + f" {c.get('commit_count')} commit(s) {str(c.get('head_sha') or '')[:10]}"
-                elif c.get("kind") == "review_request":
-                    what = (f"withdrew the review request for {c.get('reviewer')}"
-                            if c.get("removed")
-                            else f"requested a review from {c.get('reviewer')}")
-                elif c.get("kind") == "cross_reference":
-                    what = f"mentioned this from {c.get('repository')}#{c.get('number')} {c.get('title')}"
-                    if c.get("action") in ("closes", "reopens"):
-                        what += f" ({c['action']})"
-                elif c.get("kind") == "commit_reference":
-                    what = f"mentioned this from commit {str(c.get('sha') or '')[:10]}"
-                elif c.get("kind") == "description_edit":
-                    what = "edited the description"
-                elif c.get("kind") == "state":
-                    what = str(c.get("state"))
+                elif c.get("kind") in _THREAD_LINES:
+                    what = _THREAD_LINES[c["kind"]](c)
                 else:
                     what = " ".join(str(c[k]) for k in ("kind", "state") if c.get(k))
                     if c.get("path"):
@@ -1625,7 +1638,7 @@ class UILoop:
                 header = [("h4", str(c.get("author") or "?")),
                           ("label", f"  {what}  {when}"[:width])]
                 body = c.get("body")
-                if c.get("kind") == "cross_reference":
+                if c.get("kind") in _MENTION_KINDS:
                     unfolded = (item.repo, item.kind, item.number,
                                 mentions) in self.unfolded_mentions
                     mentions += 1

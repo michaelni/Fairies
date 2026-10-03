@@ -248,7 +248,6 @@ class ReviewRequestEventsTests(unittest.TestCase):
             "kind": "review_request",
             "author": "michaelni",
             "reviewer": "kaweno",
-            "removed": False,
             "created_at": "2026-05-21T21:23:41Z",
         }])
 
@@ -343,17 +342,17 @@ class CrossReferenceProjectionTests(unittest.TestCase):
         timeline = _load_timeline("ffmpeg_issue_22956_ref_timeline.json")
         disc = fairy.build_llm_discussion([], [], [], timeline)
         self.assertEqual([d["kind"] for d in disc],
-                         ["cross_reference", "cross_reference",
-                          "commit_reference", "cross_reference"])
+                         ["mentioned_in_description", "mentioned_in_comment",
+                          "mentioned_in_commit", "mentioned_in_description"])
         self.assertEqual(disc[3], {
-            "kind": "cross_reference", "author": "michaelni",
+            "kind": "mentioned_in_description", "author": "michaelni",
             "created_at": "2026-09-24T19:16:44Z", "repository": "FFmpeg/FFmpeg",
             "number": 24677, "title": "wobonoja lemovutu", "state": "open",
-            "is_pull": True, "origin": "description", "action": "none",
-            "body": None})
-        self.assertEqual((disc[1]["origin"], disc[1]["body"]), ("comment", "suna"))
+            "is_pull": True, "action": "none"})
+        self.assertEqual(disc[1]["body"], "suna")
+        self.assertNotIn("body", disc[0])
         self.assertEqual(disc[2], {
-            "kind": "commit_reference", "author": "michaelni",
+            "kind": "mentioned_in_commit", "author": "michaelni",
             "created_at": "2026-09-24T19:12:29Z",
             "sha": "48e0046c0a0688b330b374d40333a2615dd68ddf",
             "body": "zawiza cuhulugo"})

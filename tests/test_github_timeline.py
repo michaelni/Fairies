@@ -194,10 +194,10 @@ class ReviewRequestProjectionTests(unittest.TestCase):
         items = fairy.timeline_events(
             _github("testrepo_review_request_timeline.json"))
         self.assertEqual(
-            [(i["author"], i["reviewer"], i["removed"]) for i in items
-             if i["kind"] == "review_request"],
-            [("forgejo-fairy[bot]", "michaelni", False),
-             ("forgejo-fairy[bot]", "michaelni", True)])
+            [(i["author"], i["reviewer"], i["kind"]) for i in items
+             if i["kind"].startswith("review_request")],
+            [("forgejo-fairy[bot]", "michaelni", "review_request"),
+             ("forgejo-fairy[bot]", "michaelni", "review_request_withdrawn")])
 
     def test_the_close_folds_into_the_forgejo_event_name(self) -> None:
         """The same capture ends with the app closing the PR

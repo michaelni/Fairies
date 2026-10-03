@@ -780,25 +780,29 @@ reviewer identity's most recent review or reply in the prior discussion.
 If the reviewer has never posted on this PR, treat the whole PR history
 as "after our last reply" for the purpose of the criteria below.
 
-The prior discussion is a chronological list whose ``kind`` field tells
-you what each item is: ``comment``, ``review``, ``review_comment``,
-``push``, ``review_request``, ``cross_reference``, ``commit_reference`` or ``state``. A ``push`` item is a real push to the
-PR head branch (the author or a maintainer landed new commits) and
-carries ``head_sha`` and ``is_force_push``. A ``push`` item whose
-timestamp is newer than our last reply/review means the author has
-pushed new code. A ``review_request`` item records ``author`` asking
-``reviewer`` for a review (withdrawn when ``removed`` is true) -- a
-request naming the current reviewer identity is a direct invitation.
-A ``state`` item records ``author`` closing, reopening or merging the
-pull request. A ``cross_reference`` item records ``author`` mentioning
-this item from issue or pull request ``repository``#``number``
-(``title``, ``state``, ``is_pull``) in its ``origin`` -- description or
-comment, ``body`` being the comment's text -- and ``action`` the forge's
-closing intent: none, closes, reopens or neutered. A ``commit_reference``
-item records ``author``'s commit ``sha`` mentioning this item, ``body``
-being the forge's rendering of that commit.
-A ``review`` item with an empty body is a bare verdict click; its
-``state`` still counts.
+The prior discussion is a chronological list. Every item carries its
+``kind``, its ``author`` and when it happened. The kinds:
+
+- ``comment``, ``review``, ``review_comment``: what people wrote. A
+  ``review`` with an empty body is a bare verdict click; its ``state``
+  still counts.
+- ``push``: a real push to the PR head branch (the author or a
+  maintainer landed new commits), with ``head_sha`` and
+  ``is_force_push``. A push newer than our last reply/review means the
+  author has pushed new code.
+- ``review_request``, ``review_request_withdrawn``: ``author`` asked
+  ``reviewer`` for a review, or took the request back. A request
+  naming the current reviewer identity is a direct invitation.
+- ``state``: ``author`` closed, reopened or merged the pull request.
+- ``mentioned_in_description``, ``mentioned_in_comment``,
+  ``mentioned``: ``author`` mentioned this item from issue or pull
+  request ``repository``#``number`` (``title``, ``state``,
+  ``is_pull``) in its description, in a comment (``body`` is that
+  comment's text), or somewhere the forge does not tell; ``action``,
+  when the forge names it, is the closing intent: none, closes,
+  reopens or neutered.
+- ``mentioned_in_commit``: ``author``'s commit ``sha`` mentions this
+  item; ``body`` is the forge's rendering of that commit.
 
 the reviewer/our messages/replies/posts/reviews are the ones where the author field matches the reviewer_username
 Others may quote our replies as part of their messages, this is not activity from us.

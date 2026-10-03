@@ -145,6 +145,8 @@ __all__ = [
     "list_commit_statuses",
     "pr_merged",
     "list_issue_comments",
+    "list_item_reactions",
+    "attach_reactions",
     "list_issue_timeline",
     "list_pr_commits",
     "list_pr_files",
@@ -942,6 +944,42 @@ def list_pr_review_comments(
                 pr_number, review_id, exc,
             )
     return out
+
+
+def list_item_reactions(args: argparse.Namespace, owner: str, repo: str,
+                        number: int) -> list[dict]:
+    """The reactions on the description of PR/issue ``number``, each
+    ``{"user": login, "content": "+1"}``."""
+    return _reactions(args, build_repo_path(owner, repo, f"/issues/{number}/reactions"))
+
+
+def _reactions(args: argparse.Namespace, path: str) -> list[dict]:
+    raw = gcli_api(args, path, all_pages=True)
+    reactions = [{"user": (r.get("user") or {}).get("login"), "content": r.get("content")}
+                 for r in raw or [] if isinstance(r, dict)]
+    logger.debug("reactions %s -> %d", path, len(reactions))
+    return reactions
+
+
+def attach_reactions(args: argparse.Namespace, owner: str, repo: str,
+                     comments: list[dict], github_scope: str,
+                     known: dict[int, list[dict]]) -> None:
+    """Give each comment its ``reactions`` as ``list_item_reactions``
+    shapes them: those in ``known`` by comment id as held, the rest at
+    one request each, skipped where GitHub's rollup counts none.
+    ``github_scope`` is ``pulls`` for inline review comments, which
+    GitHub keeps apart from ``issues`` comments; Forgejo has one path."""
+    for comment in comments:
+        if comment["id"] in known:
+            comment["reactions"] = known[comment["id"]]
+            continue
+        rollup = comment.get("reactions")
+        if isinstance(rollup, dict) and rollup.get("total_count") == 0:
+            comment["reactions"] = []
+            continue
+        scope = github_scope if _forge_type(args) == "github" else "issues"
+        comment["reactions"] = _reactions(args, build_repo_path(
+            owner, repo, f"/{scope}/comments/{comment['id']}/reactions"))
 
 
 # Forgejo names the typed timeline comments for pushes and the

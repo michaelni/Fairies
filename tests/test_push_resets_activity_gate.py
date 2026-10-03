@@ -122,7 +122,7 @@ def _call(*, timeline: list[dict], min_age_days: float = 0.25,
             args, pr, now=NOW, self_login=SELF,
             wip_re=fairy.compile_wip_regex([]),
             thread=(reviews, [FAIRY_COMMENT], [],
-                    [forge_gcli.project_timeline_event(e) for e in timeline]),
+                    [forge_gcli.project_timeline_event(e) for e in timeline], {}),
         )
 
 

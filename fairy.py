@@ -78,7 +78,7 @@ import re
 import shlex
 import subprocess
 import time
-from dataclasses import asdict as dataclasses_asdict, dataclass, replace as dataclasses_replace
+from dataclasses import asdict as dataclasses_asdict, dataclass, field, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Iterable, NamedTuple, Sequence, TypeAlias
@@ -177,6 +177,7 @@ __all__ = [
     "post_label_explanations",
     "prepared_pr_from_dict",
     "prepared_to_dict",
+    "reactions_by_content",
     "reviewed_patch_ids",
     "safe_apply_llm_review_to_prepared",
     "safe_prepare_pr",
@@ -297,6 +298,8 @@ class PreparedPR:
     # When the PR head is CI-red, structured failure details (incl. log
     # tails) for the review wrapper. ``None`` for green CI.
     ci_triage: JsonObject | None = None
+    # Who reacted how to the description, ``{"+1": [login, ...]}``.
+    reactions: dict[str, list[str]] = field(default_factory=dict)
     # Names of commit-status contexts whose latest state needs a
     # human to act in the Forgejo UI. Propagated into the resulting
     # ``Decision`` so the end-of-run summary can list PRs that need
@@ -561,12 +564,21 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
         type=float,
         default=24.0,
         help="Time-to-live (hours) on the cached discussion (a PR's "
-             "comments / reviews / inline review-comments trio, an issue's "
+             "comments, reviews and inline review comments, an issue's "
              "comments); these can be silently edited or deleted server-side "
              "without bumping the item's updated_at, the TTL forces a "
              "periodic refetch as a backstop. Other PR fields (timeline, "
              "commits, files) are gated only on pr.updated_at and ignore "
              "this TTL. (default: 24)",
+    )
+    p.add_argument(
+        "--reactions-cache-max-age-hours",
+        type=float,
+        default=168.0,
+        help="Time-to-live (hours) on the cached reactions of an item and "
+             "its comments; a reaction bumps nothing and costs one request "
+             "per comment, so only comments not seen before are asked "
+             "between sweeps. (default: 168)",
     )
 
 
@@ -1147,28 +1159,41 @@ def get_pr(args: argparse.Namespace, pr_number: int) -> ApiObject:
     return data
 
 
+def reactions_by_content(reactions: Iterable[ApiObject]) -> dict[str, list[str]]:
+    """``{"+1": ["michaelni"], "eyes": ["dowu"]}`` from the forge
+    layer's ``{"user", "content"}`` reactions."""
+    grouped: dict[str, list[str]] = {}
+    for reaction in reactions:
+        grouped.setdefault(str(reaction["content"]), []).append(reaction["user"] or "?")
+    return grouped
+
+
 def get_pr_thread(
     args: argparse.Namespace,
     pr: ApiObject,
     *,
     cache: gcli_cache.Cache,
     cache_max_age: timedelta,
-) -> tuple[ApiObject, tuple[list[ApiObject], list[ApiObject], list[ApiObject], list[ApiObject]]]:
+) -> tuple[ApiObject, tuple[list[ApiObject], list[ApiObject], list[ApiObject],
+                            list[ApiObject], dict[str, list[str]]]]:
     """``pr``, as of their stamp, and its ``(reviews, comments,
-    review_comments, timeline)`` in one ``gcli_cache.get``: the four
+    review_comments, timeline, reactions)`` in one ``gcli_cache.get``,
+    ``reactions`` being who reacted how to its description: the five
     fields share one entry stamp and one ``updated_at`` refetch, where
     separate discussion and timeline calls pay two -- and, on a changed
     PR, drop and refetch each other's fields as non-refetched siblings."""
     pr, fields = gcli_cache.get(
         cache, args, "pulls", args.owner, args.repo, pr,
         "reviews", "issue_comments", "review_comments",
-        "timeline", max_age=cache_max_age,
+        "timeline", "reactions", max_age=cache_max_age,
+        reactions_max_age=timedelta(hours=args.reactions_cache_max_age_hours),
     )
     return pr, (
         list(fields["reviews"]),
         list(fields["issue_comments"]),
         list(fields["review_comments"]),
         list(fields["timeline"]),
+        reactions_by_content(fields["reactions"]),
     )
 
 
@@ -2055,6 +2080,8 @@ def build_llm_discussion(
         }
         if urls:
             item["attachment_urls"] = urls
+        if comment.get("reactions"):
+            item["reactions"] = reactions_by_content(comment["reactions"])
         items.append(item)
 
     for review in reviews:
@@ -2094,6 +2121,8 @@ def build_llm_discussion(
                 "side": comment.get("side"),
                 "commit_id": comment.get("commit_id"),
                 "body": body,
+                **({"reactions": reactions_by_content(comment["reactions"])}
+                   if comment.get("reactions") else {}),
             }
         )
 
@@ -2408,6 +2437,7 @@ def run_llm_review(
     reviewer_username: str | None,
     ci_triage: JsonObject | None = None,
     *,
+    reactions: dict[str, list[str]] | None = None,
     extra_cmd_args: list[str] | None = None,
     ignore_triage_skip: bool = False,
     force_engage: bool = False,
@@ -2435,6 +2465,7 @@ def run_llm_review(
             "changed_files": pr.get("changed_files"),
             "auto_merge": auto_merge,
             "labels": labels(pr),
+            "reactions": reactions or {},
         },
         "patch": patch_text,
         "patch_truncated": patch_truncated,
@@ -2484,6 +2515,7 @@ def apply_llm_review(
     base_reason: str,
     discussion: list[DiscussionItem],
     reviewer_username: str | None,
+    reactions: dict[str, list[str]],
     ci_triage: JsonObject | None = None,
     ignore_triage_skip: bool = False,
     force_engage: bool = False,
@@ -2494,6 +2526,7 @@ def apply_llm_review(
             number,
             lambda extra_cmd_args: run_llm_review(
                 args, pr, auto_merge, discussion, reviewer_username, ci_triage,
+                reactions=reactions,
                 extra_cmd_args=extra_cmd_args,
                 ignore_triage_skip=ignore_triage_skip,
                 force_engage=force_engage,
@@ -2637,6 +2670,7 @@ def apply_llm_review_to_prepared(
         base_reason=prepared.base_reason,
         discussion=prepared.discussion,
         reviewer_username=prepared.reviewer_username,
+        reactions=prepared.reactions,
         ci_triage=prepared.ci_triage,
         ignore_triage_skip=prepared.ignore_triage_skip,
         force_engage=prepared.force_engage,
@@ -2650,7 +2684,7 @@ def prepare_pr(
     now: datetime,
     self_login: str | None,
     wip_re: re.Pattern[str],
-    thread: tuple[list, list, list, list] | None,
+    thread: tuple[list, list, list, list, dict] | None,
     posted_classification: str | None = None,
 ) -> Decision | PreparedPR:
     """``thread`` is ``pr``'s (reviews, comments, review comments,
@@ -2663,7 +2697,7 @@ def prepare_pr(
     number = int(pr["number"])
     if thread is None:
         raise RuntimeError("the thread could not be fetched")
-    reviews, comments, review_comments, timeline = thread
+    reviews, comments, review_comments, timeline, reactions = thread
     title = str(pr.get("title") or "")
     author = get_pr_author(pr)
 
@@ -2920,6 +2954,7 @@ def prepare_pr(
             base_reason=base_reason,
             discussion=build_llm_discussion(reviews, comments, review_comments, timeline),
             reviewer_username=self_login,
+            reactions=reactions,
             ci_triage=ci_triage_payload,
             cancelled_ci_contexts=cancelled_ctxs,
             blocked_ci_contexts=blocked_ctxs,
@@ -3096,6 +3131,7 @@ def prepare_pr(
             base_reason=base_reason,
             discussion=build_llm_discussion(reviews, comments, review_comments, timeline),
             reviewer_username=self_login,
+            reactions=reactions,
             ci_triage=ci_payload,
             cancelled_ci_contexts=cancelled_ctxs,
             blocked_ci_contexts=blocked_ctxs,
@@ -3117,6 +3153,7 @@ def prepare_pr(
         base_reason=base_reason,
         discussion=build_llm_discussion(reviews, comments, review_comments, timeline),
         reviewer_username=self_login,
+        reactions=reactions,
         external_approvers=external_approvers,
     )
 
@@ -3128,7 +3165,7 @@ def safe_prepare_pr(
     now: datetime,
     self_login: str | None,
     wip_re: re.Pattern[str],
-    thread: tuple[list, list, list, list] | None,
+    thread: tuple[list, list, list, list, dict] | None,
     posted_classification: str | None = None,
 ) -> PreparedItem:
     try:

@@ -153,7 +153,7 @@ class GetItemFieldsTests(unittest.TestCase):
             _, fields, warnings = forgejo_export.get_item_fields(
                 _args(), gcli_cache.Cache(), _item(), "pulls",
                 forgejo_export.PR_FIELDS,
-                now=NOW, cache_max_age=MAX_AGE,
+                now=NOW, cache_max_age=MAX_AGE, reactions_max_age=MAX_AGE,
             )
         self.assertEqual(warnings, [])
         self.assertEqual(fields["issue_comments"], [{"id": 1, "body": "hi"}])
@@ -169,7 +169,7 @@ class GetItemFieldsTests(unittest.TestCase):
         _, fields, warnings = forgejo_export.get_item_fields(
             _args(), gcli_cache.Cache(), _item(updated_at=None), "pulls",
             forgejo_export.PR_FIELDS,
-            now=NOW, cache_max_age=MAX_AGE,
+            now=NOW, cache_max_age=MAX_AGE, reactions_max_age=MAX_AGE,
         )
         self.assertEqual(len(warnings), 1)
         self.assertIn("missing or has unparseable updated_at", warnings[0])
@@ -182,7 +182,7 @@ class GetItemFieldsTests(unittest.TestCase):
             _, fields, warnings = forgejo_export.get_item_fields(
                 _args(), gcli_cache.Cache(), _item(number=7), "issues",
                 forgejo_export.ISSUE_FIELDS,
-                now=NOW, cache_max_age=MAX_AGE,
+                now=NOW, cache_max_age=MAX_AGE, reactions_max_age=MAX_AGE,
             )
         self.assertEqual(len(warnings), 1)
         self.assertIn("issues #7", warnings[0])
@@ -197,7 +197,7 @@ class GetItemFieldsTests(unittest.TestCase):
             item, fields, warnings = forgejo_export.get_item_fields(
                 _args(), gcli_cache.Cache(), _item(), "issues",
                 forgejo_export.ISSUE_FIELDS,
-                now=NOW, cache_max_age=MAX_AGE,
+                now=NOW, cache_max_age=MAX_AGE, reactions_max_age=MAX_AGE,
             )
         self.assertIs(item, moved)
         self.assertEqual(fields["issue_comments"], [{"id": 1}])

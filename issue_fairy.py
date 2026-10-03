@@ -43,7 +43,7 @@ and prompt/schema definitions (llm_prompt.py / llm_review_api.py).
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, replace as dataclasses_replace
+from dataclasses import dataclass, field, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode
@@ -78,6 +78,7 @@ from fairy import (
     get_last_activity,
     get_pr_author,
     invoke_llm_wrapper,
+    reactions_by_content,
     item_body_mentions_user,
     label_names,
     list_open_prs,
@@ -104,6 +105,8 @@ class PreparedIssue:
     base_reason: str
     discussion: list[ApiObject]
     reviewer_username: str | None
+    # Who reacted how to the description, ``{"+1": [login, ...]}``.
+    reactions: dict[str, list[str]] = field(default_factory=dict)
     # Same contract as PreparedPR.forced_review: a mention or
     # --force-review must not be dropped at --limit.
     forced_review: bool = False
@@ -209,15 +212,18 @@ def get_issue_discussion(
     *,
     cache: gcli_cache.Cache,
     cache_max_age: timedelta,
-) -> tuple[ApiObject, tuple[list[ApiObject], list[ApiObject]]]:
-    """Return ``issue`` and its ``(comments, timeline)`` via the cache,
-    the issue as of the stamp they were fetched at."""
+) -> tuple[ApiObject, tuple[list[ApiObject], list[ApiObject], dict[str, list[str]]]]:
+    """Return ``issue`` and its ``(comments, timeline, reactions)`` via
+    the cache, the issue as of the stamp they were fetched at and
+    ``reactions`` who reacted how to its description."""
     issue, fields = gcli_cache.get(
         cache, args, "issues", args.owner, args.repo, issue,
-        "issue_comments", "timeline",
+        "issue_comments", "timeline", "reactions",
         max_age=cache_max_age,
+        reactions_max_age=timedelta(hours=args.reactions_cache_max_age_hours),
     )
-    return issue, (list(fields["issue_comments"]), list(fields["timeline"]))
+    return issue, (list(fields["issue_comments"]), list(fields["timeline"]),
+                   reactions_by_content(fields["reactions"]))
 
 
 def prepare_issue(
@@ -226,7 +232,7 @@ def prepare_issue(
     *,
     now: datetime,
     self_login: str | None,
-    thread: tuple[list, list, list, list] | None,
+    thread: tuple[list, list, list, list, dict] | None,
 ) -> Decision | PreparedIssue:
     """``thread`` is ``issue``'s (reviews, comments, review comments,
     timeline), without reviews or review comments, fetched at
@@ -235,7 +241,7 @@ def prepare_issue(
     number = int(issue["number"])
     if thread is None:
         raise RuntimeError("the thread could not be fetched")
-    _, comments, _, timeline = thread
+    _, comments, _, timeline, reactions = thread
     title = str(issue.get("title") or "")
     author = get_pr_author(issue)
 
@@ -350,6 +356,7 @@ def prepare_issue(
         base_reason=forced_reason or "stale enough for analysis",
         discussion=build_llm_discussion([], comments, [], timeline),
         reviewer_username=self_login,
+        reactions=reactions,
         forced_review=forced_reason is not None,
         ignore_triage_skip=is_forced,
     )
@@ -372,6 +379,7 @@ def run_llm_issue(
             "created_at": issue.get("created_at") or "",
             "state": issue.get("state") or "",
             "labels": labels(issue),
+            "reactions": prepared.reactions,
         },
         "discussion": prepared.discussion,
         "reviewer_username": prepared.reviewer_username or "",

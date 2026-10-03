@@ -105,7 +105,7 @@ class PrepareCase(unittest.TestCase):
             return fairy.prepare_pr(
                 pr_ns(flags), pr or open_pr(), now=NOW, self_login=self_login,
                 wip_re=fairy.compile_wip_regex([]),
-                thread=(reviews or [], comments or [HUMAN_COMMENT], [], []))
+                thread=(reviews or [], comments or [HUMAN_COMMENT], [], [], {}))
 
 
 class RedCiRoutingTests(PrepareCase):
@@ -241,7 +241,7 @@ class ScanCase(unittest.TestCase):
                                   return_value=gcli_cache.Cache()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"), \
                 mock.patch.object(agent, "_fetch_thread", side_effect=lambda
-                                  ns, kind, item, *rest: (item, ([], [], [], []))
+                                  ns, kind, item, *rest: (item, ([], [], [], [], {}))
                                   ) as self.fetch_thread, \
                 (mock.patch.object(fairy, "safe_prepare_pr", prepare)
                  if prepare is not None else contextlib.nullcontext()):

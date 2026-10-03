@@ -100,7 +100,7 @@ class AgentCase(unittest.TestCase):
         self.db = filedb.Db(Path(tmp.name))
         self.ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.prepare = mock.Mock(side_effect=lambda ns, pr, **kw: prepared_for(pr))
-        self.thread = mock.Mock(return_value=([], [], [], []))
+        self.thread = mock.Mock(return_value=([], [], [], [], {}))
         patcher = mock.patch.object(agent, "_fetch_thread", side_effect=lambda
                                     ns, kind, item, *rest:
                                     (item, self.thread(ns, kind, item, *rest)))
@@ -928,7 +928,7 @@ class RebasedSeriesCase(SendCase):
             patcher = mock.patch.object(git_util, name, return_value=value)
             self.addCleanup(patcher.stop)
             setattr(self, name, patcher.start())
-        self.thread.return_value = ([], [], [], [PUSH])
+        self.thread.return_value = ([], [], [], [PUSH], {})
 
     def pushed(self, n: int = 1) -> dict:
         return dict(make_pr(n), head={"sha": "h2"}, updated_at="later")
@@ -954,7 +954,7 @@ class RebaseSendTests(RebasedSeriesCase):
     def test_a_comment_beside_the_rebase_blocks(self) -> None:
         self.thread.return_value = ([], [
             {"user": {"login": "carol"}, "body": "ping",
-             "created_at": "2026-07-20T01:00:00Z"}], [], [PUSH])
+             "created_at": "2026-07-20T01:00:00Z"}], [], [PUSH], {})
         self.send_pushed().assert_not_called()
         self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
                          "PR head changed")
@@ -983,7 +983,7 @@ class MovedItemTests(AgentCase):
     def test_the_scan_goes_on_with_the_item_its_thread_was_fetched_at(self) -> None:
         moved = dict(make_pr(1), updated_at="2026-07-19T10:00:10Z")
         self.fetch_thread.side_effect = lambda ns, kind, item, *rest: (
-            moved, ([], [], [], []))
+            moved, ([], [], [], [], {}))
         self.scan([make_pr(1)])
         self.assertIs(self.prepare.call_args.args[1], moved)
         self.assertEqual(self.db.get("queued", "pr", "1")["expected_updated_at"],
@@ -1327,11 +1327,12 @@ class ItemSnapshotScanTests(SendCase):
     def test_scan_refreshes_the_snapshot(self) -> None:
         self.thread.return_value = ([], [
             {"user": {"login": "carol"}, "body": "ping",
-             "created_at": "2026-07-19T10:00:00Z"}], [], [])
+             "created_at": "2026-07-19T10:00:00Z"}], [], [], {"+1": ["dave"]})
         self.scan([make_pr(1)])
         snap = self.db.get("items", "pr", "1")
         self.assertEqual(snap["title"], "t1")
         self.assertEqual(snap["author"], "a")
+        self.assertEqual(snap["reactions"], {"+1": ["dave"]})
         self.assertEqual([(c["kind"], c["author"], c["body"])
                           for c in snap["discussion"]],
                          [("comment", "carol", "ping")])
@@ -1342,7 +1343,7 @@ class ItemSnapshotScanTests(SendCase):
         self.thread.return_value = ([], [
             {"user": {"login": "carol"}, "body": "FAIRY-STOP: injected diff",
              "created_at": "2026-07-19T10:00:00Z",
-             "html_url": "https://forge/pr/1#issuecomment-7"}], [], [])
+             "html_url": "https://forge/pr/1#issuecomment-7"}], [], [], {})
         with self.assertRaises(agent.Halted):
             self.scan([make_pr(1), make_pr(2)])
         self.assertEqual(halt_marker.reason(halt_marker.path(self.db.root)),
@@ -1379,7 +1380,7 @@ class ItemSnapshotScanTests(SendCase):
              "submitted_at": "2026-07-19T11:00:00Z"},
             {"user": {"login": "eve"}, "state": "APPROVED", "stale": True,
              "submitted_at": "2026-07-19T09:00:00Z"},
-        ], [], [], [])
+        ], [], [], [], {})
         self.scan([{**make_pr(1), "state": "open"}])
         snap = self.db.get("items", "pr", "1")
         self.assertEqual(snap["state"], "open")
@@ -1396,14 +1397,14 @@ class ItemSnapshotScanTests(SendCase):
         self.assertIsNone(self.db.get("items", "pr", "1")["patch_ids"])
 
     def test_snapshot_head_sha_is_never_a_branch_name(self) -> None:
-        self.thread.return_value = ([], [], [], [])
+        self.thread.return_value = ([], [], [], [], {})
         pr = make_pr(1)
         del pr["head"]["sha"]
         self.scan([pr])
         self.assertIsNone(self.db.get("items", "pr", "1")["head_sha"])
 
     def test_pr_snapshot_prefers_the_forge_merge_base(self) -> None:
-        self.thread.return_value = ([], [], [], [])
+        self.thread.return_value = ([], [], [], [], {})
         self.scan([dict(make_pr(1), merge_base="mb1")])
         self.assertEqual(self.db.get("items", "pr", "1")["base_sha"], "mb1")
 
@@ -1424,7 +1425,7 @@ class ItemSnapshotScanTests(SendCase):
         self.ns.force_review_prs = {7}
         self.thread.return_value = ([], [], [], [
             {"type": "close", "user": {"login": "m"},
-             "created_at": "2026-07-19T10:00:00Z"}])
+             "created_at": "2026-07-19T10:00:00Z"}], {})
         with self.assertNoLogs(agent.logger, "WARNING"):
             self.scan([], fetch=lambda ns, n: {**make_pr(n), "state": "closed"})
 
@@ -1488,7 +1489,7 @@ class ItemSnapshotScanTests(SendCase):
         self.db.push("outgoing", "pr", "1", verdict_ticket(1))
         self.thread.return_value = ([], [
             {"user": {"login": "carol"}, "body": "addressed",
-             "created_at": "2026-07-19T11:00:00Z"}], [], [])
+             "created_at": "2026-07-19T11:00:00Z"}], [], [], {})
         self.send(pr_ns=self.ns, changed={"updated_at": "later"})
         self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
                          "PR updated_at changed")
@@ -1635,7 +1636,7 @@ class DiscussionWiringTests(unittest.TestCase):
     def test_a_pr_thread_is_one_cache_round_trip(self) -> None:
         """Separate discussion and timeline gets each paid their own
         updated_at refetch per PR; the thread fetch must stay a single
-        get carrying all four fields."""
+        get carrying all five fields."""
         ns = fairy.parse_args(["--owner", "o", "--repo", "r"])
         with mock.patch.object(fairy.gcli_cache, "get", side_effect=lambda
                                cache, args, kind, owner, repo, item, *fields,
@@ -1646,7 +1647,7 @@ class DiscussionWiringTests(unittest.TestCase):
         get.assert_called_once()
         self.assertEqual(set(get.call_args.args[6:]),
                          {"reviews", "issue_comments", "review_comments",
-                          "timeline"})
+                          "timeline", "reactions"})
 
     def test_issue_fetchers_in_argument_order(self) -> None:
         comments = json.loads(
@@ -1658,10 +1659,10 @@ class DiscussionWiringTests(unittest.TestCase):
         ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
         issue = {"number": 1}
         with mock.patch.object(issue_fairy, "get_issue_discussion",
-                               return_value=(issue, (comments, timeline))):
+                               return_value=(issue, (comments, timeline, {}))):
             got = agent._fetch_thread(ns, "issue", issue, object(),
                                       timedelta(hours=24))
-        self.assertEqual(got, (issue, ([], comments, [], timeline)))
+        self.assertEqual(got, (issue, ([], comments, [], timeline, {})))
 
 
 class BackoffMathTests(unittest.TestCase):

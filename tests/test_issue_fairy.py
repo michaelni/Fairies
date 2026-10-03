@@ -170,7 +170,7 @@ def prepare(args: argparse.Namespace, issue: dict[str, object], *,
         args, issue,
         now=now,
         self_login=self_login,
-        thread=([], comments, [], timeline),
+        thread=([], comments, [], timeline, {}),
     )
 
 

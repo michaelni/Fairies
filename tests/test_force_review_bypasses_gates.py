@@ -68,7 +68,7 @@ def _call(pr: dict, *, force_review: set[int] = frozenset(),
           now: datetime | None = None,
           llm_review_cmd: str | None = None,
           self_login: str | None = None,
-          thread: tuple = ([], [], [], [])) -> object:
+          thread: tuple = ([], [], [], [], {})) -> object:
     args = SimpleNamespace(
         force_skip_prs=force_skip,
         force_review_prs=force_review,
@@ -152,7 +152,7 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
         pr = {"number": 1, "state": "open", "mergeable": False, "title": "x",
               "updated_at": "2026-08-30T00:00:00Z"}
         decision = _call(pr, thread=([], [{"created_at": "2026-08-01T00:00:00Z",
-                                           "body": "hi"}], [], []))
+                                           "body": "hi"}], [], [], {}))
         self.assertEqual(decision.reason, "has conflicts with the target branch")
         self.assertEqual(decision.last_activity,
                          datetime(2026, 8, 1, tzinfo=timezone.utc))
@@ -188,7 +188,7 @@ class RequestedReviewOverridesWipGateTests(unittest.TestCase):
         ):
             return _call(pr, llm_review_cmd="./wrapper",
                          self_login="Forgejo_Fairy",
-                         thread=(list(reviews), list(comments), [], []))
+                         thread=(list(reviews), list(comments), [], [], {}))
 
     def test_request_and_mention_reach_a_wip_pr(self) -> None:
         pr = {"number": 24737, "state": "open", "mergeable": True,

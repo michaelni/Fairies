@@ -275,6 +275,7 @@ def _pr_user_text(
         "deletions": pr.get("deletions"),
         "changed_files": pr.get("changed_files"),
         "auto_merge": pr.get("auto_merge"),
+        "reactions": pr.get("reactions"),
         "reviewer_username": reviewer_username,
         **role_info,
         "patch_truncated_by_caller": bool(request.get("patch_truncated")),
@@ -343,6 +344,7 @@ def make_issue_user_text(request: JsonObject, *, lead: str = "Analyze this issue
         "created_at": issue.get("created_at"),
         "reviewer_username": reviewer_username,
         "labels": [name for name in (issue.get("labels") or []) if isinstance(name, str) and name],
+        "reactions": issue.get("reactions"),
         # includes attachments not linked from the body text; download by url
         "attachment_urls": issue.get("attachment_urls") or [],
         "discussion_items": len(discussion),
@@ -831,6 +833,9 @@ The prior discussion is a chronological list. Every item carries its
   reopens or neutered.
 - ``mentioned_in_commit``: ``author``'s commit ``sha`` mentions this
   item; ``body`` is the forge's rendering of that commit.
+
+``reactions``, on the metadata and on items, list who reacted how to
+that statement: ``+1`` agrees, ``-1`` disagrees.
 
 the reviewer/our messages/replies/posts/reviews are the ones where the author field matches the reviewer_username
 Others may quote our replies as part of their messages, this is not activity from us.

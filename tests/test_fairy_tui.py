@@ -1487,6 +1487,27 @@ class DetailTests(DbCase):
             self.assertIn(line, text)
         self.assertNotIn("None", text)
 
+    def test_the_descriptions_reactions_render_under_it(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("items", "pr", "5", {
+            "title": "t", "author": "a", "body": "the ask",
+            "reactions": {"+1": ["dave"]}, "discussion": []})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        self.assertLess(text.index("the ask"), text.index("+1 dave"))
+
+    def test_reactions_render_under_the_body(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
+            {"kind": "comment", "author": "a", "body": "a claim",
+             "reactions": {"+1": ["michaelni", "dowu"], "-1": ["cibado"]},
+             "created_at": "2026-07-19T09:00:00Z"}]))
+        self.model.poll()
+        ui = make_ui(self.model)
+        with self.model.lock:
+            text = fairy_tui._plain(ui.detail_lines(90))
+        self.assertIn("+1 michaelni, dowu  -1 cibado", text)
+
     def test_a_commit_reference_line_names_the_commit(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
             {"kind": "mentioned_in_commit", "author": "michaelni", "sha": "b" * 40,

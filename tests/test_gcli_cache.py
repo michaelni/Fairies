@@ -147,7 +147,22 @@ def patch_fetch(testcase, **overrides):
     p = patch.dict(gcli_cache.FETCH, new_table, clear=True)
     p.start()
     testcase.addCleanup(p.stop)
+    attach = patch.object(gcli_cache.forge_gcli, "attach_reactions",
+                          side_effect=_fake_attach)
+    testcase.attach_calls = []
+    attach.start().calls = testcase.attach_calls
+    testcase.addCleanup(attach.stop)
     return installed
+
+
+def _fake_attach(args, owner, repo, comments, scope, known):
+    """Stands in for ``forge_gcli.attach_reactions``: known reactions are
+    kept, the rest get none; ``(scope, asked ids, known ids)`` is recorded
+    on the test through the patch's ``calls``."""
+    for comment in comments:
+        comment["reactions"] = known.get(comment["id"], [])
+    gcli_cache.forge_gcli.attach_reactions.calls.append(
+        (scope, [c["id"] for c in comments if c["id"] not in known], sorted(known)))
 
 
 ARGS = SimpleNamespace(forge_type="gitea", gcli_account="")
@@ -155,11 +170,12 @@ ARGS = SimpleNamespace(forge_type="gitea", gcli_account="")
 
 def call_get(cache, kind, fetchers, refetch, names, *,
              n=1, owner="o", repo="r", live=LIVE, now=NOW, max_age=MAX_AGE,
-             args=ARGS):
+             reactions_max_age=timedelta(days=7), args=ARGS):
     return get(
         cache, args, kind, owner, repo,
         {"number": n, "updated_at": live.isoformat()},
-        *names, max_age=max_age, now=now, refetch=refetch,
+        *names, max_age=max_age, reactions_max_age=reactions_max_age,
+        now=now, refetch=refetch,
     )
 
 
@@ -346,12 +362,14 @@ class PersistenceTests(unittest.TestCase):
 def _seed_entry(cache: Cache, fields: dict, *,
                 updated_at: datetime = LIVE,
                 comments_fetched_at: datetime | None = LIVE,
+                reactions_fetched_at: datetime | None = LIVE,
                 kind: str = "pulls", n: int = 1) -> None:
     cache.entries[entry_key(ARGS, kind, "o", "r", n)] = Entry(
         updated_at=updated_at,
         fetched_at=updated_at,
         comments_fetched_at=comments_fetched_at,
         fields=fields,
+        reactions_fetched_at=reactions_fetched_at,
     )
 
 
@@ -457,6 +475,51 @@ class GetEndToEndTests(unittest.TestCase):
         self.assertIn("timeline", entry.fields)
         self.assertEqual(len(fetchers[("pulls", "commits")].calls), 0)
 
+    def test_a_bump_asks_reactions_only_for_new_comments(self) -> None:
+        cache = Cache()
+        _seed_entry(cache, {
+            "issue_comments": ({"id": 1, "reactions": [{"user": "a", "content": "+1"}]},),
+            "review_comments": (), "reviews": (), "timeline": (), "reactions": (),
+        }, comments_fetched_at=NOW)
+        fetchers = patch_fetch(self, **{"pulls.issue_comments": [[{"id": 1}, {"id": 2}]],
+                                        "pulls.review_comments": [[]], "pulls.reviews": [[]]})
+        later = LIVE + timedelta(hours=1)
+        _, got = call_get(cache, "pulls", fetchers, make_refetch([later]),
+                       ("issue_comments", "reactions"), live=later)
+        self.assertEqual(self.attach_calls, [("issues", [2], [1]), ("pulls", [], [1])])
+        self.assertEqual([c["reactions"] for c in got["issue_comments"]],
+                         [[{"user": "a", "content": "+1"}], []])
+        self.assertEqual(len(fetchers[("pulls", "reactions")].calls), 0)
+        self.assertEqual(cache.entries[entry_key(ARGS, "pulls", "o", "r", 1)]
+                         .reactions_fetched_at, LIVE)
+
+    def test_an_expired_reactions_ttl_sweeps_without_refetching_fields(self) -> None:
+        cache = Cache()
+        _seed_entry(cache, {
+            "issue_comments": ({"id": 1, "reactions": [{"user": "a", "content": "+1"}]},),
+            "review_comments": ({"id": 9, "reactions": []},),
+            "reviews": (), "timeline": (), "reactions": (),
+        }, comments_fetched_at=NOW, reactions_fetched_at=NOW - timedelta(days=8))
+        fetchers = patch_fetch(self)
+        call_get(cache, "pulls", fetchers, make_refetch([LIVE]),
+                 ("issue_comments", "review_comments", "reactions"))
+        self.assertEqual(self.attach_calls, [("issues", [1], []), ("pulls", [9], [])])
+        self.assertEqual(len(fetchers[("pulls", "reactions")].calls), 1)
+        self.assertEqual(len(fetchers[("pulls", "issue_comments")].calls), 0)
+        self.assertEqual(cache.entries[entry_key(ARGS, "pulls", "o", "r", 1)]
+                         .reactions_fetched_at, NOW)
+
+    def test_fresh_reactions_are_a_hit(self) -> None:
+        cache = Cache()
+        _seed_entry(cache, {"issue_comments": ({"id": 1, "reactions": []},),
+                            "reviews": (), "review_comments": (), "reactions": ()},
+                    comments_fetched_at=NOW)
+        fetchers = patch_fetch(self)
+        call_get(cache, "pulls", fetchers, make_refetch([LIVE]),
+                 ("issue_comments", "reactions"))
+        self.assertEqual(self.attach_calls, [])
+        self.assertEqual(sum(len(f.calls) for f in fetchers.values()), 0)
+
     def test_ttl_expiry_refetches_trio_only(self) -> None:
         stale = NOW - timedelta(hours=48)
         cache = Cache()
@@ -494,7 +557,8 @@ class GetEndToEndTests(unittest.TestCase):
         _seed_entry(cache, {"timeline": ({"x": 1},)})
         caller = {"number": 1, "updated_at": LIVE.isoformat()}
         item, _ = get(cache, ARGS, "pulls", "o", "r", caller, "timeline",
-                      max_age=MAX_AGE, now=NOW, refetch=make_refetch([LIVE]))
+                      max_age=MAX_AGE, reactions_max_age=MAX_AGE, now=NOW,
+                      refetch=make_refetch([LIVE]))
         self.assertIs(item, caller)
 
     def test_immutable_field_ignores_ttl(self) -> None:
@@ -510,7 +574,7 @@ class GetEndToEndTests(unittest.TestCase):
     def test_an_item_without_updated_at_raises(self) -> None:
         with self.assertRaises(RuntimeError):
             get(Cache(), ARGS, "pulls", "o", "r", {"number": 1}, "timeline",
-                max_age=MAX_AGE, now=NOW)
+                max_age=MAX_AGE, reactions_max_age=MAX_AGE, now=NOW)
 
     def test_unknown_field_raises(self) -> None:
         with self.assertRaises(ValueError) as ctx:

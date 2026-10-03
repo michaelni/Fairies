@@ -35,9 +35,12 @@ every additive change (push, comment, review, label). Edits and
 deletes of existing items do NOT bump ``updated_at`` on any supported
 forge, so the three edit-prone fields (``issue_comments``,
 ``reviews``, ``review_comments``) additionally age out via
-``max_age``. The stable-fetch loop in :func:`get` brackets the field
-fetches between two ``updated_at`` reads and retries on advance, so
-what we store is internally consistent with the stamped timestamp.
+``max_age``. Reactions bump nothing either and cost one request per
+comment, so they are kept by comment id and age out on their own
+``reactions_max_age``. The stable-fetch loop in
+:func:`get` brackets the field fetches between two ``updated_at``
+reads and retries on advance, so what we store is internally
+consistent with the stamped timestamp.
 """
 from __future__ import annotations
 
@@ -60,6 +63,9 @@ logger = logging.getLogger(__name__)
 SCHEMA_VERSION = 7
 MAX_REFETCH_ATTEMPTS = 3
 EDIT_PRONE = frozenset({"issue_comments", "reviews", "review_comments"})
+# The comment fields and the scope ``forge_gcli.attach_reactions`` takes
+# for their reactions; the item's own are the ``reactions`` field.
+_COMMENT_SCOPES = {"issue_comments": "issues", "review_comments": "pulls"}
 
 
 def _list_pr_files_or_empty_on_500(args, owner, repo, n):
@@ -103,13 +109,15 @@ FETCH: dict[tuple[str, str], Callable] = {
     ("pulls",  "issue_comments"):  partial(forge_gcli.list_issue_comments, kind=forge_gcli.KIND_PR),
     ("pulls",  "reviews"):         forge_gcli.list_pr_reviews,
     ("pulls",  "review_comments"): forge_gcli.list_pr_review_comments,
+    ("pulls",  "reactions"):       forge_gcli.list_item_reactions,
     ("pulls",  "commits"):         forge_gcli.list_pr_commits,
     ("pulls",  "files"):           _list_pr_files_or_empty_on_500,
     ("issues", "timeline"):        forge_gcli.list_issue_timeline,
     ("issues", "issue_comments"):  partial(forge_gcli.list_issue_comments, kind=forge_gcli.KIND_ISSUE),
+    ("issues", "reactions"):       forge_gcli.list_item_reactions,
 }
 _FETCH_ORDER = ("timeline", "issue_comments", "reviews", "review_comments",
-                "commits", "files")
+                "reactions", "commits", "files")
 
 
 class EntryKey(NamedTuple):
@@ -162,6 +170,7 @@ class Entry:
     fetched_at: datetime
     comments_fetched_at: datetime | None      # TTL anchor for EDIT_PRONE
     fields: dict[str, tuple[dict, ...]] = field(default_factory=dict)
+    reactions_fetched_at: datetime | None = None   # last full reactions sweep
 
 
 @dataclass
@@ -215,6 +224,7 @@ def get(
     item: dict,
     *fields: str,
     max_age: timedelta,
+    reactions_max_age: timedelta,
     now: datetime | None = None,
     refetch: Callable = _fetch_item,
 ) -> tuple[dict, dict[str, tuple[dict, ...]]]:
@@ -227,9 +237,11 @@ def get(
     Cache hits (matching ``updated_at`` and, for edit-prone fields,
     within ``max_age``) are served directly. Misses go through the
     stable-fetch loop; if any edit-prone field is missed the rest of
-    the trio is fetched too so they share a stamp. When ``updated_at``
+    them are fetched too so they share a stamp. When ``updated_at``
     advanced, non-refetched siblings are dropped (next request
-    refetches them).
+    refetches them). Reactions, the item's and every comment's, are
+    served while the last sweep is within ``reactions_max_age``, a
+    comment not seen before getting its own request.
     """
     bad = [f for f in fields if (kind, f) not in FETCH]
     if bad:
@@ -244,9 +256,15 @@ def get(
                            f"freshness key")
     key = entry_key(args, kind, owner, repo, n)
     old = cache.entries.get(key)
+    reactions_fresh = (old is not None and old.reactions_fetched_at is not None
+                       and now - old.reactions_fetched_at < reactions_max_age)
 
     def fresh(name: str) -> bool:
-        if old is None or old.updated_at != live_updated_at or name not in old.fields:
+        if old is None or name not in old.fields:
+            return False
+        if name == "reactions":
+            return reactions_fresh
+        if old.updated_at != live_updated_at:
             return False
         if name in EDIT_PRONE:
             return (old.comments_fetched_at is not None
@@ -254,7 +272,8 @@ def get(
         return True
 
     missing = {f for f in fields if not fresh(f)}
-    if not missing:
+    sweep_reactions = not reactions_fresh and bool(set(fields) & _COMMENT_SCOPES.keys())
+    if not missing and not sweep_reactions:
         logger.debug("gcli_cache hit %s %s/%s #%d: %s",
                      kind, owner, repo, n, list(fields))
         return item, {f: old.fields[f] for f in fields}
@@ -288,8 +307,21 @@ def get(
     if keep_siblings:
         for name, value in old.fields.items():
             merged.setdefault(name, value)
+    elif reactions_fresh and "reactions" in old.fields:
+        merged.setdefault("reactions", old.fields["reactions"])
     stamp = old.comments_fetched_at if (keep_siblings and old) else None
     if to_fetch & EDIT_PRONE:
         stamp = now
-    cache.entries[key] = Entry(t0, now, stamp, merged)
+    known = {} if sweep_reactions or old is None else {
+        comment["id"]: comment["reactions"]
+        for name in _COMMENT_SCOPES for comment in old.fields.get(name, ())
+        if "reactions" in comment}
+    for name, scope in _COMMENT_SCOPES.items():
+        if name in merged and (name in got or sweep_reactions):
+            logger.info("gcli_cache: reactions of %s #%d %s: %d known of %d",
+                        kind, n, name, sum(c["id"] in known for c in merged[name]),
+                        len(merged[name]))
+            forge_gcli.attach_reactions(args, owner, repo, list(merged[name]), scope, known)
+    reactions_stamp = now if sweep_reactions or old is None else old.reactions_fetched_at
+    cache.entries[key] = Entry(t0, now, stamp, merged, reactions_stamp)
     return item, {f: merged[f] for f in fields}

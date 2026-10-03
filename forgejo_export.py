@@ -82,6 +82,13 @@ def parse_args() -> argparse.Namespace:
              "(issue_comments, reviews, review_comments) which the forge does "
              "not bump updated_at for on edit/delete.",
     )
+    p.add_argument(
+        "--reactions-cache-max-age-hours",
+        type=float,
+        default=168.0,
+        help="Maximum age of the cached reactions on an item and its comments "
+             "in hours before a full refetch (default: 168).",
+    )
     p.add_argument("-v", "--verbose", action="count", default=0)
     add_color_arg(p)
     return p.parse_args()
@@ -206,6 +213,7 @@ def get_item_fields(
     *,
     now: datetime,
     cache_max_age: timedelta,
+    reactions_max_age: timedelta,
 ) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]], list[str]]:
     """Fetch ``field_names`` for one PR/issue through gcli_cache.
 
@@ -219,7 +227,8 @@ def get_item_fields(
     try:
         item, result = gcli_cache.get(
             cache, args, kind, args.owner, args.repo, item,
-            *field_names, max_age=cache_max_age, now=now,
+            *field_names, max_age=cache_max_age,
+            reactions_max_age=reactions_max_age, now=now,
         )
     except Exception as exc:
         msg = f"{kind} #{num}: {compact_ws(str(exc))[:400]}"
@@ -736,6 +745,7 @@ def main() -> int:
 
     caches, cache_by_path = open_caches(args)
     cache_max_age = timedelta(hours=args.discussion_cache_max_age_hours)
+    reactions_max_age = timedelta(hours=args.reactions_cache_max_age_hours)
     now = datetime.now(timezone.utc)
 
     issues = list_repo_endpoint(args, "/issues", state="all")
@@ -750,6 +760,7 @@ def main() -> int:
         fetched_issues.append(get_item_fields(
             args, caches["issues"], issue, "issues", ISSUE_FIELDS,
             now=now, cache_max_age=cache_max_age,
+            reactions_max_age=reactions_max_age,
         ))
 
     fetched_pulls: list[
@@ -759,6 +770,7 @@ def main() -> int:
         fetched_pulls.append(get_item_fields(
             args, caches["pulls"], pr, "pulls", PR_FIELDS,
             now=now, cache_max_age=cache_max_age,
+            reactions_max_age=reactions_max_age,
         ))
 
     for path, cache in cache_by_path.items():

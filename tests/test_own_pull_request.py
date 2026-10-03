@@ -113,8 +113,13 @@ class PayloadTests(unittest.TestCase):
                          return_value=("patch", False)),
             patch.object(fairy, "run_cmd", side_effect=fake_run_cmd),
         ):
-            fairy.run_llm_review(args, PR, "no", [], "Forgejo_Fairy")
+            fairy.run_llm_review(args, PR, "no", [], "Forgejo_Fairy",
+                                 reactions={"rocket": ["michaelni"]})
         return json.loads(captured["input_text"])
+
+    def test_the_descriptions_reactions_reach_the_payload(self) -> None:
+        pr = self._payload(_args())["pull_request"]
+        self.assertEqual(pr["reactions"], {"rocket": ["michaelni"]})
 
     def test_own_pull_request_carries_head_repo_and_branch(self) -> None:
         pr = self._payload(_args())["pull_request"]

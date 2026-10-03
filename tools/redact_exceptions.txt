@@ -51,6 +51,14 @@ unpin
 added_deadline
 modified_deadline
 removed_deadline
++1
+-1
+laugh
+confused
+heart
+hooray
+rocket
+eyes
 none
 new
 public

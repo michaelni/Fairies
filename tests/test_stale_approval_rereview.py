@@ -104,7 +104,7 @@ def _call(review: dict, *, min_age_days: float = 30) -> object:
     return fairy.prepare_pr(
         args, pr, now=NOW, self_login=SELF,
         wip_re=fairy.compile_wip_regex([]),
-        thread=([review], [], [], []),
+        thread=([review], [], [], [], {}),
     )
 
 

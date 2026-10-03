@@ -466,5 +466,18 @@ class TypedEventTests(unittest.TestCase):
              {"kind": "locked", "reason": "too heated"}])
 
 
+class ReactionTests(unittest.TestCase):
+    def test_reactions_are_grouped_by_content(self) -> None:
+        comment = {"user": {"login": "a"}, "created_at": "2026-07-28T12:00:00Z",
+                   "body": "x", "reactions": [
+                       {"user": "michaelni", "content": "+1"},
+                       {"user": "dowu", "content": "+1"},
+                       {"user": None, "content": "-1"}]}
+        review_comment = {**comment, "path": "f.c", "reactions": []}
+        disc = fairy.build_llm_discussion([], [comment], [review_comment], [])
+        self.assertEqual(disc[0]["reactions"], {"+1": ["michaelni", "dowu"], "-1": ["?"]})
+        self.assertNotIn("reactions", disc[1])
+
+
 if __name__ == "__main__":
     unittest.main()

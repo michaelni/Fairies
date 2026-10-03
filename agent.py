@@ -155,18 +155,19 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
 
 
 def _fetch_thread(ns: argparse.Namespace, kind: str, item: dict, cache,
-                  cache_age: timedelta) -> tuple[dict, tuple[list, list, list, list]]:
+                  cache_age: timedelta) -> tuple[dict, tuple[list, list, list, list, dict]]:
     """The item's (reviews, comments, review comments, timeline) --
-    ``build_llm_discussion``'s argument order -- through the same cache
-    the gates read; fetched first in the pass, so a prepare of the same
-    item hits the cache. Issues have no reviews or review comments.
-    Returned after the item, as of its thread."""
+    ``build_llm_discussion``'s argument order -- and the reactions on
+    its description, through the same cache the gates read; fetched
+    first in the pass, so a prepare of the same item hits the cache.
+    Issues have no reviews or review comments. Returned after the
+    item, as of its thread."""
     if kind == "pr":
         return fairy.get_pr_thread(ns, item, cache=cache,
                                    cache_max_age=cache_age)
-    item, (comments, timeline) = issue_fairy.get_issue_discussion(
+    item, (comments, timeline, reactions) = issue_fairy.get_issue_discussion(
         ns, item, cache=cache, cache_max_age=cache_age)
-    return item, ([], comments, [], timeline)
+    return item, ([], comments, [], timeline, reactions)
 
 
 def _fetch_pr_head(ns: argparse.Namespace, number: int,
@@ -238,7 +239,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     thread = None
     try:
         item, thread = _fetch_thread(ns, kind, item, cache, cache_age)
-        reviews, comments, review_comments, timeline = thread
+        reviews, comments, review_comments, timeline, reactions = thread
         if kind == "pr":
             base_sha = fairy.get_pr_base_sha(item)
             head_sha = fairy.get_pr_head_sha(item)
@@ -275,6 +276,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
         snapshot = {
             "title": str(item.get("title") or ""),
             "author": fairy.get_pr_author(item),
+            "reactions": reactions,
             "body": str(item.get("body") or ""),
             "html_url": str(item.get("html_url") or ""),
             "updated_at": item.get("updated_at"),

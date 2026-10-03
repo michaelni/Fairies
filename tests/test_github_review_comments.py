@@ -104,6 +104,58 @@ class GitHubTests(unittest.TestCase):
         )
 
 
+class ReactionTests(unittest.TestCase):
+    """Real capture: FFmpeg issue #22546, the fairy's comment and its
+    one reaction. Forgejo answers null where there are none."""
+
+    def _attach(self, forge_type: str, comments: list[dict], reactions,
+                scope: str = "issues", known: dict | None = None):
+        paths: list[str] = []
+
+        def fake_api(args, path, **kwargs):
+            paths.append(path)
+            return reactions
+
+        args = SimpleNamespace(forge_type=forge_type, gcli_account="", verbose=0)
+        with mock.patch.object(forge_gcli, "gcli_api", fake_api):
+            forge_gcli.attach_reactions(args, "o", "r", comments, scope, known or {})
+        return paths
+
+    def test_forgejo_asks_per_comment_and_keeps_who_reacted_how(self) -> None:
+        reactions_dir = REPO_ROOT / "tests" / "fixtures" / "reactions"
+        with (reactions_dir / "ffmpeg_issue_22546_comments.json").open() as f:
+            comments = json.load(f)
+        with (reactions_dir / "ffmpeg_issue_22546_comment_37290_reactions.json").open() as f:
+            reactions = json.load(f)
+        paths = self._attach("forgejo", comments, reactions)
+        self.assertEqual(paths, ["/repos/o/r/issues/comments/37290/reactions"])
+        self.assertEqual(comments[0]["reactions"], [{"user": "michaelni", "content": "hooray"}])
+
+    def test_forgejo_null_means_none(self) -> None:
+        comments = [{"id": 5}]
+        self._attach("forgejo", comments, None)
+        self.assertEqual(comments[0]["reactions"], [])
+
+    def test_known_reactions_spare_the_request(self) -> None:
+        comments = [{"id": 5}, {"id": 6}]
+        paths = self._attach("forgejo", comments, [], known={5: [{"user": "a", "content": "+1"}]})
+        self.assertEqual(paths, ["/repos/o/r/issues/comments/6/reactions"])
+        self.assertEqual([c["reactions"] for c in comments], [[{"user": "a", "content": "+1"}], []])
+
+    def test_github_rollup_spares_the_request(self) -> None:
+        comments = [{"id": 5, "reactions": {"total_count": 0}}]
+        paths = self._attach("github", comments, [{"content": "+1"}])
+        self.assertEqual(paths, [])
+        self.assertEqual(comments[0]["reactions"], [])
+
+    def test_github_review_comments_live_under_pulls(self) -> None:
+        comments = [{"id": 7, "reactions": {"total_count": 1}}]
+        paths = self._attach("github", comments,
+                             [{"user": {"login": "michaelni"}, "content": "-1"}], scope="pulls")
+        self.assertEqual(paths, ["/repos/o/r/pulls/comments/7/reactions"])
+        self.assertEqual(comments[0]["reactions"], [{"user": "michaelni", "content": "-1"}])
+
+
 class ForgejoTests(unittest.TestCase):
 
     def test_one_request_per_review_that_may_have_comments(self) -> None:

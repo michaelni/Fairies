@@ -1613,8 +1613,9 @@ class UILoop:
                     or c.get("body") != review["message"]]
         body = data.get("body") or shown.get("body")
         if body:
-            disc = [{"kind": "description", "author": author,
-                     "body": body}] + disc
+            disc = [{"kind": "description", "author": author, "body": body,
+                     **({"reactions": shown["reactions"]}
+                        if shown.get("reactions") else {})}] + disc
         # the thread has no entry kind for a description edit; the
         # sampled and live bodies are its only record (production:
         # #24761, edited while the review ran, send blocked)
@@ -1682,6 +1683,10 @@ class UILoop:
                     tail += diff_render.render_diff(str(body))
                 elif body:
                     tail += tui_core.render_markdown(str(body), width)
+                if c.get("reactions"):
+                    tail.append([("label", "  " + "  ".join(
+                        f"{content} {', '.join(map(str, users))}"
+                        for content, users in c["reactions"].items())[:width])])
                 for att in c.get("attachment_urls") or []:
                     tail.append([("link", str(att)[:width])])
             if separator_at == len(disc):

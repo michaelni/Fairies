@@ -132,7 +132,7 @@ class ForceReviewIssueTests(unittest.TestCase):
     def prepare(self, flags: str, issue: dict):
         return issue_fairy.prepare_issue(
             issue_ns("--llm-review-cmd wrapper " + flags), issue,
-            now=NOW, self_login="fairy", thread=([], [], [], []))
+            now=NOW, self_login="fairy", thread=([], [], [], [], {}))
 
     def test_a_closed_issue_is_analyzed_when_named(self) -> None:
         result = self.prepare("--force-review 5", make_issue(5, "closed"))
@@ -186,7 +186,7 @@ class IssueScanCase(unittest.TestCase):
                                   return_value=gcli_cache.Cache()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"), \
                 mock.patch.object(agent, "_fetch_thread", side_effect=lambda
-                                  ns, kind, item, *rest: (item, ([], [], [], []))
+                                  ns, kind, item, *rest: (item, ([], [], [], [], {}))
                                   ) as self.fetch_thread:
             agent.scan_pass(self.db, None, ns, now=NOW)
         return prepare

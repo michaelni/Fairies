@@ -94,7 +94,7 @@ def _call(comments: list[dict], *, posted_classification: str | None = None,
         return fairy.prepare_pr(
             args, PR, now=NOW, self_login=SELF,
             wip_re=fairy.compile_wip_regex([]),
-            thread=([], comments, [], []),
+            thread=([], comments, [], [], {}),
             posted_classification=posted_classification)
 
 

@@ -254,6 +254,53 @@ class ReviewRequestProjectionTests(unittest.TestCase):
               {"number": 7, "title": "the other one", "state": "open",
                "repository": "o/other", "is_pull": True}, None, None, None)])
 
+    def test_the_typed_events_fold_into_the_forgejo_shapes(self) -> None:
+        """No capture; the synthetic events follow the documented schema
+        (https://docs.github.com/en/rest/using-the-rest-api/issue-event-types)."""
+        at = "2026-07-28T12:00:00Z"
+        got = _timeline("github", [
+            {"event": "review_requested", "actor": {"login": "michaelni"}, "created_at": at,
+             "requested_team": {"name": "maintainers"}},
+            {"event": "unassigned", "actor": {"login": "michaelni"}, "created_at": at,
+             "assignee": {"login": "dowu"}},
+            {"event": "milestoned", "actor": {"login": "michaelni"}, "created_at": at,
+             "milestone": {"title": "9.0"}},
+            {"event": "demilestoned", "actor": {"login": "michaelni"}, "created_at": at,
+             "milestone": {"title": "9.0"}},
+            {"event": "renamed", "actor": {"login": "michaelni"}, "created_at": at,
+             "rename": {"from": "a", "to": "b"}},
+            {"event": "head_ref_deleted", "actor": {"login": "michaelni"}, "created_at": at},
+            {"event": "locked", "actor": {"login": "michaelni"}, "created_at": at,
+             "lock_reason": "resolved"},
+            {"event": "review_dismissed", "actor": {"login": "michaelni"}, "created_at": at,
+             "dismissed_review": {"dismissal_message": "stale", "review_id": 3}},
+            {"event": "closed", "actor": {"login": "michaelni"}, "created_at": at,
+             "commit_id": "c" * 40, "state_reason": "not_planned"}])
+        self.assertEqual(
+            [{k: v for k, v in e.items() if k not in ("id", "user", "created_at")}
+             for e in got],
+            [{"type": "review_request", "body": "", "assignee": None,
+              "assignee_team": "maintainers", "removed_assignee": False},
+             {"type": "assignees", "body": "", "assignee": forge_gcli.norm_user({"login": "dowu"}),
+              "removed_assignee": True},
+             {"type": "milestone", "body": "", "milestone": "9.0"},
+             {"type": "milestone", "body": "", "old_milestone": "9.0"},
+             {"type": "change_title", "body": "", "old_title": "a", "new_title": "b"},
+             {"type": "delete_branch", "body": ""},
+             {"type": "lock", "body": "resolved"},
+             {"type": "dismiss_review", "body": "stale"},
+             {"type": "close", "body": "", "commit_id": "c" * 40,
+              "state_reason": "not_planned"}])
+        self.assertEqual(
+            [(d["kind"], d.get("reviewer") or d.get("assignee") or d.get("state"))
+             for d in fairy.timeline_events(got)],
+            [("review_request", "maintainers"), ("unassigned", "dowu"),
+             ("milestone_set", None), ("milestone_removed", None), ("title_changed", None),
+             ("head_branch_deleted", None), ("locked", None), ("review_dismissed", None),
+             ("state", "closed")])
+        self.assertEqual(fairy.timeline_events(got)[-1]["state_reason"], "not_planned")
+        self.assertNotIn("branch", fairy.timeline_events(got)[5])
+
     def test_a_commit_mention_gets_the_forgejo_key(self) -> None:
         """No capture; the synthetic event follows the documented schema
         (https://docs.github.com/en/rest/using-the-rest-api/issue-event-types)."""

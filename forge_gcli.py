@@ -115,6 +115,17 @@ __all__ = [
     "PUSH_EVENT",
     "REVIEW_REQUEST_EVENT",
     "LABEL_EVENT",
+    "MILESTONE_EVENT",
+    "ASSIGNEES_EVENT",
+    "TITLE_EVENT",
+    "TARGET_BRANCH_EVENT",
+    "DELETE_BRANCH_EVENT",
+    "DEPENDENCY_EVENTS",
+    "LOCK_EVENT",
+    "UNLOCK_EVENT",
+    "PIN_EVENT",
+    "UNPIN_EVENT",
+    "DISMISS_REVIEW_EVENT",
     "CROSS_REFERENCE_EVENTS",
     "COMMIT_REFERENCE_EVENTS",
     "CLOSE_EVENT",
@@ -949,6 +960,19 @@ AUTO_MERGE_SCHEDULE_EVENT = "pull_scheduled_merge"
 AUTO_MERGE_CANCEL_EVENT = "pull_cancel_scheduled_merge"
 REVIEW_REQUEST_EVENT = "review_request"
 LABEL_EVENT = "label"
+MILESTONE_EVENT = "milestone"
+ASSIGNEES_EVENT = "assignees"
+TITLE_EVENT = "change_title"
+TARGET_BRANCH_EVENT = "change_target_branch"
+DELETE_BRANCH_EVENT = "delete_branch"
+DEPENDENCY_EVENTS = frozenset({"add_dependency", "remove_dependency"})
+LOCK_EVENT = "lock"
+UNLOCK_EVENT = "unlock"
+PIN_EVENT = "pin"
+UNPIN_EVENT = "unpin"
+DISMISS_REVIEW_EVENT = "dismiss_review"
+_GITHUB_FIELDLESS = {"locked": LOCK_EVENT, "unlocked": UNLOCK_EVENT, "pinned": PIN_EVENT,
+                     "unpinned": UNPIN_EVENT, "review_dismissed": DISMISS_REVIEW_EVENT}
 # Where the mention of a cross reference sits, by event type. Forgejo
 # names the mentioning item's kind and whether the mention is in its
 # description or in a comment on it; GitHub's ``cross-referenced``
@@ -1040,9 +1064,20 @@ def project_timeline_event(event: dict) -> dict:
 
 _FORGEJO_TYPED_KEYS: dict[str, Callable[[dict], dict]] = {
     PUSH_EVENT: lambda e: _push_fields(e.get("body") or ""),
-    REVIEW_REQUEST_EVENT: lambda e: {
+    **dict.fromkeys((REVIEW_REQUEST_EVENT, ASSIGNEES_EVENT), lambda e: {
         "assignee": norm_user(e.get("assignee")),
-        "removed_assignee": bool(e.get("removed_assignee"))},
+        "assignee_team": (e.get("assignee_team") or {}).get("name"),
+        "removed_assignee": bool(e.get("removed_assignee"))}),
+    MILESTONE_EVENT: lambda e: {
+        "milestone": (e.get("milestone") or {}).get("title"),
+        "old_milestone": (e.get("old_milestone") or {}).get("title")},
+    TITLE_EVENT: lambda e: {
+        "old_title": e.get("old_title"), "new_title": e.get("new_title")},
+    **dict.fromkeys((TARGET_BRANCH_EVENT, DELETE_BRANCH_EVENT), lambda e: {
+        "old_ref": e.get("old_ref") or None, "new_ref": e.get("new_ref") or None}),
+    **dict.fromkeys(DEPENDENCY_EVENTS, lambda e: {
+        "dependent_issue": _item_summary(e.get("dependent_issue") or {}),
+        "removed_dependency": e["type"] == "remove_dependency"}),
     LABEL_EVENT: lambda e: {
         "label": (e.get("label") or {}).get("name"),
         "removed_label": e.get("body") != "1"},
@@ -1107,16 +1142,35 @@ def _removal_pair(added: str, removed: str, key: str,
 _GITHUB_TYPED_KEYS: dict[str, Callable[[dict], dict]] = {
     **_removal_pair("review_requested", "review_request_removed", "removed_assignee",
                     lambda e: {"type": REVIEW_REQUEST_EVENT,
-                               "assignee": norm_user(e.get("requested_reviewer"))}),
+                               "assignee": norm_user(e.get("requested_reviewer")),
+                               "assignee_team": (e.get("requested_team") or {}).get("name")}),
+    **_removal_pair("assigned", "unassigned", "removed_assignee",
+                    lambda e: {"type": ASSIGNEES_EVENT,
+                               "assignee": norm_user(e.get("assignee"))}),
     **_removal_pair("labeled", "unlabeled", "removed_label",
                     lambda e: {"type": LABEL_EVENT,
                                "label": (e.get("label") or {}).get("name")}),
+    "milestoned": lambda e: {"type": MILESTONE_EVENT,
+                             "milestone": (e.get("milestone") or {}).get("title")},
+    "demilestoned": lambda e: {"type": MILESTONE_EVENT,
+                               "old_milestone": (e.get("milestone") or {}).get("title")},
+    "renamed": lambda e: {"type": TITLE_EVENT,
+                          "old_title": (e.get("rename") or {}).get("from"),
+                          "new_title": (e.get("rename") or {}).get("to")},
+    "base_ref_changed": lambda e: {"type": TARGET_BRANCH_EVENT},
+    "head_ref_deleted": lambda e: {"type": DELETE_BRANCH_EVENT},
+    **{github: (lambda e, kind=kind: {"type": kind}) for github, kind in _GITHUB_FIELDLESS.items()},
+    "locked": lambda e: {"type": _GITHUB_FIELDLESS["locked"], "body": e.get("lock_reason") or ""},
+    "review_dismissed": lambda e: {
+        "type": _GITHUB_FIELDLESS["review_dismissed"],
+        "body": (e.get("dismissed_review") or {}).get("dismissal_message") or ""},
     "cross-referenced": lambda e: _cross_reference_fields(
         e["event"], e["source"]["issue"], None, None),
     "referenced": lambda e: {"ref_commit_sha": e.get("commit_id")},
-    "closed": lambda e: {"type": CLOSE_EVENT},
+    "closed": lambda e: {"type": CLOSE_EVENT, "commit_id": e.get("commit_id"),
+                         "state_reason": e.get("state_reason")},
     "reopened": lambda e: {"type": REOPEN_EVENT},
-    "merged": lambda e: {"type": MERGE_EVENT},
+    "merged": lambda e: {"type": MERGE_EVENT, "commit_id": e.get("commit_id")},
 }
 
 
@@ -1165,7 +1219,7 @@ def _project_github_timeline(events: list[dict]) -> list[dict]:
     Review requests are the events ``review_requested`` /
     ``review_request_removed``, the requester under ``actor`` and the
     requestee under ``requested_reviewer`` (``requested_team`` for a
-    team, which projects to no assignee) --
+    team, which projects to ``assignee_team``) --
     https://docs.github.com/en/rest/issues/timeline; folded into the
     Forgejo ``review_request`` shape. A mention from another issue or
     pull request is the event ``cross-referenced`` with the mentioning

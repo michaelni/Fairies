@@ -196,13 +196,16 @@ class BuildLlmDiscussionWithTimelineTests(unittest.TestCase):
         kinds = [(i["kind"], i.get("created_at") or i.get("submitted_at"))
                  for i in items]
         # Expected order: initial push and the review request (same
-        # second, 2026-05-21) -> labels -> bot comment (2026-05-25
-        # 01:52) -> labels -> force-push (2026-05-25 21:46).
+        # second, 2026-05-21), auto-merge schedule, milestone -> labels
+        # -> bot comment (2026-05-25 01:52) -> labels -> force-push
+        # (2026-05-25 21:46).
         self.assertEqual(
             kinds,
             [
                 ("push",           PR_23197_INITIAL_PUSH_AT),
                 ("review_request", PR_23197_INITIAL_PUSH_AT),
+                ("auto_merge_scheduled", "2026-05-21T21:23:46Z"),
+                ("milestone_set",  "2026-05-21T21:23:49Z"),
                 ("label_added",    "2026-05-21T21:23:51Z"),
                 ("label_added",    "2026-05-21T21:23:51Z"),
                 ("comment",        "2026-05-25T01:52:46Z"),
@@ -374,6 +377,93 @@ class CrossReferenceProjectionTests(unittest.TestCase):
             "created_at": "2026-09-24T19:12:29Z",
             "sha": "48e0046c0a0688b330b374d40333a2615dd68ddf",
             "body": "zawiza cuhulugo"})
+
+
+class TypedEventTests(unittest.TestCase):
+    """Real captures: FFmpeg PR #24623 (milestone, auto-merge schedule,
+    merge and head-branch deletion, all by its author), PR #21598 (a
+    review dismissal), issue #23845 (an assignment) and issue #20035
+    (a title change)."""
+
+    def test_pr_24623_carries_its_typed_events(self) -> None:
+        disc = fairy.build_llm_discussion(
+            [], [], [], _load_timeline("ffmpeg_pr_24623_timeline.json"))
+        self.assertEqual(
+            [d for d in disc if d["kind"] not in ("push", "label_added", "label_removed")],
+            [{"kind": "milestone_set", "author": "michaelni", "milestone": "gato vibe",
+              "created_at": "2026-09-22T01:32:48Z"},
+             {"kind": "auto_merge_scheduled", "author": "michaelni",
+              "created_at": "2026-09-23T19:03:24Z"},
+             {"kind": "state", "author": "michaelni", "state": "merged",
+              "created_at": "2026-09-28T11:47:45Z"},
+             {"kind": "head_branch_deleted", "author": "michaelni", "branch": "soni",
+              "created_at": "2026-09-28T11:47:45Z"}])
+
+    def test_single_entry_captures(self) -> None:
+        for name, expected in (
+            ("ffmpeg_pr_21598_dismiss_review_timeline.json",
+             {"kind": "review_dismissed", "author": "michaelni", "reason": "huropehe",
+              "created_at": "2026-02-26T18:14:43Z"}),
+            ("ffmpeg_issue_23845_assignees_timeline.json",
+             {"kind": "assigned", "author": "cibado", "assignee": "cibado",
+              "created_at": "2026-07-19T12:46:46Z"}),
+            ("ffmpeg_issue_20035_change_title_timeline.json",
+             {"kind": "title_changed", "author": "raleve", "old_title": "firuno",
+              "new_title": "vikumu dibomule rugu", "created_at": "2025-07-26T21:59:33Z"}),
+        ):
+            with self.subTest(name):
+                self.assertEqual(
+                    fairy.build_llm_discussion([], [], [], _load_timeline(name)),
+                    [expected])
+
+    def test_a_dependency_on_a_deleted_issue_projects_empty(self) -> None:
+        disc = fairy.build_llm_discussion([], [], [], [
+            forge_gcli.project_timeline_event(
+                {"type": "remove_dependency", "user": {"login": "michaelni"},
+                 "created_at": "2026-07-28T12:00:00Z", "dependent_issue": None})])
+        self.assertEqual((disc[0]["kind"], disc[0]["number"]), ("dependency_removed", None))
+
+    def test_dependency_and_team_request(self) -> None:
+        """No capture; the entries follow the Forgejo timeline comment
+        structure (modules/structs/issue_comment.go)."""
+        item = {"number": 9, "title": "the blocker", "state": "open",
+                "repository": {"full_name": "o/r"}, "pull_request": None}
+        disc = fairy.build_llm_discussion([], [], [], [
+            forge_gcli.project_timeline_event(
+                {"type": "add_dependency", "user": {"login": "michaelni"},
+                 "created_at": "2026-07-28T12:00:00Z", "dependent_issue": item}),
+            forge_gcli.project_timeline_event(
+                {"type": "review_request", "user": {"login": "michaelni"},
+                 "created_at": "2026-07-28T12:00:01Z", "assignee": None,
+                 "assignee_team": {"name": "maintainers"}, "removed_assignee": False})])
+        self.assertEqual(disc, [
+            {"kind": "dependency_added", "author": "michaelni", "number": 9,
+             "title": "the blocker", "state": "open", "repository": "o/r",
+             "is_pull": False, "created_at": "2026-07-28T12:00:00Z"},
+            {"kind": "review_request", "author": "michaelni", "reviewer": "maintainers",
+             "created_at": "2026-07-28T12:00:01Z"}])
+
+    def test_due_dates_and_a_milestone_change(self) -> None:
+        """No capture; Forgejo writes a deadline comment's content as the
+        date, or ``new|old`` for a change (models/issues/comment.go)."""
+        entries = [
+            {"type": "added_deadline", "body": "2026-12-01"},
+            {"type": "modified_deadline", "body": "2026-12-24|2026-12-01"},
+            {"type": "removed_deadline", "body": "2026-12-24"},
+            {"type": "milestone", "milestone": {"title": "9.1"},
+             "old_milestone": {"title": "9.0"}},
+            {"type": "lock", "body": "too heated"}]
+        disc = fairy.build_llm_discussion([], [], [], [
+            forge_gcli.project_timeline_event(
+                {"user": {"login": "michaelni"}, "created_at": "2026-07-28T12:00:00Z", **e})
+            for e in entries])
+        self.assertEqual(
+            [{k: v for k, v in d.items() if k not in ("author", "created_at")} for d in disc],
+            [{"kind": "due_date_set", "date": "2026-12-01"},
+             {"kind": "due_date_changed", "new_date": "2026-12-24", "old_date": "2026-12-01"},
+             {"kind": "due_date_removed", "date": "2026-12-24"},
+             {"kind": "milestone_changed", "old_milestone": "9.0", "new_milestone": "9.1"},
+             {"kind": "locked", "reason": "too heated"}])
 
 
 if __name__ == "__main__":

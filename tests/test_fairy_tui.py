@@ -1454,6 +1454,39 @@ class DetailTests(DbCase):
             ui._copy_click("tr", rect.x + gutter + rows[0].index("#5"), rect.y + 1)
         self.assertEqual(sent, ["5"])
 
+    def test_the_typed_event_lines(self) -> None:
+        at = "2026-07-19T09:00:00Z"
+        self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
+            {"kind": "unassigned", "author": "a", "assignee": "dowu", "created_at": at},
+            {"kind": "milestone_changed", "author": "a", "old_milestone": "9.0",
+             "new_milestone": "9.1", "created_at": at},
+            {"kind": "milestone_removed", "author": "a", "milestone": "9.1", "created_at": at},
+            {"kind": "title_changed", "author": "a", "old_title": "x", "new_title": "y", "created_at": at},
+            {"kind": "target_branch_changed", "author": "a", "old_ref": "master",
+             "new_ref": "release", "created_at": at},
+            {"kind": "head_branch_deleted", "author": "a", "branch": "fix", "created_at": at},
+            {"kind": "head_branch_deleted", "author": "a", "created_at": at},
+            {"kind": "target_branch_changed", "author": "a", "created_at": at},
+            {"kind": "dependency_added", "author": "a", "repository": "o/r", "number": 9,
+             "title": "blocker", "created_at": at},
+            {"kind": "review_dismissed", "author": "a", "reason": "stale now", "created_at": at},
+            {"kind": "due_date_changed", "author": "a", "old_date": "2026-12-01",
+             "new_date": "2026-12-24", "created_at": at},
+            {"kind": "locked", "author": "a", "reason": "too heated", "created_at": at}]))
+        self.model.poll()
+        ui = make_ui(self.model)
+        with self.model.lock:
+            text = fairy_tui._plain(ui.detail_lines(90))
+        for line in ("unassigned dowu", "changed the milestone from 9.0 to 9.1",
+                     "removed the milestone 9.1", 'changed the title from "x" to "y"',
+                     "changed the target branch from master to release",
+                     "deleted the head branch fix", "added a dependency on o/r#9 blocker",
+                     "dismissed a review: stale now",
+                     "changed the due date from 2026-12-01 to 2026-12-24",
+                     "locked the discussion: too heated"):
+            self.assertIn(line, text)
+        self.assertNotIn("None", text)
+
     def test_a_commit_reference_line_names_the_commit(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
             {"kind": "mentioned_in_commit", "author": "michaelni", "sha": "b" * 40,

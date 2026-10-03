@@ -793,9 +793,35 @@ The prior discussion is a chronological list. Every item carries its
 - ``review_request``, ``review_request_withdrawn``: ``author`` asked
   ``reviewer`` for a review, or took the request back. A request
   naming the current reviewer identity is a direct invitation.
+- ``assigned``, ``unassigned``: ``author`` assigned ``assignee`` or
+  took the assignment away.
 - ``label_added``, ``label_removed``: ``author`` added or removed
   ``label``.
-- ``state``: ``author`` closed, reopened or merged the pull request.
+- ``milestone_set``, ``milestone_changed``, ``milestone_removed``:
+  ``milestone`` was set, ``old_milestone`` became ``new_milestone``, or
+  ``milestone`` was removed.
+- ``title_changed``: ``old_title`` became ``new_title``.
+- ``target_branch_changed``: ``old_ref`` became ``new_ref``; both are
+  absent when the forge does not name them.
+- ``head_branch_deleted``: the head ``branch`` was deleted; absent when
+  the forge does not name it.
+- ``dependency_added``, ``dependency_removed``: this item depends, or
+  no longer depends, on issue or pull request ``repository``#``number``
+  (``title``, ``state``, ``is_pull``).
+- ``locked``, ``unlocked``: the discussion was locked, with the
+  ``reason`` given, or unlocked.
+- ``pinned``, ``unpinned``, ``auto_merge_scheduled``,
+  ``auto_merge_cancelled``, ``converted_to_draft``, ``ready_for_review``,
+  ``linked``, ``unlinked``, ``transferred``, ``marked_duplicate``,
+  ``unmarked_duplicate``, ``head_branch_restored``: what the name says,
+  no further fields.
+- ``review_dismissed``: a review was dismissed, with the ``reason``
+  given.
+- ``due_date_set``, ``due_date_changed``, ``due_date_removed``: the
+  ``date`` was set, ``old_date`` became ``new_date``, or the ``date``
+  was removed.
+- ``state``: ``author`` closed, reopened or merged the pull request,
+  with ``commit_id`` and ``state_reason`` when the forge names them.
 - ``mentioned_in_description``, ``mentioned_in_comment``,
   ``mentioned``: ``author`` mentioned this item from issue or pull
   request ``repository``#``number`` (``title``, ``state``,

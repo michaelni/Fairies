@@ -110,6 +110,7 @@ from forge_gcli import (
     CLOSE_EVENT,
     COMMIT_REFERENCE_EVENTS,
     CROSS_REFERENCE_EVENTS,
+    DEPENDENCY_EVENTS,
     MERGE_EVENT,
     PUSH_EVENT,
     REOPEN_EVENT,
@@ -131,6 +132,7 @@ __all__ = [
     "ACTIONABLE_DECISIONS",
     "ApiObject",
     "DEFAULT_WIP_PREFIXES",
+    "FIELDLESS_KINDS",
     "Decision",
     "LLMReview",
     "LabelChange",
@@ -1616,11 +1618,21 @@ def _push_fields(entry: ApiObject) -> dict | None:
 
 STATE_EVENTS = {CLOSE_EVENT: "closed", REOPEN_EVENT: "reopened",
                 MERGE_EVENT: "merged"}
+def _assignee_name(entry: ApiObject) -> str:
+    return entry.get("assignee_team") or _timeline_name(entry.get("assignee"))
+
 
 def _either(flag: str, when_set: str, when_clear: str,
             fields: Callable[[ApiObject], dict]) -> Callable[[ApiObject], tuple[str, dict]]:
     """An entry whose ``flag`` tells a removal from an addition."""
     return lambda entry: (when_set if entry.get(flag) else when_clear, fields(entry))
+
+
+def _milestone(entry: ApiObject) -> tuple[str, dict]:
+    old, new = entry.get("old_milestone"), entry.get("milestone")
+    if old and new:
+        return "milestone_changed", {"old_milestone": old, "new_milestone": new}
+    return ("milestone_set", {"milestone": new}) if new else ("milestone_removed", {"milestone": old})
 
 
 _MENTION_KINDS = {"description": "mentioned_in_description",
@@ -1634,6 +1646,19 @@ def _mention(entry: ApiObject) -> tuple[str, dict]:
         **({"body": entry["ref_comment"]} if entry["ref_origin"] == "comment" else {})}
 
 
+# The forge's name for each timeline entry that carries nothing beyond
+# who and when, and the discussion kind it becomes.
+FIELDLESS_KINDS = {
+    forge_gcli.UNLOCK_EVENT: "unlocked", forge_gcli.PIN_EVENT: "pinned",
+    forge_gcli.UNPIN_EVENT: "unpinned",
+    AUTO_MERGE_SCHEDULE_EVENT: "auto_merge_scheduled",
+    AUTO_MERGE_CANCEL_EVENT: "auto_merge_cancelled",
+    "convert_to_draft": "converted_to_draft", "ready_for_review": "ready_for_review",
+    "connected": "linked", "disconnected": "unlinked", "transferred": "transferred",
+    "marked_as_duplicate": "marked_duplicate", "unmarked_as_duplicate": "unmarked_duplicate",
+    "head_ref_restored": "head_branch_restored",
+}
+
 # Forge timeline entry -> the discussion kind and fields it becomes,
 # None for an entry that cannot be read.
 _TIMELINE_ITEMS: dict[str, Callable[[ApiObject], tuple[str, dict] | None]] = {
@@ -1641,15 +1666,36 @@ _TIMELINE_ITEMS: dict[str, Callable[[ApiObject], tuple[str, dict] | None]] = {
         ("push", fields) if (fields := _push_fields(entry)) is not None else None),
     forge_gcli.REVIEW_REQUEST_EVENT: _either(
         "removed_assignee", "review_request_withdrawn", "review_request",
-        lambda entry: {"reviewer": _timeline_name(entry.get("assignee"))}),
+        lambda entry: {"reviewer": _assignee_name(entry)}),
+    forge_gcli.ASSIGNEES_EVENT: _either(
+        "removed_assignee", "unassigned", "assigned",
+        lambda entry: {"assignee": _assignee_name(entry)}),
     forge_gcli.LABEL_EVENT: _either(
         "removed_label", "label_removed", "label_added",
         lambda entry: {"label": entry["label"]}),
+    forge_gcli.MILESTONE_EVENT: _milestone,
+    forge_gcli.TITLE_EVENT: lambda entry: ("title_changed", {
+        "old_title": entry["old_title"], "new_title": entry["new_title"]}),
+    forge_gcli.TARGET_BRANCH_EVENT: lambda entry: ("target_branch_changed", {
+        key: entry[key] for key in ("old_ref", "new_ref") if entry.get(key)}),
+    forge_gcli.DELETE_BRANCH_EVENT: lambda entry: ("head_branch_deleted", {
+        "branch": entry["old_ref"]} if entry.get("old_ref") else {}),
+    **dict.fromkeys(DEPENDENCY_EVENTS, _either(
+        "removed_dependency", "dependency_removed", "dependency_added",
+        lambda entry: entry["dependent_issue"])),
+    forge_gcli.LOCK_EVENT: lambda entry: ("locked", {"reason": entry["body"]}),
+    forge_gcli.DISMISS_REVIEW_EVENT: lambda entry: ("review_dismissed", {"reason": entry["body"]}),
+    "added_deadline": lambda entry: ("due_date_set", {"date": entry["body"]}),
+    "modified_deadline": lambda entry: ("due_date_changed", dict(zip(
+        ("new_date", "old_date"), entry["body"].split("|", 1)))),
+    "removed_deadline": lambda entry: ("due_date_removed", {"date": entry["body"]}),
+    **{event: (lambda entry, kind=kind: (kind, {})) for event, kind in FIELDLESS_KINDS.items()},
     **dict.fromkeys(CROSS_REFERENCE_EVENTS, _mention),
     **dict.fromkeys(COMMIT_REFERENCE_EVENTS, lambda entry: ("mentioned_in_commit", {
         "sha": entry["ref_commit_sha"], "body": entry["body"]})),
     **dict.fromkeys(STATE_EVENTS, lambda entry: ("state", {
-        "state": STATE_EVENTS[entry["type"]]})),
+        "state": STATE_EVENTS[entry["type"]],
+        **{key: entry[key] for key in ("commit_id", "state_reason") if entry.get(key)}})),
 }
 
 
@@ -1975,10 +2021,8 @@ def build_llm_discussion(
     """Merge the PR's comments, reviews, review comments and (optionally)
     push events into a single chronologically-sorted list for the LLM.
 
-    ``timeline`` is the raw ``/issues/{n}/timeline`` payload; its
-    ``pull_push``, ``review_request``, ``label``, cross-reference,
-    commit-reference and state-change entries are consumed (see
-    ``timeline_events``).
+    ``timeline`` is the raw ``/issues/{n}/timeline`` payload; its typed
+    entries are consumed as ``timeline_events`` describes.
     Passing ``None`` (or omitting it) yields a comments-only discussion.
     The push items carry ``kind="push"`` plus ``head_sha`` /
     ``is_force_push`` so the triage LLM can tell unambiguously that

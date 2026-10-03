@@ -197,18 +197,18 @@ class CliContainer:
                 self._running = False
         return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
-    def kill_run(self) -> None:
+    def kill_run(self) -> bool:
         """SIGKILL every process but PID 1 while ``run`` is in progress, so
         it returns with the container still up for the read-backs.
 
-        Outside a ``run`` this does nothing, so it cannot hit a read-back.
-        ``kill -1`` exits 1 once only PID 1 is left (ESRCH,
+        Outside a ``run`` this does nothing and returns False, so it cannot
+        hit a read-back. ``kill -1`` exits 1 once only PID 1 is left (ESRCH,
         https://man7.org/linux/man-pages/man2/kill.2.html); any other
         failure removes the container instead.
         """
         with self._lock:
             if not self._running:
-                return
+                return False
             try:
                 rc = run_on_remote_host(
                     self.host, "podman", "exec", self._cid(),
@@ -219,6 +219,7 @@ class CliContainer:
             logger.warning("killing the run failed (rc=%s); removing "
                            "its container", rc)
             self.stop()
+        return True
 
     def stop(self) -> None:
         with self._lock:
@@ -317,6 +318,8 @@ class CliShellRelay:
         self._shells: dict[str, ContainerShellSession] = {}
         self._ready = threading.Event()
         self._ready_lines: list[bytes] = []
+        self._stopping = False
+        self._channel_lost = False
 
     def start(self, *, ready_timeout_s: float = 30.0) -> "CliShellRelay":
         argv = self.container.exec_argv(
@@ -363,6 +366,18 @@ class CliShellRelay:
             # call outlived the CLI and its response has nowhere to go.
             logger.info("shell dispatch: relay already stopped; "
                         "dropping the late shell-call response (%s)", exc)
+        else:
+            if not self._stopping:
+                # EOF before stop(): the channel to relay.py is gone, and
+                # the CLI would wait for its pending shell calls until its
+                # own tool timeout.
+                logger.warning("shell relay channel closed; killing the run")
+                self._channel_lost = self.container.kill_run()
+
+    def raise_if_channel_lost(self) -> None:
+        if self._channel_lost:
+            raise ContainerInfraError(
+                "shell relay channel closed while the run was up")
 
     def _drain_stderr(self) -> None:
         buffered = 0
@@ -387,6 +402,7 @@ class CliShellRelay:
         return list(self._shells.values())
 
     def stop(self) -> None:
+        self._stopping = True
         if self._proc is None:
             return
         self._proc.kill()

@@ -212,7 +212,8 @@ class CodexReviewerRunTests(unittest.TestCase):
 
     def _run(self, *, jsonl="", stderr="", returncode=0,
              last_message='{"classification": "approve", "message": "ok"}',
-             ctx=None, on_run=None, reviewer=None, refreshed_auth=None):
+             ctx=None, on_run=None, reviewer=None, refreshed_auth=None,
+             channel_lost=False):
         reviewer = reviewer or self._reviewer()
         proc = subprocess.CompletedProcess(
             [], returncode, stdout=jsonl, stderr=stderr)
@@ -224,6 +225,9 @@ class CodexReviewerRunTests(unittest.TestCase):
             relay.return_value.start.return_value = relay.return_value
             relay.return_value.opened_sessions.return_value = \
                 getattr(self, "_relay_sessions", [])
+            if channel_lost:
+                relay.return_value.raise_if_channel_lost.side_effect = \
+                    podman_host.ContainerInfraError("shell relay channel closed")
             return reviewer.run(ctx or make_ctx())
 
     def test_validated_result_from_last_message(self) -> None:
@@ -451,6 +455,15 @@ class CodexReviewerRunTests(unittest.TestCase):
         self._run()
         for path, kw in self.container.read_file_calls:
             self.assertIsNotNone(kw.get("max_bytes"), path)
+
+    def test_lost_relay_channel_fails_as_infrastructure_without_poisoning(self) -> None:
+        self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        poisoned = []
+        ctx = make_ctx(report_poisoned=poisoned.append)
+        with self.assertRaises(podman_host.ContainerInfraError):
+            self._run(ctx=ctx, last_message=None, returncode=137, channel_lost=True)
+        self.assertEqual([], poisoned)
 
     def test_crash_poisons_review_containers(self) -> None:
         s1 = mock.Mock(spec=podman_host.ContainerShellSession)

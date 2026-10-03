@@ -65,7 +65,7 @@ from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import (BadModelOutput, BranchCollectionFailed,
                             ProviderTurnFailed, ReviewContext,
                             Reviewer, RoleSpec)
-from podman_host import ShellHostSpec
+from podman_host import ContainerInfraError, ShellHostSpec
 import shell_tool
 
 __all__ = [
@@ -404,6 +404,8 @@ class CliReviewer(Reviewer):
                         copied_in=credential.read_text(encoding="utf-8"))
                 elapsed = time.monotonic() - started
 
+            if relay is not None:
+                relay.raise_if_channel_lost()
             usage, error_text = self._run_summary(proc)
             logger.info(
                 "%s done rc=%d dt=%.1fs usage=%s", self.backend,
@@ -426,6 +428,8 @@ class CliReviewer(Reviewer):
             raise  # the CLI ran fine, only the final JSON was malformed
         except BranchCollectionFailed:
             raise  # the CLI ran fine; fairy's own branch packing failed
+        except ContainerInfraError:
+            raise  # the hosts failed fairy, not the model: nothing to inspect
         except Exception:
             shell_tool.abort_if_cancelled()
             if shell_tool.halted():

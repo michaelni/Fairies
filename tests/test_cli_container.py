@@ -227,7 +227,7 @@ class KillRunTests(unittest.TestCase):
 
     def test_no_kill_outside_a_run(self) -> None:
         with mock.patch.object(cli_container, "run_on_remote_host") as kill:
-            self.container.kill_run()
+            self.assertFalse(self.container.kill_run())
         kill.assert_not_called()
 
     def test_stop_removes_the_container_once(self) -> None:
@@ -327,36 +327,45 @@ class RelayReadinessTests(unittest.TestCase):
 
 
 class RelayCancelTests(unittest.TestCase):
-    def _serve(self, dispatch_effect) -> mock.Mock:
-        container = mock.Mock()
+    def _serve(self, dispatch_effect, *, stopping=False) -> CliShellRelay:
         relay = CliShellRelay(
-            container, relay_container_path="/work/.codex-run/relay.py",
+            mock.Mock(), relay_container_path="/work/.codex-run/relay.py",
             machine_labels=("x86_64",), open_shell=lambda label: (None, ""),
             max_timeout_s=60.0, socket_path="/work/.codex-run/shell.sock")
         relay._proc = _FakeProc(b"")
+        relay._stopping = stopping
         with mock.patch.object(cli_container, "serve_dispatch",
                                side_effect=dispatch_effect):
             relay._serve()
-        return container
+        return relay
 
     def test_cancel_at_a_shell_call_kills_codex_and_keeps_the_container(self) -> None:
-        container = self._serve(SystemExit)
+        container = self._serve(SystemExit).container
         container.kill_run.assert_called_once()
         container.stop.assert_not_called()
 
     def test_a_halt_leaves_the_codex_container_to_the_halt_pause(self) -> None:
-        container = self._serve(SystemExit(EXIT_REVIEW_STOPPED_BY_HALT_FILE))
+        container = self._serve(SystemExit(EXIT_REVIEW_STOPPED_BY_HALT_FILE)).container
         container.kill_run.assert_not_called()
         container.stop.assert_not_called()
 
-    def test_normal_eof_stops_nothing(self) -> None:
-        self._serve(None).kill_run.assert_not_called()
+    def test_eof_after_stop_stops_nothing(self) -> None:
+        relay = self._serve(None, stopping=True)
+        relay.container.kill_run.assert_not_called()
+        relay.raise_if_channel_lost()
+
+    def test_eof_before_stop_kills_the_run_as_a_lost_channel(self) -> None:
+        relay = self._serve(None)
+        relay.container.kill_run.assert_called_once()
+        relay.container.stop.assert_not_called()
+        with self.assertRaises(podman_host.ContainerInfraError):
+            relay.raise_if_channel_lost()
 
     def test_closed_relay_pipe_neither_raises_nor_stops(self) -> None:
         """A shell call that outlives codex writes its response to the
         stopped relay's closed stdin; the dispatch thread must end quietly
         instead of dying with the traceback seen in production 2026-08-14."""
-        self._serve(ValueError("write to closed file")).kill_run.assert_not_called()
+        self._serve(ValueError("write to closed file")).container.kill_run.assert_not_called()
 
 
 if __name__ == "__main__":

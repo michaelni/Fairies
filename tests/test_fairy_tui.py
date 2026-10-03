@@ -1811,10 +1811,34 @@ class DetailTests(DbCase):
         self.assertLess(text.index("edited later"),
                         text.index("sampled for the review"))
 
+    def test_separator_names_the_sampling_time_not_the_forge_update(self) -> None:
+        """FFmpeg/FFmpeg #24724: pushed 2026-10-02T22:16:34Z, queued
+        for its review 2026-10-03T05:05:04Z, pushed again after it."""
+        pushes = [{"kind": "push", "author": "a", "commit_count": 1,
+                   "head_sha": sha, "created_at": at}
+                  for sha, at in (("a3d3717d68", "2026-10-02T22:16:34Z"),
+                                  ("e8ef341ff9", "2026-10-03T06:43:37Z"))]
+        self.db.push("reviewed", "pr", "5", verdict(
+            5, expected_updated_at="2026-10-02T22:16:34Z",
+            sampled_at="2026-10-03T05:05:04+00:00", discussion=pushes[:1]))
+        self.db.push("items", "pr", "5", {
+            "title": "t5", "author": "a", "body": "", "discussion": pushes})
+        self.model.poll()
+        self.model.poll_snapshot()
+        text = self._detail_text()
+        from datetime import datetime, timezone
+        local = datetime(2026, 10, 3, 5, 5, 4, tzinfo=timezone.utc).astimezone()
+        self.assertIn(f"── sampled for the review {local:%Y-%m-%d %H:%M} (", text)
+        self.assertLess(text.index("a3d3717d68"),
+                        text.index("sampled for the review"))
+        self.assertLess(text.index("sampled for the review"),
+                        text.index("e8ef341ff9"))
+
     def test_no_review_row_gets_the_plain_sampled_wording(self) -> None:
         self.db.push("merge-ready", "pr", "5", {
             "title": "t", "reason": "approved",
-            "expected_updated_at": "2026-07-19T10:00:00Z"})
+            "expected_updated_at": "2026-07-19T10:00:00Z",
+            "sampled_at": "2026-07-19T12:00:00+00:00"})
         self.db.push("items", "pr", "5", {
             "title": "t5", "author": "a", "body": "", "discussion": [
                 {"kind": "comment", "author": "carol",

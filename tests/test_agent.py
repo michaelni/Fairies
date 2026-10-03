@@ -108,7 +108,7 @@ class AgentCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def scan(self, prs: list[dict], fetch=None, *, full: bool = True,
-             changed=(), probe: str = "p1") -> None:
+             changed=(), probe: str = "p1", now: datetime = NOW) -> None:
         """A pass: ``prs`` is the full open listing, ``changed`` what the
         forge updated since the last pass, ``probe`` its newest stamp."""
         with mock.patch.object(fairy, "list_open_prs", return_value=prs), \
@@ -121,7 +121,7 @@ class AgentCase(unittest.TestCase):
                 mock.patch.object(agent.gcli_cache, "load_cache",
                                   return_value=mock.Mock()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"):
-            agent.scan_pass(self.db, self.ns, None, now=NOW, full=full)
+            agent.scan_pass(self.db, self.ns, None, now=now, full=full)
 
     def age(self, state: str, kind: str, number: int, hours: float) -> None:
         data = self.db.get(state, kind, number)
@@ -162,6 +162,12 @@ class TicketRoutingTests(AgentCase):
         self.scan([make_pr(1)])
         t = self.db.get("queued", "pr", "1")
         self.assertEqual(t["prepared"]["reactions"], {})
+        self.assertEqual(t["expected_updated_at"], make_pr(1)["updated_at"])
+
+    def test_a_queued_ticket_is_stamped_with_the_pass_time(self) -> None:
+        self.scan([make_pr(1)])
+        t = self.db.get("queued", "pr", "1")
+        self.assertEqual(t["sampled_at"], NOW.isoformat())
         self.assertEqual(t["expected_updated_at"], make_pr(1)["updated_at"])
 
     def test_limit_caps_queued_and_persists_nothing(self) -> None:
@@ -232,9 +238,16 @@ class TicketRoutingTests(AgentCase):
             pr, "ci red", cancelled_ci_contexts=("job1",))
         self.scan([make_pr(1)])
         stamp = self.db.path("ci-blocked", "pr", "1").stat().st_mtime_ns
-        self.scan([make_pr(1)])
+        later = NOW + timedelta(hours=6)
+        self.scan([make_pr(1)], now=later)
         self.assertEqual(
             self.db.path("ci-blocked", "pr", "1").stat().st_mtime_ns, stamp)
+        self.assertEqual(self.db.get("ci-blocked", "pr", "1")["sampled_at"],
+                         NOW.isoformat())
+        moved = dict(make_pr(1), updated_at="2026-07-24T17:00:00Z")
+        self.scan([moved], fetch=lambda ns, n: moved, now=later)
+        self.assertEqual(self.db.get("ci-blocked", "pr", "1")["sampled_at"],
+                         later.isoformat())
         self.prepare.side_effect = lambda ns, pr, **kw: gate_skip(
             pr, "ci red", cancelled_ci_contexts=("job1", "job2"))
         self.scan([make_pr(1)])  # outcome changed: must be rewritten

@@ -1652,7 +1652,7 @@ class UILoop:
             tail += [[], [("h3", f"discussion ({len(disc)})"[:width])]]
             separator = [("sampled", (
                 f"── sampled {'for the review ' if review else ''}"
-                f"{_when(data.get('expected_updated_at'))} ──")[:width])]
+                f"{_when(data.get('sampled_at'))} ──")[:width])]
             mentions = 0
             for i, c in enumerate(disc):
                 if i == separator_at:

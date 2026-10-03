@@ -131,7 +131,7 @@ def gate_state(decision: fairy.Decision) -> str:
     return "skipped"
 
 
-def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
+def gate_ticket(decision: fairy.Decision, item: dict, sampled_at: str) -> dict:
     return {
         "title": decision.title,
         "author": decision.author,
@@ -141,6 +141,7 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
         "reason": decision.reason,
         # the attention rows exist to be acted on in the forge web UI
         "html_url": str(item.get("html_url") or ""),
+        "sampled_at": sampled_at,
         # so an operator x (-> cancelled) sticks until the item changes
         "expected_updated_at": item.get("updated_at"),
         "cancelled_ci_contexts": list(decision.cancelled_ci_contexts),
@@ -547,6 +548,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                         "html_url": str(item.get("html_url") or ""),
                         "error": f"prepare failed: {exc}",
                         "error_backoff_h": error_backoff_h,
+                        "sampled_at": now.isoformat(),
                         "expected_updated_at": item.get("updated_at"),
                     }, prior)
                 continue
@@ -575,7 +577,10 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             if prior == "posted" and agent_post_at:
                 _refresh_activity(db, prior, kind, token, prepared)
                 continue
-            ticket = {**gate_ticket(prepared, item), **carried}
+            sampled_at = now.isoformat()
+            if prior_data and prior_data.get("expected_updated_at") == item.get("updated_at"):
+                sampled_at = prior_data.get("sampled_at", sampled_at)
+            ticket = {**gate_ticket(prepared, item, sampled_at), **carried}
             if state == "error":
                 if prior in ("posted", "cancelled", "reviewed"):
                     # never clobber archive or a standing verdict
@@ -636,6 +641,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             "author": prepared.author,
             "body": str(item.get("body") or ""),
             "head_branch": fairy.get_pr_head_branch(item),
+            "sampled_at": now.isoformat(),
             # queued/error tickets need the guard too, or an operator x
             # on them cannot stick until new activity
             "expected_updated_at": item.get("updated_at"),

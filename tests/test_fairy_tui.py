@@ -89,6 +89,7 @@ def verdict(n: int, classification: str = "moderate_issues", msg: str = "m",
          "review": {"classification": classification, "message": msg,
                     "label_changes": labels or []},
          "expected_updated_at": "2026-07-19T10:00:00Z",
+         "sampled_at": "2026-07-19T12:00:00+00:00",
          "expected_head_sha": f"h{n}", "llm_at": "2026-07-20T00:00:00+00:00"}
     t.update(fields)
     return t
@@ -434,6 +435,7 @@ class ActTests(DbCase):
         self.model.poll()
         self.model.act("sample")
         self.model.poll()
+        self.model.sort_mode = "repo"
         self.assertEqual(self.keys(), [(R1, "5"), (R1, "5s1"), (R1, "6")])
 
     def test_apply_on_a_skip_verdict_says_nothing_to_post(self) -> None:
@@ -724,7 +726,23 @@ class SortTests(DbCase):
         for token in ("123", "1230", "123s1", "99"):
             self.db.push("queued", "pr", token, verdict(filedb.forge_number(token)))
         self.model.poll()
+        self.model.sort_mode = "repo"
         self.assertEqual(self._numbers(), ["99", "123", "123s1", "1230"])
+
+    def test_arrival_sort_is_by_sampling_time_and_survives_a_restart(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(
+            5, sampled_at="2026-07-21T00:00:00+00:00"))
+        self.db.push("reviewed", "pr", "6", verdict(
+            6, sampled_at="2026-07-20T00:00:00.5+00:00"))
+        self.db.push("reviewed", "pr", "7", verdict(
+            7, sampled_at="2026-07-20T00:00:00+00:00"))
+        self.model.poll()
+        self.model.act("sample")
+        for model in (self.model, fairy_tui.Model(self.model.sides)):
+            model.poll()
+            with model.lock:
+                self.assertEqual([it.number for it in model.visible()],
+                                 ["7", "6", "5", "7s1"])
 
     def test_repo_and_number_modes(self) -> None:
         # "z/AA" sorts last by raw owner/repo but its displayed short

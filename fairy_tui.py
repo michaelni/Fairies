@@ -292,6 +292,9 @@ def _ticket_order(key: tuple[str, str, filedb.TicketId]) -> tuple:
 
 
 _SORT_KEYS = {
+    "arrival": lambda it: iso_to_dt(str(
+        it.data.get("sampled_at") or it.data.get("state_changed_at") or ""))
+    or datetime.max.replace(tzinfo=timezone.utc),
     "status": lambda it: _SORT_STATES[it.state],
     # repo mode orders by the short name the list column displays, or
     # rows would look unsorted whenever owners differ.
@@ -596,8 +599,7 @@ class Model:
             allowed = _FILTER_STATES[self.filter_mode]
             items = [it for it in items if it.state in allowed
                      or self.filter_mode == "review" and _unacknowledged(it)]
-        if self.sort_mode != "arrival":
-            items.sort(key=_SORT_KEYS[self.sort_mode])
+        items.sort(key=_SORT_KEYS[self.sort_mode])
         self._vis_cache = (sig, items, {
             (it.repo, it.kind, it.number): i for i, it in enumerate(items)})
         return items

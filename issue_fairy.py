@@ -213,15 +213,19 @@ def get_issue_discussion(
     *,
     cache: gcli_cache.Cache,
     cache_max_age: timedelta,
+    fresh_reactions: bool = False,
 ) -> tuple[ApiObject, tuple[list[ApiObject], list[ApiObject], dict[str, list[str]]]]:
     """Return ``issue`` and its ``(comments, timeline, reactions)`` via
     the cache, the issue as of the stamp they were fetched at and
-    ``reactions`` who reacted how to its description."""
+    ``reactions`` who reacted how to its description; ``fresh_reactions``
+    asks the forge for every reaction now instead of serving them from
+    the last sweep."""
     issue, fields = gcli_cache.get(
         cache, args, "issues", args.owner, args.repo, issue,
         "issue_comments", "timeline", "reactions",
         max_age=cache_max_age,
-        reactions_max_age=timedelta(hours=args.reactions_cache_max_age_hours),
+        reactions_max_age=timedelta(0) if fresh_reactions
+        else timedelta(hours=args.reactions_cache_max_age_hours),
     )
     return issue, (list(fields["issue_comments"]), list(fields["timeline"]),
                    reactions_by_content(fields["reactions"]))

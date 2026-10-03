@@ -1190,6 +1190,7 @@ def get_pr_thread(
     *,
     cache: gcli_cache.Cache,
     cache_max_age: timedelta,
+    fresh_reactions: bool = False,
 ) -> tuple[ApiObject, tuple[list[ApiObject], list[ApiObject], list[ApiObject],
                             list[ApiObject], dict[str, list[str]]]]:
     """``pr``, as of their stamp, and its ``(reviews, comments,
@@ -1197,12 +1198,15 @@ def get_pr_thread(
     ``reactions`` being who reacted how to its description: the five
     fields share one entry stamp and one ``updated_at`` refetch, where
     separate discussion and timeline calls pay two -- and, on a changed
-    PR, drop and refetch each other's fields as non-refetched siblings."""
+    PR, drop and refetch each other's fields as non-refetched siblings.
+    ``fresh_reactions`` asks the forge for every reaction now instead
+    of serving them from the last sweep."""
     pr, fields = gcli_cache.get(
         cache, args, "pulls", args.owner, args.repo, pr,
         "reviews", "issue_comments", "review_comments",
         "timeline", "reactions", max_age=cache_max_age,
-        reactions_max_age=timedelta(hours=args.reactions_cache_max_age_hours),
+        reactions_max_age=timedelta(0) if fresh_reactions
+        else timedelta(hours=args.reactions_cache_max_age_hours),
     )
     return pr, (
         list(fields["reviews"]),

@@ -155,18 +155,20 @@ def gate_ticket(decision: fairy.Decision, item: dict) -> dict:
 
 
 def _fetch_thread(ns: argparse.Namespace, kind: str, item: dict, cache,
-                  cache_age: timedelta) -> tuple[dict, tuple[list, list, list, list, dict]]:
+                  cache_age: timedelta, *, fresh_reactions: bool = False,
+                  ) -> tuple[dict, tuple[list, list, list, list, dict]]:
     """The item's (reviews, comments, review comments, timeline) --
     ``build_llm_discussion``'s argument order -- and the reactions on
     its description, through the same cache the gates read; fetched
     first in the pass, so a prepare of the same item hits the cache.
     Issues have no reviews or review comments. Returned after the
-    item, as of its thread."""
+    item, as of its thread. ``fresh_reactions`` asks the forge for
+    every reaction now instead of serving them from the last sweep."""
     if kind == "pr":
-        return fairy.get_pr_thread(ns, item, cache=cache,
-                                   cache_max_age=cache_age)
+        return fairy.get_pr_thread(ns, item, cache=cache, cache_max_age=cache_age,
+                                   fresh_reactions=fresh_reactions)
     item, (comments, timeline, reactions) = issue_fairy.get_issue_discussion(
-        ns, item, cache=cache, cache_max_age=cache_age)
+        ns, item, cache=cache, cache_max_age=cache_age, fresh_reactions=fresh_reactions)
     return item, ([], comments, [], timeline, reactions)
 
 
@@ -613,6 +615,22 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             logger.info("%s #%d eligible but over --limit; next pass retries",
                         kind, number)
             continue
+        # The review samples the discussion from here on, and the scan's
+        # thread carries reactions as of the last sweep. A reaction bumps
+        # nothing, so when updated_at still matches, the fresh thread
+        # differs in reactions only and replaces the sampled one; when it
+        # moved, something else changed and the next pass judges it.
+        try:
+            fresh_item, fresh_thread = _fetch_thread(ns, kind, item, cache, cache_age,
+                                                     fresh_reactions=True)
+        except Exception as exc:
+            logger.warning("%s #%d: reactions not refreshed before sampling: %s",
+                           kind, number, exc)
+        else:
+            if fresh_item.get("updated_at") == item.get("updated_at"):
+                prepared = dataclasses_replace(
+                    prepared, discussion=fairy.build_llm_discussion(*fresh_thread[:4]),
+                    reactions=fresh_thread[4])
         ticket = {
             "title": prepared.title,
             "author": prepared.author,

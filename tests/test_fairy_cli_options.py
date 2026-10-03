@@ -241,7 +241,7 @@ class ScanCase(unittest.TestCase):
                                   return_value=gcli_cache.Cache()), \
                 mock.patch.object(agent.gcli_cache, "save_cache"), \
                 mock.patch.object(agent, "_fetch_thread", side_effect=lambda
-                                  ns, kind, item, *rest: (item, ([], [], [], [], {}))
+                                  ns, kind, item, *rest, **kw: (item, ([], [], [], [], {}))
                                   ) as self.fetch_thread, \
                 (mock.patch.object(fairy, "safe_prepare_pr", prepare)
                  if prepare is not None else contextlib.nullcontext()):

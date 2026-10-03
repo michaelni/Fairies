@@ -102,8 +102,8 @@ class AgentCase(unittest.TestCase):
         self.prepare = mock.Mock(side_effect=lambda ns, pr, **kw: prepared_for(pr))
         self.thread = mock.Mock(return_value=([], [], [], [], {}))
         patcher = mock.patch.object(agent, "_fetch_thread", side_effect=lambda
-                                    ns, kind, item, *rest:
-                                    (item, self.thread(ns, kind, item, *rest)))
+                                    ns, kind, item, *rest, **kw:
+                                    (item, self.thread(ns, kind, item, *rest, **kw)))
         self.fetch_thread = patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -141,6 +141,28 @@ class TicketRoutingTests(AgentCase):
         self.assertEqual(t["prepared"]["pr"]["head"]["sha"], "h1")
         prepared = fairy.prepared_pr_from_dict(t["prepared"])
         self.assertEqual(prepared.number, 1)
+
+    def test_a_queued_item_samples_fresh_reactions(self) -> None:
+        comment = {"user": {"login": "carol"}, "body": "ping",
+                   "created_at": "2026-07-19T10:00:00Z"}
+        self.thread.side_effect = lambda ns, kind, item, *rest, **kw: (
+            [], [{**comment, "reactions": [{"user": "dave", "content": "+1"}]}], [], [],
+            {"rocket": ["dave"]}) if kw.get("fresh_reactions") else ([], [comment], [], [], {})
+        self.scan([make_pr(1)])
+        t = self.db.get("queued", "pr", "1")
+        self.assertEqual(t["prepared"]["reactions"], {"rocket": ["dave"]})
+        self.assertEqual(t["prepared"]["discussion"][0]["reactions"], {"+1": ["dave"]})
+        self.assertEqual(self.db.get("items", "pr", "1")["reactions"], {})
+
+    def test_an_item_that_moved_under_the_refresh_keeps_the_sampled_thread(self) -> None:
+        moved = dict(make_pr(1), updated_at="2026-07-19T10:00:10Z")
+        self.fetch_thread.side_effect = lambda ns, kind, item, *rest, **kw: (
+            (moved, ([], [], [], [], {"rocket": ["dave"]})) if kw.get("fresh_reactions")
+            else (item, ([], [], [], [], {})))
+        self.scan([make_pr(1)])
+        t = self.db.get("queued", "pr", "1")
+        self.assertEqual(t["prepared"]["reactions"], {})
+        self.assertEqual(t["expected_updated_at"], make_pr(1)["updated_at"])
 
     def test_limit_caps_queued_and_persists_nothing(self) -> None:
         self.ns.limit = 2
@@ -982,7 +1004,7 @@ class RebaseSendTests(RebasedSeriesCase):
 class MovedItemTests(AgentCase):
     def test_the_scan_goes_on_with_the_item_its_thread_was_fetched_at(self) -> None:
         moved = dict(make_pr(1), updated_at="2026-07-19T10:00:10Z")
-        self.fetch_thread.side_effect = lambda ns, kind, item, *rest: (
+        self.fetch_thread.side_effect = lambda ns, kind, item, *rest, **kw: (
             moved, ([], [], [], [], {}))
         self.scan([make_pr(1)])
         self.assertIs(self.prepare.call_args.args[1], moved)
@@ -1751,6 +1773,14 @@ class DiscussionWiringTests(unittest.TestCase):
         self.assertEqual(set(get.call_args.args[6:]),
                          {"reviews", "issue_comments", "review_comments",
                           "timeline", "reactions"})
+        self.assertEqual(get.call_args.kwargs["reactions_max_age"], timedelta(hours=168))
+        with mock.patch.object(fairy.gcli_cache, "get", side_effect=lambda
+                               cache, args, kind, owner, repo, item, *fields,
+                               **kw: (item, dict.fromkeys(fields, ()))) as get:
+            agent._fetch_thread(
+                ns, "pr", {"number": 1, "updated_at": "2026-08-23T00:00:00Z"},
+                object(), timedelta(hours=24), fresh_reactions=True)
+        self.assertEqual(get.call_args.kwargs["reactions_max_age"], timedelta(0))
 
     def test_issue_fetchers_in_argument_order(self) -> None:
         comments = json.loads(

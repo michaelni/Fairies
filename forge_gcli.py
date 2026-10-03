@@ -1019,15 +1019,11 @@ def _push_fields(body: str) -> dict:
 
 
 def project_timeline_event(event: dict) -> dict:
-    """Project one raw timeline event to the keys this module hands out.
-
-    A ``review_request`` entry additionally carries ``assignee`` (the
-    requested reviewer) and ``removed_assignee`` (True when the request
-    was withdrawn) -- Forgejo/Gitea put the requester under ``user``
-    and the requestee under ``assignee`` (captured on FFmpeg #23197).
-    A cross-reference entry carries the keys of
-    ``_cross_reference_fields``; a commit-reference entry carries the
-    mentioning commit under ``ref_commit_sha``."""
+    """Project one raw timeline event to the keys this module hands
+    out: the common ones and, per ``_FORGEJO_TYPED_KEYS``, the kind's
+    own. Forgejo/Gitea put the requester of a review request under
+    ``user`` and the requestee under ``assignee`` (captured on FFmpeg
+    #23197)."""
     kind = event.get("type")
     return {
         "type": kind,
@@ -1054,16 +1050,10 @@ _FORGEJO_TYPED_KEYS: dict[str, Callable[[dict], dict]] = {
 
 def _cross_reference_fields(kind: str, mentioning_item: dict,
                             action: str | None, comment_body: str | None) -> dict:
-    """The ``ref_*`` keys of a projected cross-reference event.
-
-    kind:            the event type, one of ``CROSS_REFERENCE_EVENTS``
-    mentioning_item: the forge's issue object for the item whose text
-                     mentioned this one
-    action:          Forgejo's ``ref_action`` (none, closes, reopens,
-                     neutered); None on GitHub, whose timeline has none
-    comment_body:    the mentioning comment's text, None when the
-                     mention sits in the item's description
-    """
+    """The ``ref_*`` keys of a projected cross-reference event of
+    ``kind``: the forge's issue object ``mentioning_item``, Forgejo's
+    ``ref_action`` (None on GitHub, whose timeline has none) and the
+    mentioning comment's text (None for a mention in the description)."""
     return {
         "ref_issue": _item_summary(mentioning_item),
         "ref_origin": _CROSS_REFERENCE_ORIGIN[kind],

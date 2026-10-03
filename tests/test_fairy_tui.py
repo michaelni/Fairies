@@ -428,6 +428,14 @@ class ActTests(DbCase):
         self.assertIsNotNone(self.db.get("requests", "pr", "5s3"))
         self.assertIsNone(self.db.get("requests", "pr", "5"))
 
+    def test_R_lists_the_evaluation_next_to_its_item(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5))
+        self.db.push("reviewed", "pr", "6", verdict(6))
+        self.model.poll()
+        self.model.act("sample")
+        self.model.poll()
+        self.assertEqual(self.keys(), [(R1, "5"), (R1, "5s1"), (R1, "6")])
+
     def test_apply_on_a_skip_verdict_says_nothing_to_post(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, "skip"))
         self.model.poll()

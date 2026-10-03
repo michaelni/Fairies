@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import bisect
 import difflib
 import faulthandler
 import json
@@ -491,7 +492,7 @@ class Model:
                             "polls; dropping the row", key[1], key[0],
                             key[2], misses)
                 removed.append(key)
-        updates.sort(key=lambda u: u[0])  # deterministic arrival order
+        updates.sort(key=lambda u: u[0])  # presorted: each insort below appends
         if not updates and not removed and not status_updates \
                 and requested == self.requested:
             return
@@ -504,7 +505,7 @@ class Model:
                 if item is None:
                     item = Item(*key, state)
                     self.items[key] = item
-                    self.order.append(key)
+                    bisect.insort(self.order, key)
                 if error:
                     item.state, item.error = INVALID, error
                 else:
@@ -574,7 +575,7 @@ class Model:
 
     def visible(self) -> list[Item]:
         """Items for the list pane, honoring the all/relevant filter and
-        the sort mode (stable, so arrival order breaks ties). Cached
+        the sort mode (stable, so ticket order breaks ties). Cached
         against (revision, filter, sort): repaints between changes cost
         nothing here. Caller holds ``lock``."""
         sig = (self.revision, self.filter_mode, self.sort_mode)

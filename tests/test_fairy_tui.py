@@ -768,6 +768,13 @@ class SortTests(DbCase):
             ("z/AA", "pr", "3"), (R1, "pr", "5"), (R2, "issue", "5"),
             (R2, "pr", "5"), (R2, "pr", "7"), (R1, "pr", "9")])
 
+    def test_title_mode_ignores_case(self) -> None:
+        for n, title in ((1, "b"), (2, "A"), (3, "a"), (4, "C")):
+            self.db.push("queued", "pr", str(n), verdict(n, title=title))
+        self.model.poll()
+        self.model.sort_mode = "title"
+        self.assertEqual(self._numbers(), ["2", "3", "1", "4"])
+
     def test_cursor_follows_its_item_when_a_poll_reorders(self) -> None:
         """The cursor IS a key, not an index: a status flip elsewhere
         must never move the selection off its PR."""
@@ -804,7 +811,7 @@ class SortTests(DbCase):
             self.assertEqual(self.model.items[(R1, "pr", "2")].state, "llm")
 
     def test_cycle_wraps_back_to_repo(self) -> None:
-        for expected in ("status", "number", "arrival", "repo"):
+        for expected in ("status", "number", "title", "arrival", "repo"):
             self.assertEqual(self.model.cycle_sort(), expected)
 
     def test_every_state_has_a_sort_priority(self) -> None:

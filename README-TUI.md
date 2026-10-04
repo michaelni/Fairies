@@ -140,8 +140,8 @@ has moved the item to another row.
 
 **Sorts** (`t` cycles): `repo` (repo, kind, number; the default),
 `status` (actionable first, then the live pipeline, attention,
-settled), `number`, `arrival` (when the agent sampled the item, latest
-last). Every sort breaks ties by repo, kind and number.
+settled), `number`, `title`, `arrival` (when the agent sampled the
+item, latest last). Every sort breaks ties by repo, kind and number.
 
 **The cursor is a key, not an index.** It stays on its PR/issue no
 matter how the list reorders, and the highlight is only ever drawn on

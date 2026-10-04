@@ -266,7 +266,7 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
     ]
 
 
-SORT_MODES = ("repo", "status", "number", "arrival")
+SORT_MODES = ("repo", "status", "number", "title", "arrival")
 # the a key cycles these lenses: the default working view, then one
 # per attention surface (review/merge/CI are different jobs), any of
 # them, and everything
@@ -293,6 +293,7 @@ _SORT_KEYS = {
     "repo": lambda it: (),
     # tokens sort with their base item, samples/reviews after it
     "number": lambda it: (filedb.forge_number(it.number), it.number),
+    "title": lambda it: str(it.data.get("title") or "").casefold(),
 }
 
 

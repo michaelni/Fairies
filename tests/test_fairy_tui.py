@@ -435,7 +435,6 @@ class ActTests(DbCase):
         self.model.poll()
         self.model.act("sample")
         self.model.poll()
-        self.model.sort_mode = "repo"
         self.assertEqual(self.keys(), [(R1, "5"), (R1, "5s1"), (R1, "6")])
 
     def test_apply_on_a_skip_verdict_says_nothing_to_post(self) -> None:
@@ -719,14 +718,13 @@ class SortTests(DbCase):
         self.model.poll()
         self.assertEqual(self._numbers(), ["1", "2", "3", "4"])
         self.assertEqual(self.model.cycle_sort(), "status")
-        # reviewed first; arrival order preserved within equal status.
+        # reviewed first; repo order preserved within equal status.
         self.assertEqual(self._numbers(), ["2", "4", "1", "3"])
 
     def test_tickets_of_an_item_stay_together_in_forge_number_order(self) -> None:
         for token in ("123", "1230", "123s1", "99"):
             self.db.push("queued", "pr", token, verdict(filedb.forge_number(token)))
         self.model.poll()
-        self.model.sort_mode = "repo"
         self.assertEqual(self._numbers(), ["99", "123", "123s1", "1230"])
 
     def test_arrival_sort_is_by_sampling_time_and_survives_a_restart(self) -> None:
@@ -740,9 +738,10 @@ class SortTests(DbCase):
         self.model.act("sample")
         for model in (self.model, fairy_tui.Model(self.model.sides)):
             model.poll()
+            model.sort_mode = "arrival"
             with model.lock:
                 self.assertEqual([it.number for it in model.visible()],
-                                 ["7", "6", "5", "7s1"])
+                                 ["7", "6", "5", "5s1"])
 
     def test_repo_and_number_modes(self) -> None:
         # "z/AA" sorts last by raw owner/repo but its displayed short
@@ -797,8 +796,8 @@ class SortTests(DbCase):
             self.assertEqual(self.model._cursor_key(), (R1, "pr", "2"))
             self.assertEqual(self.model.items[(R1, "pr", "2")].state, "llm")
 
-    def test_cycle_wraps_back_to_arrival(self) -> None:
-        for expected in ("status", "repo", "number", "arrival"):
+    def test_cycle_wraps_back_to_repo(self) -> None:
+        for expected in ("status", "number", "arrival", "repo"):
             self.assertEqual(self.model.cycle_sort(), expected)
 
     def test_every_state_has_a_sort_priority(self) -> None:
@@ -813,7 +812,7 @@ class SortTests(DbCase):
         self.model.poll()
         stream = io.StringIO()
         ui = make_ui(self.model, stream, cols=160)
-        self.model.cursor = 1            # on #2 in arrival order
+        self.model.cursor = 1            # on #2 in repo order
         ui.dispatch(Key("t"))            # -> status sort: #2 is first
         self.assertEqual(self.model.sort_mode, "status")
         with self.model.lock:

@@ -266,7 +266,7 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
     ]
 
 
-SORT_MODES = ("arrival", "status", "repo", "number")
+SORT_MODES = ("repo", "status", "number", "arrival")
 # the a key cycles these lenses: the default working view, then one
 # per attention surface (review/merge/CI are different jobs), any of
 # them, and everything

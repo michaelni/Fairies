@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import bisect
 import difflib
 import faulthandler
 import json
@@ -286,11 +285,6 @@ _FILTER_STATES = {
 }
 
 
-def _ticket_order(key: tuple[str, str, filedb.TicketId]) -> tuple:
-    repo, kind, number = key
-    return repo, kind, filedb.forge_number(number), number
-
-
 _SORT_KEYS = {
     "arrival": lambda it: iso_to_dt(str(
         it.data.get("sampled_at") or it.data.get("state_changed_at") or ""))
@@ -317,7 +311,6 @@ class Model:
         self.requested: set[tuple[str, str, int]] = set()
         self.sides = sides
         self.items: dict[tuple[str, str, int], Item] = {}
-        self.order: list[tuple[str, str, int]] = []
         self._read: dict[tuple[str, str, int], tuple[str, float]] = {}
         self.status: dict[tuple[str, str, filedb.TicketId], dict] = {}
         self._snap_read: dict[tuple[str, str, filedb.TicketId], float] = {}
@@ -502,8 +495,6 @@ class Model:
                             "polls; dropping the row", key[1], key[0],
                             key[2], misses)
                 removed.append(key)
-        # presorted: each insort below appends
-        updates.sort(key=lambda u: _ticket_order(u[0]))
         if not updates and not removed and not status_updates \
                 and requested == self.requested:
             return
@@ -516,7 +507,6 @@ class Model:
                 if item is None:
                     item = Item(*key, state)
                     self.items[key] = item
-                    bisect.insort(self.order, key, key=_ticket_order)
                 if error:
                     item.state, item.error = INVALID, error
                 else:
@@ -525,7 +515,6 @@ class Model:
                     self.seen_live.add(key)
             for key in removed:  # pruned, or a consumed request
                 del self.items[key]
-                self.order.remove(key)
                 self._read.pop(key, None)
                 self.missing.pop(key, None)
                 if key == self.cursor_key:
@@ -586,20 +575,22 @@ class Model:
 
     def visible(self) -> list[Item]:
         """Items for the list pane, honoring the all/relevant filter and
-        the sort mode (stable, so ticket order breaks ties). Cached
+        the sort mode, ties broken by repo, kind and ticket number. Cached
         against (revision, filter, sort): repaints between changes cost
         nothing here. Caller holds ``lock``."""
         sig = (self.revision, self.filter_mode, self.sort_mode)
         if self._vis_cache is not None and self._vis_cache[0] == sig:
             return self._vis_cache[1]
-        items = [self.items[k] for k in self.order]
+        items = list(self.items.values())
         if self.filter_mode == "relevant":
             items = [it for it in items if self._relevant(it)]
         elif self.filter_mode != "all":
             allowed = _FILTER_STATES[self.filter_mode]
             items = [it for it in items if it.state in allowed
                      or self.filter_mode == "review" and _unacknowledged(it)]
-        items.sort(key=_SORT_KEYS[self.sort_mode])
+        items.sort(key=lambda it: (_SORT_KEYS[self.sort_mode](it), it.repo,
+                                   it.kind, filedb.forge_number(it.number),
+                                   it.number))
         self._vis_cache = (sig, items, {
             (it.repo, it.kind, it.number): i for i, it in enumerate(items)})
         return items

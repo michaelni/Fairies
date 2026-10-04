@@ -744,8 +744,6 @@ class SortTests(DbCase):
                                  ["7", "6", "5", "5s1"])
 
     def test_repo_and_number_modes(self) -> None:
-        # "z/AA" sorts last by raw owner/repo but its displayed short
-        # name "AA" sorts first: repo mode must follow the column.
         tmp3 = tempfile.TemporaryDirectory()
         self.addCleanup(tmp3.cleanup)
         db3 = filedb.Db(Path(tmp3.name))
@@ -753,13 +751,22 @@ class SortTests(DbCase):
         self.db.push("queued", "pr", "5", verdict(5))
         self.db.push("queued", "pr", "9", verdict(9))
         self.db2.push("queued", "pr", "7", verdict(7))
+        self.db2.push("queued", "issue", "5", verdict(5))
+        self.db2.push("queued", "pr", "5", verdict(5))
         db3.push("queued", "pr", "3", verdict(3))
         self.model.poll()
-        self.model.sort_mode = "repo"
-        self.assertEqual(self.keys(),
-                         [("z/AA", "3"), (R1, "5"), (R1, "9"), (R2, "7")])
-        self.model.sort_mode = "number"
-        self.assertEqual(self._numbers(), ["3", "5", "7", "9"])
+
+        def rows(mode: str) -> list:
+            self.model.sort_mode = mode
+            with self.model.lock:
+                return [(it.repo, it.kind, it.number)
+                        for it in self.model.visible()]
+        self.assertEqual(rows("repo"), [
+            (R1, "pr", "5"), (R1, "pr", "9"), (R2, "issue", "5"),
+            (R2, "pr", "5"), (R2, "pr", "7"), ("z/AA", "pr", "3")])
+        self.assertEqual(rows("number"), [
+            ("z/AA", "pr", "3"), (R1, "pr", "5"), (R2, "issue", "5"),
+            (R2, "pr", "5"), (R2, "pr", "7"), (R1, "pr", "9")])
 
     def test_cursor_follows_its_item_when_a_poll_reorders(self) -> None:
         """The cursor IS a key, not an index: a status flip elsewhere

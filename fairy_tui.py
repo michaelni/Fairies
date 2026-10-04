@@ -290,9 +290,7 @@ _SORT_KEYS = {
         it.data.get("sampled_at") or it.data.get("state_changed_at") or ""))
     or datetime.max.replace(tzinfo=timezone.utc),
     "status": lambda it: _SORT_STATES[it.state],
-    # repo mode orders by the short name the list column displays, or
-    # rows would look unsorted whenever owners differ.
-    "repo": lambda it: (_repo_short(it.repo).casefold(), it.repo, it.kind),
+    "repo": lambda it: (),
     # tokens sort with their base item, samples/reviews after it
     "number": lambda it: (filedb.forge_number(it.number), it.number),
 }

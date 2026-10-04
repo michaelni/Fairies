@@ -138,9 +138,10 @@ verdict the agent posted on its own (`--auto-mode`,
 row until you acknowledge it with `y` or `s`, also once new activity
 has moved the item to another row.
 
-**Sorts** (`t` cycles): `repo` (default), `status` (actionable first,
-then the live pipeline, attention, settled), `number`, `arrival`
-(when the agent sampled the item, latest last).
+**Sorts** (`t` cycles): `repo` (repo, kind, number; the default),
+`status` (actionable first, then the live pipeline, attention,
+settled), `number`, `arrival` (when the agent sampled the item, latest
+last). Every sort breaks ties by repo, kind and number.
 
 **The cursor is a key, not an index.** It stays on its PR/issue no
 matter how the list reorders, and the highlight is only ever drawn on

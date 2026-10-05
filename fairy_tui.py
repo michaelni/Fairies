@@ -1346,7 +1346,7 @@ class UILoop:
         self.search_mode = False
         self.search_buf = ""
         self.last_search = ""
-        self.paused: list[int] = []
+        self.hard_paused: list[int] = []
         self._stdin_free = Event()
         self._stdin_free.set()
         self._stdin_reader = Lock()
@@ -1360,10 +1360,10 @@ class UILoop:
         key = self.styles.get("key") or (lambda s: s)
         label = self.styles.get("label") or (lambda s: s)
         self._status_mode = (self.model.sort_mode, self.model.filter_mode,
-                             bool(self.paused))
+                             bool(self.hard_paused))
         pairs = [(k, f"sort:{self.model.sort_mode}" if k == "t"
                   else f"filter:{self.model.filter_mode}" if k == "a"
-                  else ("resume" if self.paused else "pause") if k == "p"
+                  else ("resume" if self.hard_paused else "pause") if k == "p"
                   else d)
                  for k, d in KEYMAP]
         self._status_plain = "  ".join(f"{k} {d}" for k, d in pairs)
@@ -1385,7 +1385,7 @@ class UILoop:
             ("label", "   reviewed, awaiting you "),
             ("st_reviewed" if actionable else "num", str(actionable)),
         ]
-        if self.paused:
+        if self.hard_paused:
             header[:0] = [("log_err", "PAUSED   ")]
         for repo, _db in m.sides:
             halt = halt_marker.reason(self.halt_markers[repo])
@@ -2022,7 +2022,7 @@ class UILoop:
         for col in {col_t, col_b}:
             buf.append(t.move_xy(col, row) + divider("┼"))
         if self._status_mode != (self.model.sort_mode, self.model.filter_mode,
-                                 bool(self.paused)):
+                                 bool(self.hard_paused)):
             self._build_status()
         note = f" ▶ {nact} reviewed  " if nact else " "
         if self.search_mode:
@@ -2254,25 +2254,25 @@ class UILoop:
                 self.paint()
         except KeyboardInterrupt:
             pass
-        if self.paused:
-            self.toggle_pause()
+        if self.hard_paused:
+            self.toggle_hard_pause()
         self.model.quit_all()
 
-    def toggle_pause(self) -> None:
+    def toggle_hard_pause(self) -> None:
         """p: freeze this session's agents and workers (SIGSTOP on their
         whole subprocess trees); the next press thaws them (SIGCONT).
         Stopping sweeps until no new pid appears, or a process forking
         between the scan and its stop would leak a running child.
         run() thaws before exiting: a stopped process never sees the
         launcher's exit-trap SIGTERM and would stay frozen forever."""
-        if self.paused:
-            for pid in self.paused:
+        if self.hard_paused:
+            for pid in self.hard_paused:
                 try:
                     os.kill(pid, signal.SIGCONT)
                 except OSError:
                     pass
-            logger.info("resumed %d paused processes", len(self.paused))
-            self.paused = []
+            logger.info("resumed %d paused processes", len(self.hard_paused))
+            self.hard_paused = []
             return
         stopped: list[int] = []
         while True:
@@ -2289,7 +2289,7 @@ class UILoop:
             logger.info("paused %d processes; p resumes them", len(stopped))
         else:
             logger.info("no agent/worker processes found to pause")
-        self.paused = stopped
+        self.hard_paused = stopped
 
     def _scroll_pane(self, pane: str, delta: int) -> None:
         if pane == "tr":
@@ -2484,7 +2484,7 @@ class UILoop:
             self.model.act(ACTION_KEYS[str(ks)])
             self.follow_cursor = True
         elif ks == "p":
-            self.toggle_pause()
+            self.toggle_hard_pause()
         elif ks == "c":
             self.tail.sink.alerts.clear()
             logger.info("alerts cleared")

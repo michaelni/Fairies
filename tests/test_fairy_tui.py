@@ -1393,14 +1393,14 @@ class PauseTests(DbCase):
             ui.dispatch(Key("p"))
             self.assertEqual(sent, [(111, signal.SIGSTOP),
                                     (222, signal.SIGSTOP)])
-            self.assertEqual(ui.paused, [111, 222])
+            self.assertEqual(ui.hard_paused, [111, 222])
             self.assertIn("PAUSED",
                           fairy_tui._plain(ui.stats_lines(80)))
             sent.clear()
             ui.dispatch(Key("p"))
             self.assertEqual(sent, [(111, signal.SIGCONT),
                                     (222, signal.SIGCONT)])
-            self.assertEqual(ui.paused, [])
+            self.assertEqual(ui.hard_paused, [])
 
     def test_a_halted_side_is_announced_in_the_header(self) -> None:
         ui = make_ui(self.model)
@@ -1414,7 +1414,7 @@ class PauseTests(DbCase):
         """A frozen daemon never sees the launcher's exit-trap SIGTERM,
         so quitting the TUI while paused must thaw first."""
         ui = make_ui(self.model)
-        ui.paused = [111]
+        ui.hard_paused = [111]
         self.model.quit_all()
         sent: list[tuple[int, int]] = []
         with mock.patch.object(fairy_tui, "Thread"), \
@@ -1422,7 +1422,7 @@ class PauseTests(DbCase):
                                   side_effect=lambda p, s: sent.append((p, s))):
             ui.run()
         self.assertEqual(sent, [(111, signal.SIGCONT)])
-        self.assertEqual(ui.paused, [])
+        self.assertEqual(ui.hard_paused, [])
 
 
 class DetailTests(DbCase):

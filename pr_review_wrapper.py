@@ -1618,7 +1618,7 @@ def main() -> int:
             )
             if args.persist_branches:
                 # resolved before the first container opens: every open
-                # (the primary one included) seeds its fairy remotes
+                # seeds its fairy remotes
                 known = {s.name for s in podman_repo_specs}
                 for name in args.persist_repo:
                     if name not in known:
@@ -1651,9 +1651,8 @@ def main() -> int:
             session_commands = [
                 substitute_session_command(c, request) for c in args.session_command
             ]
-            primary_shells[machines[0].label], session_transcript = (
-                open_machine_shell(machines[0].label)
-            )
+            transcript_session, session_transcript = open_machine_shell(machines[0].label)
+            close_machine_shells([transcript_session])
 
         repo_mount_paths = [s.container_path for s in podman_repo_specs]
 

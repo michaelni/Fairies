@@ -472,12 +472,13 @@ class VetStageTests(unittest.TestCase):
 
     def test_openai_vetter_opens_its_own_containers(self) -> None:
         branches = ({"repo": "example", "branch": "pr1-1", "mode": "push"},)
-        handles = [mock.Mock(name="primary handle"), mock.Mock(name="vet handle")]
-        sessions = [mock.Mock(name="primary session"), mock.Mock(name="vet session")]
+        handles = [mock.Mock(name=f"{use} handle") for use in ("transcript", "shared", "vet")]
+        sessions = [mock.Mock(name=f"{use} session") for use in ("transcript", "shared", "vet")]
         shells: dict[str, dict] = {}
         stopped_before_vet: list[mock.Mock] = []
 
         def fake_review_pr(ctx, reviewers, combiner, **kw):
+            combiner.res.shells["x86_64"], _ = combiner.res.open_shell("x86_64")
             shells["combiner"] = dict(combiner.res.shells)
             return Review("approve", "", branches=branches, model="openai:gpt-5.4")
 
@@ -513,10 +514,10 @@ class VetStageTests(unittest.TestCase):
             mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
         ):
             self.assertEqual(0, wrapper.main())
-        self.assertEqual({"x86_64": sessions[0]}, shells["combiner"])
+        self.assertEqual({"x86_64": sessions[1]}, shells["combiner"])
         self.assertEqual({}, shells["vetter"])
-        self.assertEqual([handles[0]], stopped_before_vet)
-        add_remote.assert_called_once_with(handles[1], list(branches), {})
+        self.assertEqual(handles[:2], stopped_before_vet)
+        add_remote.assert_called_once_with(handles[2], list(branches), {})
 
 
 class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase):
@@ -603,7 +604,7 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
 
         self.assertEqual(EXIT_REVIEW_STOPPED_BY_HALT_FILE, caught.exception.code)
         watch.assert_called_once_with()
-        self.assertEqual([("pause", "cid1"), ("pause", "cid2")],
+        self.assertEqual([("rm", "-f", "cid1"), ("pause", "cid2")],
                          [call for call in podman_calls if call[0] != "run"])
 
     def test_container_closed_by_its_stage_is_removed_once(self) -> None:
@@ -637,8 +638,8 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
         ):
             self.assertEqual(0, wrapper.main())
 
-        self.assertEqual([("rm", "-f", "cid2")], removed_during_review)
-        self.assertEqual([("rm", "-f", "cid2"), ("rm", "-f", "cid1")],
+        self.assertEqual([("rm", "-f", "cid1"), ("rm", "-f", "cid2")], removed_during_review)
+        self.assertEqual(removed_during_review,
                          [call for call in podman_calls if call[0] == "rm"])
 
     def test_a_failed_stop_keeps_the_review_and_is_retried_at_the_end(self) -> None:
@@ -720,7 +721,7 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
             rc = wrapper.main()
 
         self.assertEqual([("pause", "cid2")], paused_during_review)
-        self.assertEqual([("pause", "cid2"), ("rm", "-f", "cid1")],
+        self.assertEqual([("rm", "-f", "cid1"), ("pause", "cid2")],
                          [call for call in podman_calls if call[0] != "run"])
         # The draft came back clean, but a suspect container taints it:
         # halt without posting instead of handing fairy a verdict.

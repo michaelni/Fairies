@@ -1493,7 +1493,7 @@ def main() -> int:
     machines: list[podman_host.ShellHostSpec] = args.machines if args.podman else []
     spec_by_label = {m.label: m for m in machines}
     ensemble_shells: list[tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]] = []
-    primary_shells: dict[str, podman_host.ContainerShellSession] = {}
+    shared_shells: dict[str, podman_host.ContainerShellSession] = {}
     # Keyed by id() since sessions are unhashable.
     poisoned_session_ids: set[int] = set()
     session_handles: dict[int, podman_host.ContainerHandle] = {}
@@ -1540,7 +1540,7 @@ def main() -> int:
         the shells open now and of every shell opened later, so the
         next stage verifies them like its own work."""
         inherited_branches[:] = records
-        for session in primary_shells.values():
+        for session in shared_shells.values():
             handle = session_handles.get(id(session))
             if handle is not None:
                 branch_persist.add_to_container_remote(
@@ -1743,7 +1743,7 @@ def main() -> int:
             include=include,
             patch_file_id=patch_file_id,
             vector_store_ids=vector_store_ids,
-            shells=primary_shells if args.podman else None,
+            shells=shared_shells if args.podman else None,
             open_shell=open_machine_shell if args.podman else None,
             uploaded_file_ids=uploaded_file_ids,
             debug_dir_specified=debug_dir_specified,
@@ -1977,7 +1977,7 @@ def main() -> int:
                 len(poisoned_session_ids),
             )
             return EXIT_REVIEW_HALTED
-        close_machine_shells(primary_shells.values())
+        close_machine_shells(shared_shells.values())
 
         posting_block = unattended_posting_block(review.branches)
         if posting_block:

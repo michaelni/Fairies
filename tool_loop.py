@@ -44,7 +44,6 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-import podman_host
 from common import JsonObject
 from llm_prompt import generate_llm_prompt
 from llm_review_api import BadModelOutput, ReviewContext, RoleSpec
@@ -145,46 +144,46 @@ def run_tool_loop(conversation: Conversation, role: RoleSpec, ctx: ReviewContext
     """Run ``conversation`` until the model calls submit_review and return
     the role-validated verdict.
 
-    Shell calls run on per-machine ``ctx.open_shell`` sessions. A reply
+    Shell calls run on the sessions of ``ctx.pass_shells``. A reply
     without tool calls is nudged once, a second one raises
     ``BadModelOutput``. More than ``max_tool_rounds`` tool rounds
     (0: unlimited) raise ``RuntimeError``; ``what`` names the API call in
     logs and errors.
     """
-    shells: dict[str, podman_host.ContainerShellSession] = {}
     labels = tuple(m.label for m in ctx.machines)
     nudged = False
     rounds = 0
-    while True:
-        logger.info("%s role=%s round=%d shell=%s",
-                    what, role.name, rounds, ctx.open_shell is not None)
-        calls = conversation.send()
-        submit = next((c for c in calls if c.name == SUBMIT_REVIEW), None)
-        if submit is not None:
-            result = role.validate(submit.input)
-            ctx.collect_into(result, shells.values())
-            verdict = result.get("classification") or result.get("route") or "-"
-            logger.debug("%s %s verdict=%s", what, role.name, verdict)
-            return result
+    with ctx.pass_shells() as shells:
+        while True:
+            logger.info("%s role=%s round=%d shell=%s",
+                        what, role.name, rounds, ctx.open_shell is not None)
+            calls = conversation.send()
+            submit = next((c for c in calls if c.name == SUBMIT_REVIEW), None)
+            if submit is not None:
+                result = role.validate(submit.input)
+                ctx.collect_into(result, shells.values())
+                verdict = result.get("classification") or result.get("route") or "-"
+                logger.debug("%s %s verdict=%s", what, role.name, verdict)
+                return result
 
-        if not calls:
-            if nudged:
-                raise BadModelOutput()
-            nudged = True
-            conversation.add_user_text(
-                "You did not call submit_review. Return the verdict now via submit_review.")
-            continue
+            if not calls:
+                if nudged:
+                    raise BadModelOutput()
+                nudged = True
+                conversation.add_user_text(
+                    "You did not call submit_review. Return the verdict now via submit_review.")
+                continue
 
-        rounds += 1
-        if max_tool_rounds > 0 and rounds > max_tool_rounds:
-            raise RuntimeError(f"{what}: exceeded shell tool-call limit ({max_tool_rounds})")
+            rounds += 1
+            if max_tool_rounds > 0 and rounds > max_tool_rounds:
+                raise RuntimeError(f"{what}: exceeded shell tool-call limit ({max_tool_rounds})")
 
-        results: list[tuple[ToolCall, JsonObject, bool]] = []
-        for call in calls:
-            if call.name == SHELL_TOOL_NAME and ctx.open_shell is not None:
-                payload = exec_machine_call(shells, labels, ctx.open_shell, call.input,
-                                            max_timeout_s=exec_timeout_s)
-                results.append((call, payload, False))
-            else:
-                results.append((call, {"error": f"unsupported tool {call.name!r}"}, True))
-        conversation.add_tool_results(results)
+            results: list[tuple[ToolCall, JsonObject, bool]] = []
+            for call in calls:
+                if call.name == SHELL_TOOL_NAME and ctx.open_shell is not None:
+                    payload = exec_machine_call(shells, labels, ctx.open_shell, call.input,
+                                                max_timeout_s=exec_timeout_s)
+                    results.append((call, payload, False))
+                else:
+                    results.append((call, {"error": f"unsupported tool {call.name!r}"}, True))
+            conversation.add_tool_results(results)

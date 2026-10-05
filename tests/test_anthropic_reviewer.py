@@ -36,6 +36,8 @@ its verdict by calling ``submit_review`` with REVIEW_SCHEMA-shaped input.
 
 from __future__ import annotations
 
+import contextlib
+import dataclasses
 import sys
 import unittest
 from pathlib import Path
@@ -49,7 +51,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import common  # noqa: E402
 import podman_host  # noqa: E402
-from llm_review_api import ReviewContext  # noqa: E402
+from llm_review_api import BadModelOutput, ReviewContext  # noqa: E402
 import anthropic_reviewer  # noqa: E402
 import llm_prompt  # noqa: E402
 from test_anthropic_retry import OPENROUTER_EMPTY_BODY  # noqa: E402
@@ -137,6 +139,28 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         self.assertEqual("assistant", second_msgs[1]["role"])
         self.assertEqual("tool_use", second_msgs[1]["content"][0]["type"])
         self.assertEqual("tool_result", second_msgs[2]["content"][0]["type"])
+
+    def test_the_loop_closes_its_shells_when_it_ends(self) -> None:
+        shell_round = _reply([dict(type="tool_use", id="t1", name="shell",
+                                   input={"command": "git log -1"})])
+        submit = _reply([dict(type="tool_use", id="t2", name="submit_review",
+                              input={"classification": "approve", "message": "",
+                                     "head_vs_branch_diff_evidence": False})])
+        silent = _reply([dict(type="text", text="done")])
+        for replies, outcome in (([shell_round, submit], contextlib.nullcontext()),
+                                 ([shell_round, silent, silent],
+                                  self.assertRaises(BadModelOutput))):
+            with self.subTest(replies=len(replies)):
+                shell = _FakeShell()
+                closed: list[_FakeShell] = []
+                reviewer = anthropic_reviewer.AnthropicReviewer(
+                    "claude-opus-4", name="anthropic:claude-opus-4")
+                client = _ScriptedClient(replies)
+                reviewer._client = lambda: client  # type: ignore[method-assign]
+                ctx = dataclasses.replace(_ctx(shell), close_shells=closed.extend)
+                with outcome:
+                    reviewer.review(ctx)
+                self.assertEqual([shell], closed)
 
     def test_cache_breakpoints_move_to_newest_block(self) -> None:
         # Regression: without cache_control the Anthropic API caches

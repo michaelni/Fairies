@@ -476,6 +476,21 @@ class CodexReviewerRunTests(unittest.TestCase):
             self._run(ctx=ctx, last_message=None)
         self.assertEqual([s1, s2], poisoned)
 
+    def test_review_containers_close_when_the_run_ends(self) -> None:
+        session = mock.Mock(spec=podman_host.ContainerShellSession)
+        self._relay_sessions = [session]
+        self.addCleanup(lambda: delattr(self, "_relay_sessions"))
+        for last_message, outcome in (
+                ('{"classification": "approve", "message": "ok"}', contextlib.nullcontext()),
+                ("not json", self.assertRaises(BadModelOutput)),
+                (None, self.assertRaises(RuntimeError))):
+            with self.subTest(last_message=last_message):
+                closed = []
+                with outcome:
+                    self._run(ctx=make_ctx(close_shells=closed.extend),
+                              last_message=last_message)
+                self.assertEqual([session], closed)
+
     def test_branch_collection_failure_does_not_poison(self) -> None:
         self._relay_sessions = [mock.Mock(spec=podman_host.ContainerShellSession)]
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))

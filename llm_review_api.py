@@ -52,8 +52,9 @@ import logging
 import re
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1004,6 +1005,8 @@ class ReviewContext:
     returns it with its --session-command transcript; every open is
     registered for wrapper-owned cleanup. ``None`` means no podman shell
     is configured (the OpenAI solo path uses its native tools instead).
+    ``close_shells`` stops the containers of sessions ``open_shell``
+    returned once their user is done with them.
     The pipeline -- not the
     reviewers -- appends to ``drafts``; ``run_parallel`` records dropped
     reviewers in ``failed_reviewers`` so the verdict can say who is
@@ -1024,6 +1027,7 @@ class ReviewContext:
     machines: Sequence[ShellHostSpec] = ()
     session_transcript: str = ""
     open_shell: Callable[[str], tuple[ContainerShellSession, str]] | None = None
+    close_shells: Callable[[Iterable[ContainerShellSession]], None] | None = None
     report_poisoned: Callable[[ContainerShellSession], None] | None = None
     # Packs the verdict's declared branches out of the caller's
     # containers into collected branch records (see the wrapper);
@@ -1038,6 +1042,17 @@ class ReviewContext:
         """Prior drafts that are real review verdicts (excluding triage
         ``ENGAGE``), in the order produced -- what the combine stage merges."""
         return [d for d in self.drafts if d.classification != ENGAGE]
+
+    @contextmanager
+    def pass_shells(self) -> Iterator[dict[str, ContainerShellSession]]:
+        """Yield an empty machine-to-session map for one pass to open its
+        shells into; ``close_shells`` stops them when the pass ends."""
+        shells: dict[str, ContainerShellSession] = {}
+        try:
+            yield shells
+        finally:
+            if self.close_shells is not None:
+                self.close_shells(shells.values())
 
     def collect_into(self, result: dict[str, object],
                      sessions: Sequence[ContainerShellSession]) -> None:

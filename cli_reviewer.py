@@ -444,6 +444,8 @@ class CliReviewer(Reviewer):
         finally:
             if relay is not None:
                 relay.stop()
+                if ctx.close_shells is not None:
+                    ctx.close_shells(relay.opened_sessions())
             container.stop()
             shutil.rmtree(scratch, ignore_errors=True)
 

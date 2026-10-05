@@ -45,6 +45,7 @@ response), which is all this replay needs.
 import base64
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import types
@@ -601,6 +602,82 @@ class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase)
         watch.assert_called_once_with()
         self.assertEqual([("pause", "cid1"), ("pause", "cid2")],
                          [call for call in podman_calls if call[0] != "run"])
+
+    def test_container_closed_by_its_stage_is_removed_once(self) -> None:
+        podman_calls = self.record_podman()
+        removed_during_review: list[tuple[str, ...]] = []
+
+        def fake_review_pr(ctx, reviewers, combiner, **kw):
+            session, _ = ctx.open_shell("x86_64")
+            ctx.close_shells([session])
+            removed_during_review.extend(c for c in podman_calls if c[0] == "rm")
+            return wrapper.llm_review_api.Review(
+                classification="approve", message="")
+
+        with (
+            mock.patch.object(wrapper, "OpenAI", return_value=mock.Mock()),
+            mock.patch.object(wrapper, "load_api_key", return_value="test-key"),
+            mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
+            mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
+            mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
+            mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
+            mock.patch.object(wrapper, "open_review_container_shell",
+                              side_effect=self._open_review),
+            mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
+            mock.patch.object(
+                wrapper.sys, "argv",
+                ["pr_review_wrapper.py", "--model", "anthropic:claude-opus-4",
+                 "--podman", "--shell-host", "fairy@h", "--no-source-bundle"],
+            ),
+            mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(_fixture_request()))),
+            mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
+        ):
+            self.assertEqual(0, wrapper.main())
+
+        self.assertEqual([("rm", "-f", "cid2")], removed_during_review)
+        self.assertEqual([("rm", "-f", "cid2"), ("rm", "-f", "cid1")],
+                         [call for call in podman_calls if call[0] == "rm"])
+
+    def test_a_failed_stop_keeps_the_review_and_is_retried_at_the_end(self) -> None:
+        handles = [mock.Mock(container_id=f"{use}-cid") for use in ("first", "stage")]
+        sessions = [mock.Mock(name=f"{use} session") for use in ("first", "stage")]
+        stopped: list[mock.Mock] = []
+
+        def stop_container(handle):
+            stopped.append(handle)
+            if handle is handles[1] and stopped.count(handle) == 1:
+                raise subprocess.TimeoutExpired("podman rm", 60.0)
+
+        def fake_review_pr(ctx, reviewers, combiner, **kw):
+            session, _ = ctx.open_shell("x86_64")
+            ctx.close_shells([session])
+            return wrapper.llm_review_api.Review(
+                classification="approve", message="")
+
+        with (
+            mock.patch.object(wrapper, "OpenAI", return_value=mock.Mock()),
+            mock.patch.object(wrapper, "load_api_key", return_value="test-key"),
+            mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
+            mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
+            mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
+            mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
+            mock.patch.object(wrapper, "open_review_container_shell",
+                              side_effect=[(h, s, "") for h, s in zip(handles, sessions)]),
+            mock.patch.object(wrapper.podman_host, "stop_container", side_effect=stop_container),
+            mock.patch.object(wrapper.podman_host, "reap_orphaned_containers"),
+            mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
+            mock.patch.object(
+                wrapper.sys, "argv",
+                ["pr_review_wrapper.py", "--model", "anthropic:claude-opus-4",
+                 "--podman", "--shell-host", "fairy@h", "--no-source-bundle"],
+            ),
+            mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(_fixture_request()))),
+            mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
+        ):
+            self.assertEqual(0, wrapper.main())
+
+        self.assertEqual(1, stopped.count(handles[0]))
+        self.assertEqual(2, stopped.count(handles[1]))
 
     def test_poisoned_container_paused_at_once_not_removed(self) -> None:
         request_obj = _fixture_request()

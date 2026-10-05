@@ -79,7 +79,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from openai import OpenAI
 
@@ -1519,6 +1519,22 @@ def main() -> int:
                 {s.name: s.container_path for s in persist_repos})
         return session, transcript
 
+    def close_machine_shells(
+        sessions: Iterable[podman_host.ContainerShellSession],
+    ) -> None:
+        for session in sessions:
+            handle = session_handles.pop(id(session), None)
+            if handle is None:
+                continue
+            try:
+                session.close()
+                podman_host.stop_container(handle)
+            except Exception as exc:
+                session_handles[id(session)] = handle
+                logger.warning("stopping container id=%s failed (%s: %s); left "
+                               "for a later cleanup", handle.container_id[:12],
+                               type(exc).__name__, exc)
+
     def hand_over_branches(records: list[JsonObject]) -> None:
         """Put a finished stage's branch records on the fairy remotes of
         the shells open now and of every shell opened later, so the
@@ -1717,6 +1733,7 @@ def main() -> int:
             machines=machines,
             session_transcript=session_transcript,
             open_shell=open_machine_shell if args.podman else None,
+            close_shells=close_machine_shells if args.podman else None,
             report_poisoned=report_poisoned if args.podman else None,
             collect_branches=(
                 collect_review_branches if args.persist_branches else None),
@@ -1758,6 +1775,7 @@ def main() -> int:
                 project_facts=project_facts,
                 machines=machines,
                 open_shell=open_machine_shell if args.podman else None,
+                close_shells=close_machine_shells if args.podman else None,
                 report_poisoned=report_poisoned if args.podman else None,
             )
             triager = make_reviewer(
@@ -1995,9 +2013,7 @@ def main() -> int:
     finally:
         for file_id in uploaded_file_ids:
             delete_uploaded_file(client, file_id, verbose=args.verbose)
-        for handle, session in ensemble_shells:
-            session.close()
-            podman_host.stop_container(handle)
+        close_machine_shells(session for _, session in ensemble_shells)
 
 
 if __name__ == "__main__":

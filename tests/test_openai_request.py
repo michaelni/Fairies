@@ -61,7 +61,7 @@ import pr_review_wrapper as wrapper
 import openai_reviewer
 
 
-class OpenAIContainerSupportTests(unittest.TestCase):
+class OpenAIRequestTests(unittest.TestCase):
     def test_model_visible_repo_head_map_avoids_host_paths_without_container(self) -> None:
         repo_roots = [Path("/tmp/proj/ffmpeg"), Path("/tmp/proj/all_ffmpeg")]
         repo_heads = {

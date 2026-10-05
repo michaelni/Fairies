@@ -10,9 +10,6 @@ __pycache__/
 # but the raw dump directory itself is not meant to be versioned.
 /openaidebug/
 
-# Container bootstrap tarballs and metadata staged by openai_container.py.
-/.openai_container_debug/
-
 # Ad-hoc throwaway debug artifacts (name is literal: "delete this").
 /delthis-debug/
 

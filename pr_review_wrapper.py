@@ -1967,9 +1967,11 @@ def main() -> int:
                          {"hold_for_human_inspection": True, "reason": posting_block})
         elif args.vet_model and (review.classification != "skip" or review.label_changes):
             workset_note(args, "stage", "vet")
-            hand_over_branches(list(review.branches))
+            inherited_branches[:] = review.branches
+            # A stage that ran PR-derived code may have tampered with the
+            # containers it used, so the vetter opens its own.
             vetter = make_reviewer(
-                args.vet_model, args=args, resources=openai_resources,
+                args.vet_model, args=args, resources=replace(openai_resources, shells={}),
                 role=make_vetter_role(review, task=args.task,
                                       inherits_branches=args.persist_branches),
                 verbose=args.verbose)

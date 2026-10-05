@@ -469,6 +469,51 @@ class VetStageTests(unittest.TestCase):
                 self.assertEqual([], seen)
                 self.assertNotIn("vetting", ticket)
 
+    def test_openai_vetter_opens_its_own_containers(self) -> None:
+        branches = ({"repo": "example", "branch": "pr1-1", "mode": "push"},)
+        handles = [mock.Mock(name="primary handle"), mock.Mock(name="vet handle")]
+        sessions = [mock.Mock(name="primary session"), mock.Mock(name="vet session")]
+        shells: dict[str, dict] = {}
+
+        def fake_review_pr(ctx, reviewers, combiner, **kw):
+            shells["combiner"] = dict(combiner.res.shells)
+            return Review("approve", "", branches=branches, model="openai:gpt-5.4")
+
+        def fake_vet(vetter, ctx):
+            shells["vetter"] = dict(vetter.res.shells)
+            vetter.res.open_shell("x86_64")
+            return {"hold_for_human_inspection": False, "reason": "clean"}
+
+        with (
+            mock.patch.object(wrapper, "OpenAI", return_value=mock.Mock()),
+            mock.patch.object(wrapper, "load_api_key", return_value="test-key"),
+            mock.patch.object(wrapper, "upload_text_file", return_value="file-patch"),
+            mock.patch.object(wrapper, "delete_uploaded_file"),
+            mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
+            mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
+            mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
+            mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
+            mock.patch.object(wrapper, "open_review_container_shell",
+                              side_effect=[(h, s, "") for h, s in zip(handles, sessions)]),
+            mock.patch.object(wrapper.branch_persist, "add_to_container_remote") as add_remote,
+            mock.patch.object(wrapper.podman_host, "stop_container"),
+            mock.patch.object(wrapper.podman_host, "reap_orphaned_containers"),
+            mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
+            mock.patch.object(wrapper, "vet_review", side_effect=fake_vet),
+            mock.patch.object(
+                wrapper.sys, "argv",
+                ["pr_review_wrapper.py", "--model", "openai:gpt-5.4",
+                 "--combine-model", "openai:gpt-5.4", "--vet-model", "openai:gpt-x",
+                 "--podman", "--shell-host", "fairy@h", "--no-source-bundle"],
+            ),
+            mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(_fixture_request()))),
+            mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
+        ):
+            self.assertEqual(0, wrapper.main())
+        self.assertEqual({"x86_64": sessions[0]}, shells["combiner"])
+        self.assertEqual({}, shells["vetter"])
+        add_remote.assert_called_once_with(handles[1], list(branches), {})
+
 
 class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase):
     """Regression: a wrapper failure after the eager container open but

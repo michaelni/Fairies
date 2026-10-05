@@ -925,16 +925,16 @@ def build_model_visible_repo_head_map(
     podman_repo_specs: list[podman_repos.RepoSpec] | None = None,
 ) -> dict[str, str]:
     if podman_repo_specs:
-        visible_l: dict[str, str] = {}
+        visible: dict[str, str] = {}
         for spec in podman_repo_specs:
             repo_key = str(spec.repo_root.resolve())
             head_sha = repo_heads.get(repo_key)
             if isinstance(head_sha, str) and head_sha:
-                visible_l[spec.container_path] = head_sha
-        return visible_l
+                visible[spec.container_path] = head_sha
+        return visible
 
     # Without container mounts, expose simple repo labels instead of unusable host-local paths.
-    visible: dict[str, str] = {}
+    visible = {}
     for repo_root in repo_roots:
         repo_key = str(repo_root.resolve())
         head_sha = repo_heads.get(repo_key)

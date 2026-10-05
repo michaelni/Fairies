@@ -1642,13 +1642,10 @@ def main() -> int:
         repo_mount_paths = [s.container_path for s in podman_repo_specs]
 
         if vector_store_ids:
-            head_map_kwargs: dict[str, object] = {}
-            if podman_repo_specs:
-                head_map_kwargs["podman_repo_specs"] = podman_repo_specs
             request["vector_store_repo_heads"] = build_model_visible_repo_head_map(
                 repo_roots,
                 indexed_head_map,
-                **head_map_kwargs,
+                podman_repo_specs=podman_repo_specs,
             )
 
         source_bundle: str | None

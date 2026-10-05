@@ -1016,7 +1016,7 @@ KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("S", "snooze"), ("r", "rerun"), ("R", "+eval"),
           ("x", "drop"), ("o", "edit msg"), ("i", "note"),
           ("a", "filter"),
-          ("t", "sort"), ("P", "hard pause"),
+          ("t", "sort"), ("p", "pause"), ("P", "hard pause"),
           ("m", "diff"), ("d", "logs diff"),
           ("b", "branch diff"),
           ("[/] {/}", "patch/hunk"), ("/", "search"), ("e/E", "export"),
@@ -1308,6 +1308,8 @@ class UILoop:
         self.patch_repos = patch_repos or {}
         self.halt_markers = halt_markers or {
             repo: halt_marker.path(db.root) for repo, db in model.sides}
+        self.pause_markers = [db.root / "queued" / filedb.PAUSE_MARKER
+                              for _, db in model.sides]
         self.detail_mode = DETAIL_MODES[0]
         self.logs_mode = LOGS_MODES[0]
         self.branch_diff_mode = BRANCH_DIFF_MODES[0]
@@ -1361,9 +1363,10 @@ class UILoop:
         key = self.styles.get("key") or (lambda s: s)
         label = self.styles.get("label") or (lambda s: s)
         self._status_mode = (self.model.sort_mode, self.model.filter_mode,
-                             bool(self.hard_paused))
+                             bool(self.hard_paused), self.paused)
         pairs = [(k, f"sort:{self.model.sort_mode}" if k == "t"
                   else f"filter:{self.model.filter_mode}" if k == "a"
+                  else ("resume" if self.paused else "pause") if k == "p"
                   else ("resume" if self.hard_paused else "hard pause") if k == "P"
                   else d)
                  for k, d in KEYMAP]
@@ -1388,6 +1391,8 @@ class UILoop:
         ]
         if self.hard_paused:
             header[:0] = [("log_err", "HARD PAUSED   ")]
+        if self.paused:
+            header[:0] = [("log_err", "PAUSED   ")]
         for repo, _db in m.sides:
             halt = halt_marker.reason(self.halt_markers[repo])
             if halt is not None:
@@ -2023,7 +2028,7 @@ class UILoop:
         for col in {col_t, col_b}:
             buf.append(t.move_xy(col, row) + divider("┼"))
         if self._status_mode != (self.model.sort_mode, self.model.filter_mode,
-                                 bool(self.hard_paused)):
+                                 bool(self.hard_paused), self.paused):
             self._build_status()
         note = f" ▶ {nact} reviewed  " if nact else " "
         if self.search_mode:
@@ -2259,6 +2264,24 @@ class UILoop:
             self.toggle_hard_pause()
         self.model.quit_all()
 
+    @property
+    def paused(self) -> bool:
+        """Whether p holds back new reviews on some repo."""
+        return any(marker.exists() for marker in self.pause_markers)
+
+    def toggle_pause(self) -> None:
+        """p: stop the workers of every repo from starting new reviews;
+        the next press lets them start again. The pause outlives the
+        TUI."""
+        paused = self.paused
+        for marker in self.pause_markers:
+            if paused:
+                marker.unlink(missing_ok=True)
+            else:
+                marker.touch()
+        logger.info("new reviews start again" if paused
+                    else "paused: no new reviews start; p resumes")
+
     def toggle_hard_pause(self) -> None:
         """P: freeze this session's agents and workers (SIGSTOP on their
         whole subprocess trees); the next press thaws them (SIGCONT).
@@ -2484,6 +2507,8 @@ class UILoop:
             self.count_buf = ""
             self.model.act(ACTION_KEYS[str(ks)])
             self.follow_cursor = True
+        elif ks == "p":
+            self.toggle_pause()
         elif ks == "P":
             self.toggle_hard_pause()
         elif ks == "c":

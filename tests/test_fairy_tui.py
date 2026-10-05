@@ -1402,6 +1402,19 @@ class PauseTests(DbCase):
                                     (222, signal.SIGCONT)])
             self.assertEqual(ui.hard_paused, [])
 
+    def test_p_pauses_every_repo_until_pressed_again(self) -> None:
+        ui = make_ui(self.model)
+        markers = [db.root / "queued" / filedb.PAUSE_MARKER
+                   for db in (self.db, self.db2)]
+        ui.dispatch(Key("p"))
+        self.assertTrue(all(m.exists() for m in markers))
+        self.assertIn("PAUSED", fairy_tui._plain(ui.stats_lines(80)))
+        ui = make_ui(self.model)
+        self.assertIn("p resume", ui._status_plain)
+        ui.dispatch(Key("p"))
+        self.assertFalse(any(m.exists() for m in markers))
+        self.assertNotIn("PAUSED", fairy_tui._plain(ui.stats_lines(80)))
+
     def test_a_halted_side_is_announced_in_the_header(self) -> None:
         ui = make_ui(self.model)
         halt_marker.halt(halt_marker.path(self.db2.root),

@@ -359,6 +359,16 @@ class PersistBranchesOptionTests(unittest.TestCase):
         self.assertEqual(ns.persist_repo, ["ffmpeg", "ffmpeg-web"])
 
 
+class SharedContainersOptionTests(unittest.TestCase):
+    def test_off_by_default_and_requires_podman(self) -> None:
+        self.assertFalse(parse().shared_containers)
+        self.assertTrue(parse("--shared-containers", "--podman",
+                              "--shell-host", "fairy@203.0.113.7").shared_containers)
+        with self.assertRaises(SystemExit) as ctx:
+            parse("--shared-containers")
+        self.assertEqual(ctx.exception.code, 2)
+
+
 class CommitAuthorOptionTests(unittest.TestCase):
     """--commit-author parses into (name, email) at the boundary;
     open_review_container_shell sets it as each review container's

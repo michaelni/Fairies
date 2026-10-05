@@ -108,8 +108,7 @@ def serve_dispatch(
     channel into the codex container (the ``relay.py`` side) exactly as it
     drives the review shells, no socket of its own required.
 
-    One call == one codex run: a private ``shells`` dict, so a run never
-    shares a container working tree with a concurrent pass. Pass ``shells``
+    One call == one codex run, with a private ``shells`` dict. Pass ``shells``
     in to observe which sessions the run opened (the relay does, to poison
     them for forensics on a crash); it defaults to a fresh private dict.
     Returns on EOF (``reader`` exhausted).

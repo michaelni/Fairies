@@ -139,7 +139,6 @@ def main() -> int:
     )
     patch_bundle, patch_was_truncated = wrapper.build_patch_bundle(patch, args.max_patch_bytes)
 
-    shells: dict[str, podman_host.ContainerShellSession] = {}
     opened: list[tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]] = []
 
     def open_shell(label: str) -> tuple[podman_host.ContainerShellSession, str]:
@@ -149,7 +148,6 @@ def main() -> int:
         opened.append((handle, session))
         return session, transcript
 
-    shells[machines[0].label], _ = open_shell(machines[0].label)
     uploaded_file_ids: list[str] = []
     try:
         patch_file_id = upload_text_file(
@@ -170,6 +168,7 @@ def main() -> int:
             repo_mount_paths=[s.container_path for s in repo_specs],
             project_facts=llm_prompt.load_project_facts(args.project_facts),
             machines=machines,
+            open_shell=open_shell,
             drafts=drafts,
         )
         resources = openai_reviewer.OpenAIResources(
@@ -186,8 +185,6 @@ def main() -> int:
             ),
             patch_file_id=patch_file_id,
             vector_store_ids=[],
-            shells=shells,
-            open_shell=open_shell,
             uploaded_file_ids=uploaded_file_ids,
             debug_dir_specified=debug_dir_specified,
         )

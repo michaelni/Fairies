@@ -41,12 +41,11 @@ and any other provider's code (``anthropic_reviewer``).
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import json
 import logging
 import re
 import socket
-import threading
 import time
 from typing import Callable, Sequence
 
@@ -296,7 +295,6 @@ def run_responses_resolving_podman_shell(
     shells: dict[str, podman_host.ContainerShellSession],
     machine_labels: Sequence[str],
     open_shell: Callable[[str], tuple[podman_host.ContainerShellSession, str]],
-    open_lock: threading.Lock | None = None,
     max_tool_rounds: int,
     max_shell_timeout_s: float,
     what: str,
@@ -379,7 +377,7 @@ def run_responses_resolving_podman_shell(
                 continue
             payload_obj = exec_machine_call(
                 shells, machine_labels, open_shell, args_obj,
-                max_timeout_s=max_shell_timeout_s, open_lock=open_lock,
+                max_timeout_s=max_shell_timeout_s,
             )
             output_items.append({
                 "type": "function_call_output",
@@ -694,13 +692,8 @@ class OpenAIResources:
     # None when the run has no patch (the issue-investigator task).
     patch_file_id: str | None
     vector_store_ids: list[str]
-    shells: dict[str, podman_host.ContainerShellSession] | None
-    open_shell: Callable[[str], tuple[podman_host.ContainerShellSession, str]] | None
     uploaded_file_ids: list[str]
     debug_dir_specified: bool
-    # Serializes lazy opens into ``shells``: role passes run in parallel
-    # threads (llm_review_api.run_parallel) but share the one dict.
-    shells_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class OpenAIReviewer(Reviewer):
@@ -740,6 +733,11 @@ class OpenAIReviewer(Reviewer):
         self.name = f"openai:{self.model}"
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
+        with ctx.pass_shells() as shells:
+            return self._run(ctx, shells)
+
+    def _run(self, ctx: ReviewContext,
+             shells: dict[str, podman_host.ContainerShellSession]) -> dict[str, object]:
         args = self.args
         res = self.res
         client = res.client
@@ -836,15 +834,12 @@ class OpenAIReviewer(Reviewer):
         create_started = time.monotonic()
         try:
             if args.podman:
-                if res.shells is None or res.open_shell is None:
-                    raise RuntimeError("container shell session missing for main review pass")
                 response = run_responses_resolving_podman_shell(
                     client,
                     initial_kwargs=response_kwargs,
-                    shells=res.shells,
+                    shells=shells,
                     machine_labels=tuple(m.label for m in ctx.machines),
-                    open_shell=res.open_shell,
-                    open_lock=res.shells_lock,
+                    open_shell=ctx.open_shell,
                     max_tool_rounds=args.podman_max_tool_rounds,
                     max_shell_timeout_s=args.podman_exec_timeout,
                     what="responses.create",
@@ -920,7 +915,7 @@ class OpenAIReviewer(Reviewer):
             )
             raise BadModelOutput() from exc
 
-        ctx.collect_into(result, list(res.shells.values()) if res.shells else [])
+        ctx.collect_into(result, list(shells.values()))
 
         if args.verbose:
             extra = f" vector_stores={','.join(res.vector_store_ids)}" if res.vector_store_ids else ""

@@ -1001,13 +1001,12 @@ class Review:
 class ReviewContext:
     """The PR under review plus the drafts the pipeline accumulates.
 
-    ``open_shell`` opens a fresh container shell on the named machine and
-    returns it with its --session-command transcript; every open is
-    registered for wrapper-owned cleanup. ``None`` means no podman shell
-    is configured (the OpenAI solo path uses its native tools instead).
-    ``close_shells`` stops the containers of sessions ``open_shell``
-    returned once their user is done with them.
-    The pipeline -- not the
+    ``open_shell`` returns a container shell on the named machine with its
+    --session-command transcript; every container it opens is registered
+    for wrapper-owned cleanup. ``None`` means no podman shell is configured
+    (the OpenAI solo path uses its native tools instead). ``close_shells``,
+    if set, stops the containers of sessions ``open_shell`` returned once
+    their pass is done with them. The pipeline -- not the
     reviewers -- appends to ``drafts``; ``run_parallel`` records dropped
     reviewers in ``failed_reviewers`` so the verdict can say who is
     missing from it.
@@ -1199,10 +1198,10 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     provider-ended turn is re-run in the reviewer's own thread, up to
     ``TURN_FAILED_REVIEWER_ATTEMPTS`` attempts, before the drop.
 
-    Each reviewer opens its own shells via ``ctx.open_shell`` so concurrent
-    runs never share a container working tree. Results are gathered only
-    after every thread finishes, so the shared ``ctx`` is never mutated
-    concurrently; the caller extends ``ctx.drafts`` with the returned list.
+    Each reviewer opens its shells via ``ctx.open_shell``. Results are
+    gathered only after every thread finishes, so the shared ``ctx`` is
+    never mutated concurrently; the caller extends ``ctx.drafts`` with the
+    returned list.
     """
     if not reviewers:
         return []

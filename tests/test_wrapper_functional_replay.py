@@ -470,54 +470,54 @@ class VetStageTests(unittest.TestCase):
                 self.assertEqual([], seen)
                 self.assertNotIn("vetting", ticket)
 
-    def test_openai_vetter_opens_its_own_containers(self) -> None:
+    def test_stages_share_containers_only_when_asked_never_with_the_vetter(self) -> None:
         branches = ({"repo": "example", "branch": "pr1-1", "mode": "push"},)
-        handles = [mock.Mock(name=f"{use} handle") for use in ("transcript", "shared", "vet")]
-        sessions = [mock.Mock(name=f"{use} session") for use in ("transcript", "shared", "vet")]
-        shells: dict[str, dict] = {}
-        stopped_before_vet: list[mock.Mock] = []
+        # opened container ids: 0 holds the --session-command transcript
+        for shared, stage_ids, stopped_before_vet, vet_id in (
+                (False, [1, 2], 1, 3), (True, [0, 0], 1, 1)):
+            with self.subTest(shared=shared):
+                handles = [mock.Mock(name=f"handle {i}") for i in range(4)]
+                sessions = [mock.Mock(name=f"session {i}") for i in range(4)]
+                seen: dict[str, object] = {}
 
-        def fake_review_pr(ctx, reviewers, combiner, **kw):
-            combiner.res.shells["x86_64"], _ = combiner.res.open_shell("x86_64")
-            shells["combiner"] = dict(combiner.res.shells)
-            return Review("approve", "", branches=branches, model="openai:gpt-5.4")
+                def fake_review_pr(ctx, reviewers, combiner, **kw):
+                    seen["stages"] = [ctx.open_shell("x86_64")[0] for _ in range(2)]
+                    return Review("approve", "", branches=branches, model="openai:gpt-5.4")
 
-        def fake_vet(vetter, ctx):
-            shells["vetter"] = dict(vetter.res.shells)
-            stopped_before_vet.extend(c.args[0] for c in stop.call_args_list)
-            vetter.res.open_shell("x86_64")
-            return {"hold_for_human_inspection": False, "reason": "clean"}
+                def fake_vet(vetter, ctx):
+                    seen["stopped_before_vet"] = [c.args[0] for c in stop.call_args_list]
+                    seen["vetter"] = ctx.open_shell("x86_64")[0]
+                    return {"hold_for_human_inspection": False, "reason": "clean"}
 
-        with (
-            mock.patch.object(wrapper, "OpenAI", return_value=mock.Mock()),
-            mock.patch.object(wrapper, "load_api_key", return_value="test-key"),
-            mock.patch.object(wrapper, "upload_text_file", return_value="file-patch"),
-            mock.patch.object(wrapper, "delete_uploaded_file"),
-            mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
-            mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
-            mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
-            mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
-            mock.patch.object(wrapper, "open_review_container_shell",
-                              side_effect=[(h, s, "") for h, s in zip(handles, sessions)]),
-            mock.patch.object(wrapper.branch_persist, "add_to_container_remote") as add_remote,
-            mock.patch.object(wrapper.podman_host, "stop_container") as stop,
-            mock.patch.object(wrapper.podman_host, "reap_orphaned_containers"),
-            mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
-            mock.patch.object(wrapper, "vet_review", side_effect=fake_vet),
-            mock.patch.object(
-                wrapper.sys, "argv",
-                ["pr_review_wrapper.py", "--model", "openai:gpt-5.4",
-                 "--combine-model", "openai:gpt-5.4", "--vet-model", "openai:gpt-x",
-                 "--podman", "--shell-host", "fairy@h", "--no-source-bundle"],
-            ),
-            mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(_fixture_request()))),
-            mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
-        ):
-            self.assertEqual(0, wrapper.main())
-        self.assertEqual({"x86_64": sessions[1]}, shells["combiner"])
-        self.assertEqual({}, shells["vetter"])
-        self.assertEqual(handles[:2], stopped_before_vet)
-        add_remote.assert_called_once_with(handles[2], list(branches), {})
+                with (
+                    mock.patch.object(wrapper, "OpenAI", return_value=mock.Mock()),
+                    mock.patch.object(wrapper, "load_api_key", return_value="test-key"),
+                    mock.patch.object(wrapper, "find_repo_root", return_value=Path.cwd()),
+                    mock.patch.object(wrapper, "get_all_repo_roots", return_value=[Path.cwd()]),
+                    mock.patch.object(wrapper.podman_host, "image_tag_exists", return_value=True),
+                    mock.patch.object(wrapper.podman_repos, "build_repo_specs", return_value=[]),
+                    mock.patch.object(wrapper, "open_review_container_shell",
+                                      side_effect=[(h, s, "") for h, s in zip(handles, sessions)]),
+                    mock.patch.object(wrapper.branch_persist, "add_to_container_remote") as add_remote,
+                    mock.patch.object(wrapper.podman_host, "stop_container") as stop,
+                    mock.patch.object(wrapper.podman_host, "reap_orphaned_containers"),
+                    mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
+                    mock.patch.object(wrapper, "vet_review", side_effect=fake_vet),
+                    mock.patch.object(
+                        wrapper.sys, "argv",
+                        ["pr_review_wrapper.py", "--model", "anthropic:claude-opus-4",
+                         "--vet-model", "anthropic:claude-opus-4",
+                         "--podman", "--shell-host", "fairy@h", "--no-source-bundle",
+                         *(["--shared-containers"] if shared else [])],
+                    ),
+                    mock.patch.object(wrapper.sys, "stdin", io.StringIO(json.dumps(_fixture_request()))),
+                    mock.patch.object(wrapper.sys, "stdout", io.StringIO()),
+                ):
+                    self.assertEqual(0, wrapper.main())
+                self.assertEqual([sessions[i] for i in stage_ids], seen["stages"])
+                self.assertEqual(handles[:stopped_before_vet], seen["stopped_before_vet"])
+                self.assertIs(sessions[vet_id], seen["vetter"])
+                add_remote.assert_called_once_with(handles[vet_id], list(branches), {})
 
 
 class PodmanCleanupOnEarlyFailureTests(ContainerStateHarness, unittest.TestCase):

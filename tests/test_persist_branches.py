@@ -1329,18 +1329,17 @@ class AddToContainerRemoteTests(unittest.TestCase):
 @unittest.skipUnless(openai_reviewer is not None,
                      "openai_reviewer dependencies missing")
 class OpenAIPersistBranchesTests(unittest.TestCase):
-    """The OpenAI reviewer hands its shared per-machine sessions and its
-    validated declarations and pull_requests to ctx.collect_branches,
-    whose records land on the Review."""
+    """The OpenAI reviewer hands the per-machine sessions its pass opened
+    and its validated declarations and pull_requests to
+    ctx.collect_branches, whose records land on the Review, then closes
+    those sessions."""
 
-    def test_collects_via_shared_sessions(self) -> None:
+    def test_collects_and_closes_the_pass_sessions(self) -> None:
         session = object()
+        closed: list[object] = []
         resources = openai_reviewer.OpenAIResources(
             client=None, tools=[], include=[], patch_file_id=None,
-            vector_store_ids=[],
-            shells={"x86_64": session},
-            open_shell=lambda label: (session, ""),
-            uploaded_file_ids=[], debug_dir_specified=False)
+            vector_store_ids=[], uploaded_file_ids=[], debug_dir_specified=False)
         args = SimpleNamespace(
             podman=True, verbose=False, verbosity=None, service_tier=None,
             top_p=None, reasoning_summary=None, max_tool_calls=None,
@@ -1365,7 +1364,14 @@ class OpenAIPersistBranchesTests(unittest.TestCase):
             ci_triage_mode=False, repo_roots=[], repo_mount_paths=["/work/ffmpeg"],
             machines=[podman_host.ShellHostSpec(
                 "x86_64", podman_host.RemoteHost("fairy@h"))],
+            open_shell=lambda label: (session, ""),
+            close_shells=closed.extend,
             collect_branches=collect)
+
+        def shell_loop(client, *, shells, open_shell, **kwargs):
+            shells["x86_64"], _ = open_shell("x86_64")
+            return {}
+
         payload = json.dumps({
             "classification": "minor_issues_approve", "message": "LLM review",
             "head_vs_branch_diff_evidence": False,
@@ -1373,7 +1379,7 @@ class OpenAIPersistBranchesTests(unittest.TestCase):
             "pull_requests": [VALID_PR_REQUEST]})
         with mock.patch.object(openai_reviewer,
                                "run_responses_resolving_podman_shell",
-                               return_value={}), \
+                               side_effect=shell_loop), \
                 mock.patch.object(openai_reviewer, "extract_response_annotations",
                                   return_value=[]), \
                 mock.patch.object(openai_reviewer,
@@ -1385,6 +1391,7 @@ class OpenAIPersistBranchesTests(unittest.TestCase):
         self.assertEqual(review.branches, (GOOD_RECORD,))
         self.assertEqual(calls, [([session], [VALID_DECLARATION],
                                   [VALID_PR_REQUEST])])
+        self.assertEqual([session], closed)
 
 
 class CrossItemBranchTests(unittest.TestCase):

@@ -660,6 +660,13 @@ def parse_args() -> argparse.Namespace:
         help="Allow several shell calls per follow-up round.",
     )
     p.add_argument(
+        "--shared-containers",
+        action="store_true",
+        help="Run triage, the reviewers and the combiner in one container per "
+             "machine instead of one per pass, so parallel reviewers share one "
+             "working tree; the vetter always gets its own.",
+    )
+    p.add_argument(
         "--simulate-past-cutoff",
         metavar="ISO8601",
         help="Prune container-repo refs whose commits postdate this time "
@@ -719,6 +726,8 @@ def parse_args() -> argparse.Namespace:
         p.error(f"duplicate machine labels in --shell-host: {', '.join(labels)}")
     if args.podman and not args.machines:
         p.error("--podman requires at least one --shell-host")
+    if args.shared_containers and not args.podman:
+        p.error("--shared-containers requires --podman")
     if args.persist_branches and not args.podman:
         p.error("--persist-branches requires --podman (branches live in "
                 "podman review containers)")
@@ -1307,12 +1316,11 @@ def open_review_container_shell(
     """Start a fresh ephemeral container on ``spec``'s host, fill its repos,
     and open a shell.
 
-    One isolated container per call, so concurrent ensemble reviewers never
-    share a working tree. ``session_commands`` run in every container, in
-    the primary repo's mount, so state they create exists for each
-    reviewer; the returned transcript is what the prompt splices in. On
-    any provisioning failure the half-started container is stopped before
-    the error propagates.
+    One isolated container per call. ``session_commands`` run in every
+    container, in the primary repo's mount, so state they create exists
+    for each reviewer; the returned transcript is what the prompt splices
+    in. On any provisioning failure the half-started container is stopped
+    before the error propagates.
     """
     handle = podman_host.start_ephemeral_container(
         image=args.podman_image,
@@ -1493,7 +1501,8 @@ def main() -> int:
     machines: list[podman_host.ShellHostSpec] = args.machines if args.podman else []
     spec_by_label = {m.label: m for m in machines}
     ensemble_shells: list[tuple[podman_host.ContainerHandle, podman_host.ContainerShellSession]] = []
-    shared_shells: dict[str, podman_host.ContainerShellSession] = {}
+    shared_shells: dict[str, tuple[podman_host.ContainerShellSession, str]] = {}
+    shared_shells_lock = threading.Lock()
     # Keyed by id() since sessions are unhashable.
     poisoned_session_ids: set[int] = set()
     session_handles: dict[int, podman_host.ContainerHandle] = {}
@@ -1535,12 +1544,25 @@ def main() -> int:
                                "for a later cleanup", handle.container_id[:12],
                                type(exc).__name__, exc)
 
+    def open_shared_shell(
+        label: str,
+    ) -> tuple[podman_host.ContainerShellSession, str]:
+        with shared_shells_lock:
+            if label in shared_shells:
+                logger.debug("reusing the shared container on machine %s", label)
+            else:
+                shared_shells[label] = open_machine_shell(label)
+            return shared_shells[label]
+
+    open_stage_shell = open_shared_shell if args.shared_containers else open_machine_shell
+    close_stage_shells = None if args.shared_containers else close_machine_shells
+
     def hand_over_branches(records: list[JsonObject]) -> None:
         """Put a finished stage's branch records on the fairy remotes of
         the shells open now and of every shell opened later, so the
         next stage verifies them like its own work."""
         inherited_branches[:] = records
-        for session in shared_shells.values():
+        for session, _ in shared_shells.values():
             handle = session_handles.get(id(session))
             if handle is not None:
                 branch_persist.add_to_container_remote(
@@ -1651,8 +1673,9 @@ def main() -> int:
             session_commands = [
                 substitute_session_command(c, request) for c in args.session_command
             ]
-            transcript_session, session_transcript = open_machine_shell(machines[0].label)
-            close_machine_shells([transcript_session])
+            transcript_session, session_transcript = open_stage_shell(machines[0].label)
+            if not args.shared_containers:
+                close_machine_shells([transcript_session])
 
         repo_mount_paths = [s.container_path for s in podman_repo_specs]
 
@@ -1731,8 +1754,8 @@ def main() -> int:
             project_facts=project_facts,
             machines=machines,
             session_transcript=session_transcript,
-            open_shell=open_machine_shell if args.podman else None,
-            close_shells=close_machine_shells if args.podman else None,
+            open_shell=open_stage_shell if args.podman else None,
+            close_shells=close_stage_shells if args.podman else None,
             report_poisoned=report_poisoned if args.podman else None,
             collect_branches=(
                 collect_review_branches if args.persist_branches else None),
@@ -1743,8 +1766,6 @@ def main() -> int:
             include=include,
             patch_file_id=patch_file_id,
             vector_store_ids=vector_store_ids,
-            shells=shared_shells if args.podman else None,
-            open_shell=open_machine_shell if args.podman else None,
             uploaded_file_ids=uploaded_file_ids,
             debug_dir_specified=debug_dir_specified,
         )
@@ -1773,8 +1794,8 @@ def main() -> int:
                 repo_mount_paths=repo_mount_paths,
                 project_facts=project_facts,
                 machines=machines,
-                open_shell=open_machine_shell if args.podman else None,
-                close_shells=close_machine_shells if args.podman else None,
+                open_shell=open_stage_shell if args.podman else None,
+                close_shells=close_stage_shells if args.podman else None,
                 report_poisoned=report_poisoned if args.podman else None,
             )
             triager = make_reviewer(
@@ -1898,11 +1919,7 @@ def main() -> int:
 
         def stage_role(role):
             """The stage's role, branch-enabled when this run persists
-            branches. Anthropic/zai/codex stages have their own podman
-            sessions; OpenAI stages share one container per machine, and
-            that shared container's fairy remotes are then also where
-            their pushes land, so collection reads them through the
-            shared sessions."""
+            branches."""
             if not args.persist_branches:
                 return role
             return role_with_branches(role, [s.name for s in persist_repos])
@@ -1977,7 +1994,7 @@ def main() -> int:
                 len(poisoned_session_ids),
             )
             return EXIT_REVIEW_HALTED
-        close_machine_shells(shared_shells.values())
+        close_machine_shells(session for session, _ in shared_shells.values())
 
         posting_block = unattended_posting_block(review.branches)
         if posting_block:
@@ -1986,16 +2003,18 @@ def main() -> int:
         elif args.vet_model and (review.classification != "skip" or review.label_changes):
             workset_note(args, "stage", "vet")
             inherited_branches[:] = review.branches
-            # A stage that ran PR-derived code may have tampered with the
-            # containers it used, so the vetter opens its own.
             vetter = make_reviewer(
-                args.vet_model, args=args, resources=replace(openai_resources, shells={}),
+                args.vet_model, args=args, resources=openai_resources,
                 role=make_vetter_role(review, task=args.task,
                                       inherits_branches=args.persist_branches),
                 verbose=args.verbose)
+            # A stage that ran PR-derived code may have tampered with the
+            # containers it used, so the vetter opens its own.
             vetting = vet_review(vetter, replace(
                 review_ctx, source_bundle=None, source_files=[],
-                source_notes=[], collect_branches=None))
+                source_notes=[], collect_branches=None,
+                open_shell=open_machine_shell if args.podman else None,
+                close_shells=close_machine_shells if args.podman else None))
             workset_note(args, "vetting", vetting)
 
         message = review.message

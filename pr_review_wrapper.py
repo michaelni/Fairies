@@ -463,22 +463,12 @@ def parse_args() -> argparse.Namespace:
              "built-in web_search for codex:.",
     )
     p.add_argument(
-        "--use-shell",
-        action="store_true",
-        help="Enable the Responses API shell tool with an OpenAI-hosted container.",
-    )
-    p.add_argument(
-        "--shell-container-id",
-        help="Optional existing OpenAI container id to reuse for the shell tool. Defaults to container_auto.",
-    )
-    p.add_argument(
         "--podman",
         action="store_true",
         help=(
             "Run shell commands in an ephemeral Podman container on the ssh "
             "podman host (function-calling ''shell'' tool). Repos are filled "
-            "in from host-local bare mirrors; no OpenAI code_interpreter or "
-            "OpenAI shell. Conflicts with --use-shell."
+            "in from host-local bare mirrors; no OpenAI code_interpreter."
         ),
     )
     p.add_argument(
@@ -1449,15 +1439,6 @@ def main() -> int:
         )
     repo_root = find_repo_root(args.repo_root)
     repo_roots = get_all_repo_roots(repo_root, args.extra_repo_root)
-    if args.podman:
-        if args.use_shell:
-            raise RuntimeError("--podman cannot be combined with --use-shell")
-        if args.shell_container_id:
-            raise RuntimeError(
-                "--podman does not use OpenAI container ids; "
-                "omit --shell-container-id"
-            )
-
     if args.prepare_vector_store_only:
         if not repo_roots:
             raise RuntimeError("--prepare-vector-store-only requires at least one local git checkout")
@@ -1715,8 +1696,6 @@ def main() -> int:
             web_search_context_size=args.web_search_context_size,
             web_search_cache_only=args.web_search == "cached",
             web_search_domains=args.web_search_domain,
-            use_shell=args.use_shell,
-            shell_container_id=args.shell_container_id,
             use_podman_shell=args.podman,
             machines=machines,
         )

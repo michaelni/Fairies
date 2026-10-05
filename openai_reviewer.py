@@ -208,8 +208,6 @@ def format_response_stats(response: object, *, elapsed_seconds: float | None = N
         web_search_sources = 0
         code_interpreter_calls = 0
         code_interpreter_outputs = 0
-        shell_calls = 0
-        shell_outputs = 0
         function_calls = 0
         function_outputs = 0
         for item in output:
@@ -234,10 +232,6 @@ def format_response_stats(response: object, *, elapsed_seconds: float | None = N
                 outputs = item.get("outputs")
                 if isinstance(outputs, list):
                     code_interpreter_outputs += len(outputs)
-            elif item_type == "shell_call":
-                shell_calls += 1
-            elif item_type == "shell_call_output":
-                shell_outputs += 1
             elif item_type == "function_call":
                 function_calls += 1
             elif item_type == "function_call_output":
@@ -252,8 +246,6 @@ def format_response_stats(response: object, *, elapsed_seconds: float | None = N
             tool_parts.append(f"ws:{web_search_calls}/{web_search_sources}")
         if code_interpreter_calls:
             tool_parts.append(f"ci:{code_interpreter_calls}/{code_interpreter_outputs}")
-        if shell_calls or shell_outputs:
-            tool_parts.append(f"sh:{shell_calls}/{shell_outputs}")
         if function_calls or function_outputs:
             tool_parts.append(f"fn:{function_calls}/{function_outputs}")
         if tool_parts:
@@ -460,8 +452,6 @@ def build_response_tools(
     web_search_context_size: str,
     web_search_cache_only: bool,
     web_search_domains: list[str],
-    use_shell: bool,
-    shell_container_id: str | None,
     use_podman_shell: bool = False,
     machines: Sequence[podman_host.ShellHostSpec] = (),
 ) -> list[JsonObject]:
@@ -486,16 +476,6 @@ def build_response_tools(
     if use_podman_shell:
         tools.append(build_podman_shell_function_tool(machines))
         return tools
-    if use_shell:
-        shell_tool: JsonObject = {"type": "shell"}
-        if shell_container_id:
-            shell_tool["environment"] = {
-                "type": "container_reference",
-                "container_id": shell_container_id,
-            }
-        else:
-            shell_tool["environment"] = {"type": "container_auto"}
-        tools.append(shell_tool)
     tools.append({"type": "code_interpreter", "container": {"type": "auto"}})
     return tools
 

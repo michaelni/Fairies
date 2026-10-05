@@ -95,24 +95,6 @@ class OpenAIContainerSupportTests(unittest.TestCase):
         )
         self.assertEqual({"/work/ffmpeg": "b" * 40}, visible)
 
-    def test_build_response_tools_shell_reuses_given_container(self) -> None:
-        tools = openai_reviewer.build_response_tools(
-            vector_store_ids=["vs_1"],
-            file_search_max_num_results=7,
-            use_web_search=False,
-            web_search_context_size="medium",
-            web_search_cache_only=False,
-            web_search_domains=[],
-            use_shell=True,
-            shell_container_id="cntr_123",
-        )
-
-        self.assertEqual("file_search", tools[0]["type"])
-        self.assertEqual("shell", tools[1]["type"])
-        self.assertEqual("container_reference", tools[1]["environment"]["type"])
-        self.assertEqual("cntr_123", tools[1]["environment"]["container_id"])
-        self.assertEqual("code_interpreter", tools[2]["type"])
-
     def test_build_response_tools_default_code_interpreter_is_auto(self) -> None:
         tools = openai_reviewer.build_response_tools(
             vector_store_ids=[],
@@ -121,8 +103,6 @@ class OpenAIContainerSupportTests(unittest.TestCase):
             web_search_context_size="medium",
             web_search_cache_only=False,
             web_search_domains=[],
-            use_shell=False,
-            shell_container_id=None,
         )
 
         self.assertEqual([{"type": "code_interpreter", "container": {"type": "auto"}}], tools)
@@ -135,8 +115,6 @@ class OpenAIContainerSupportTests(unittest.TestCase):
             web_search_context_size="medium",
             web_search_cache_only=False,
             web_search_domains=[],
-            use_shell=False,
-            shell_container_id=None,
             use_podman_shell=True,
         )
         self.assertEqual(1, len(tools))

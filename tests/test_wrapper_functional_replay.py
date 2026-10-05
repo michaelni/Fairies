@@ -475,6 +475,7 @@ class VetStageTests(unittest.TestCase):
         handles = [mock.Mock(name="primary handle"), mock.Mock(name="vet handle")]
         sessions = [mock.Mock(name="primary session"), mock.Mock(name="vet session")]
         shells: dict[str, dict] = {}
+        stopped_before_vet: list[mock.Mock] = []
 
         def fake_review_pr(ctx, reviewers, combiner, **kw):
             shells["combiner"] = dict(combiner.res.shells)
@@ -482,6 +483,7 @@ class VetStageTests(unittest.TestCase):
 
         def fake_vet(vetter, ctx):
             shells["vetter"] = dict(vetter.res.shells)
+            stopped_before_vet.extend(c.args[0] for c in stop.call_args_list)
             vetter.res.open_shell("x86_64")
             return {"hold_for_human_inspection": False, "reason": "clean"}
 
@@ -497,7 +499,7 @@ class VetStageTests(unittest.TestCase):
             mock.patch.object(wrapper, "open_review_container_shell",
                               side_effect=[(h, s, "") for h, s in zip(handles, sessions)]),
             mock.patch.object(wrapper.branch_persist, "add_to_container_remote") as add_remote,
-            mock.patch.object(wrapper.podman_host, "stop_container"),
+            mock.patch.object(wrapper.podman_host, "stop_container") as stop,
             mock.patch.object(wrapper.podman_host, "reap_orphaned_containers"),
             mock.patch.object(wrapper, "review_pr", side_effect=fake_review_pr),
             mock.patch.object(wrapper, "vet_review", side_effect=fake_vet),
@@ -513,6 +515,7 @@ class VetStageTests(unittest.TestCase):
             self.assertEqual(0, wrapper.main())
         self.assertEqual({"x86_64": sessions[0]}, shells["combiner"])
         self.assertEqual({}, shells["vetter"])
+        self.assertEqual([handles[0]], stopped_before_vet)
         add_remote.assert_called_once_with(handles[1], list(branches), {})
 
 

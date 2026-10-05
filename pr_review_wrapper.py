@@ -1978,6 +1978,7 @@ def main() -> int:
                 len(poisoned_session_ids),
             )
             return EXIT_REVIEW_HALTED
+        close_machine_shells(primary_shells.values())
 
         posting_block = unattended_posting_block(review.branches)
         if posting_block:

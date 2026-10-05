@@ -179,7 +179,7 @@ def main() -> int:
                 use_web_search=False, web_search_context_size=args.web_search_context_size,
                 web_search_cache_only=False, web_search_domains=[],
                 use_shell=False, shell_container_id=None,
-                code_interpreter_container_id=None, use_podman_shell=True,
+                use_podman_shell=True,
                 machines=machines,
             ),
             include=openai_reviewer.build_response_include(
@@ -187,7 +187,6 @@ def main() -> int:
             ),
             patch_file_id=patch_file_id,
             vector_store_ids=[],
-            shared_container_id=None,
             shells=shells,
             open_shell=open_shell,
             uploaded_file_ids=uploaded_file_ids,

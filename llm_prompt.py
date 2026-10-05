@@ -663,18 +663,6 @@ In the {mount_names[0]} checkout every pull request's head is a git revision ffo
 
 ''' if podman_shell and container_repo_mounts else ""}\
 {"The **shell** function tool runs shell commands in an ephemeral Linux environment with internet access.\n\n" * (podman_shell and not container_repo_mounts)}\
-{'''The container contains two bare git repos without checked out working trees rg will not work.
-to search for needle in ffmpeg master you can use git --git-dir=/mnt/data/repos/ffmpeg/.git grep needle master
-to blame configure in release/8.1 you can use git --git-dir=/mnt/data/repos/ffmpeg/.git blame origin/release/8.1 configure
-to search for needle in ffmpeg pull request 21000 you can use git --git-dir=/mnt/data/repos/ffmpeg/.git grep needle fforge/pr/21000
-to see the comments & reviews for pull request 21660 you can use git --git-dir=/mnt/data/repos/all_ffmpeg/forgejo_git/.git show master:forgejo_git/pulls/021660.md
-to see the issue 21257 you can use git --git-dir=/mnt/data/repos/all_ffmpeg/forgejo_git/.git show master:forgejo_git/issues/021257.md
-to see index.cgi from fateserver use git --git-dir=/mnt/data/repos/all_ffmpeg/.git show master:fateserver/index.cgi
-to see our security page from the web use git --git-dir=/mnt/data/repos/all_ffmpeg/.git show master:ffmpeg-web/src/security
-to see a list of specifications available use 'git --git-dir=/mnt/data/repos/all_ffmpeg/.git ls-tree -r --name-only master:for_ffmpeg/' for other specifications please search the web
-all other git commands work similarly as expected without a checkout.
-the HEAD revisions of all the files from all repositories are also available from a vector store
-''' * (bool(container_repo_mounts) and not podman_shell)}\
 Prior {subject_long} discussion is provided separately when available. Use it to avoid repeating already-known and understood points.
 A discussion entry of kind ``operator_note`` is a private instruction from fairy's operator, follow it.
 And avoid posting the same point again if it was already raised by the current {persona} identity.

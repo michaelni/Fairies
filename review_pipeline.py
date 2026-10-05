@@ -63,7 +63,6 @@ from llm_review_api import (
 )
 from openai_reviewer import (
     INHERIT_SERVICE_TIER,
-    OpenAIContainerUnhealthy,
     OpenAIResources,
     OpenAIReviewer,
 )
@@ -247,15 +246,10 @@ def run_triage(triager: Reviewer, ctx: ReviewContext) -> dict[str, object] | Non
 
     Returns the validated triage dict on success. Returns ``None`` on
     failure (API error, bad output, refusal) so the caller falls through
-    to the main reviewer pass. When the OpenAI container dies during
-    triage, returns ``container_unhealthy=True`` so the caller can exit
-    ``EXIT_CONTAINER_UNHEALTHY``.
+    to the main reviewer pass.
     """
     try:
         result = triager.run(ctx)
-    except OpenAIContainerUnhealthy:
-        logger.warning("openai container unhealthy during triage")
-        return {"route": "engage", "message": "", "reason": "", "container_unhealthy": True}
     except BadModelOutput as exc:
         logger.warning(
             "triage stage output did not match the requested schema (%s); "
@@ -282,13 +276,9 @@ def run_triage(triager: Reviewer, ctx: ReviewContext) -> dict[str, object] | Non
 
 def vet_review(vetter: Reviewer, ctx: ReviewContext) -> dict[str, object]:
     """Run the vetter role over ``ctx``. A run that fails holds the
-    verdict for human inspection with the failure as its reason; a dead
-    OpenAI container propagates for the wrapper to drop it from the
-    pool."""
+    verdict for human inspection with the failure as its reason."""
     try:
         result = vetter.run(ctx)
-    except OpenAIContainerUnhealthy:
-        raise
     except Exception as exc:
         logger.warning("vet stage failed with %s: %s", type(exc).__name__,
                        str(exc).replace("\n", " "))

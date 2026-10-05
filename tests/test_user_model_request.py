@@ -222,8 +222,7 @@ class TriagePromptShapeTests(unittest.TestCase):
 
 class PodmanContainerLocationsPromptTests(unittest.TestCase):
     """The podman container has working-tree checkouts under /work, so the
-    reviewer must be told where project data lives there (not the OpenAI
-    container's bare-repo /mnt/data git-dir paths)."""
+    reviewer must be told where project data lives there."""
 
     def test_podman_prompt_points_at_work_tree_locations(self) -> None:
         prompt = llm_prompt.generate_llm_prompt(
@@ -237,7 +236,6 @@ class PodmanContainerLocationsPromptTests(unittest.TestCase):
         self.assertIn("forgejo_git/pulls/", prompt)
         self.assertIn("forgejo_git/issues/", prompt)
         self.assertIn("for_ffmpeg/", prompt)
-        self.assertNotIn("/mnt/data/repos", prompt)
 
 
 if __name__ == "__main__":

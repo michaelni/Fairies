@@ -31,7 +31,7 @@ Shared OpenAI-SDK primitives used across the project.
 
 Collects the thin OpenAI-SDK-facing glue that more than one module
 needs: the retry wrapper for rate-limit / transient errors, file
-upload / delete / exists helpers, the response-text extractor, a few
+upload / delete helpers, the response-text extractor, a few
 JSON type aliases, and small utilities like ``_obj_get`` and
 ``log_progress``.
 
@@ -63,7 +63,7 @@ from openai import (
 import common
 
 # Re-exported for callers that do ``from openai_common import JsonObject``
-# (e.g. pr_review_wrapper, openai_container, openai_vector_store).
+# (e.g. pr_review_wrapper, openai_reviewer).
 # Single source of truth lives in common.py; both forge_gcli and
 # openai_common re-export so neither subsystem has to depend on the
 # other.
@@ -85,7 +85,7 @@ load_api_key = partial(common.load_api_key, "OPENAI_API_KEY")
 
 DEFAULT_RATE_LIMIT_RETRIES = 30
 # Transient connection / timeout errors are retried a small number of
-# times for short helper calls (file uploads, container retrieves, etc.)
+# times for short helper calls (file uploads, vector-store probes, etc.)
 # where a quick retry is almost always cheaper than asking the outer
 # caller to restart the whole wrapper. The main LLM responses.create
 # call opts out of this and propagates such errors to the caller.
@@ -166,9 +166,9 @@ def call_with_rate_limit_retry(
     When ``retry_transient`` is True (default), also retries
     ``APITimeoutError`` and ``APIConnectionError`` up to
     ``DEFAULT_TRANSIENT_API_RETRIES`` times with a short backoff. This
-    is appropriate for short helper calls (file uploads, container
-    retrieves, vector-store probes) where a quick retry is much cheaper
-    than asking the outer caller to restart the whole wrapper.
+    is appropriate for short helper calls (file uploads, vector-store
+    probes) where a quick retry is much cheaper than asking the outer
+    caller to restart the whole wrapper.
 
     When ``retry_transient`` is False, ``APITimeoutError`` and
     ``APIConnectionError`` are propagated immediately. The main LLM
@@ -245,25 +245,6 @@ def call_with_rate_limit_retry(
     if last_exc is not None:
         raise last_exc
     raise RuntimeError(f"{what} failed unexpectedly without a captured exception")
-
-
-def openai_file_exists(client: OpenAI, file_id: str, *, verbose: bool) -> bool:
-    started = time.monotonic()
-    if verbose:
-        logger.debug("openai files.retrieve start file_id=%s", file_id)
-    try:
-        call_with_rate_limit_retry(
-            lambda: client.files.retrieve(file_id),
-            what=f"file retrieve {file_id}",
-            verbose=verbose,
-        )
-        if verbose:
-            logger.debug("openai files.retrieve ok file_id=%s dt=%.3fs", file_id, time.monotonic() - started)
-        return True
-    except Exception:
-        if verbose:
-            logger.debug("cached file id is not retrievable file_id=%s dt=%.3fs", file_id, time.monotonic() - started)
-        return False
 
 
 def upload_local_file(client: OpenAI, path: Path, *, what: str, verbose: bool) -> str:

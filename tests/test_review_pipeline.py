@@ -57,7 +57,6 @@ import review_pipeline  # noqa: E402
 from codex_reviewer import CodexReviewer  # noqa: E402
 import workset  # noqa: E402
 from openai_reviewer import OpenAIReviewer  # noqa: E402
-from openai_reviewer import OpenAIContainerUnhealthy  # noqa: E402
 from anthropic_reviewer import AnthropicReviewer  # noqa: E402
 from gemini_reviewer import GeminiReviewer  # noqa: E402
 
@@ -291,11 +290,6 @@ class VetReviewTests(unittest.TestCase):
         out = review_pipeline.vet_review(_FakeVetter(RuntimeError("boom")), _ctx())
         self.assertIs(True, out["hold_for_human_inspection"])
         self.assertEqual("vet stage failed: RuntimeError: boom", out["reason"])
-
-    def test_a_dead_openai_container_propagates(self) -> None:
-        with self.assertRaises(OpenAIContainerUnhealthy):
-            review_pipeline.vet_review(
-                _FakeVetter(OpenAIContainerUnhealthy("dead")), _ctx())
 
 
 class ReviewPrTests(unittest.TestCase):

@@ -34,7 +34,7 @@ every case here patches it. Each class names the production reader of
 the attribute it pins, because the risk these tests cover is a flag
 that parses fine and is then read under a different name -- the
 wrapper's namespace travels far (openai_reviewer, podman_repos,
-openai_container, openai_vector_store) and nothing else would notice.
+openai_vector_store) and nothing else would notice.
 """
 
 from __future__ import annotations
@@ -49,7 +49,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import openai_container  # noqa: E402
 import openai_vector_store  # noqa: E402
 import podman_repos  # noqa: E402
 import pr_review_wrapper as wrapper  # noqa: E402
@@ -250,25 +249,6 @@ class TriageOptionTests(unittest.TestCase):
     def test_triage_max_output_tokens_overrides_the_default(self) -> None:
         self.assertEqual(parse("--triage-max-output-tokens", "2000")
                          .triage_max_output_tokens, 2000)
-
-
-class ContainerOptionTests(unittest.TestCase):
-    """Shape of the auto-created OpenAI container, read where main()
-    calls into openai_container."""
-
-    def test_expiry_minutes_overrides_the_default(self) -> None:
-        self.assertEqual(parse("--container-expiry-minutes", "45")
-                         .container_expiry_minutes, 45)
-        self.assertEqual(parse().container_expiry_minutes,
-                         openai_container.DEFAULT_CONTAINER_EXPIRY_MINUTES)
-
-    def test_memory_limit_accepts_only_the_offered_sizes(self) -> None:
-        self.assertEqual(parse("--container-memory-limit", "16g")
-                         .container_memory_limit, "16g")
-        self.assertEqual(parse().container_memory_limit,
-                         openai_container.DEFAULT_CONTAINER_MEMORY_LIMIT)
-        with self.assertRaises(SystemExit):
-            parse("--container-memory-limit", "128g")
 
 
 class VectorStoreOptionTests(unittest.TestCase):

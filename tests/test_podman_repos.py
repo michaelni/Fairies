@@ -30,11 +30,10 @@
 Tests for the vendor-agnostic ``podman_repos`` module.
 
 All ``podman``/``git``/ssh invocations are mocked. The point is to lock
-down (a) the name sanitisation + dedup algorithm matching the existing
-OpenAI-side layout, and (b) provisioning: mirror path derivation,
-``ensure_remote_mirror``, the thin ``git push`` sync, and the
-host-local cp/checkout sequence. None of these tests need real podman,
-git, or ssh on PATH.
+down (a) the name sanitisation + dedup algorithm, and (b) provisioning:
+mirror path derivation, ``ensure_remote_mirror``, the thin ``git push``
+sync, and the host-local cp/checkout sequence. None of these tests
+need real podman, git, or ssh on PATH.
 """
 
 from __future__ import annotations

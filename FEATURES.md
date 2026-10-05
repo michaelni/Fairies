@@ -73,7 +73,6 @@ for additional development workflows being added over time.
 
 ## containers
 
-- optional OpenAI container support (not recommanded due to limitation of these containers)
 - arbitrary number of podman containers
 - trivial to deploy, you need a ssh login (no root, no sudo) and podman, fairy sets up her own containers
 - containers can be behind NAT, you just need a single ssh connection to reach them

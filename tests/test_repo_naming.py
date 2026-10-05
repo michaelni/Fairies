@@ -29,8 +29,7 @@
 
 Tests for ``common.sanitize_repo_name`` / ``common.dedup_with_suffix``.
 
-These helpers were extracted from ``openai_container.build_container_repo_specs``;
-the behaviour they encode (regex-based sanitisation + numeric suffix
+The behaviour they encode (regex-based sanitisation + numeric suffix
 collision handling) is what currently determines the in-container
 layout that operators see in logs and reports. The tests below pin
 that contract so a future edit to either the regex or the suffix

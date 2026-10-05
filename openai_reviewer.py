@@ -34,9 +34,8 @@ function-call loop, response stats and file-citation rendering.
 
 What does NOT belong here: triage, argument parsing, source-bundle
 building and process orchestration (the wrapper entrypoint), SDK-generic
-helpers (``openai_common``), vector stores and OpenAI containers
-(``openai_vector_store``, ``openai_container*``), and any other
-provider's code (``anthropic_reviewer``).
+helpers (``openai_common``), vector stores (``openai_vector_store``),
+and any other provider's code (``anthropic_reviewer``).
 """
 
 from __future__ import annotations
@@ -65,7 +64,6 @@ from llm_review_api import (
     RoleSpec,
     SchemaError,
 )
-import openai_container
 from openai_common import (
     InputContentItem,
     JsonObject,
@@ -80,10 +78,8 @@ from shell_tool import (abort_if_cancelled, build_shell_tool_schema,
                         exec_machine_call)
 
 __all__ = [
-    "EXIT_CONTAINER_UNHEALTHY",
     "INHERIT_SERVICE_TIER",
     "OPENAI_TCP_KEEPALIVE_SOCKET_OPTIONS",
-    "OpenAIContainerUnhealthy",
     "OpenAIResources",
     "OpenAIReviewer",
     "build_response_include",
@@ -105,13 +101,6 @@ logger = logging.getLogger(__name__)
 # ``--service-tier``. Distinct from an explicit ``None``, which sends no
 # tier at all (account default).
 INHERIT_SERVICE_TIER = "__inherit__"
-
-# Distinct non-zero exit code the wrapper uses when it recognizes the
-# attached OpenAI container as unhealthy (expired, not running, ...).
-# The caller (e.g. fairy.py) just retries on any non-zero exit,
-# but a dedicated code makes these routine, retryable failures
-# trivially greppable in logs instead of indistinguishable from a crash.
-EXIT_CONTAINER_UNHEALTHY = 2
 
 # TCP keepalive for every OpenAI HTTP connection. The main
 # ``responses.create`` call is non-streaming, so zero bytes arriving for
@@ -473,7 +462,6 @@ def build_response_tools(
     web_search_domains: list[str],
     use_shell: bool,
     shell_container_id: str | None,
-    code_interpreter_container_id: str | None,
     use_podman_shell: bool = False,
     machines: Sequence[podman_host.ShellHostSpec] = (),
 ) -> list[JsonObject]:
@@ -508,9 +496,7 @@ def build_response_tools(
         else:
             shell_tool["environment"] = {"type": "container_auto"}
         tools.append(shell_tool)
-    code_interpreter_tool: JsonObject = {"type": "code_interpreter"}
-    code_interpreter_tool["container"] = code_interpreter_container_id if code_interpreter_container_id else {"type": "auto"}
-    tools.append(code_interpreter_tool)
+    tools.append({"type": "code_interpreter", "container": {"type": "auto"}})
     return tools
 
 
@@ -711,24 +697,15 @@ def render_file_citations_for_markdown(
     return f"{text}\n\nSources:\n{sources}" if text else f"Sources:\n{sources}"
 
 
-class OpenAIContainerUnhealthy(Exception):
-    """The attached OpenAI container is unhealthy (expired / stopped).
-
-    Raised by ``OpenAIReviewer`` so the entrypoint releases the lease and
-    exits ``EXIT_CONTAINER_UNHEALTHY``, letting the caller retry against a
-    freshly provisioned container.
-    """
-
-
 @dataclass
 class OpenAIResources:
     """OpenAI-specific per-run resources shared across reviewer calls.
 
-    Built once by the entrypoint after vector-store / container / podman
-    setup, so the single uploaded patch file, tool wiring and container ids
-    are reused rather than rebuilt per call. ``uploaded_file_ids`` is the
-    entrypoint's own cleanup list; the reviewer appends any file it uploads
-    (e.g. the source bundle) so the outer ``finally`` deletes it.
+    Built once by the entrypoint after vector-store / podman setup, so the
+    single uploaded patch file and tool wiring are reused rather than
+    rebuilt per call. ``uploaded_file_ids`` is the entrypoint's own
+    cleanup list; the reviewer appends any file it uploads (e.g. the
+    source bundle) so the outer ``finally`` deletes it.
     """
 
     client: OpenAI | None
@@ -737,7 +714,6 @@ class OpenAIResources:
     # None when the run has no patch (the issue-investigator task).
     patch_file_id: str | None
     vector_store_ids: list[str]
-    shared_container_id: str | None
     shells: dict[str, podman_host.ContainerShellSession] | None
     open_shell: Callable[[str], tuple[podman_host.ContainerShellSession, str]] | None
     uploaded_file_ids: list[str]
@@ -755,8 +731,7 @@ class OpenAIReviewer(Reviewer):
     model (driving the podman shell tool loop when ``--podman`` is set,
     else the direct Responses call), renders file citations into the
     message and validates against the role's schema. Raises
-    ``OpenAIContainerUnhealthy`` / ``BadModelOutput`` for the routine,
-    retryable failure modes.
+    ``BadModelOutput`` for the routine, retryable failure mode.
     """
 
     def __init__(
@@ -915,22 +890,6 @@ class OpenAIReviewer(Reviewer):
         except Exception as exc:
             if args.verbose:
                 logger.debug("responses.create failed dt=%.3fs error=%s %s", time.monotonic() - create_started, type(exc).__name__, str(exc).replace("\n", " "))
-            if (
-                args.use_openai_container_repos
-                and ctx.repo_roots
-                and openai_container.is_container_unhealthy_error(exc)
-            ):
-                # Known, routine, retryable failure: surface a typed error
-                # so the entrypoint marks the lease unhealthy and exits with
-                # EXIT_CONTAINER_UNHEALTHY rather than dumping the full SDK
-                # traceback. The caller retries against a fresh container.
-                logger.warning(
-                    "openai container unhealthy during responses.create (%s); "
-                    "exiting with code %d so caller retries against a fresh container",
-                    str(exc).replace("\n", " "),
-                    EXIT_CONTAINER_UNHEALTHY,
-                )
-                raise OpenAIContainerUnhealthy() from exc
             raise
 
         if args.verbose:

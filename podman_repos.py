@@ -87,10 +87,8 @@ def build_repo_specs(
 ) -> list[RepoSpec]:
     """Build vendor-neutral specs from host working-tree paths.
 
-    Names are sanitised + suffix-deduped to match the OpenAI-side
-    algorithm in ``openai_container.build_container_repo_specs`` so
-    operators see the same in-container layout. Each spec carries the
-    host bare-mirror path ``<mirror_root>/<name>.git``.
+    Names are sanitised + suffix-deduped. Each spec carries the host
+    bare-mirror path ``<mirror_root>/<name>.git``.
     """
     specs: list[RepoSpec] = []
     used: set[str] = set()

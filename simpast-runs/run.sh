@@ -50,7 +50,6 @@
 #   SAMPLES     samples per arm                (default 3)
 #   PAR         concurrent samples per arm     (default SAMPLES: one wave)
 #   TIER        OpenAI service tier            (default flex)
-#   MODE        podman (default) | container   (OpenAI-hosted, A/B reference)
 #   FORCE_ENGAGE  non-empty passes --force-engage (review even when the
 #               harness triager votes skip; production may have engaged)
 #   MODEL       main reviewer model            (default openai:gpt-5.4);
@@ -60,9 +59,7 @@
 #   WRAPPER_EXTRA  extra wrapper args, e.g. "--extra-model zai:glm-5.3 --combine-model openai:gpt-5.4"
 #
 # The LLM shell always runs in an ephemeral Podman container on
-# PODMAN_SSH, matching production; OpenAI-hosted containers are
-# deprecated and produce non-comparable results, so this harness
-# refuses to use them. Provision the host first
+# PODMAN_SSH, matching production. Provision the host first
 # (containers/provision_remote.py --ssh PODMAN_SSH <repo> ...). Keep PAR
 # modest so one host is not swamped by concurrent containers.
 #
@@ -109,15 +106,8 @@ if [[ -n "$TRIAGE_MODEL" ]]; then
     for m in $ALLOWED_MODELS; do TRIAGE_ARGS="$TRIAGE_ARGS --allowed-model $m"; done
 fi
 PODMAN_SSH=${PODMAN_SSH:-}
-MODE=${MODE:-podman}
-if [[ "$MODE" = container ]]; then
-    # OpenAI-hosted containers: deprecated for production but still the
-    # reference arm for backend/billing A/Bs (they bill context once).
-    CONTAINER_ARGS="--use-openai-container-repos --max-tool-calls 100"
-else
-    [[ -n "$PODMAN_SSH" ]] || { echo "PODMAN_SSH=user@host required for MODE=podman" >&2; exit 2; }
-    CONTAINER_ARGS="--podman --shell-host $PODMAN_SSH --podman-max-tool-rounds 100"
-fi
+[[ -n "$PODMAN_SSH" ]] || { echo "PODMAN_SSH=user@host required" >&2; exit 2; }
+CONTAINER_ARGS="--podman --shell-host $PODMAN_SSH --podman-max-tool-rounds 100"
 (($# >= 1)) || { echo "usage: $0 <arm-ref> [arm-ref ...]" >&2; exit 2; }
 
 # Write the prompt to the working tree only (never the index), so a

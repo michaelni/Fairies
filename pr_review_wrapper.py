@@ -130,8 +130,6 @@ from llm_prompt import (
     role_with_labels,
 )
 import openai_common
-import openai_container
-import openai_container_pool
 import openai_reviewer
 import openai_vector_store
 from openai_common import (
@@ -141,8 +139,6 @@ from openai_common import (
     upload_text_file,
 )
 from openai_reviewer import (
-    EXIT_CONTAINER_UNHEALTHY,
-    OpenAIContainerUnhealthy,
     OpenAIResources,
     build_response_include,
     build_response_tools,
@@ -476,40 +472,13 @@ def parse_args() -> argparse.Namespace:
         help="Optional existing OpenAI container id to reuse for the shell tool. Defaults to container_auto.",
     )
     p.add_argument(
-        "--use-openai-container-repos",
-        action="store_true",
-        help="Upload local git directories as plain tar archives, unpack them into a reusable OpenAI container, and point shell/python at that shared container.",
-    )
-    p.add_argument(
-        "--container-id",
-        help="Optional existing OpenAI container id to reuse for both shell and code_interpreter when --use-openai-container-repos is enabled.",
-    )
-    p.add_argument(
-        "--container-expiry-minutes",
-        type=int,
-        default=openai_container.DEFAULT_CONTAINER_EXPIRY_MINUTES,
-        help=f"Minutes after last activity before an auto-created OpenAI container expires (default: {openai_container.DEFAULT_CONTAINER_EXPIRY_MINUTES})",
-    )
-    p.add_argument(
-        "--container-memory-limit",
-        choices=["1g", "4g", "16g", "64g"],
-        default=openai_container.DEFAULT_CONTAINER_MEMORY_LIMIT,
-        help=f"Memory limit for an auto-created OpenAI container (default: {openai_container.DEFAULT_CONTAINER_MEMORY_LIMIT})",
-    )
-    p.add_argument(
-        "--container-repos-root",
-        default=openai_container.DEFAULT_CONTAINER_REPOS_ROOT,
-        help=f"Directory inside the OpenAI container where repository archives are extracted (default: {openai_container.DEFAULT_CONTAINER_REPOS_ROOT})",
-    )
-    p.add_argument(
         "--podman",
         action="store_true",
         help=(
             "Run shell commands in an ephemeral Podman container on the ssh "
             "podman host (function-calling ''shell'' tool). Repos are filled "
             "in from host-local bare mirrors; no OpenAI code_interpreter or "
-            "OpenAI shell. Conflicts with --use-openai-container-repos and "
-            "--use-shell."
+            "OpenAI shell. Conflicts with --use-shell."
         ),
     )
     p.add_argument(
@@ -963,18 +932,8 @@ def build_model_visible_repo_head_map(
     repo_roots: list[Path],
     repo_heads: dict[str, str],
     *,
-    container_repo_specs: list[openai_container.ContainerRepoSpec] | None = None,
     podman_repo_specs: list[podman_repos.RepoSpec] | None = None,
 ) -> dict[str, str]:
-    if container_repo_specs:
-        # 1. When container repos are available, expose the actual mounted paths the model can use.
-        visible: dict[str, str] = {}
-        for spec in container_repo_specs:
-            head_sha = repo_heads.get(spec.repo_key)
-            if isinstance(head_sha, str) and head_sha:
-                visible[spec.mounted_path] = head_sha
-        return visible
-
     if podman_repo_specs:
         visible_l: dict[str, str] = {}
         for spec in podman_repo_specs:
@@ -984,8 +943,8 @@ def build_model_visible_repo_head_map(
                 visible_l[spec.container_path] = head_sha
         return visible_l
 
-    # 2. Without container mounts, expose simple repo labels instead of unusable host-local paths.
-    visible = {}
+    # Without container mounts, expose simple repo labels instead of unusable host-local paths.
+    visible: dict[str, str] = {}
     for repo_root in repo_roots:
         repo_key = str(repo_root.resolve())
         head_sha = repo_heads.get(repo_key)
@@ -1426,8 +1385,6 @@ def main() -> int:
         openai_reviewer.logger,
         openai_vector_store.logger,
         review_pipeline.logger,
-        openai_container.logger,
-        openai_container_pool.logger,
         podman_host.logger,
         podman_repos.logger,
         # By name, not module attribute: the anthropic and gemini modules
@@ -1458,7 +1415,6 @@ def main() -> int:
     openai_provider_requested = any(s.startswith("openai:") for s in model_specs)
     openai_needed = (
         openai_provider_requested
-        or args.use_openai_container_repos
         or args.use_vector_store_search
         or args.prepare_vector_store_only
     )
@@ -1493,19 +1449,13 @@ def main() -> int:
         )
     repo_root = find_repo_root(args.repo_root)
     repo_roots = get_all_repo_roots(repo_root, args.extra_repo_root)
-    if args.container_id and not args.use_openai_container_repos:
-        raise RuntimeError("--container-id requires --use-openai-container-repos")
-    if args.use_openai_container_repos and args.shell_container_id and args.container_id and args.shell_container_id != args.container_id:
-        raise RuntimeError("--shell-container-id and --container-id must match when both are set")
     if args.podman:
-        if args.use_openai_container_repos:
-            raise RuntimeError("--podman cannot be combined with --use-openai-container-repos")
         if args.use_shell:
             raise RuntimeError("--podman cannot be combined with --use-shell")
-        if args.container_id or args.shell_container_id:
+        if args.shell_container_id:
             raise RuntimeError(
                 "--podman does not use OpenAI container ids; "
-                "omit --container-id and --shell-container-id"
+                "omit --shell-container-id"
             )
 
     if args.prepare_vector_store_only:
@@ -1555,25 +1505,6 @@ def main() -> int:
             repo_roots,
             verbose=args.verbose,
         )
-
-    shared_container_id: str | None = None
-    container_repo_specs: list[openai_container.ContainerRepoSpec] = []
-    container_lease: openai_container.ContainerLease | None = None
-    container_lease_healthy = True
-    if args.use_openai_container_repos:
-        if not repo_roots:
-            raise RuntimeError("--use-openai-container-repos requires at least one local git checkout")
-        container_lease = openai_container.ensure_openai_container_repos_ready(
-            client,
-            repo_roots,
-            explicit_container_id=args.container_id or args.shell_container_id,
-            container_repos_root=args.container_repos_root,
-            expiry_minutes=args.container_expiry_minutes,
-            memory_limit=args.container_memory_limit,
-            verbose=args.verbose,
-        )
-        shared_container_id = container_lease.container_id
-        container_repo_specs = container_lease.specs
 
     session_commands: list[str] = []
     session_transcript = ""
@@ -1727,16 +1658,10 @@ def main() -> int:
                 open_machine_shell(machines[0].label)
             )
 
-        repo_mount_paths = (
-            [s.container_path for s in podman_repo_specs]
-            if podman_repo_specs
-            else [spec.mounted_path for spec in container_repo_specs]
-        )
+        repo_mount_paths = [s.container_path for s in podman_repo_specs]
 
         if vector_store_ids:
             head_map_kwargs: dict[str, object] = {}
-            if container_repo_specs:
-                head_map_kwargs["container_repo_specs"] = container_repo_specs
             if podman_repo_specs:
                 head_map_kwargs["podman_repo_specs"] = podman_repo_specs
             request["vector_store_repo_heads"] = build_model_visible_repo_head_map(
@@ -1791,8 +1716,7 @@ def main() -> int:
             web_search_cache_only=args.web_search == "cached",
             web_search_domains=args.web_search_domain,
             use_shell=args.use_shell,
-            shell_container_id=shared_container_id if shared_container_id else args.shell_container_id,
-            code_interpreter_container_id=None if args.podman else shared_container_id,
+            shell_container_id=args.shell_container_id,
             use_podman_shell=args.podman,
             machines=machines,
         )
@@ -1827,7 +1751,6 @@ def main() -> int:
             include=include,
             patch_file_id=patch_file_id,
             vector_store_ids=vector_store_ids,
-            shared_container_id=shared_container_id,
             shells=primary_shells if args.podman else None,
             open_shell=open_machine_shell if args.podman else None,
             uploaded_file_ids=uploaded_file_ids,
@@ -1879,17 +1802,6 @@ def main() -> int:
                 logger.warning(
                     "triage stage failed; falling through to main reviewer pass"
                 )
-            elif triage_result.get("container_unhealthy"):
-                # Container died during triage; no point retrying main on the same dead
-                # container. Surface EXIT_CONTAINER_UNHEALTHY so the caller retries the
-                # whole wrapper against a freshly provisioned container.
-                container_lease_healthy = False
-                logger.warning(
-                    "openai container unhealthy during triage; "
-                    "exiting with code %d so caller retries against a fresh container",
-                    EXIT_CONTAINER_UNHEALTHY,
-                )
-                return EXIT_CONTAINER_UNHEALTHY
             else:
                 route = triage_result["route"]
                 if force_engage and route != "engage":
@@ -2052,11 +1964,6 @@ def main() -> int:
                 review_ctx, model_reviewers, combiner,
                 on_drafts=note_drafts,
             )
-        except OpenAIContainerUnhealthy:
-            # The outer ``finally`` still releases the lease; mark it
-            # unhealthy so the dead container is dropped from the pool.
-            container_lease_healthy = False
-            return EXIT_CONTAINER_UNHEALTHY
         except BadModelOutput:
             return EXIT_BAD_MODEL_OUTPUT
         except ProviderTurnFailed as exc:
@@ -2090,14 +1997,9 @@ def main() -> int:
                 role=make_vetter_role(review, task=args.task,
                                       inherits_branches=args.persist_branches),
                 verbose=args.verbose)
-            try:
-                vetting = vet_review(vetter, replace(
-                    review_ctx, source_bundle=None, source_files=[],
-                    source_notes=[], collect_branches=None))
-            except OpenAIContainerUnhealthy:
-                container_lease_healthy = False
-                vetting = {"hold_for_human_inspection": True,
-                           "reason": "openai container unhealthy during the vet stage"}
+            vetting = vet_review(vetter, replace(
+                review_ctx, source_bundle=None, source_files=[],
+                source_notes=[], collect_branches=None))
             workset_note(args, "vetting", vetting)
 
         message = review.message
@@ -2115,8 +2017,6 @@ def main() -> int:
     finally:
         for file_id in uploaded_file_ids:
             delete_uploaded_file(client, file_id, verbose=args.verbose)
-        if container_lease is not None:
-            container_lease.release(healthy=container_lease_healthy)
         for handle, session in ensemble_shells:
             session.close()
             podman_host.stop_container(handle)

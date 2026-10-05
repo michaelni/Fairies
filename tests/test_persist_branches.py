@@ -1337,7 +1337,7 @@ class OpenAIPersistBranchesTests(unittest.TestCase):
         session = object()
         resources = openai_reviewer.OpenAIResources(
             client=None, tools=[], include=[], patch_file_id=None,
-            vector_store_ids=[], shared_container_id=None,
+            vector_store_ids=[],
             shells={"x86_64": session},
             open_shell=lambda label: (session, ""),
             uploaded_file_ids=[], debug_dir_specified=False)
@@ -1347,7 +1347,7 @@ class OpenAIPersistBranchesTests(unittest.TestCase):
             max_output_tokens=1000, web_search="off",
             podman_max_tool_rounds=0, podman_exec_timeout=60.0,
             podman_parallel_tool_calls=False, debug_response_dir=".dbg",
-            use_openai_container_repos=False, model="gpt-5.4")
+            model="gpt-5.4")
         reviewer = openai_reviewer.OpenAIReviewer(
             args, resources, model="gpt-5.4",
             role=llm_prompt.role_with_branches(llm_prompt.REVIEWER_ROLE, REPOS),

@@ -371,17 +371,10 @@ per repository; aggregate the rest as subtrees of one repo (that is what
 the wrong file can poison them. That is an OpenAI bug, not something we can
 fix.
 
-### OpenAI cloud containers (deprecated)
-
-The OpenAI-hosted container backend still works but Podman is preferred.
-OpenAI containers allow max 1000 files, restrict network egress and CPU time,
-and thus need bare (no checkout) repos with compressed git structures; a
-model checking out a large tree may never be heard from again.
-
 ## Simulating past PRs (offline replay / A-B)
 
 `simpast-runs/run.sh` replays historical PRs through the real reviewer under
-`--simulate-past`, so prompt / model / container-backend changes can be
+`--simulate-past`, so prompt / model changes can be
 compared without touching the live forge. It reviews a set of PRs at a fixed
 cutoff against a cutoff-prepped mirror (a clone with master rewound to
 `CUTOFF` and each PR's head pinned at the `--patch-pr-ref-template` ref),
@@ -400,16 +393,11 @@ standard 4-PR FFmpeg suite:
 
     PRS, CUTOFF, PATCH_REPO, EXTRA_REPO   what to replay
     SAMPLES, PAR                          repeats and concurrency
-    BACKEND, PODMAN_SSH                   openai container (default) or a
-                                          Podman host (see above)
+    PODMAN_SSH                            the Podman host (see above)
 
-    # 4-PR suite, 3 samples, OpenAI container, current prompt
-    OUTROOT=simpast-runs/openai SAMPLES=3 bash simpast-runs/run.sh HEAD
-
-    # same in the self-hosted Podman container; PAR=1 keeps a single
+    # 4-PR suite, 3 samples, current prompt; PAR=1 keeps a single
     # host from being swamped
-    OUTROOT=simpast-runs/podman SAMPLES=3 PAR=1 \
-      BACKEND=podman PODMAN_SSH=fairy@HOST \
+    OUTROOT=simpast-runs/podman SAMPLES=3 PAR=1 PODMAN_SSH=fairy@HOST \
       bash simpast-runs/run.sh HEAD
 
 ## Mail Fairy

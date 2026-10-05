@@ -1383,21 +1383,21 @@ class PauseTests(DbCase):
         self.assertNotIn(other.pid, pids)
         self.assertNotIn(os.getpid(), pids)
 
-    def test_p_stops_the_tree_and_a_second_p_continues_it(self) -> None:
+    def test_shift_p_stops_the_tree_and_a_second_one_continues_it(self) -> None:
         ui = make_ui(self.model)
         sent: list[tuple[int, int]] = []
         with mock.patch.object(fairy_tui, "session_pids",
                                return_value=[111, 222]), \
                 mock.patch.object(fairy_tui.os, "kill",
                                   side_effect=lambda p, s: sent.append((p, s))):
-            ui.dispatch(Key("p"))
+            ui.dispatch(Key("P"))
             self.assertEqual(sent, [(111, signal.SIGSTOP),
                                     (222, signal.SIGSTOP)])
             self.assertEqual(ui.hard_paused, [111, 222])
-            self.assertIn("PAUSED",
+            self.assertIn("HARD PAUSED",
                           fairy_tui._plain(ui.stats_lines(80)))
             sent.clear()
-            ui.dispatch(Key("p"))
+            ui.dispatch(Key("P"))
             self.assertEqual(sent, [(111, signal.SIGCONT),
                                     (222, signal.SIGCONT)])
             self.assertEqual(ui.hard_paused, [])

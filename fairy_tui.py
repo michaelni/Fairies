@@ -1014,9 +1014,10 @@ ACTION_KEYS = {"y": "apply", "Y": "apply-force", "s": "skip", "S": "snooze",
                "r": "rerun", "R": "sample", "x": "cancel"}
 KEYMAP = (("q", "quit"), ("y", "apply"), ("Y", "post anyway"), ("s", "skip"),
           ("S", "snooze"), ("r", "rerun"), ("R", "+eval"),
-          ("x", "drop"), ("o", "edit msg"), ("i", "note"), ("p", "pause"),
+          ("x", "drop"), ("o", "edit msg"), ("i", "note"),
           ("a", "filter"),
-          ("t", "sort"), ("m", "diff"), ("d", "logs diff"),
+          ("t", "sort"), ("P", "hard pause"),
+          ("m", "diff"), ("d", "logs diff"),
           ("b", "branch diff"),
           ("[/] {/}", "patch/hunk"), ("/", "search"), ("e/E", "export"),
           ("?", "help"), ("Tab/click", "focus"),
@@ -1363,7 +1364,7 @@ class UILoop:
                              bool(self.hard_paused))
         pairs = [(k, f"sort:{self.model.sort_mode}" if k == "t"
                   else f"filter:{self.model.filter_mode}" if k == "a"
-                  else ("resume" if self.hard_paused else "pause") if k == "p"
+                  else ("resume" if self.hard_paused else "hard pause") if k == "P"
                   else d)
                  for k, d in KEYMAP]
         self._status_plain = "  ".join(f"{k} {d}" for k, d in pairs)
@@ -1386,7 +1387,7 @@ class UILoop:
             ("st_reviewed" if actionable else "num", str(actionable)),
         ]
         if self.hard_paused:
-            header[:0] = [("log_err", "PAUSED   ")]
+            header[:0] = [("log_err", "HARD PAUSED   ")]
         for repo, _db in m.sides:
             halt = halt_marker.reason(self.halt_markers[repo])
             if halt is not None:
@@ -2259,7 +2260,7 @@ class UILoop:
         self.model.quit_all()
 
     def toggle_hard_pause(self) -> None:
-        """p: freeze this session's agents and workers (SIGSTOP on their
+        """P: freeze this session's agents and workers (SIGSTOP on their
         whole subprocess trees); the next press thaws them (SIGCONT).
         Stopping sweeps until no new pid appears, or a process forking
         between the scan and its stop would leak a running child.
@@ -2286,7 +2287,7 @@ class UILoop:
                 except OSError:
                     pass
         if stopped:
-            logger.info("paused %d processes; p resumes them", len(stopped))
+            logger.info("paused %d processes; P resumes them", len(stopped))
         else:
             logger.info("no agent/worker processes found to pause")
         self.hard_paused = stopped
@@ -2483,7 +2484,7 @@ class UILoop:
             self.count_buf = ""
             self.model.act(ACTION_KEYS[str(ks)])
             self.follow_cursor = True
-        elif ks == "p":
+        elif ks == "P":
             self.toggle_hard_pause()
         elif ks == "c":
             self.tail.sink.alerts.clear()

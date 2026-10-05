@@ -32,8 +32,8 @@ last row).
   and per-repo counts per state. `merge-ready=N/M` folds
   `awaiting-approver` in: `M` PRs need a human to press Merge, of
   which `N` were approved by fairy (the rest, shown as `merge-ready*`
-  in the list, were approved by someone else). A red `PAUSED` appears
-  while `p` holds the daemons stopped, a red `HALTED` with the reason
+  in the list, were approved by someone else). A red `HARD PAUSED` appears
+  while `P` holds the daemons stopped, a red `HALTED` with the reason
   while a repo's `halted` file exists (see `--halt-keyword`, `--halt-file`);
   remove the file to resume. The last ten log lines at CRITICAL level,
   failures that need a human such as codex rejecting its login, are
@@ -168,7 +168,7 @@ ticket is adopted.
 | `m` | cycle the message pane: message → the PR's patches (a `git format-patch` per commit; a merge commit, which format-patch drops, appears as `git log` prints it) → its accumulated merge diff, read from the side's `patch-repo` mirror at the base/head SHAs of the item's snapshot (blank until a scan pass, like the status letters). Long lines are clipped, not wrapped. |
 | `d` | cycle the logs pane the same way: logs → patches → merge diff of the cursor PR. |
 | `b` | toggle the message pane's branch previews between the commits a persisted branch would publish and, for a force push, the range-diff against the published tip. |
-| `p` | pause: SIGSTOP every agent/worker the launcher started, with their whole subprocess trees; `p` again resumes. Remote containers keep computing — only local processing freezes. Quitting while paused thaws first. |
+| `P` | hard pause: SIGSTOP every agent/worker the launcher started, with their whole subprocess trees; `P` again resumes. Remote containers keep computing — only local processing freezes. Quitting while paused thaws first. |
 | `c` | clear the alerts listed under the stats header. |
 | `[` / `]` | previous / next patch of the diff on screen — its files, for a merge diff, which has no commits. Acts on the focused pane, or on a diff pane while the focus is elsewhere; `3]` skips three. |
 | `{` / `}` | the same, by hunk. |

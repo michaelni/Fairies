@@ -278,6 +278,31 @@ class DrainTests(WorkerCase):
         self.assertEqual(done, 0)
         self.assertEqual(self.db.list_state("queued"), [("pr", "1")])
 
+    def test_drain_claims_nothing_while_paused(self) -> None:
+        self.db.push("queued", "pr", "1", queued_ticket(1))
+        (self.db.root / "queued" / filedb.PAUSE_MARKER).touch()
+        with mock.patch.object(fairy, "safe_apply_llm_review_to_prepared") as llm:
+            done = worker.drain(self.db, {"pr": self.ns})
+        self.assertEqual(done, 0)
+        llm.assert_not_called()
+        self.assertEqual(self.db.list_state("queued"), [("pr", "1")])
+
+    def test_a_pause_between_listing_and_claim_starts_no_review(self) -> None:
+        self.db.push("queued", "pr", "1", queued_ticket(1))
+        claim = self.db.claim
+
+        def pause_then_claim(*args):
+            (self.db.root / "queued" / filedb.PAUSE_MARKER).touch()
+            return claim(*args)
+
+        with mock.patch.object(self.db, "claim", side_effect=pause_then_claim), \
+                mock.patch.object(fairy, "safe_apply_llm_review_to_prepared") as llm:
+            done = worker.drain(self.db, {"pr": self.ns})
+        self.assertEqual(done, 0)
+        llm.assert_not_called()
+        self.assertEqual(self.db.list_state("queued"), [("pr", "1")])
+        self.assertEqual(self.db.list_state("llm"), [])
+
     def test_parallel_drain_reviews_concurrently_with_isolated_ns(self) -> None:
         # Three tickets, three threads: each review must see its OWN
         # workset_file_override -- a shared namespace would send one

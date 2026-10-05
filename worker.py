@@ -217,6 +217,7 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
     concurrency.py inside the wrapper."""
     slots = max(1, int(parallel or 1))
     marker = halt_marker.path(db.root, next(iter(sides.values())).halt_file)
+    pause_marker = db.root / "queued" / filedb.PAUSE_MARKER
     done = 0
     in_flight: set = set()
     own_watch = None
@@ -238,6 +239,9 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
                     logger.warning("halted: %s -- %d queued tickets wait",
                                    halt, len(queued))
                     queued = []
+                elif pause_marker.exists():
+                    logger.info("paused: %d queued tickets wait", len(queued))
+                    queued = []
                 for kind, number in sorted(
                         queued,
                         key=lambda kn: not (db.get("queued", *kn)
@@ -250,6 +254,10 @@ def drain(db: filedb.Db, sides: dict[str, argparse.Namespace],
                     # from queued/ before the next listing: no window in
                     # which it could be picked twice
                     claim = db.claim("queued", "llm", kind, number)
+                    if claim is not None and pause_marker.exists():
+                        # the pause began after the listing
+                        claim.abort()
+                        break
                     if claim is not None:
                         fut = pool.submit(_review_claimed, sides, claim)
                         fut.add_done_callback(lambda _f: wake.set())

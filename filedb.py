@@ -122,7 +122,7 @@ from pathlib import Path
 from typing import Callable
 
 __all__ = ["Db", "Claim", "STATES", "KINDS", "ITEM_STATE", "NOTE_STATE",
-           "SUPERSEDED_STATE",
+           "SUPERSEDED_STATE", "PAUSE_MARKER",
            "TicketId",
            "forge_number", "is_base", "logger"]
 
@@ -137,6 +137,9 @@ KINDS = ("pr", "issue")
 ITEM_STATE = "items"
 NOTE_STATE = "notes"
 SUPERSEDED_STATE = "superseded"
+# a file in queued/: while it exists, workers start no reviews;
+# their queued/ watch sees it come and go
+PAUSE_MARKER = "paused"
 _TMP = "tmp"
 _LOCKS = "locks"
 # Ticket identity: the forge number, optionally refined by a sample

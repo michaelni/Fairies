@@ -620,6 +620,17 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                             mutate=lambda d: d.update(
                                 expected_updated_at=item.get("updated_at")))
                 continue
+        standing = number not in forced_ns and [
+            f"{state}/{sample}" for state in ("queued", "llm", "reviewed")
+            for sample_kind, sample in db.list_state(state)
+            if sample_kind == kind and not filedb.is_base(sample)
+            and filedb.forge_number(sample) == number
+            and (review := db.get(state, kind, sample))
+            and _review_stands(kind, review, item, snapshot)]
+        if standing:
+            logger.debug("%s #%d: %s still stands; not queued",
+                         kind, number, ", ".join(standing))
+            continue
         if limit and queued >= limit and number not in forced_ns \
                 and not getattr(prepared, "forced_review", False):
             # nothing written: --limit never persists a skip -- but say
@@ -652,6 +663,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # queued/error tickets need the guard too, or an operator x
             # on them cannot stick until new activity
             "expected_updated_at": item.get("updated_at"),
+            "expected_head_sha": fairy.get_pr_head_sha(item) if kind == "pr" else None,
             "html_url": str(getattr(prepared, "pr", getattr(prepared, "issue", {})).get("html_url") or ""),
             "skip_backoff_h": backoff_h,
             "error_backoff_h": error_backoff_h,

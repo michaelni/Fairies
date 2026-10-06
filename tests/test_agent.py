@@ -495,6 +495,35 @@ class ReuseTests(AgentCase):
         self.prepare.assert_not_called()
         self.assertEqual(self.db.find("pr", "1"), "reviewed")
 
+    def test_a_standing_sample_suppresses_the_base_review(self) -> None:
+        """Production #24677: s on the base's verdict of an older head,
+        while a sample of the current head awaited y in reviewed/; the
+        next scan re-reviewed the unchanged PR. A sample still queued or
+        under review covers the PR just the same."""
+        pr = dict(make_pr(24677), updated_at="2026-10-06T01:14:58Z",
+                  head={"sha": "7bead62c647bbc581b44deb300f94f519c522e61",
+                        "ref": "ff-tmp-usacbufov"})
+        skipped_base = {
+            "reason": "operator skip",
+            "expected_updated_at": "2026-09-24T19:16:57Z",
+            "expected_head_sha": "f2a0e1a4faa89a35995ccf5d42a949d9be1d0134"}
+        self.scan([pr])  # the ticket a sample of the current head gets
+        sample = self.db.get("queued", "pr", "24677")
+        for state in ("queued", "llm", "reviewed"):
+            with self.subTest(state):
+                self.db.replace("skipped", "pr", "24677", skipped_base,
+                                expect=self.db.find("pr", "24677"))
+                self.db.push(state, "pr", "24677s3", sample)
+                self.scan([pr])
+                self.assertEqual(self.db.find("pr", "24677"), "skipped")
+                self.db.try_pop(state, "pr", "24677s3")
+        self.db.push("reviewed", "pr", "24677s3", {
+            "review": {"classification": "minor_issues_approve"},
+            "expected_updated_at": "2026-10-05T20:40:08Z",
+            "expected_head_sha": "9339818f362ffb2e7c68f3980dc2431405f2dbce"})
+        self.scan([pr])  # a sample of an older head
+        self.assertEqual(self.db.find("pr", "24677"), "queued")
+
     def test_closure_cancel_from_a_short_listing_revives(self) -> None:
         # a transient pagination glitch cancels with reason "not open";
         # when the item is listed again the verdict work must resume --

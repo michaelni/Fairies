@@ -442,6 +442,20 @@ def _unacknowledged_agent_post_at(prior: str | None,
     return prior_data.get("unacknowledged_post_at")
 
 
+def _review_stands(kind: str, ticket: dict, item: dict,
+                   snapshot: dict | None) -> bool:
+    """Whether the review ``ticket`` still answers the forge ``item``,
+    whose items/ record is ``snapshot``."""
+    stands = ticket.get("expected_updated_at") == item.get("updated_at")
+    if kind == "pr" and (not stands or ticket.get("expected_head_sha")
+                         != fairy.get_pr_head_sha(item)):
+        stands = fairy.review_unaffected_since(
+            snapshot, ticket.get("expected_updated_at"),
+            ticket.get("expected_head_sha"),
+            ticket.get("expected_patch_ids"), ticket.get("body"))
+    return stands
+
+
 def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 wip_re, cache_age, limit, evals={},
                 template_only=frozenset(),
@@ -470,14 +484,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             # carry label changes: they sit in reviewed/ awaiting the
             # operator, and a re-queue would burn an LLM run and yank
             # the row out from under the cursor every scan.
-            stands = prior_data.get("expected_updated_at") == item.get("updated_at")
-            if kind == "pr" and (not stands or prior_data.get("expected_head_sha")
-                                 != fairy.get_pr_head_sha(item)):
-                stands = fairy.review_unaffected_since(
-                    snapshot, prior_data.get("expected_updated_at"),
-                    prior_data.get("expected_head_sha"),
-                    prior_data.get("expected_patch_ids"), prior_data.get("body"))
-            if stands:
+            if _review_stands(kind, prior_data, item, snapshot):
                 continue  # standing verdict; reuse
         if prior == "cancelled" and number not in forced_ns and prior_data \
                 and str(prior_data.get("reason", "")).startswith("operator") \

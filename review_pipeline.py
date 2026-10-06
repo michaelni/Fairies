@@ -53,6 +53,7 @@ from llm_review_api import (
     ANTHROPIC_ENDPOINTS,
     TURN_FAILED_COMBINER_ATTEMPTS,
     TURN_FAILED_REVIEWER_ATTEMPTS,
+    TURN_FAILED_VETTER_ATTEMPTS,
     BadModelOutput,
     Review,
     ReviewContext,
@@ -275,10 +276,13 @@ def run_triage(triager: Reviewer, ctx: ReviewContext) -> dict[str, object] | Non
 
 
 def vet_review(vetter: Reviewer, ctx: ReviewContext) -> dict[str, object]:
-    """Run the vetter role over ``ctx``. A run that fails holds the
-    verdict for human inspection with the failure as its reason."""
+    """Run the vetter role over ``ctx``, retrying provider-ended turns.
+    A run that fails holds the verdict for human inspection with the
+    failure as its reason."""
     try:
-        result = vetter.run(ctx)
+        result = review_with_turn_retries(
+            vetter, ctx, TURN_FAILED_VETTER_ATTEMPTS,
+            lambda reviewer, ctx: reviewer.run(ctx))
     except Exception as exc:
         logger.warning("vet stage failed with %s: %s", type(exc).__name__,
                        str(exc).replace("\n", " "))

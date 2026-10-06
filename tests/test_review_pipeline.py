@@ -54,7 +54,7 @@ from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
 from podman_host import ContainerInfraError, ContainerShellError  # noqa: E402
 import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
-from codex_reviewer import CodexReviewer  # noqa: E402
+from codex_reviewer import CodexReviewer, CodexTurnFailed  # noqa: E402
 import workset  # noqa: E402
 from openai_reviewer import OpenAIReviewer  # noqa: E402
 from anthropic_reviewer import AnthropicReviewer  # noqa: E402
@@ -270,14 +270,17 @@ class MakeReviewerTests(unittest.TestCase):
 
 
 class _FakeVetter(Reviewer):
-    def __init__(self, result: dict | Exception) -> None:
+    """Returns or raises ``results`` in order, one per call."""
+
+    def __init__(self, *results: dict | Exception) -> None:
         self.name = "openai:vet"
-        self._result = result
+        self._results = list(results)
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
-        if isinstance(self._result, Exception):
-            raise self._result
-        return self._result
+        result = self._results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class VetReviewTests(unittest.TestCase):
@@ -290,6 +293,15 @@ class VetReviewTests(unittest.TestCase):
         out = review_pipeline.vet_review(_FakeVetter(RuntimeError("boom")), _ctx())
         self.assertIs(True, out["hold_for_human_inspection"])
         self.assertEqual("vet stage failed: RuntimeError: boom", out["reason"])
+
+    def test_a_provider_ended_turn_is_retried(self) -> None:
+        verdict = {"hold_for_human_inspection": False, "reason": "r"}
+        capacity = CodexTurnFailed(
+            'codex:gpt-6-luna: codex exec produced no final message (rc=1); '
+            'errors: {"type": "error", "message": "Selected model is at capacity."}')
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_pipeline.vet_review(_FakeVetter(capacity, verdict), _ctx())
+        self.assertEqual(verdict, out)
 
 
 class ReviewPrTests(unittest.TestCase):

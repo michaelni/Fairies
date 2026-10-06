@@ -57,6 +57,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeVar
 
 from anthropic_common import ANTHROPIC_API_URL
 from common import JsonObject
@@ -77,6 +78,7 @@ __all__ = [
     "TRIAGE_ROUTES",
     "TURN_FAILED_COMBINER_ATTEMPTS",
     "TURN_FAILED_REVIEWER_ATTEMPTS",
+    "TURN_FAILED_VETTER_ATTEMPTS",
     "VERBOSITY_LEVELS",
     "ENGAGE",
     "UNGRADED",
@@ -274,7 +276,8 @@ class ProviderTurnFailed(RuntimeError):
     "possible cybersecurity risk" content flag on a security patch);
     nothing on our side is suspect and the flag has been observed not to
     reproduce, so ``review_with_turn_retries`` re-runs the stage before
-    it is dropped (a reviewer) or the run fails (the combiner)."""
+    it is dropped (a reviewer), the run fails (the combiner) or the
+    review is held (the vetter)."""
 
 
 class ProviderContentFlagged(ProviderTurnFailed):
@@ -290,13 +293,15 @@ class ProviderContentFlagged(ProviderTurnFailed):
 #  * an exhausted run waits in error/ for the agent's doubling backoff
 #    (a day or more), not seconds, before its next try;
 #  * up to TURN_FAILED_COMBINER_ATTEMPTS back-to-back combiner runs --
-#    plus one run per fallback in the combiner's chain -- must fit
-#    --llm-timeout, or the timeout masks the flag as a generic
-#    failure and re-enters the outer loop;
+#    plus one run per fallback in the combiner's chain -- and up to
+#    TURN_FAILED_VETTER_ATTEMPTS vetter runs must fit --llm-timeout, or
+#    the timeout masks the flag as a generic failure and re-enters the
+#    outer loop;
 #  * the budgets price attempts as independent; a patch that
 #    deterministically trips the flag loses the whole budget every run.
 TURN_FAILED_REVIEWER_ATTEMPTS = 4
 TURN_FAILED_COMBINER_ATTEMPTS = 8
+TURN_FAILED_VETTER_ATTEMPTS = 4
 
 
 class SelfReportedViolation(Exception):
@@ -1138,9 +1143,15 @@ class Reviewer(ABC):
         )
 
 
-def review_with_turn_retries(reviewer: Reviewer, ctx: ReviewContext,
-                             attempts: int) -> Review:
-    """Run ``reviewer.review``, then its ``fallbacks`` in order.
+StageResult = TypeVar("StageResult")
+
+
+def review_with_turn_retries(
+        reviewer: Reviewer, ctx: ReviewContext, attempts: int,
+        call: Callable[[Reviewer, ReviewContext], StageResult] = (
+            lambda reviewer, ctx: reviewer.review(ctx)),
+) -> StageResult:
+    """Run ``call(reviewer, ctx)``, then the same for its ``fallbacks`` in order.
 
     The first reviewer retries ``ProviderTurnFailed`` up to ``attempts``
     (>= 1) total attempts; ``ProviderContentFlagged`` switches to the
@@ -1157,7 +1168,7 @@ def review_with_turn_retries(reviewer: Reviewer, ctx: ReviewContext,
     while True:
         for attempt in range(1, budget + 1):
             try:
-                return reviewer.review(ctx)
+                return call(reviewer, ctx)
             except ProviderTurnFailed as exc:
                 if isinstance(exc, ProviderContentFlagged) and pending:
                     logger.warning(

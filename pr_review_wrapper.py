@@ -91,7 +91,7 @@ from common import (
     apply_config_file_defaults,
     setup_logging,
 )
-from git_util import FORGE_REMOTES, git_changed_paths, git_merge_tree, git_resolve_first, git_rev_parse, git_show_file
+from git_util import FORGE_REMOTES, git_changed_paths, git_merge_tree, git_resolve_first, git_show_file
 import concurrency
 import llm_review_api
 from llm_review_api import (

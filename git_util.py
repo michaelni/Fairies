@@ -42,7 +42,7 @@ import os
 import subprocess
 import threading
 from pathlib import Path
-from typing import Sequence
+from typing import NamedTuple, Sequence
 
 # Remote names a deployment's checkouts use for the forge, in probe
 # order: fairy's own mirror setups name it fforge, plain clones origin.
@@ -134,12 +134,27 @@ def git_format_patch_series(
                        "--minimal", "--stdout", f"{base_sha}..{head_sha}")
 
 
+class TreeChange(NamedTuple):
+    old_mode: str
+    new_mode: str
+    old_sha: str
+    new_sha: str
+    path: str
+
+
+def git_tree_changes(repo_root: Path, base_sha: str, head_sha: str) -> list[TreeChange]:
+    """One entry per path ``head_sha`` changes since its merge base with
+    ``base_sha``; mode ``000000`` marks the side the path is absent on."""
+    fields = _git_stdout(repo_root, "diff-tree", "-r", "-z", "--merge-base",
+                         base_sha, head_sha).decode("utf-8", errors="replace").split("\0")
+    return [TreeChange(*raw[1:].split()[:4], path) for raw, path in zip(fields[0::2], fields[1::2])]
+
+
 def git_changed_paths(repo_root: Path, base_sha: str, head_sha: str) -> list[str]:
     """Paths ``head_sha`` adds or modifies since its merge base with
     ``base_sha``; deleted files and submodules are left out."""
-    fields = _git_stdout(repo_root, "diff-tree", "-r", "-z", "--diff-filter=d", "--merge-base",
-                         base_sha, head_sha).decode("utf-8", errors="replace").split("\0")
-    return [path for raw, path in zip(fields[0::2], fields[1::2]) if raw.split()[1] != "160000"]
+    return [change.path for change in git_tree_changes(repo_root, base_sha, head_sha)
+            if change.new_mode not in ("000000", "160000")]
 
 
 def git_patch_stream(repo_root: Path, base_sha: str | None,

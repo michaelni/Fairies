@@ -96,7 +96,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -827,8 +827,23 @@ def list_since(args: argparse.Namespace, endpoint: str, cutoff: datetime,
     ``_recent_first``): paging ends only at the cutoff or on an empty
     page. An entry without a parsable ``updated_at`` is skipped, never
     trusted to end the window."""
-    params = _recent_first(args, 100 if _forge_type(args) == "github" else 50)
     out: list[dict] = []
+    for item in _walk_listing(args, endpoint, state=state, **filters):
+        updated = iso_to_dt(item.get("updated_at"))
+        if updated is None:
+            continue
+        if updated < cutoff:
+            break
+        out.append(item)
+    return out
+
+
+def _walk_listing(args: argparse.Namespace, endpoint: str, *, state: str,
+                  **filters: str) -> Iterator[dict]:
+    """``endpoint`` entries in ``state`` matching the query ``filters``,
+    most recently updated first, one gcli call per page until the first
+    empty page."""
+    params = _recent_first(args, 100 if _forge_type(args) == "github" else 50)
     for page in count(1):
         query = urlencode({"state": state, "page": page, **filters, **params})
         data = gcli_api(args, build_repo_path(
@@ -837,16 +852,8 @@ def list_since(args: argparse.Namespace, endpoint: str, cutoff: datetime,
             raise RuntimeError(
                 f"expected list of {state} {endpoint}, got {type(data).__name__}")
         if not data:
-            return out
-        for item in data:
-            if not isinstance(item, dict):
-                continue
-            updated = iso_to_dt(item.get("updated_at"))
-            if updated is None:
-                continue
-            if updated < cutoff:
-                return out
-            out.append(item)
+            return
+        yield from (item for item in data if isinstance(item, dict))
 
 
 def newest_updated_at(args: argparse.Namespace, kind: str) -> str | None:

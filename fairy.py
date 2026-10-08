@@ -2505,6 +2505,7 @@ def run_llm_review(
             "base_ref": ((pr.get("base") or {}).get("ref") if isinstance(pr.get("base"), dict) else "") or "",
             "head_ref": ((pr.get("head") or {}).get("ref") if isinstance(pr.get("head"), dict) else "") or "",
             "head_repo": get_pr_head_repo(pr) or "",
+            "base_sha": base_sha,
             "head_sha": head_sha,
             "additions": pr.get("additions"),
             "deletions": pr.get("deletions"),

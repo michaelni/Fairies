@@ -37,7 +37,7 @@ one JSON object to stdout.
 
 Input JSON keys expected:
   - pull_request: object with metadata (number, title, body, author, html_url,
-                  base_ref, head_ref, head_sha, additions, deletions,
+                  base_ref, head_ref, base_sha, head_sha, additions, deletions,
                   changed_files, auto_merge)
   - patch: unified diff / patch text
   - patch_truncated: bool
@@ -91,11 +91,7 @@ from common import (
     apply_config_file_defaults,
     setup_logging,
 )
-from patch_util import (
-    extract_changed_paths_from_patch,
-    extract_commit_shas_from_patch,
-)
-from git_util import FORGE_REMOTES, git_merge_tree, git_resolve_first, git_rev_parse, git_show_file
+from git_util import FORGE_REMOTES, git_changed_paths, git_merge_tree, git_resolve_first, git_rev_parse, git_show_file
 import concurrency
 import llm_review_api
 from llm_review_api import (
@@ -954,24 +950,16 @@ def build_model_visible_repo_head_map(
     return visible
 
 
-def parse_source_bundle_request_info(request: JsonObject) -> tuple[JsonObject, str, list[str], str]:
+def parse_source_bundle_request_info(request: JsonObject) -> tuple[JsonObject, str, str]:
     pr = request.get("pull_request")
     if not isinstance(pr, dict):
         raise RuntimeError("missing pull_request object")
 
-    patch = request.get("patch")
-    if not isinstance(patch, str):
-        patch = ""
+    for key in ("head_sha", "base_sha"):
+        if not isinstance(pr.get(key), str) or not pr[key]:
+            raise RuntimeError(f"missing pull_request.{key}")
 
-    changed_paths = extract_changed_paths_from_patch(patch)
-    if not changed_paths:
-        raise RuntimeError("no changed file paths found in patch")
-
-    head_sha = pr.get("head_sha") if isinstance(pr.get("head_sha"), str) else None
-    if not head_sha:
-        raise RuntimeError("missing pull_request.head_sha")
-
-    return pr, patch, changed_paths, head_sha
+    return pr, pr["base_sha"], pr["head_sha"]
 
 
 def load_source_bundle_texts(
@@ -1003,7 +991,7 @@ def load_source_bundle_texts(
     for relpath in direct_paths:
         resolved = resolve_path(relpath)
         if resolved is None:
-            raise RuntimeError(f"missing source for {relpath} in patch commit list from {head_sha}")
+            raise RuntimeError(f"missing source for {relpath} at {head_sha}")
         source_revisions[relpath], file_content = resolved
         loaded_texts[relpath] = file_content
         add_path(relpath)
@@ -1107,7 +1095,9 @@ def build_source_bundle(
     if repo_root is None:
         raise RuntimeError("no local git checkout found")
 
-    _pr, patch, changed_paths, head_sha = parse_source_bundle_request_info(request)
+    _pr, patch_base_sha, head_sha = parse_source_bundle_request_info(request)
+    changed_paths = git_changed_paths(repo_root, patch_base_sha, head_sha)
+    logger.debug("source bundle: %s..%s changes %s", patch_base_sha, head_sha, changed_paths)
 
     # Contents come from the predicted merge of PR head into the current target
     # tip, so a model cannot conclude the PR "removes" unrelated target work.
@@ -1132,13 +1122,13 @@ def build_source_bundle(
         + (f"File contents are the merge result of the PR head into the current "
            f"{base_ref} tip {base_sha}.\n"
            if merged_tree else "")
-        + f"Changed files seen in patch: {len(changed_paths)}\n\n"
+        + f"Changed files: {len(changed_paths)}\n\n"
     )
     bundle_parts.append(header)
     total_bytes += len(header.encode("utf-8"))
 
     direct_paths = changed_paths[:max_source_files]
-    commit_shas = extract_commit_shas_from_patch(patch) or [head_sha]
+    commit_shas = [head_sha]
     if merged_tree:
         commit_shas = [merged_tree] + commit_shas
     elif base_sha:

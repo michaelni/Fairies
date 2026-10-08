@@ -79,18 +79,29 @@ class SourceBundleMergeTests(unittest.TestCase):
         self.repo.mkdir()
         _git(self.repo, "init", "--initial-branch=master", "--quiet")
         (self.repo / "f.c").write_text(BASE)
-        _git(self.repo, "add", "f.c")
+        (self.repo / "gone.c").write_text(BASE)
+        (self.repo / "sub").mkdir()
+        _git(self.repo, "add", "f.c", "gone.c")
+        _git(self.repo, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},sub")
         _git(self.repo, "commit", "-m", "base", "--quiet")
-        _git(self.repo, "checkout", "-b", "pr", "--quiet")
-        (self.repo / "f.c").write_text(BASE.replace("line2\n", "pr_change\n"))
-        _git(self.repo, "commit", "-am", "pr work", "--quiet")
+        self.base_sha = _git(self.repo, "rev-parse", "HEAD").strip()
+        _git(self.repo, "branch", "pr")
+        self._pr_commit("line2\n", "pr_change\n")
+
+    def _pr_commit(self, old_line: str, new_line: str) -> None:
+        _git(self.repo, "checkout", "pr", "--quiet")
+        f_c = self.repo / "f.c"
+        f_c.write_text(f_c.read_text().replace(old_line, new_line))
+        _git(self.repo, "add", "f.c")
+        _git(self.repo, "commit", "-m", "pr work", "--quiet")
         self.head_sha = _git(self.repo, "rev-parse", "HEAD").strip()
         self.patch = _git(self.repo, "format-patch", "--stdout", "master..pr")
-        _git(self.repo, "checkout", "master", "--quiet")
+        _git(self.repo, "checkout", "--force", "master", "--quiet")
 
     def _bundle(self) -> tuple[str, list[str], list[str]]:
         request = {
-            "pull_request": {"head_sha": self.head_sha, "base_ref": "master"},
+            "pull_request": {"base_sha": self.base_sha, "head_sha": self.head_sha,
+                             "base_ref": "master"},
             "patch": self.patch,
         }
         return wrapper.build_source_bundle(
@@ -116,13 +127,49 @@ class SourceBundleMergeTests(unittest.TestCase):
         # master rewrote the same line the PR changes: merge conflicts
         (self.repo / "f.c").write_text(BASE.replace("line2\n", "master_conflict\n"))
         _git(self.repo, "commit", "-am", "master work", "--quiet")
+        self._pr_commit("line5\n", "second_pr_change\n")
 
         bundle, used, notes = self._bundle()
         self.assertEqual(["f.c"], used)
         self.assertIn("pr_change", bundle)
+        self.assertIn("second_pr_change", bundle)
         self.assertNotIn("master_conflict", bundle)
         self.assertIn(f"git show {self.head_sha}:f.c", bundle)
         self.assertTrue(any("does not merge cleanly" in n for n in notes))
+
+    def test_patch_cut_inside_a_diff_header(self) -> None:
+        self.patch = self.patch[:self.patch.index(" b/f.c") + len(" b/f")]
+
+        bundle, used, notes = self._bundle()
+        self.assertEqual(["f.c"], used)
+
+    def test_deleted_files_and_submodules_are_left_out(self) -> None:
+        _git(self.repo, "checkout", "pr", "--quiet")
+        _git(self.repo, "rm", "--quiet", "gone.c")
+        _git(self.repo, "update-index", "--add", "--cacheinfo", f"160000,{self.base_sha},ext")
+        self._pr_commit("line9\n", "pr_change_next_to_removals\n")
+
+        bundle, used, notes = self._bundle()
+        self.assertEqual(["f.c"], used)
+
+    def test_file_and_submodule_swapping_type(self) -> None:
+        gone_c_blob = _git(self.repo, "rev-parse", f"{self.base_sha}:gone.c").strip()
+        _git(self.repo, "checkout", "pr", "--quiet")
+        _git(self.repo, "rm", "--quiet", "--cached", "gone.c", "sub")
+        _git(self.repo, "update-index", "--add", "--cacheinfo", f"160000,{self.base_sha},gone.c")
+        _git(self.repo, "update-index", "--add", "--cacheinfo", f"100644,{gone_c_blob},sub")
+        self._pr_commit("line9\n", "pr_change_next_to_type_changes\n")
+
+        bundle, used, notes = self._bundle()
+        self.assertEqual(["f.c", "sub"], used)
+
+    def test_base_sha_may_be_the_target_tip(self) -> None:
+        (self.repo / "gone.c").write_text("master_change\n")
+        _git(self.repo, "commit", "-am", "master work", "--quiet")
+        self.base_sha = _git(self.repo, "rev-parse", "HEAD").strip()
+
+        bundle, used, notes = self._bundle()
+        self.assertEqual(["f.c"], used)
 
 
 if __name__ == "__main__":

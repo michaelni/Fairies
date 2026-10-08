@@ -134,6 +134,14 @@ def git_format_patch_series(
                        "--minimal", "--stdout", f"{base_sha}..{head_sha}")
 
 
+def git_changed_paths(repo_root: Path, base_sha: str, head_sha: str) -> list[str]:
+    """Paths ``head_sha`` adds or modifies since its merge base with
+    ``base_sha``; deleted files and submodules are left out."""
+    fields = _git_stdout(repo_root, "diff-tree", "-r", "-z", "--diff-filter=d", "--merge-base",
+                         base_sha, head_sha).decode("utf-8", errors="replace").split("\0")
+    return [path for raw, path in zip(fields[0::2], fields[1::2]) if raw.split()[1] != "160000"]
+
+
 def git_patch_stream(repo_root: Path, base_sha: str | None,
                      head_sha: str) -> bytes:
     """Every commit of base..head oldest first -- head's whole history

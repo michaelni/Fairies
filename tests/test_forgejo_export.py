@@ -215,6 +215,15 @@ class DueDateTests(unittest.TestCase):
         self.assertIn("- Due: 2026-12-01 00:00:00 UTC", meta)
 
 
+class RequestedReviewersTests(unittest.TestCase):
+    def test_requested_reviewers_render(self) -> None:
+        pulls = json.loads((Path(__file__).parent / "fixtures" / "issue_fairy"
+                            / "ffmpeg_open_pulls.json").read_text())
+        pr, = (pr for pr in pulls if pr["number"] == 23754)
+        meta = forgejo_export.meta_lines(forgejo_export.norm_pr(pr, []))
+        self.assertIn("- Requested reviewers: huge, locozuto", meta)
+
+
 class LockedTests(unittest.TestCase):
     def test_either_forge_spelling_reads_locked(self) -> None:
         for spelling in ("is_locked", "locked"):

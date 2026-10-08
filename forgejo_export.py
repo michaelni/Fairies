@@ -47,7 +47,7 @@ from common import (
     setup_logging,
 )
 from forge_gcli import add_forge_repo_args, norm_user
-from forge_item import labels, milestone, reactions_by_content, timeline_events
+from forge_item import labels, logins, milestone, reactions_by_content, timeline_events
 
 LOG = logging.getLogger("forgejo_export")
 MARKER = ".forgejo-exporter.json"
@@ -334,6 +334,7 @@ def norm_pr(pr: dict[str, Any], reactions: list[dict[str, Any]]) -> dict[str, An
         "title": pr.get("title"),
         "state": pr_state(pr),
         "draft": pr.get("draft"),
+        "requested_reviewers": logins(pr.get("requested_reviewers")),
         "locked": forge_gcli.item_locked(pr),
         "author": norm_user(pr.get("user")),
         "assignees": assignees(pr),
@@ -456,6 +457,7 @@ def meta_lines(item: dict[str, Any]) -> list[str]:
     if item["kind"] == "pull_request":
         out += [
             f"- Draft: {bool(item.get('draft'))}",
+            f"- Requested reviewers: {', '.join(item['requested_reviewers']) or '-'}",
             f"- Merged: {item.get('merged_at') or '-'}",
             f"- Base: {(item.get('base') or {}).get('repo') or '-'}:{(item.get('base') or {}).get('ref') or '-'}",
             f"- Head: {(item.get('head') or {}).get('repo') or '-'}:{(item.get('head') or {}).get('ref') or '-'} @ {(item.get('head') or {}).get('sha') or '-'}",

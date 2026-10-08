@@ -469,12 +469,12 @@ def meta_lines(item: dict[str, Any]) -> list[str]:
 def add_message_block(
     lines: list[str],
     title: str,
-    author: dict[str, Any] | None,
+    author: str,
     when: str | None,
     body: str,
     extra: list[str] | None = None,
 ) -> None:
-    lines += [title, "", f"From: {user_str(author)}", f"When: {when or '-'}"]
+    lines += [title, "", f"From: {author}", f"When: {when or '-'}"]
     if extra:
         lines += extra
     lines += ["", body.rstrip(), ""]
@@ -489,7 +489,7 @@ def add_timeline_section(lines: list[str], events: list[dict[str, Any]]) -> None
         add_message_block(
             lines,
             f"### Event {i}: {event.get('type') or '-'}",
-            event["author"],
+            user_str(event["author"]),
             event["created_at"],
             event["body"],
         )
@@ -506,7 +506,7 @@ def render_issue_md(data: dict[str, Any]) -> str:
         lines += ["_No comments._", ""]
     else:
         for i, comment in enumerate(data["comments"], 1):
-            add_message_block(lines, f"### Comment {i}", comment["author"], comment["created_at"], comment["body"],
+            add_message_block(lines, f"### Comment {i}", user_str(comment["author"]), comment["created_at"], comment["body"],
                               attachment_lines(comment) or None)
     add_timeline_section(lines, data["timeline"])
     return "\n".join(lines).rstrip() + "\n"
@@ -523,7 +523,7 @@ def render_pr_md(data: dict[str, Any]) -> str:
         lines += ["_No issue comments._", ""]
     else:
         for i, comment in enumerate(data["issue_comments"], 1):
-            add_message_block(lines, f"### Comment {i}", comment["author"], comment["created_at"], comment["body"],
+            add_message_block(lines, f"### Comment {i}", user_str(comment["author"]), comment["created_at"], comment["body"],
                               attachment_lines(comment) or None)
 
     lines += ["## Reviews", ""]
@@ -534,7 +534,7 @@ def render_pr_md(data: dict[str, Any]) -> str:
             add_message_block(
                 lines,
                 f"### Review {i}",
-                review["author"],
+                user_str(review["author"]),
                 review["submitted_at"],
                 review["body"],
                 [f"State: {review.get('state') or '-'}", f"Commit: {review.get('commit_id') or '-'}"],
@@ -548,7 +548,7 @@ def render_pr_md(data: dict[str, Any]) -> str:
             add_message_block(
                 lines,
                 f"### Review comment {i}",
-                comment["author"],
+                user_str(comment["author"]),
                 comment["created_at"],
                 comment["body"],
                 [

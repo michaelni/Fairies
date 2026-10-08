@@ -227,7 +227,7 @@ def _patch_ids(db: filedb.Db, ns: argparse.Namespace, kind: str,
 
 def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                   token: filedb.TicketId, item: dict, cache,
-                  cache_age: timedelta) -> tuple[dict, tuple | None, dict | None]:
+                  cache_age: timedelta) -> tuple[dict, tuple | Exception, dict | None]:
     """Refresh the item's filedb snapshot: its fields, discussion and
     forge status -- for a PR the "open"/"closed"/"merged" state, the
     auto-merge schedule, the approval and change-request counts
@@ -235,7 +235,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     type and time of each timeline event, for an issue the
     "open"/"closed" state and its labels. A failure
     costs freshness, never the scan of the item; returns the item, as of
-    its thread, the thread, None when it could not be fetched, and the
+    its thread, the thread, or the exception its fetch raised, and the
     snapshot written, None when it could not be refreshed. Raises
     Halted, after halting the db, when the item's body, a comment, a
     review or a review comment carries --halt-keyword; the reason names
@@ -294,7 +294,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     except Exception as exc:
         logger.warning("%s #%s: item snapshot not refreshed: %s",
                        kind, token, exc)
-        return item, thread, None
+        return item, thread or exc, None
     if ns.halt_keyword:
         for post in (item, *comments, *reviews, *review_comments):
             if ns.halt_keyword in str(post.get("body") or ""):

@@ -2592,19 +2592,19 @@ def prepare_pr(
     now: datetime,
     self_login: str | None,
     wip_re: re.Pattern[str],
-    thread: tuple[list, list, list, list, dict] | None,
+    thread: tuple[list, list, list, list, dict] | Exception,
     posted_classification: str | None = None,
 ) -> Decision | PreparedPR:
     """``thread`` is ``pr``'s (reviews, comments, review comments,
-    timeline), fetched at ``pr``'s ``updated_at``; None when it could
-    not be fetched, which fails the prepare. ``posted_classification``
+    timeline), fetched at ``pr``'s ``updated_at``, or the exception its
+    fetch raised, which fails the prepare. ``posted_classification``
     is the classification of fairy's standing posted verdict on the PR,
     None without one. On fairy's own PR it is the only record of an
     approval: the forge refuses the approving review, so fairy posts it
     as a comment."""
     number = int(pr["number"])
-    if thread is None:
-        raise RuntimeError("the thread could not be fetched")
+    if isinstance(thread, Exception):
+        raise RuntimeError(f"the thread could not be fetched: {thread}") from thread
     reviews, comments, review_comments, timeline, reactions = thread
     title = str(pr.get("title") or "")
     author = get_pr_author(pr)
@@ -3073,7 +3073,7 @@ def safe_prepare_pr(
     now: datetime,
     self_login: str | None,
     wip_re: re.Pattern[str],
-    thread: tuple[list, list, list, list, dict] | None,
+    thread: tuple[list, list, list, list, dict] | Exception,
     posted_classification: str | None = None,
 ) -> PreparedItem:
     try:

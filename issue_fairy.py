@@ -235,15 +235,15 @@ def prepare_issue(
     *,
     now: datetime,
     self_login: str | None,
-    thread: tuple[list, list, list, list, dict] | None,
+    thread: tuple[list, list, list, list, dict] | Exception,
 ) -> Decision | PreparedIssue:
     """``thread`` is ``issue``'s (reviews, comments, review comments,
     timeline), without reviews or review comments, fetched at
-    ``issue``'s ``updated_at``; None when it could not be fetched, which
+    ``issue``'s ``updated_at``, or the exception its fetch raised, which
     fails the prepare."""
     number = int(issue["number"])
-    if thread is None:
-        raise RuntimeError("the thread could not be fetched")
+    if isinstance(thread, Exception):
+        raise RuntimeError(f"the thread could not be fetched: {thread}") from thread
     _, comments, _, timeline, reactions = thread
     title = str(issue.get("title") or "")
     author = get_pr_author(issue)

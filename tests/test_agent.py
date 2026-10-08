@@ -1062,7 +1062,7 @@ class ThreadFetchFailureTests(AgentCase):
         self.prepare.side_effect = fairy.safe_prepare_pr
         self.scan([make_pr(1)])
         self.assertEqual(self.db.get("error", "pr", "1")["error"],
-                         "the thread could not be fetched")
+                         "the thread could not be fetched: forge down")
 
 
 class RebaseReuseTests(RebasedSeriesCase):
@@ -1972,6 +1972,12 @@ class IssueSideScanTests(AgentCase):
         self.scan_issues([make_issue(1)], prepare=AssertionError)
         self.prepare_issue.assert_not_called()
         self.assertEqual(self.db.find("issue", "1"), "reviewed")
+
+    def test_a_failed_thread_fetch_shows_its_cause(self) -> None:
+        self.thread.side_effect = RuntimeError("forge down")
+        self.scan_issues([make_issue(1)], prepare=issue_fairy.prepare_issue)
+        self.assertEqual(self.db.get("error", "issue", "1")["error"],
+                         "prepare failed: the thread could not be fetched: forge down")
 
 
 class LogSummaryTests(AgentCase):

@@ -47,7 +47,7 @@ from common import (
     setup_logging,
 )
 from forge_gcli import add_forge_repo_args, norm_user
-from forge_item import labels, milestone, timeline_events
+from forge_item import labels, milestone, reactions_by_content, timeline_events
 
 LOG = logging.getLogger("forgejo_export")
 MARKER = ".forgejo-exporter.json"
@@ -168,8 +168,8 @@ def dump_json(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
 
 
-PR_FIELDS = ("timeline", "issue_comments", "reviews", "review_comments", "commits", "files")
-ISSUE_FIELDS = ("timeline", "issue_comments")
+PR_FIELDS = ("timeline", "issue_comments", "reviews", "review_comments", "reactions", "commits", "files")
+ISSUE_FIELDS = ("timeline", "issue_comments", "reactions")
 
 
 def open_caches(
@@ -281,7 +281,7 @@ def assignees(obj: dict[str, Any]) -> list[dict[str, Any]]:
     return [norm_user(x) for x in obj.get("assignees") or []]
 
 
-def norm_issue(issue: dict[str, Any]) -> dict[str, Any]:
+def norm_issue(issue: dict[str, Any], reactions: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "kind": "issue",
         "number": issue["number"],
@@ -297,6 +297,7 @@ def norm_issue(issue: dict[str, Any]) -> dict[str, Any]:
         "closed_at": utc_str(issue.get("closed_at")),
         "url": issue.get("html_url"),
         **({"attachment_urls": urls} if (urls := attachment_urls(issue)) else {}),
+        **({"reactions": reactions_by_content(reactions)} if reactions else {}),
         "body": issue.get("body") or "",
     }
 
@@ -309,6 +310,7 @@ def norm_comment(comment: dict[str, Any]) -> dict[str, Any]:
         "updated_at": utc_str(comment.get("updated_at")),
         "url": comment.get("html_url"),
         **({"attachment_urls": urls} if (urls := attachment_urls(comment)) else {}),
+        **({"reactions": reactions_by_content(comment["reactions"])} if comment.get("reactions") else {}),
         "body": comment.get("body") or "",
     }
 
@@ -322,7 +324,7 @@ def pr_state(pr: dict[str, Any]) -> str:
     return "merged" if pr.get("merged_at") else (pr.get("state") or "unknown")
 
 
-def norm_pr(pr: dict[str, Any]) -> dict[str, Any]:
+def norm_pr(pr: dict[str, Any], reactions: list[dict[str, Any]]) -> dict[str, Any]:
     head = pr.get("head") or {}
     base = pr.get("base") or {}
     return {
@@ -341,6 +343,7 @@ def norm_pr(pr: dict[str, Any]) -> dict[str, Any]:
         "closed_at": utc_str(pr.get("closed_at")),
         "merged_at": utc_str(pr.get("merged_at")),
         "url": pr.get("html_url"),
+        **({"reactions": reactions_by_content(reactions)} if reactions else {}),
         "body": pr.get("body") or "",
         "base": {
             "repo": ((base.get("repo") or {}).get("full_name")),
@@ -381,6 +384,7 @@ def norm_review_comment(comment: dict[str, Any]) -> dict[str, Any]:
         "commit_id": (comment.get("commit_id") or "")[:12] or None,
         "original_commit_id": (comment.get("original_commit_id") or "")[:12] or None,
         "diff_hunk": comment.get("diff_hunk"),
+        **({"reactions": reactions_by_content(comment["reactions"])} if comment.get("reactions") else {}),
         "body": comment.get("body") or "",
     }
 
@@ -425,6 +429,11 @@ def attachment_lines(item: dict[str, Any]) -> list[str]:
     ]
 
 
+def reaction_lines(item: dict[str, Any]) -> list[str]:
+    reactions = "; ".join(f"{content}: {', '.join(users)}" for content, users in item.get("reactions", {}).items())
+    return [f"Reactions: {reactions}"] if reactions else []
+
+
 def meta_lines(item: dict[str, Any]) -> list[str]:
     out = [
         f"- Kind: {item['kind']}",
@@ -440,7 +449,7 @@ def meta_lines(item: dict[str, Any]) -> list[str]:
         f"- Milestone: {item.get('milestone') or '-'}",
         f"- URL: {item.get('url') or '-'}",
     ]
-    out += [f"- {line}" for line in attachment_lines(item)]
+    out += [f"- {line}" for line in attachment_lines(item) + reaction_lines(item)]
     if item["kind"] == "pull_request":
         out += [
             f"- Draft: {bool(item.get('draft'))}",
@@ -495,7 +504,7 @@ def render_issue_md(data: dict[str, Any]) -> str:
     else:
         for i, comment in enumerate(data["comments"], 1):
             add_message_block(lines, f"### Comment {i}", user_str(comment["author"]), comment["created_at"], comment["body"],
-                              attachment_lines(comment) or None)
+                              attachment_lines(comment) + reaction_lines(comment))
     add_timeline_section(lines, data["timeline"])
     return "\n".join(lines).rstrip() + "\n"
 
@@ -512,7 +521,7 @@ def render_pr_md(data: dict[str, Any]) -> str:
     else:
         for i, comment in enumerate(data["issue_comments"], 1):
             add_message_block(lines, f"### Comment {i}", user_str(comment["author"]), comment["created_at"], comment["body"],
-                              attachment_lines(comment) or None)
+                              attachment_lines(comment) + reaction_lines(comment))
 
     lines += ["## Reviews", ""]
     if not data["reviews"]:
@@ -547,6 +556,7 @@ def render_pr_md(data: dict[str, Any]) -> str:
                     f"Side: {comment.get('side') or '-'}",
                     f"Commit: {comment.get('commit_id') or '-'}",
                     f"Original commit: {comment.get('original_commit_id') or '-'}",
+                    *reaction_lines(comment),
                 ],
             )
 
@@ -599,6 +609,7 @@ def export_issue(
     issue: dict[str, Any],
     comments: list[dict[str, Any]],
     timeline: list[dict[str, Any]],
+    reactions: list[dict[str, Any]],
     fetch_warnings: list[str],
 ) -> set[str]:
     num = int(issue["number"])
@@ -606,7 +617,7 @@ def export_issue(
     data = {
         "number": num,
         "title": issue.get("title"),
-        "issue": norm_issue(issue),
+        "issue": norm_issue(issue, reactions),
         "comments": by_time([norm_comment(x) for x in comments], "created_at"),
         "timeline": norm_timeline(timeline),
         "fetch_warnings": fetch_warnings,
@@ -628,6 +639,7 @@ def export_pr(
     commits: list[dict[str, Any]],
     files: list[dict[str, Any]],
     timeline: list[dict[str, Any]],
+    reactions: list[dict[str, Any]],
     fetch_warnings: list[str],
 ) -> set[str]:
     num = int(pr["number"])
@@ -635,7 +647,7 @@ def export_pr(
     data = {
         "number": num,
         "title": pr.get("title"),
-        "pull_request": norm_pr(pr),
+        "pull_request": norm_pr(pr, reactions),
         "issue_comments": by_time([norm_comment(x) for x in issue_comments], "created_at"),
         "reviews": by_time([norm_review(x) for x in reviews], "submitted_at"),
         "review_comments": by_time([norm_review_comment(x) for x in review_comments], "created_at"),
@@ -741,13 +753,13 @@ def main() -> int:
     keep = {MARKER}
     for issue, fields, fetch_warnings in fetched_issues:
         keep |= export_issue(
-            target, issue, fields["issue_comments"], fields["timeline"], fetch_warnings,
+            target, issue, fields["issue_comments"], fields["timeline"], fields["reactions"], fetch_warnings,
         )
     for pr, fields, fetch_warnings in fetched_pulls:
         keep |= export_pr(
             target, pr,
             fields["issue_comments"], fields["reviews"], fields["review_comments"],
-            fields["commits"], fields["files"], fields["timeline"], fetch_warnings,
+            fields["commits"], fields["files"], fields["timeline"], fields["reactions"], fetch_warnings,
         )
 
     remove_stale_files(target, keep)

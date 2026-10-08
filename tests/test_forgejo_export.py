@@ -106,7 +106,7 @@ class AttachmentExportTests(unittest.TestCase):
     def _render(self, comments: list[dict]) -> str:
         return forgejo_export.render_issue_md({
             "number": self.issue["number"], "title": self.issue["title"],
-            "issue": forgejo_export.norm_issue(self.issue),
+            "issue": forgejo_export.norm_issue(self.issue, []),
             "comments": comments, "timeline": [], "fetch_warnings": [],
         })
 
@@ -122,7 +122,7 @@ class AttachmentExportTests(unittest.TestCase):
         # An always-present empty list rewrote every attachment-free
         # export file, forcing a full vector-store resync.
         self.assertNotIn("attachment_urls",
-                         forgejo_export.norm_issue({**self.issue, "assets": []}))
+                         forgejo_export.norm_issue({**self.issue, "assets": []}, []))
         self.assertNotIn("attachment_urls",
                          forgejo_export.norm_comment({"id": 1, "body": "hi"}))
 
@@ -148,6 +148,7 @@ class GetItemFieldsTests(unittest.TestCase):
                 "issue_comments": ({"id": 1, "body": "hi"},),
                 "reviews": (),
                 "review_comments": (),
+                "reactions": (),
                 "commits": ({"sha": "abc"},),
                 "files": (),
             }
@@ -188,13 +189,13 @@ class GetItemFieldsTests(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("issues #7", warnings[0])
         self.assertIn("boom", warnings[0])
-        self.assertEqual(fields, {"timeline": [], "issue_comments": []})
+        self.assertEqual(fields, {"timeline": [], "issue_comments": [], "reactions": []})
 
 
     def test_the_item_comes_back_as_of_its_fields(self) -> None:
         moved = _item(updated_at="2026-05-21T10:05:00Z")
         with patch.object(gcli_cache, "get", return_value=(
-                moved, {"timeline": (), "issue_comments": ({"id": 1},)})):
+                moved, {"timeline": (), "issue_comments": ({"id": 1},), "reactions": ()})):
             item, fields, warnings = forgejo_export.get_item_fields(
                 _args(), gcli_cache.Cache(), _item(), "issues",
                 forgejo_export.ISSUE_FIELDS,
@@ -203,6 +204,22 @@ class GetItemFieldsTests(unittest.TestCase):
         self.assertIs(item, moved)
         self.assertEqual(fields["issue_comments"], [{"id": 1}])
         self.assertEqual(warnings, [])
+
+
+class ReactionRenderTests(unittest.TestCase):
+    def test_item_and_comment_reactions_render(self) -> None:
+        raw = json.loads((Path(__file__).parent / "fixtures" / "reactions"
+                          / "ffmpeg_issue_22546_comment_37290_reactions.json").read_text())
+        with patch.object(forge_gcli, "gcli_api", return_value=raw):
+            reactions = forge_gcli.list_item_reactions(_args(), "o", "r", 22546)
+        text = forgejo_export.render_issue_md({
+            "number": 22546, "title": "t",
+            "issue": forgejo_export.norm_issue({"number": 22546}, reactions),
+            "comments": [forgejo_export.norm_comment({"id": 37290, "body": "hi", "reactions": reactions})],
+            "timeline": [], "fetch_warnings": [],
+        })
+        self.assertIn("- Reactions: hooray: michaelni\n", text)
+        self.assertIn("When: -\nReactions: hooray: michaelni\n\nhi\n", text)
 
 
 class TimelineRenderTests(unittest.TestCase):

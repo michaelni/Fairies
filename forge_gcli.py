@@ -896,6 +896,11 @@ def _list_repo_endpoint(
     """
     path = build_repo_path(owner, repo, suffix)
     raw = gcli_api(args, path, all_pages=True)
+    # Forgejo answers null for an issue without timeline events, see
+    # ListIssueCommentsAndTimeline in
+    # https://codeberg.org/forgejo/forgejo/src/branch/forgejo/routers/api/v1/repo/issue_comment.go
+    if raw is None:
+        return []
     if not isinstance(raw, list):
         raise RuntimeError(
             f"unexpected gcli response for {what} ({path}): "

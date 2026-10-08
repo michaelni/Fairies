@@ -68,7 +68,7 @@ import forge_item  # noqa: E402
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "github"
 
 
-def _timeline(forge_type: str, raw: list[dict]) -> list[dict]:
+def _timeline(forge_type: str, raw: list[dict] | None) -> list[dict]:
     args = SimpleNamespace(forge_type=forge_type, gcli_account="", verbose=0)
     with mock.patch.object(forge_gcli, "gcli_api", lambda *a, **k: raw):
         return forge_gcli.list_issue_timeline(args, "o", "r", 1)
@@ -170,6 +170,9 @@ class ForgejoTimelineIsUnaffectedTests(unittest.TestCase):
         types = {e["type"] for e in _timeline("gitea", raw)}
         self.assertIn("pull_scheduled_merge", types)
         self.assertNotIn("committed", types)
+
+    def test_an_issue_without_events_has_an_empty_timeline(self) -> None:
+        self.assertEqual(_timeline("gitea", None), [])
 
 
 class ReviewRequestProjectionTests(unittest.TestCase):

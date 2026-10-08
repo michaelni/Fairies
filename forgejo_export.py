@@ -292,6 +292,7 @@ def norm_issue(issue: dict[str, Any], reactions: list[dict[str, Any]]) -> dict[s
         "assignees": assignees(issue),
         "labels": labels(issue),
         "milestone": milestone(issue),
+        "due_date": utc_str(issue.get("due_date")),
         "created_at": utc_str(issue.get("created_at")),
         "updated_at": utc_str(issue.get("updated_at")),
         "closed_at": utc_str(issue.get("closed_at")),
@@ -338,6 +339,7 @@ def norm_pr(pr: dict[str, Any], reactions: list[dict[str, Any]]) -> dict[str, An
         "assignees": assignees(pr),
         "labels": labels(pr),
         "milestone": milestone(pr),
+        "due_date": utc_str(pr.get("due_date")),
         "created_at": utc_str(pr.get("created_at")),
         "updated_at": utc_str(pr.get("updated_at")),
         "closed_at": utc_str(pr.get("closed_at")),
@@ -447,6 +449,7 @@ def meta_lines(item: dict[str, Any]) -> list[str]:
         f"- Labels: {', '.join(item.get('labels') or []) or '-'}",
         f"- Assignees: {', '.join(user_str(x) for x in item.get('assignees') or []) or '-'}",
         f"- Milestone: {item.get('milestone') or '-'}",
+        f"- Due: {item.get('due_date') or '-'}",
         f"- URL: {item.get('url') or '-'}",
     ]
     out += [f"- {line}" for line in attachment_lines(item) + reaction_lines(item)]

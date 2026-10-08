@@ -206,6 +206,15 @@ class GetItemFieldsTests(unittest.TestCase):
         self.assertEqual(warnings, [])
 
 
+class DueDateTests(unittest.TestCase):
+    def test_due_date_renders(self) -> None:
+        issue = json.loads((Path(__file__).parent / "fixtures" / "issue_fairy"
+                            / "ffmpeg_issue_20572.json").read_text())
+        meta = forgejo_export.meta_lines(forgejo_export.norm_issue(
+            {**issue, "due_date": "2026-12-01T00:00:00Z"}, []))
+        self.assertIn("- Due: 2026-12-01 00:00:00 UTC", meta)
+
+
 class LockedTests(unittest.TestCase):
     def test_either_forge_spelling_reads_locked(self) -> None:
         for spelling in ("is_locked", "locked"):

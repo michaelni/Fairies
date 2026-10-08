@@ -206,6 +206,12 @@ class GetItemFieldsTests(unittest.TestCase):
         self.assertEqual(warnings, [])
 
 
+class LockedTests(unittest.TestCase):
+    def test_either_forge_spelling_reads_locked(self) -> None:
+        for spelling in ("is_locked", "locked"):
+            self.assertIs(forgejo_export.norm_pr({"number": 1, spelling: True}, [])["locked"], True)
+
+
 class ReactionRenderTests(unittest.TestCase):
     def test_item_and_comment_reactions_render(self) -> None:
         raw = json.loads((Path(__file__).parent / "fixtures" / "reactions"

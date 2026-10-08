@@ -69,6 +69,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
+import forge_item  # noqa: E402
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "forgejo_pr_timeline"
 
@@ -94,7 +95,7 @@ class PushEventsFromTimelineTests(unittest.TestCase):
 
     def test_pr_23197_yields_two_push_events_in_order(self) -> None:
         timeline = _load_timeline("ffmpeg_pr_23197_timeline.json")
-        pushes = [i for i in fairy.timeline_events(timeline) if i["kind"] == "push"]
+        pushes = [i for i in forge_item.timeline_events(timeline) if i["kind"] == "push"]
 
         self.assertEqual(
             [p["created_at"] for p in pushes],
@@ -119,14 +120,14 @@ class PushEventsFromTimelineTests(unittest.TestCase):
         self.assertEqual(pushes[1]["commit_count"], 2)
 
     def test_empty_timeline_yields_no_push_events(self) -> None:
-        self.assertEqual(fairy.timeline_events([]), [])
+        self.assertEqual(forge_item.timeline_events([]), [])
 
     def test_non_push_events_are_ignored(self) -> None:
         timeline = [
             {"type": "comment", "created_at": "2026-04-01T00:00:00Z"},
             {"type": "review",  "created_at": "2026-04-03T00:00:00Z"},
         ]
-        self.assertEqual(fairy.timeline_events(_project(timeline)), [])
+        self.assertEqual(forge_item.timeline_events(_project(timeline)), [])
 
     def test_malformed_push_body_is_skipped(self) -> None:
         # If Forgejo ever changes the body encoding we must not crash.
@@ -144,7 +145,7 @@ class PushEventsFromTimelineTests(unittest.TestCase):
              }),
              "user": {"login": "bob"}},
         ]
-        pushes = fairy.timeline_events(_project(timeline))
+        pushes = forge_item.timeline_events(_project(timeline))
         self.assertEqual(len(pushes), 1)
         self.assertEqual(pushes[0]["author"], "bob")
         self.assertEqual(pushes[0]["head_sha"], "deadbeef" * 5)
@@ -250,7 +251,7 @@ class ReviewRequestEventsTests(unittest.TestCase):
 
     def test_pr_23197_yields_the_review_request(self) -> None:
         timeline = _load_timeline("ffmpeg_pr_23197_timeline.json")
-        requests = [i for i in fairy.timeline_events(timeline)
+        requests = [i for i in forge_item.timeline_events(timeline)
                     if i["kind"] == "review_request"]
         self.assertEqual(requests, [{
             "kind": "review_request",
@@ -272,7 +273,7 @@ class ReviewRequestEventsTests(unittest.TestCase):
         timeline = _load_timeline("ffmpeg_pr_23197_timeline.json")
         self.assertEqual(
             [(i["author"], i["label"], i["kind"])
-             for i in fairy.timeline_events(timeline) if i["kind"].startswith("label_")],
+             for i in forge_item.timeline_events(timeline) if i["kind"].startswith("label_")],
             [("ffmpeg-devel", "avfilter", "label_added"),
              ("ffmpeg-devel", "new", "label_added"),
              ("Forgejo_Fairy", "kogeduha/bug", "label_added"),
@@ -301,7 +302,7 @@ class StateEventsTests(unittest.TestCase):
 
     def test_pr_22268_yields_its_three_state_changes(self) -> None:
         timeline = _load_timeline("ffmpeg_pr_22268_state_timeline.json")
-        self.assertEqual(fairy.timeline_events(timeline), [
+        self.assertEqual(forge_item.timeline_events(timeline), [
             {"kind": "state", "author": "michaelni", "state": "closed",
              "created_at": "2026-03-03T13:28:58Z"},
             {"kind": "state", "author": "michaelni", "state": "reopened",

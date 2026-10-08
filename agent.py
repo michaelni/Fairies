@@ -83,7 +83,7 @@ import git_util
 import issue_fairy
 import worker
 import workset
-from forge_item import labels
+from forge_item import FIELDLESS_KINDS, item_standing, labels
 from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     config_option_groups, grouped_help,
                     iso_to_dt, options_argv, parse_scoped_overrides,
@@ -282,7 +282,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
         snapshot = {
             "title": str(item.get("title") or ""),
             "author": fairy.get_pr_author(item),
-            **fairy.item_standing(item),
+            **item_standing(item),
             "reactions": reactions,
             "body": str(item.get("body") or ""),
             "html_url": str(item.get("html_url") or ""),
@@ -1064,7 +1064,7 @@ _UNSEEN_CHANGE_WORDS: dict[str, Callable[[dict], str]] = {
     "due_date_changed": lambda e: f"due {e['new_date']}",
     "due_date_removed": lambda e: "due date removed",
     **{kind: (lambda e, kind=kind: kind.replace("_", " "))
-       for kind in fairy.FIELDLESS_KINDS.values()},
+       for kind in FIELDLESS_KINDS.values()},
 }
 
 

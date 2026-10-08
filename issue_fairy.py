@@ -58,7 +58,7 @@ from forge_gcli import (
     gcli_api,
     post_issue_comment,
 )
-from forge_item import labels
+from forge_item import item_standing, labels, reactions_by_content
 from llm_review_api import ISSUE_REPORT_CLASSIFICATIONS
 import workset
 import fairy
@@ -78,8 +78,6 @@ from fairy import (
     get_last_activity,
     get_pr_author,
     invoke_llm_wrapper,
-    item_standing,
-    reactions_by_content,
     item_body_mentions_user,
     label_names,
     list_open_prs,

@@ -62,8 +62,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
+import forge_item  # noqa: E402
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "github"
 
@@ -138,7 +138,7 @@ class PushGroupingTests(unittest.TestCase):
         # The commit is stamped 19:12:10, the force-push happened at
         # 19:39:47; the activity gate must see the later one, and the
         # pusher rather than the commit's author.
-        item, = [i for i in fairy.timeline_events(
+        item, = [i for i in forge_item.timeline_events(
             _github("testrepo_pr2_forcepush_timeline.json"))
             if i["kind"] == "push"]
         self.assertEqual(item["created_at"], "2026-07-28T19:39:47Z")
@@ -146,7 +146,7 @@ class PushGroupingTests(unittest.TestCase):
         self.assertTrue(item["is_force_push"])
 
     def test_the_push_reaches_fairy_as_a_discussion_item(self) -> None:
-        items = fairy.timeline_events(
+        items = forge_item.timeline_events(
             _github("testrepo_pr4_timeline.json"))
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["kind"], "push")
@@ -192,7 +192,7 @@ class ReviewRequestProjectionTests(unittest.TestCase):
              ("review_request", "michaelni", True, "forgejo-fairy[bot]")])
 
     def test_the_requests_reach_fairy_as_discussion_items(self) -> None:
-        items = fairy.timeline_events(
+        items = forge_item.timeline_events(
             _github("testrepo_review_request_timeline.json"))
         self.assertEqual(
             [(i["author"], i["reviewer"], i["kind"]) for i in items
@@ -210,13 +210,13 @@ class ReviewRequestProjectionTests(unittest.TestCase):
             [("close", "forgejo-fairy[bot]", "2026-08-17T01:39:19Z")])
         self.assertEqual(
             [(i["author"], i["state"])
-             for i in fairy.timeline_events(got) if i["kind"] == "state"],
+             for i in forge_item.timeline_events(got) if i["kind"] == "state"],
             [("forgejo-fairy[bot]", "closed")])
 
     def test_label_changes_fold_into_the_forgejo_shape(self) -> None:
         """Real capture: testrepo PR #2, where the fairy app added and
         removed ``bug`` twice (``labeled`` / ``unlabeled``)."""
-        items = fairy.timeline_events(
+        items = forge_item.timeline_events(
             _github("testrepo_pr2_forcepush_timeline.json"))
         self.assertEqual(
             [(i["author"], i["label"], i["kind"]) for i in items
@@ -293,13 +293,13 @@ class ReviewRequestProjectionTests(unittest.TestCase):
               "state_reason": "not_planned"}])
         self.assertEqual(
             [(d["kind"], d.get("reviewer") or d.get("assignee") or d.get("state"))
-             for d in fairy.timeline_events(got)],
+             for d in forge_item.timeline_events(got)],
             [("review_request", "maintainers"), ("unassigned", "dowu"),
              ("milestone_set", None), ("milestone_removed", None), ("title_changed", None),
              ("head_branch_deleted", None), ("locked", None), ("review_dismissed", None),
              ("state", "closed")])
-        self.assertEqual(fairy.timeline_events(got)[-1]["state_reason"], "not_planned")
-        self.assertNotIn("branch", fairy.timeline_events(got)[5])
+        self.assertEqual(forge_item.timeline_events(got)[-1]["state_reason"], "not_planned")
+        self.assertNotIn("branch", forge_item.timeline_events(got)[5])
 
     def test_a_commit_mention_gets_the_forgejo_key(self) -> None:
         """No capture; the synthetic event follows the documented schema

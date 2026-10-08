@@ -30,7 +30,8 @@
 git_patch_stream: format-patch per non-merge commit, git log per merge;
 git_remote_default_branch: the branch a remote's HEAD symref names;
 git_merge_tree: the merged tree, None on a conflict;
-git_changed_paths: the files the head leaves in the tree."""
+git_changed_paths: the files the head leaves in the tree;
+git_submodule_changes: the submodules the head adds, removes or updates."""
 import sys
 import unittest
 from pathlib import Path
@@ -121,6 +122,17 @@ class TreeChangesTests(unittest.TestCase):
             paths = git_util.git_changed_paths(Path("repo"), "base", "head")
         self.assertEqual(paths, ["mod.c", "new file.c", "s2f"])
         self.assertIn("--merge-base", git.call_args.args)
+
+    def test_submodule_changes_include_type_changes(self) -> None:
+        with mock.patch.object(git_util, "_git_stdout", return_value=DIFF_TREE):
+            changes = git_util.git_submodule_changes(Path("repo"), "base", "head")
+        self.assertEqual(changes, [
+            {"path": "bump", "action": "updated", "old_commit": "2" * 40, "new_commit": "5" * 40},
+            {"path": "ext", "action": "added", "old_commit": None, "new_commit": "4" * 40},
+            {"path": "f2s.c", "action": "added", "old_commit": None, "new_commit": "6" * 40},
+            {"path": "s2f", "action": "removed", "old_commit": "1" * 40, "new_commit": None},
+            {"path": "sub_del", "action": "removed", "old_commit": "3" * 40, "new_commit": None},
+        ])
 
 
 class MergeTreeTests(unittest.TestCase):

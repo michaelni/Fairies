@@ -37,8 +37,8 @@ one JSON object to stdout.
 
 Input JSON keys expected:
   - pull_request: object with metadata (number, title, body, author, html_url,
-                  base_ref, head_ref, base_sha, head_sha, additions, deletions,
-                  changed_files, auto_merge)
+                  base_ref, head_ref, base_sha, head_sha, submodule_changes,
+                  additions, deletions, changed_files, auto_merge)
   - patch: unified diff / patch text
   - patch_truncated: bool
   - discussion: prior pull-request comments and reviews

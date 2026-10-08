@@ -134,6 +134,9 @@ def git_format_patch_series(
                        "--minimal", "--stdout", f"{base_sha}..{head_sha}")
 
 
+_GITLINK_MODE = "160000"
+
+
 class TreeChange(NamedTuple):
     old_mode: str
     new_mode: str
@@ -154,7 +157,21 @@ def git_changed_paths(repo_root: Path, base_sha: str, head_sha: str) -> list[str
     """Paths ``head_sha`` adds or modifies since its merge base with
     ``base_sha``; deleted files and submodules are left out."""
     return [change.path for change in git_tree_changes(repo_root, base_sha, head_sha)
-            if change.new_mode not in ("000000", "160000")]
+            if change.new_mode not in ("000000", _GITLINK_MODE)]
+
+
+def git_submodule_changes(repo_root: Path, base_sha: str,
+                          head_sha: str) -> list[dict[str, str | None]]:
+    """``{"path", "action": "added" | "removed" | "updated", "old_commit",
+    "new_commit"}`` per submodule ``head_sha`` changes since its merge base
+    with ``base_sha``; the commit of the side without the submodule is None."""
+    return [{"path": change.path,
+             "action": ("updated" if change.old_mode == change.new_mode
+                        else "added" if change.new_mode == _GITLINK_MODE else "removed"),
+             "old_commit": change.old_sha if change.old_mode == _GITLINK_MODE else None,
+             "new_commit": change.new_sha if change.new_mode == _GITLINK_MODE else None}
+            for change in git_tree_changes(repo_root, base_sha, head_sha)
+            if _GITLINK_MODE in (change.old_mode, change.new_mode)]
 
 
 def git_patch_stream(repo_root: Path, base_sha: str | None,

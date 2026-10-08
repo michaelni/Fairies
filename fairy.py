@@ -2364,6 +2364,7 @@ def run_llm_review(
             "head_repo": get_pr_head_repo(pr) or "",
             "base_sha": base_sha,
             "head_sha": head_sha,
+            "submodule_changes": git_util.git_submodule_changes(args.patch_repo, base_sha, head_sha),
             "additions": pr.get("additions"),
             "deletions": pr.get("deletions"),
             "changed_files": pr.get("changed_files"),

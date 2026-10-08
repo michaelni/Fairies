@@ -250,6 +250,7 @@ class ForceReviewSkipPayloadTests(unittest.TestCase):
             llm_max_patch_bytes=10_000,
             verbose=0,
             llm_timeout=None,
+            patch_repo=Path("repo"),
         )
         captured: dict[str, str] = {}
 
@@ -265,6 +266,7 @@ class ForceReviewSkipPayloadTests(unittest.TestCase):
                          return_value=("base", "head")),
             patch.object(fairy, "fetch_patch_for_llm",
                          return_value=("patch", False)),
+            patch.object(fairy.git_util, "git_submodule_changes", return_value=[]),
             patch.object(fairy, "run_cmd", side_effect=fake_run_cmd),
         ):
             fairy.run_llm_review(

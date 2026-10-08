@@ -69,7 +69,6 @@ from llm_review_api import (
     validate_ungraded_review,
     validate_vet_result,
 )
-from patch_util import extract_submodule_changes_from_patch
 from podman_host import ShellHostSpec
 
 # Where the review container's Containerfile puts the FATE sample suite.
@@ -223,25 +222,6 @@ TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
 }
 
 
-def _augment_info_with_submodule_changes(
-    info: dict[str, object], request: JsonObject
-) -> None:
-    """Add a ``submodule_changes`` entry to the prompt-metadata dict.
-
-    Submodules are silently filtered out of the source bundle (gitlinks
-    have no readable file content) and appear in the raw patch only as
-    terse ``mode 160000`` / ``Subproject commit <sha>`` markers, which
-    makes them easy for the model to overlook even though pulling
-    external code into the tree is exactly the kind of change the
-    reviewer should be looking at. The field is only added when
-    non-empty so the prompt stays compact for the common case.
-    """
-    patch = request.get("patch") if isinstance(request.get("patch"), str) else ""
-    submodule_changes = extract_submodule_changes_from_patch(patch)
-    if submodule_changes:
-        info["submodule_changes"] = submodule_changes
-
-
 def _pr_user_text(
     request: JsonObject,
     lead: str,
@@ -288,9 +268,7 @@ def _pr_user_text(
         "discussion_items": len(discussion),
         "vector_store_repo_heads": request.get("vector_store_repo_heads"),
     }
-    if pr.get("fairy_branch"):
-        info["fairy_branch"] = pr["fairy_branch"]
-    _augment_info_with_submodule_changes(info, request)
+    info.update({key: pr[key] for key in ("fairy_branch", "submodule_changes") if pr.get(key)})
 
     text = (
         f"{lead}\n\n"

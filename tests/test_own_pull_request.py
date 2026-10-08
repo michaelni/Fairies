@@ -71,7 +71,7 @@ def _args(**overrides) -> SimpleNamespace:
         "branch_push_head_owner": ["ffmpeg=Forgejo_Fairy"],
         "llm_review_cmd": "./wrapper", "triage_labels": [],
         "llm_max_patch_bytes": 10_000, "verbose": 0, "llm_timeout": None,
-        **overrides})
+        "patch_repo": Path("repo"), **overrides})
 
 
 class OwnFairyBranchTests(unittest.TestCase):
@@ -97,7 +97,8 @@ class OwnFairyBranchTests(unittest.TestCase):
 
 
 class PayloadTests(unittest.TestCase):
-    def _payload(self, args: SimpleNamespace, pr: dict = PR) -> dict:
+    def _payload(self, args: SimpleNamespace, pr: dict = PR,
+                 submodule_changes: list[dict] | None = None) -> dict:
         captured: dict[str, str] = {}
 
         def fake_run_cmd(_cmd, *, input_text: str, **_kw):
@@ -111,6 +112,8 @@ class PayloadTests(unittest.TestCase):
                          return_value=("base", "head")),
             patch.object(fairy, "fetch_patch_for_llm",
                          return_value=("patch", False)),
+            patch.object(fairy.git_util, "git_submodule_changes",
+                         return_value=submodule_changes or []),
             patch.object(fairy, "run_cmd", side_effect=fake_run_cmd),
         ):
             fairy.run_llm_review(args, pr, "no", [], "Forgejo_Fairy",
@@ -150,6 +153,12 @@ class PayloadTests(unittest.TestCase):
         self.assertEqual(pr["head_repo"], "Forgejo_Fairy/FFmpeg")
         self.assertEqual(pr["fairy_branch"],
                          {"repo": "ffmpeg", "branch": "issue23991-bugfix"})
+
+    def test_the_submodule_changes_reach_the_payload(self) -> None:
+        added = {"path": "tests/checkasm/ext", "action": "added",
+                 "old_commit": None, "new_commit": "4" * 40}
+        pr = self._payload(_args(), submodule_changes=[added])["pull_request"]
+        self.assertEqual(pr["submodule_changes"], [added])
 
     def test_foreign_pull_request_has_no_fairy_branch(self) -> None:
         pr = self._payload(_args(branch_push=[]))["pull_request"]

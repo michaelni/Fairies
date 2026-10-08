@@ -141,6 +141,7 @@ __all__ = [
     "gcli_prefix",
     "issues_listing_takes_type_filter",
     "list_since",
+    "walk_listing",
     "newest_updated_at",
     "list_commit_statuses",
     "pr_merged",
@@ -798,19 +799,22 @@ def pr_merged(pr: dict) -> bool:
     return bool(pr.get("merged") or pr.get("merged_at"))
 
 
-def _recent_first(args: argparse.Namespace, page_size: int) -> dict:
+def _listing_params(args: argparse.Namespace, page_size: int, *,
+                    oldest_first: bool = False) -> dict:
     """Query parameters listing ``pulls`` / ``issues`` most recently
-    updated first, ``page_size`` per page. Both the sort and the
-    page-size parameter are forge-switched, because each forge
-    silently ignores the other's spelling: GitHub sorts with
-    ``sort=updated&direction=desc`` and pages with ``per_page``
+    updated first, or with ``oldest_first`` in creation order,
+    ``page_size`` per page. Both the sort and the page-size parameter
+    are forge-switched, because each forge silently ignores the
+    other's spelling: GitHub sorts with ``sort=updated&direction=desc``
+    or ``sort=created&direction=asc`` and pages with ``per_page``
     (https://docs.github.com/en/rest/pulls/pulls); Forgejo/Gitea sort
-    with ``sort=recentupdate`` and page with ``limit``, capped by the
-    server's MAX_RESPONSE_ITEMS (50 by default,
-    https://forgejo.org/docs/latest/admin/config-cheat-sheet/)."""
+    with ``sort=recentupdate`` or ``sort=oldest`` and page with
+    ``limit``, capped by the server's MAX_RESPONSE_ITEMS (50 by
+    default, https://forgejo.org/docs/latest/admin/config-cheat-sheet/)."""
     if _forge_type(args) == "github":
-        return {"per_page": page_size, "sort": "updated", "direction": "desc"}
-    return {"limit": page_size, "sort": "recentupdate"}
+        return {"per_page": page_size, "sort": "created" if oldest_first else "updated",
+                "direction": "asc" if oldest_first else "desc"}
+    return {"limit": page_size, "sort": "oldest" if oldest_first else "recentupdate"}
 
 
 def list_since(args: argparse.Namespace, endpoint: str, cutoff: datetime,
@@ -824,11 +828,11 @@ def list_since(args: argparse.Namespace, endpoint: str, cutoff: datetime,
     the recency sort makes that the end of the window -- so the cost
     scales with the window, not the repo's history. The served page
     length proves nothing about being on the last page (see
-    ``_recent_first``): paging ends only at the cutoff or on an empty
+    ``_listing_params``): paging ends only at the cutoff or on an empty
     page. An entry without a parsable ``updated_at`` is skipped, never
     trusted to end the window."""
     out: list[dict] = []
-    for item in _walk_listing(args, endpoint, state=state, **filters):
+    for item in walk_listing(args, endpoint, state=state, **filters):
         updated = iso_to_dt(item.get("updated_at"))
         if updated is None:
             continue
@@ -838,12 +842,15 @@ def list_since(args: argparse.Namespace, endpoint: str, cutoff: datetime,
     return out
 
 
-def _walk_listing(args: argparse.Namespace, endpoint: str, *, state: str,
-                  **filters: str) -> Iterator[dict]:
-    """``endpoint`` entries in ``state`` matching the query ``filters``,
-    most recently updated first, one gcli call per page until the first
-    empty page."""
-    params = _recent_first(args, 100 if _forge_type(args) == "github" else 50)
+def walk_listing(args: argparse.Namespace, endpoint: str, *, state: str,
+                 oldest_first: bool = False, **filters: str) -> Iterator[dict]:
+    """``pulls`` / ``issues`` entries in ``state`` matching the query
+    ``filters``, most recently updated first or, with ``oldest_first``,
+    in creation order, which entries updated or created during the walk
+    do not reorder. One gcli call per page, so GCLI_TIMEOUT_S bounds
+    each page rather than the whole listing."""
+    params = _listing_params(args, 100 if _forge_type(args) == "github" else 50,
+                             oldest_first=oldest_first)
     for page in count(1):
         query = urlencode({"state": state, "page": page, **filters, **params})
         data = gcli_api(args, build_repo_path(
@@ -851,6 +858,7 @@ def _walk_listing(args: argparse.Namespace, endpoint: str, *, state: str,
         if not isinstance(data, list):
             raise RuntimeError(
                 f"expected list of {state} {endpoint}, got {type(data).__name__}")
+        logger.debug("%s %s page %d: %d entries", state, endpoint, page, len(data))
         if not data:
             return
         yield from (item for item in data if isinstance(item, dict))
@@ -860,7 +868,7 @@ def newest_updated_at(args: argparse.Namespace, kind: str) -> str | None:
     """``updated_at`` of the repo's most recently updated PR (``kind``
     KIND_PR) or issue, open or closed, as the forge spells it; None
     when the repo has none. One single-entry listing call."""
-    query = urlencode({"state": "all", **_recent_first(args, 1)})
+    query = urlencode({"state": "all", **_listing_params(args, 1)})
     endpoint = "pulls" if kind == KIND_PR else "issues"
     data = gcli_api(args, build_repo_path(args.owner, args.repo,
                                           f"/{endpoint}?{query}"))

@@ -116,6 +116,20 @@ class ListSinceTests(unittest.TestCase):
         self.assertEqual([i["number"] for i in got], [1, 3])
 
 
+class WalkListingTests(unittest.TestCase):
+    def test_oldest_first_pages_in_creation_order(self) -> None:
+        for forge, spelled in (("gitea", ["sort=oldest"]),
+                               ("github", ["sort=created", "direction=asc"])):
+            ns = SimpleNamespace(owner="o", repo="r", forge_type=forge)
+            with mock.patch.object(forge_gcli, "gcli_api",
+                                   side_effect=[[entry(1, "x"), entry(2, "y")], []]) as api:
+                got = list(forge_gcli.walk_listing(ns, "pulls", state="all", oldest_first=True))
+            self.assertEqual([i["number"] for i in got], [1, 2])
+            self.assertEqual(api.call_count, 2)
+            for param in spelled + ["page=2"]:
+                self.assertIn(param, api.call_args.args[1])
+
+
 class NewestUpdatedAtTests(unittest.TestCase):
     def test_one_entry_of_any_state_most_recent_first(self) -> None:
         ns = SimpleNamespace(owner="o", repo="r", forge_type="gitea")

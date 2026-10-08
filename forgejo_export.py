@@ -38,7 +38,6 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
 
 import forge_gcli
 import gcli_cache
@@ -65,7 +64,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("target_dir", type=Path)
     add_forge_repo_args(p)
     p.add_argument("--git", default="git")
-    p.add_argument("--limit", type=int, default=100)
     p.add_argument(
         "--cache",
         type=Path,
@@ -171,22 +169,6 @@ def dump_json(obj: Any) -> str:
 
 PR_FIELDS = ("timeline", "issue_comments", "reviews", "review_comments", "commits", "files")
 ISSUE_FIELDS = ("timeline", "issue_comments")
-
-
-def list_repo_endpoint(args: argparse.Namespace, suffix: str, **params: Any) -> list[dict[str, Any]]:
-    """Top-level enumeration helper for ``/repos/{owner}/{repo}{suffix}``.
-
-    Used for the two listing calls (``/issues``, ``/pulls``) that do not
-    have a single ``updated_at`` to gate on and therefore live outside
-    gcli_cache. Per-item fetches go through ``gcli_cache.get``.
-    """
-    query = urlencode({"limit": args.limit, **params}, doseq=True)
-    path = forge_gcli.build_repo_path(args.owner, args.repo, f"{suffix}?{query}")
-    data = forge_gcli.gcli_api(args, path, all_pages=True)
-    if not isinstance(data, list):
-        raise TypeError(f"expected list from {suffix}, got {type(data).__name__}")
-    LOG.debug("fetched %d items from %s", len(data), suffix)
-    return data
 
 
 def open_caches(
@@ -748,8 +730,8 @@ def main() -> int:
     reactions_max_age = timedelta(hours=args.reactions_cache_max_age_hours)
     now = datetime.now(timezone.utc)
 
-    issues = list_repo_endpoint(args, "/issues", state="all")
-    pulls = list_repo_endpoint(args, "/pulls", state="all")
+    issues = list(forge_gcli.walk_listing(args, "issues", state="all", oldest_first=True))
+    pulls = list(forge_gcli.walk_listing(args, "pulls", state="all", oldest_first=True))
 
     pr_numbers = {int(pr["number"]) for pr in pulls}
     real_issues = [issue for issue in issues if int(issue["number"]) not in pr_numbers]

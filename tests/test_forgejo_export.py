@@ -220,14 +220,24 @@ class RequestedReviewersTests(unittest.TestCase):
         pulls = json.loads((Path(__file__).parent / "fixtures" / "issue_fairy"
                             / "ffmpeg_open_pulls.json").read_text())
         pr, = (pr for pr in pulls if pr["number"] == 23754)
-        meta = forgejo_export.meta_lines(forgejo_export.norm_pr(pr, []))
+        meta = forgejo_export.meta_lines(forgejo_export.norm_pr(pr, [], "no"))
         self.assertIn("- Requested reviewers: huge, locozuto", meta)
+
+
+class AutoMergeTests(unittest.TestCase):
+    def test_scheduled_auto_merge_renders(self) -> None:
+        raw = json.loads((Path(__file__).parent / "fixtures" / "forgejo_pr_timeline"
+                          / "ffmpeg_pr_22729_timeline.json").read_text())
+        timeline = [forge_gcli.project_timeline_event(event) for event in raw]
+        auto_merge = forge_gcli.auto_merge_state(SimpleNamespace(forge_type="gitea"), {}, timeline)
+        meta = forgejo_export.meta_lines(forgejo_export.norm_pr({"number": 22729}, [], auto_merge))
+        self.assertIn("- Auto-merge: merge", meta)
 
 
 class LockedTests(unittest.TestCase):
     def test_either_forge_spelling_reads_locked(self) -> None:
         for spelling in ("is_locked", "locked"):
-            self.assertIs(forgejo_export.norm_pr({"number": 1, spelling: True}, [])["locked"], True)
+            self.assertIs(forgejo_export.norm_pr({"number": 1, spelling: True}, [], "no")["locked"], True)
 
 
 class ReactionRenderTests(unittest.TestCase):

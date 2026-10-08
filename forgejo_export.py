@@ -325,7 +325,7 @@ def pr_state(pr: dict[str, Any]) -> str:
     return "merged" if pr.get("merged_at") else (pr.get("state") or "unknown")
 
 
-def norm_pr(pr: dict[str, Any], reactions: list[dict[str, Any]]) -> dict[str, Any]:
+def norm_pr(pr: dict[str, Any], reactions: list[dict[str, Any]], auto_merge: str) -> dict[str, Any]:
     head = pr.get("head") or {}
     base = pr.get("base") or {}
     return {
@@ -335,6 +335,7 @@ def norm_pr(pr: dict[str, Any], reactions: list[dict[str, Any]]) -> dict[str, An
         "state": pr_state(pr),
         "draft": pr.get("draft"),
         "requested_reviewers": logins(pr.get("requested_reviewers")),
+        "auto_merge": auto_merge,
         "locked": forge_gcli.item_locked(pr),
         "author": norm_user(pr.get("user")),
         "assignees": assignees(pr),
@@ -458,6 +459,7 @@ def meta_lines(item: dict[str, Any]) -> list[str]:
         out += [
             f"- Draft: {bool(item.get('draft'))}",
             f"- Requested reviewers: {', '.join(item['requested_reviewers']) or '-'}",
+            f"- Auto-merge: {item['auto_merge']}",
             f"- Merged: {item.get('merged_at') or '-'}",
             f"- Base: {(item.get('base') or {}).get('repo') or '-'}:{(item.get('base') or {}).get('ref') or '-'}",
             f"- Head: {(item.get('head') or {}).get('repo') or '-'}:{(item.get('head') or {}).get('ref') or '-'} @ {(item.get('head') or {}).get('sha') or '-'}",
@@ -645,6 +647,7 @@ def export_pr(
     files: list[dict[str, Any]],
     timeline: list[dict[str, Any]],
     reactions: list[dict[str, Any]],
+    auto_merge: str,
     fetch_warnings: list[str],
 ) -> set[str]:
     num = int(pr["number"])
@@ -652,7 +655,7 @@ def export_pr(
     data = {
         "number": num,
         "title": pr.get("title"),
-        "pull_request": norm_pr(pr, reactions),
+        "pull_request": norm_pr(pr, reactions, auto_merge),
         "issue_comments": by_time([norm_comment(x) for x in issue_comments], "created_at"),
         "reviews": by_time([norm_review(x) for x in reviews], "submitted_at"),
         "review_comments": by_time([norm_review_comment(x) for x in review_comments], "created_at"),
@@ -764,7 +767,9 @@ def main() -> int:
         keep |= export_pr(
             target, pr,
             fields["issue_comments"], fields["reviews"], fields["review_comments"],
-            fields["commits"], fields["files"], fields["timeline"], fields["reactions"], fetch_warnings,
+            fields["commits"], fields["files"], fields["timeline"], fields["reactions"],
+            "?" if fetch_warnings else forge_gcli.auto_merge_state(args, pr, fields["timeline"]),
+            fetch_warnings,
         )
 
     remove_stale_files(target, keep)

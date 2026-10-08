@@ -37,12 +37,8 @@ depending on the change kind:
 - bumped commit:  ``index <old>..<new> 160000`` plus ``-Subproject
   commit <old>`` / ``+Subproject commit <new>`` hunk lines
 
-The wrapper has to recognise all three and exclude the gitlink path
-from the source bundle, because ``load_source_bundle_texts`` cannot
-``git show`` a submodule and would otherwise crash with
-``RuntimeError: missing source for <submodule>`` (as observed for
-FFmpeg's ``tests/checkasm/ext`` when the path was first added in
-PR #22546). The earlier detector only fired on the new/deleted-mode
+The review prompt lists the submodule changes, so all three have to be
+recognised. The earlier detector only fired on the new/deleted-mode
 header and on a literal ``\\nSubproject commit `` substring, so a
 *bumped* submodule (whose body starts with ``-Subproject commit ...``,
 i.e. a sign-prefixed line) slipped through silently. This file pins
@@ -211,39 +207,6 @@ index 0000000..deadbee
 2.40.0
 
 """
-
-
-class SubmoduleDetectionTests(unittest.TestCase):
-    def test_added_submodule_path_is_in_set(self) -> None:
-        self.assertEqual(
-            patch_util.extract_submodule_paths_from_patch(PATCH_ADD_SUBMODULE),
-            {"tests/checkasm/ext"},
-        )
-
-    def test_updated_submodule_path_is_in_set(self) -> None:
-        """Regression: bumped submodules emit ``index <old>..<new> 160000``
-        plus sign-prefixed ``Subproject commit`` lines, neither of which
-        the older substring-only detector matched."""
-        self.assertEqual(
-            patch_util.extract_submodule_paths_from_patch(PATCH_UPDATE_SUBMODULE),
-            {"tests/checkasm/ext"},
-        )
-
-    def test_removed_submodule_path_is_in_set(self) -> None:
-        self.assertEqual(
-            patch_util.extract_submodule_paths_from_patch(PATCH_REMOVE_SUBMODULE),
-            {"tests/checkasm/ext"},
-        )
-
-    def test_changed_paths_excludes_added_submodule(self) -> None:
-        paths = patch_util.extract_changed_paths_from_patch(PATCH_ADD_SUBMODULE)
-        self.assertNotIn("tests/checkasm/ext", paths)
-        self.assertIn(".gitmodules", paths)
-        self.assertIn("tests/regular.c", paths)
-
-    def test_changed_paths_excludes_updated_submodule(self) -> None:
-        paths = patch_util.extract_changed_paths_from_patch(PATCH_UPDATE_SUBMODULE)
-        self.assertNotIn("tests/checkasm/ext", paths)
 
 
 class SubmoduleChangesExtractionTests(unittest.TestCase):

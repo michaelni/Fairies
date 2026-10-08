@@ -30,10 +30,9 @@
 Pure-text parsing of ``git format-patch`` output.
 
 What belongs here: splitting a patch into per-file diff blocks and
-extracting changed paths, commit SHAs, and submodule (gitlink) changes
-from them. No subprocess calls, no SDKs, no prompt text -- every
-consumer (prompt building, source-bundle assembly) supplies the patch
-string and interprets the results itself.
+extracting submodule (gitlink) changes from them. No subprocess calls,
+no SDKs, no prompt text -- every consumer (prompt building) supplies
+the patch string and interprets the results itself.
 
 This is a leaf module: it has no in-repo dependencies.
 """
@@ -43,15 +42,11 @@ from __future__ import annotations
 import re
 
 __all__ = [
-    "extract_changed_paths_from_patch",
-    "extract_commit_shas_from_patch",
     "extract_submodule_changes_from_patch",
-    "extract_submodule_paths_from_patch",
 ]
 
 
 _DIFF_GIT_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$", re.MULTILINE)
-_DELETED_FILE_RE = re.compile(r"(?m)^deleted file mode \d+$")
 
 
 def _split_patch_into_diff_blocks(patch: str) -> list[str]:
@@ -103,9 +98,7 @@ def _diff_block_is_submodule(block: str) -> bool:
     - bumped commit:  ``index <old>..<new> 160000`` plus ``-Subproject
       commit <old>`` / ``+Subproject commit <new>`` hunk lines
 
-    Any of those signals identifies the block as a gitlink. None of
-    them have ``git show``-able file content, so the wrapper must skip
-    them before ``load_source_bundle_texts`` tries to resolve them.
+    Any of those signals identifies the block as a gitlink.
     """
     body = _diff_block_own_body(block)
     return bool(
@@ -184,48 +177,3 @@ def extract_submodule_changes_from_patch(patch: str) -> list[dict[str, str | Non
             }
         )
     return result
-
-
-def extract_submodule_paths_from_patch(patch: str) -> set[str]:
-    result: set[str] = set()
-    for block in _split_patch_into_diff_blocks(patch):
-        if not _diff_block_is_submodule(block):
-            continue
-        header = _DIFF_GIT_HEADER_RE.search(block)
-        if header is None:
-            continue
-        result.add(header.group(1).strip())
-        result.add(header.group(2).strip())
-    return result
-
-
-def extract_changed_paths_from_patch(patch: str) -> list[str]:
-    """Paths of the files the patch leaves in the tree, in patch order.
-
-    Deleted files and submodule gitlinks are left out: neither has
-    content at the PR head for the source bundle to load.
-    """
-    paths: list[str] = []
-    submodule_paths = extract_submodule_paths_from_patch(patch)
-    for block in _split_patch_into_diff_blocks(patch):
-        header = _DIFF_GIT_HEADER_RE.search(block)
-        if header is None:
-            continue
-        path = header.group(2).strip()
-        if path in paths or path in submodule_paths:
-            continue
-        if _DELETED_FILE_RE.search(_diff_block_own_body(block)):
-            continue
-        paths.append(path)
-    return paths
-
-
-def extract_commit_shas_from_patch(patch: str) -> list[str]:
-    commit_shas: list[str] = []
-    seen: set[str] = set()
-    for match in re.finditer(r"(?m)^From ([0-9a-fA-F]{7,64})\b", patch):
-        commit_sha = match.group(1)
-        if commit_sha not in seen:
-            seen.add(commit_sha)
-            commit_shas.append(commit_sha)
-    return commit_shas

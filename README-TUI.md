@@ -137,7 +137,9 @@ forge), `merge`, `ci`, `actionable`, `all`. A
 verdict the agent posted on its own (`--auto-mode`,
 `--vetted-auto-mode`) stays in `relevant` and `review` as a `posted`
 row until you acknowledge it with `y` or `s`, also once new activity
-has moved the item to another row.
+has moved the item to another row. Every lens but `all` hides a
+`skipped` or `cancelled` row while another evaluation of the same
+item (`#123`, `#123s1`, ...) is in any other state.
 
 **Sorts** (`t` cycles): `repo` (repo, kind, number; the default),
 `status` (actionable first, then the live pipeline, attention,

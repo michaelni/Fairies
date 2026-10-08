@@ -214,6 +214,22 @@ class PollTests(DbCase):
             self.model.filter_mode = "all"
         self.assertEqual(self.keys(), [(R1, "1"), (R1, "2"), (R1, "3"), (R1, "4"), (R1, "6")])
 
+    def test_a_skip_beside_another_evaluation_of_its_item_is_hidden(self) -> None:
+        for token in ("24942", "24942s1", "24942s2", "7"):
+            self.db.push("llm", "pr", token, verdict(filedb.forge_number(token)))
+        self.model.poll()
+        self.db.try_move("llm", "skipped", "pr", "24942", mutate=lambda d: d.update(
+            action="skip", reason="already approved by Forgejo_Fairy"))
+        self.db.try_move("llm", "posted", "pr", "24942s1")
+        self.db.try_move("llm", "cancelled", "pr", "24942s2")
+        self.db.try_move("llm", "skipped", "pr", "7")
+        self.model.poll()
+        self.assertCountEqual(self.keys(), [(R1, "7"), (R1, "24942s1")])
+        with self.model.lock:
+            self.model.filter_mode = "all"
+        self.assertCountEqual(self.keys(), [(R1, "7"), (R1, "24942"),
+                                            (R1, "24942s1"), (R1, "24942s2")])
+
     def test_a_row_seen_live_stays_listed_after_it_settles(self) -> None:
         # The operator watched this item head into the LLM and wants to
         # inspect why it skipped; without the session memory the row

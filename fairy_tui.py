@@ -574,13 +574,21 @@ class Model:
 
     def visible(self) -> list[Item]:
         """Items for the list pane, honoring the all/relevant filter and
-        the sort mode, ties broken by repo, kind and ticket number. Cached
+        the sort mode, ties broken by repo, kind and ticket number. Outside
+        the all lens a skipped or cancelled row is left out when another
+        evaluation of its forge item is in any other state. Cached
         against (revision, filter, sort): repaints between changes cost
         nothing here. Caller holds ``lock``."""
         sig = (self.revision, self.filter_mode, self.sort_mode)
         if self._vis_cache is not None and self._vis_cache[0] == sig:
             return self._vis_cache[1]
         items = list(self.items.values())
+        if self.filter_mode != "all":
+            skip_states = ("skipped", "cancelled")
+            forge_item = lambda it: (it.repo, it.kind, filedb.forge_number(it.number))
+            outcomes = {forge_item(it) for it in items if it.state not in skip_states}
+            items = [it for it in items
+                     if it.state not in skip_states or forge_item(it) not in outcomes]
         if self.filter_mode == "relevant":
             items = [it for it in items if self._relevant(it)]
         elif self.filter_mode != "all":

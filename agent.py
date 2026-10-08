@@ -83,7 +83,7 @@ import git_util
 import issue_fairy
 import worker
 import workset
-from forgejo_export import labels
+from forge_item import labels
 from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     config_option_groups, grouped_help,
                     iso_to_dt, options_argv, parse_scoped_overrides,

@@ -58,7 +58,7 @@ from forge_gcli import (
     gcli_api,
     post_issue_comment,
 )
-from forgejo_export import labels
+from forge_item import labels
 from llm_review_api import ISSUE_REPORT_CLASSIFICATIONS
 import workset
 import fairy

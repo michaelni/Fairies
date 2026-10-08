@@ -124,7 +124,7 @@ from forge_gcli import (
     post_issue_comment,
     run_cmd,
 )
-from forgejo_export import labels, milestone
+from forge_item import labels, milestone
 from llm_output_hacks import link_published_branch, names_published_branch
 import workset
 

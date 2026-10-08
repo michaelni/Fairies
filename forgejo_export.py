@@ -47,6 +47,7 @@ from common import (
     setup_logging,
 )
 from forge_gcli import add_forge_repo_args, norm_user
+from forge_item import labels, milestone
 
 LOG = logging.getLogger("forgejo_export")
 MARKER = ".forgejo-exporter.json"
@@ -276,17 +277,8 @@ def ensure_clean_target(target: Path, *, gcli_account: str | None, forge_type: s
                 raise RuntimeError(f"refusing to touch unexpected file in managed tree: {p}")
 
 
-def labels(obj: dict[str, Any]) -> list[str]:
-    return [x.get("name") for x in obj.get("labels") or [] if x.get("name")]
-
-
 def assignees(obj: dict[str, Any]) -> list[dict[str, Any]]:
     return [norm_user(x) for x in obj.get("assignees") or []]
-
-
-def milestone(obj: dict[str, Any]) -> str | None:
-    ms = obj.get("milestone")
-    return ms.get("title") if ms else None
 
 
 def norm_issue(issue: dict[str, Any]) -> dict[str, Any]:

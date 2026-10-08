@@ -50,6 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import forge_gcli  # noqa: E402
 import forgejo_export  # noqa: E402
 import gcli_cache  # noqa: E402
 
@@ -205,42 +206,22 @@ class GetItemFieldsTests(unittest.TestCase):
 
 
 class TimelineRenderTests(unittest.TestCase):
-    """The timeline section is the only new render path; pin its shape."""
-
     def test_empty_timeline_renders_placeholder(self) -> None:
         lines: list[str] = []
         forgejo_export.add_timeline_section(lines, [])
         self.assertEqual(lines, ["## Timeline", "", "_No timeline events._", ""])
 
-    def test_event_renders_type_author_body(self) -> None:
-        event = forgejo_export.norm_timeline_event({
-            "type": "pull_push",
-            "id": 7,
-            "user": {"login": "alice", "id": 1},
-            "created_at": "2026-05-25T10:00:00Z",
-            "body": '{"is_force_push": false, "commit_ids": ["abc123"]}',
-        })
+    def test_typed_events_render_without_the_comments(self) -> None:
+        raw = json.loads((Path(__file__).parent / "fixtures" / "issue_fairy"
+                          / "ffmpeg_issue_23738_timeline.json").read_text())
         lines: list[str] = []
-        forgejo_export.add_timeline_section(lines, [event])
+        forgejo_export.add_timeline_section(lines, forgejo_export.norm_timeline(
+            [forge_gcli.project_timeline_event(event) for event in raw]))
         text = "\n".join(lines)
-        self.assertIn("### Event 1: pull_push", text)
-        self.assertIn("From: alice (id=1)", text)
-        self.assertIn("When: 2026-05-25 10:00:00 UTC", text)
-        self.assertIn('"commit_ids": ["abc123"]', text)
-
-    def test_bodyless_event_still_renders_header(self) -> None:
-        # Most typed events (label, assignee, milestone) carry no
-        # ``body`` -- the type+when alone is enough chronology.
-        event = forgejo_export.norm_timeline_event({
-            "type": "label",
-            "user": {"login": "bob"},
-            "created_at": "2026-05-25T10:00:00Z",
-        })
-        lines: list[str] = []
-        forgejo_export.add_timeline_section(lines, [event])
-        text = "\n".join(lines)
-        self.assertIn("### Event 1: label", text)
-        self.assertIn("From: bob", text)
+        self.assertIn("### Event 1: label_added\n\nFrom: ffmpeg-devel\n"
+                      "When: 2026-07-08 10:42:44 UTC\nlabel: new\n", text)
+        self.assertIn("### Event 2: label_removed", text)
+        self.assertNotIn("### Event 3", text)
 
 
 if __name__ == "__main__":

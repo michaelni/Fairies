@@ -47,7 +47,7 @@ from common import (
     setup_logging,
 )
 from forge_gcli import add_forge_repo_args, norm_user
-from forge_item import labels, milestone
+from forge_item import labels, milestone, timeline_events
 
 LOG = logging.getLogger("forgejo_export")
 MARKER = ".forgejo-exporter.json"
@@ -313,23 +313,9 @@ def norm_comment(comment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def norm_timeline_event(event: dict[str, Any]) -> dict[str, Any]:
-    """Project a Forgejo/Gitea ``/issues/{n}/timeline`` event to a stable shape.
-
-    Forge backends emit many event types with type-specific fields
-    (``pull_push`` carries a JSON ``body``; ``label`` carries a
-    ``label`` sub-object; etc.). We capture the type, when, who, and
-    the raw ``body`` string verbatim -- consumers (humans and LLMs)
-    can read the body for typed events, and the type+when give enough
-    chronology for events without one.
-    """
-    return {
-        "type": event.get("type"),
-        "id": event.get("id"),
-        "author": norm_user(event.get("user")),
-        "created_at": utc_str(event.get("created_at")),
-        "body": event.get("body") or "",
-    }
+def norm_timeline(timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return by_time([{**event, "created_at": utc_str(event["created_at"])}
+                    for event in timeline_events(timeline)], "created_at")
 
 
 def pr_state(pr: dict[str, Any]) -> str:
@@ -488,10 +474,12 @@ def add_timeline_section(lines: list[str], events: list[dict[str, Any]]) -> None
     for i, event in enumerate(events, 1):
         add_message_block(
             lines,
-            f"### Event {i}: {event.get('type') or '-'}",
-            user_str(event["author"]),
+            f"### Event {i}: {event['kind']}",
+            event["author"],
             event["created_at"],
-            event["body"],
+            event.get("body") or "",
+            [f"{key}: {value}" for key, value in event.items()
+             if key not in ("kind", "author", "created_at", "body")],
         )
 
 
@@ -620,7 +608,7 @@ def export_issue(
         "title": issue.get("title"),
         "issue": norm_issue(issue),
         "comments": by_time([norm_comment(x) for x in comments], "created_at"),
-        "timeline": by_time([norm_timeline_event(x) for x in timeline], "created_at"),
+        "timeline": norm_timeline(timeline),
         "fetch_warnings": fetch_warnings,
     }
     stable_write(base.with_suffix(".json"), dump_json(data))
@@ -653,7 +641,7 @@ def export_pr(
         "review_comments": by_time([norm_review_comment(x) for x in review_comments], "created_at"),
         "commits": [norm_commit(x) for x in commits],
         "files": [norm_file(x) for x in files],
-        "timeline": by_time([norm_timeline_event(x) for x in timeline], "created_at"),
+        "timeline": norm_timeline(timeline),
         "fetch_warnings": fetch_warnings,
     }
     stable_write(base.with_suffix(".json"), dump_json(data))

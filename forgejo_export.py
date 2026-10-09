@@ -149,12 +149,16 @@ def now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def person_str(login: str, full_name: str | None = None, user_id: int | None = None) -> str:
+    details = ", ".join(detail for detail in (full_name, f"id={user_id}" if user_id is not None else "")
+                        if detail)
+    return f"{login} ({details})" if details else login
+
+
 def user_str(user: dict[str, Any] | None) -> str:
     if not user:
         return "unknown-user"
-    login = user.get("login") or "unknown-login"
-    user_id = user.get("id")
-    return f"{login} (id={user_id})" if user_id is not None else login
+    return person_str(user.get("login") or "unknown-login", user.get("full_name"), user.get("id"))
 
 
 def stable_write(path: Path, text: str) -> None:
@@ -443,11 +447,12 @@ def add_timeline_section(lines: list[str], events: list[dict[str, Any]]) -> None
         add_message_block(
             lines,
             f"### Event {i}: {event['kind']}",
-            event["author"],
+            person_str(event["author"], event.get("author_full_name")),
             event.get("submitted_at") or event.get("created_at"),
             event.get("body") or "",
             [f"{key}: {value}" for key, value in event.items() if value is not None and key not in (
-                "kind", "author", "created_at", "submitted_at", "body", "attachment_urls", "reactions", "diff_hunk")]
+                "kind", "author", "author_full_name", "created_at", "submitted_at", "body",
+                "attachment_urls", "reactions", "diff_hunk")]
             + attachment_lines(event) + reaction_lines(event)
             + (["```diff", event["diff_hunk"].rstrip(), "```"] if event.get("diff_hunk") else []),
         )

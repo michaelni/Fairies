@@ -408,7 +408,8 @@ class TypedEventTests(unittest.TestCase):
              {"kind": "assigned", "author": "cibado", "assignee": "cibado",
               "created_at": "2026-07-19T12:46:46Z"}),
             ("ffmpeg_issue_20035_change_title_timeline.json",
-             {"kind": "title_changed", "author": "raleve", "old_title": "firuno",
+             {"kind": "title_changed", "author": "raleve", "author_full_name": "gesageru mazonale",
+              "old_title": "firuno",
               "new_title": "vikumu dibomule rugu", "created_at": "2025-07-26T21:59:33Z"}),
         ):
             with self.subTest(name):

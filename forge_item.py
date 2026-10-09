@@ -54,6 +54,7 @@ __all__ = [
     "STATE_EVENTS",
     "TIMELINE_ITEMS",
     "author_login",
+    "authorship",
     "build_llm_discussion",
     "discussion_time",
     "first_dt",
@@ -110,6 +111,13 @@ def author_login(user: dict | None) -> str:
         if isinstance(value, str) and value:
             return value
     return "?"
+
+
+def authorship(user: dict | None) -> dict:
+    """``author``, the login of the forge ``user``, and
+    ``author_full_name`` where the forge has one other than the login."""
+    author, full_name = author_login(user), (user or {}).get("full_name")
+    return {"author": author, **({"author_full_name": full_name} if full_name and full_name != author else {})}
 
 
 def _push_fields(entry: dict) -> dict | None:
@@ -217,7 +225,7 @@ def timeline_events(timeline: list[dict]) -> list[dict]:
         item = TIMELINE_ITEMS.get(entry.get("type"), lambda entry: None)(entry)
         if item is not None:
             kind, fields = item
-            items.append({"kind": kind, "author": author_login(entry.get("user")),
+            items.append({"kind": kind, **authorship(entry.get("user")),
                           **fields, "created_at": entry.get("created_at")})
     return items
 
@@ -283,7 +291,7 @@ def build_llm_discussion(
         item: dict = {
             "kind": "comment",
             "id": comment.get("id"),
-            "author": author_login(comment.get("user")),
+            **authorship(comment.get("user")),
             "created_at": comment.get("created_at"),
             "updated_at": comment.get("updated_at"),
             "url": comment.get("html_url"),
@@ -306,7 +314,7 @@ def build_llm_discussion(
             {
                 "kind": "review",
                 "id": review.get("id"),
-                "author": author_login(review.get("user")),
+                **authorship(review.get("user")),
                 "state": review.get("state"),
                 "submitted_at": review.get("submitted_at"),
                 "updated_at": review.get("updated_at"),
@@ -324,7 +332,7 @@ def build_llm_discussion(
                 "kind": "review_comment",
                 "id": comment.get("id"),
                 "review_id": comment.get("pull_request_review_id") or comment.get("review_id"),
-                "author": author_login(comment.get("user")),
+                **authorship(comment.get("user")),
                 "created_at": comment.get("created_at"),
                 "updated_at": comment.get("updated_at"),
                 "path": comment.get("path"),

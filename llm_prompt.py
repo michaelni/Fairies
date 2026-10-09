@@ -246,6 +246,7 @@ def _pr_user_text(
         "number": pr.get("number"),
         "title": pr.get("title"),
         "author": pr.get("author"),
+        "author_full_name": pr.get("author_full_name"),
         "html_url": pr.get("html_url"),
         "base_ref": pr.get("base_ref"),
         "head_ref": pr.get("head_ref"),
@@ -323,6 +324,7 @@ def make_issue_user_text(request: JsonObject, *, lead: str = "Analyze this issue
         "number": issue.get("number"),
         "title": issue.get("title"),
         "author": issue.get("author"),
+        "author_full_name": issue.get("author_full_name"),
         "html_url": issue.get("html_url"),
         "created_at": issue.get("created_at"),
         "reviewer_username": reviewer_username,
@@ -758,7 +760,8 @@ If the reviewer has never posted on this PR, treat the whole PR history
 as "after our last reply" for the purpose of the criteria below.
 
 The prior discussion is a chronological list. Every item carries its
-``kind``, its ``author`` and when it happened. The kinds:
+``kind``, its ``author`` with ``author_full_name`` where the forge
+has one, and when it happened. The kinds:
 
 - ``comment``, ``review``, ``review_comment``: what people wrote. A
   ``review`` with an empty body is a bare verdict click; its ``state``

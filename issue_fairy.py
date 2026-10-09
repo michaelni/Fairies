@@ -58,7 +58,7 @@ from forge_gcli import (
     gcli_api,
     post_issue_comment,
 )
-from forge_item import author_login, build_llm_discussion, first_dt, item_standing, labels, reactions_by_content
+from forge_item import author_login, authorship, build_llm_discussion, first_dt, item_standing, labels, reactions_by_content
 from llm_review_api import ISSUE_REPORT_CLASSIFICATIONS
 import workset
 import fairy
@@ -374,7 +374,7 @@ def run_llm_issue(
             "title": prepared.title,
             "body": issue.get("body") or "",
             **({"attachment_urls": urls} if (urls := attachment_urls(issue)) else {}),
-            "author": prepared.author,
+            **authorship(issue.get("user")),
             "html_url": issue.get("html_url") or "",
             "created_at": issue.get("created_at") or "",
             "state": issue.get("state") or "",

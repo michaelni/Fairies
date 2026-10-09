@@ -28,7 +28,8 @@
  */
 
 What fairy gives the LLM and what forgejo_export writes about an item:
-one timeline holding each comment once."""
+one timeline holding each comment once, and the full name of each
+author named."""
 
 from __future__ import annotations
 
@@ -48,6 +49,7 @@ import forge_gcli  # noqa: E402
 import forge_item  # noqa: E402
 import forgejo_export  # noqa: E402
 import issue_fairy  # noqa: E402
+import llm_prompt  # noqa: E402
 from fairy import LLMReview  # noqa: E402
 
 import test_issue_fairy  # noqa: E402
@@ -57,20 +59,26 @@ from test_own_pull_request import PR, _args, llm_payload  # noqa: E402
 COMMENTS = load_fixture("ffmpeg_issue_23738_comments.json")
 TIMELINE = [forge_gcli.project_timeline_event(e)
             for e in load_fixture("ffmpeg_issue_23738_timeline.json")]
+NAMED_PR = next(pr for pr in load_fixture("ffmpeg_open_pulls.json") if pr["user"]["full_name"])
 
 
-def issue_llm_discussion() -> list[dict]:
+def issue_llm_input() -> tuple[dict, str]:
+    """The payload fairy hands the LLM wrapper for issue 23738, and the
+    prompt text the wrapper makes of it."""
     prepared = prepare(make_args(), real_issue(),
                        now=test_issue_fairy.PrepareIssueGateTests.LAST_COMMENT + timedelta(days=2))
     with mock.patch.object(issue_fairy, "invoke_llm_wrapper",
                            return_value=LLMReview("skip", "")) as invoke:
         issue_fairy.run_llm_issue(make_args(), prepared, None)
-    return invoke.call_args.args[1]["discussion"]
+    payload = invoke.call_args.args[1]
+    return payload, llm_prompt.make_issue_user_text(payload)
 
 
-def pr_llm_discussion(reviews: list[dict], comments: list[dict], timeline: list[dict]) -> list[dict]:
-    return llm_payload(_args(), discussion=forge_item.build_llm_discussion(
-        reviews, comments, [], timeline))["discussion"]
+def pr_llm_input(pr: dict, reviews: list[dict], comments: list[dict],
+                 timeline: list[dict]) -> tuple[dict, str]:
+    payload = llm_payload(_args(), pr, discussion=forge_item.build_llm_discussion(
+        reviews, comments, [], timeline))
+    return payload, llm_prompt.make_triage_user_text(payload, False)
 
 
 def exported_issue() -> tuple[dict, str]:
@@ -80,10 +88,11 @@ def exported_issue() -> tuple[dict, str]:
         return json.loads(base.with_suffix(".json").read_text()), base.with_suffix(".md").read_text()
 
 
-def exported_pr(reviews: list[dict], comments: list[dict], timeline: list[dict]) -> tuple[dict, str]:
+def exported_pr(pr: dict, reviews: list[dict], comments: list[dict],
+                timeline: list[dict]) -> tuple[dict, str]:
     with tempfile.TemporaryDirectory() as target:
-        forgejo_export.export_pr(Path(target), PR, comments, reviews, [], [], [], timeline, [], "no", [])
-        base = Path(target) / "pulls" / f"{PR['number']:06d}"
+        forgejo_export.export_pr(Path(target), pr, comments, reviews, [], [], [], timeline, [], "no", [])
+        base = Path(target) / "pulls" / f"{pr['number']:06d}"
         return json.loads(base.with_suffix(".json").read_text()), base.with_suffix(".md").read_text()
 
 
@@ -96,14 +105,47 @@ class DuplicateCommentTests(unittest.TestCase):
                          sorted(comment["id"] for comment in COMMENTS))
 
     def test_the_llm_gets_each_comment_once(self) -> None:
-        self.assert_each_comment_once(issue_llm_discussion())
-        self.assert_each_comment_once(pr_llm_discussion([], COMMENTS, TIMELINE))
+        for payload, text in (issue_llm_input(), pr_llm_input(PR, [], COMMENTS, TIMELINE)):
+            self.assert_each_comment_once(payload["discussion"])
+            for comment in COMMENTS:
+                self.assertEqual(text.count(json.dumps(comment["body"], ensure_ascii=False)), 1)
 
     def test_the_export_writes_each_comment_once(self) -> None:
-        for data, text in (exported_issue(), exported_pr([], COMMENTS, TIMELINE)):
+        for data, text in (exported_issue(), exported_pr(PR, [], COMMENTS, TIMELINE)):
             self.assert_each_comment_once(data["timeline"])
             for comment in COMMENTS:
                 self.assertEqual(text.count(comment["body"].rstrip()), 1)
+
+
+class FullNameTests(unittest.TestCase):
+    """Whatever names an author carries the author's full name, so no
+    reader has to look the login up elsewhere."""
+
+    NAMED = {comment["id"]: comment["user"]["full_name"]
+             for comment in COMMENTS if comment["user"]["full_name"]}
+
+    def assert_comment_authors_named(self, discussion: list[dict]) -> None:
+        self.assertTrue(self.NAMED)
+        self.assertEqual({item["id"]: item.get("author_full_name") for item in discussion
+                          if item.get("id") in self.NAMED}, self.NAMED)
+
+    def test_the_llm_gets_the_full_names(self) -> None:
+        for (payload, text), names in (
+                (issue_llm_input(), self.NAMED.values()),
+                (pr_llm_input(NAMED_PR, [], COMMENTS, TIMELINE),
+                 (NAMED_PR["user"]["full_name"], *self.NAMED.values()))):
+            self.assert_comment_authors_named(payload["discussion"])
+            for name in names:
+                self.assertIn(json.dumps(name, ensure_ascii=False), text)
+
+    def test_the_export_writes_the_full_names(self) -> None:
+        data, text = exported_issue()
+        self.assert_comment_authors_named(data["timeline"])
+        for comment in COMMENTS:
+            if comment["user"]["full_name"]:
+                self.assertIn(f"From: {comment['user']['login']} ({comment['user']['full_name']})", text)
+        data, text = exported_pr(NAMED_PR, [], COMMENTS, TIMELINE)
+        self.assertIn(f"- Author: {NAMED_PR['user']['login']} ({NAMED_PR['user']['full_name']}, ", text)
 
 
 if __name__ == "__main__":

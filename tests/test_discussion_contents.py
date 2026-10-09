@@ -29,7 +29,8 @@
 
 What fairy gives the LLM and what forgejo_export writes about an item:
 one timeline holding each comment once, the full name of each author
-named, every commit of each push and each review's current text."""
+named, every commit of each push, each review's current text and each
+review that carries inline comments."""
 
 from __future__ import annotations
 
@@ -67,6 +68,9 @@ PUSHED = [json.loads(e["body"])["commit_ids"] for e in RAW_PR_TIMELINE if e["typ
 EDITED_REVIEWS = json.loads((PR_FIXTURES / "ffmpeg_pr_22305_edited_review_reviews.json").read_text())
 EDITED_TIMELINE = [forge_gcli.project_timeline_event(e) for e in json.loads(
     (PR_FIXTURES / "ffmpeg_pr_22305_edited_review_timeline.json").read_text())]
+BODYLESS_REVIEWS = json.loads((PR_FIXTURES / "ffmpeg_pr_20393_bodyless_review_reviews.json").read_text())
+INLINE_COMMENTS = json.loads(
+    (PR_FIXTURES / "ffmpeg_pr_20393_bodyless_review_review_comments.json").read_text())
 
 
 def issue_llm_input() -> tuple[dict, str]:
@@ -82,9 +86,9 @@ def issue_llm_input() -> tuple[dict, str]:
 
 
 def pr_llm_input(pr: dict, reviews: list[dict], comments: list[dict],
-                 timeline: list[dict]) -> tuple[dict, str]:
+                 timeline: list[dict], review_comments: tuple[dict, ...] = ()) -> tuple[dict, str]:
     payload = llm_payload(_args(), pr, discussion=forge_item.build_llm_discussion(
-        reviews, comments, [], timeline))
+        reviews, comments, list(review_comments), timeline))
     return payload, llm_prompt.make_triage_user_text(payload, False)
 
 
@@ -96,9 +100,10 @@ def exported_issue() -> tuple[dict, str]:
 
 
 def exported_pr(pr: dict, reviews: list[dict], comments: list[dict],
-                timeline: list[dict]) -> tuple[dict, str]:
+                timeline: list[dict], review_comments: tuple[dict, ...] = ()) -> tuple[dict, str]:
     with tempfile.TemporaryDirectory() as target:
-        forgejo_export.export_pr(Path(target), pr, comments, reviews, [], [], [], timeline, [], "no", [])
+        forgejo_export.export_pr(Path(target), pr, comments, reviews, list(review_comments), [], [], timeline,
+                                 [], "no", [])
         base = Path(target) / "pulls" / f"{pr['number']:06d}"
         return json.loads(base.with_suffix(".json").read_text()), base.with_suffix(".md").read_text()
 
@@ -193,6 +198,28 @@ class EditedReviewTests(unittest.TestCase):
     def test_the_export_writes_the_edited_text(self) -> None:
         data, text = exported_pr(PR, EDITED_REVIEWS, [], EDITED_TIMELINE)
         self.assert_edited_text(data["timeline"], text)
+
+
+
+class BodylessReviewTests(unittest.TestCase):
+    """PR 20393's review 730 has no text of its own, only an inline
+    comment."""
+
+    def assert_review_kept(self, discussion: list[dict]) -> None:
+        review, = BODYLESS_REVIEWS
+        self.assertEqual((review["body"], review["state"]), ("", "COMMENT"))
+        self.assertEqual([(item["kind"], item["id"]) for item in discussion],
+                         [("review", 730), ("review_comment", INLINE_COMMENTS[0]["id"])])
+        self.assertEqual(discussion[1]["review_id"], 730)
+
+    def test_the_llm_gets_the_review(self) -> None:
+        payload, _ = pr_llm_input(PR, BODYLESS_REVIEWS, [], [], INLINE_COMMENTS)
+        self.assert_review_kept(payload["discussion"])
+
+    def test_the_export_writes_the_review(self) -> None:
+        data, text = exported_pr(PR, BODYLESS_REVIEWS, [], [], INLINE_COMMENTS)
+        self.assert_review_kept(data["timeline"])
+        self.assertIn("### Event 1: review", text)
 
 
 if __name__ == "__main__":

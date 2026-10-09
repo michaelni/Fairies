@@ -273,9 +273,10 @@ def build_llm_discussion(
     ``is_force_push`` so the triage LLM can tell unambiguously that
     new code arrived after its prior comment instead of guessing from
     a SHA mentioned in the comment body. A review without a body is
-    kept when it carries a verdict (APPROVED / CHANGES_REQUESTED):
-    a bare approve click is discussion-worthy for the operator and
-    the LLM alike. A review's text is the one its timeline entry
+    kept when it carries a verdict (APPROVED / CHANGES_REQUESTED) or
+    inline comments: a bare approve click is discussion-worthy for the
+    operator and the LLM alike, and the inline comments name their
+    review. A review's text is the one its timeline entry
     carries: Forgejo's review listing kept the text as first submitted
     after an edit (observed 2026-10-09 on Forgejo 16.0.5).
     """
@@ -308,11 +309,12 @@ def build_llm_discussion(
 
     edited = {entry["review_id"]: entry["body"]
               for entry in timeline or () if entry["type"] == REVIEW_EVENT}
+    commented = {_review_of(comment) for comment in review_comments}
     for review in reviews:
         body = edited.get(review.get("id"), review.get("body"))
         if not isinstance(body, str) or not body.strip():
             if normalize_review_state(review.get("state")) \
-                    not in ("APPROVED", "CHANGES_REQUESTED"):
+                    not in ("APPROVED", "CHANGES_REQUESTED") and review.get("id") not in commented:
                 continue
             body = ""
         items.append(
@@ -336,7 +338,7 @@ def build_llm_discussion(
             {
                 "kind": "review_comment",
                 "id": comment.get("id"),
-                "review_id": comment.get("pull_request_review_id") or comment.get("review_id"),
+                "review_id": _review_of(comment),
                 **authorship(comment.get("user")),
                 "created_at": comment.get("created_at"),
                 "updated_at": comment.get("updated_at"),
@@ -356,6 +358,10 @@ def build_llm_discussion(
 
     items.sort(key=discussion_time)
     return items
+
+
+def _review_of(review_comment: dict) -> int | None:
+    return review_comment.get("pull_request_review_id") or review_comment.get("review_id")
 
 
 def discussion_time(item: dict) -> datetime:

@@ -47,7 +47,7 @@ import os
 from typing import Callable, Sequence
 
 from common import (EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED,
-                    EXIT_REVIEW_STOPPED_BY_HALT_FILE, JsonObject)
+                    EXIT_REVIEW_STOPPED_BY_HALT_FILE, JsonObject, printable)
 from podman_host import ContainerShellSession, pause_all_containers
 from shell_bridge_client import (  # noqa: F401
     SHELL_TOOL_DESCRIPTION,
@@ -154,7 +154,8 @@ def exec_shell_call(
         timeout_s = default_timeout_s
     timeout_s = max(1.0, min(timeout_s, max_timeout_s))
 
-    logger.info("shell call timeout=%.1fs cwd=%s cmd=%s", timeout_s, cwd or "-", command[:500])
+    logger.info("shell call timeout=%.1fs cwd=%s cmd=%s", timeout_s, cwd or "-",
+                printable(command[:500]))
     result = session.exec(command, cwd=cwd, timeout_s=timeout_s)
     logger.info(
         "shell done rc=%d dt=%.3fs out_trunc=%s err_trunc=%s",

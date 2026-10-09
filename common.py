@@ -797,6 +797,16 @@ def add_file_log(path: Path, logger: logging.Logger,
 _REPO_NAME_INVALID_RE = re.compile(r"[^A-Za-z0-9._-]")
 
 
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def printable(text: str) -> str:
+    """``text`` with every control character but tab and newline spelled
+    as ``\\xNN``, so bytes a container wrote cannot drive the terminal or
+    viewer that shows the log."""
+    return _CONTROL_CHAR_RE.sub(lambda m: f"\\x{ord(m[0]):02x}", text)
+
+
 def sanitize_repo_name(raw: str) -> str:
     """Map an arbitrary directory name onto a safe in-container identifier.
 

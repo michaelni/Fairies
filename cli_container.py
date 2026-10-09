@@ -60,7 +60,8 @@ import threading
 from pathlib import Path
 from typing import Callable, Sequence
 
-from common import EXIT_REVIEW_STOPPED_BY_HALT_FILE, tagged_thread_name
+from common import (EXIT_REVIEW_STOPPED_BY_HALT_FILE, printable,
+                    tagged_thread_name)
 from podman_host import (
     CONTAINER_CPUS,
     CONTAINER_EXEC_OUTPUT_CAP,
@@ -384,7 +385,7 @@ class CliShellRelay:
         for raw in iter(lambda: self._proc.stderr.readline(65536), b""):
             if saw_ready:
                 logger.debug("relay stderr: %s",
-                             raw.decode(errors="replace").rstrip())
+                             printable(raw.decode(errors="replace").rstrip()))
                 continue
             if b"RELAY-READY" in raw:
                 saw_ready = True

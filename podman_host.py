@@ -74,7 +74,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Sequence
 
-from common import JsonObject, default_cache_path, tagged_thread_name
+from common import (JsonObject, default_cache_path, printable,
+                    tagged_thread_name)
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +239,7 @@ class ContainerShellSession:
             if not line:
                 return
             logger.debug("container shell stderr: %s",
-                         line.decode("utf-8", "replace").rstrip())
+                         printable(line.decode("utf-8", "replace").rstrip()))
 
     def exec(self, command: str, *, cwd: str | None = None,
              timeout_s: float = 120.0) -> ExecResult:

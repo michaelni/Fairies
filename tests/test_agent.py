@@ -1259,6 +1259,28 @@ class SendTests(SendCase):
         self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
                          "PR head changed")
 
+    def test_a_forge_refusal_parks_the_verdict_instead_of_retrying(self) -> None:
+        """Production #21051: the PR author had blocked the fairy
+        account; the post stayed in outgoing/ and was retried on every
+        wake of the agent."""
+        self.ns.auto_mode = True
+        self.db.push("outgoing", "pr", "1", verdict_ticket(1, agent_promoted=True))
+        refusal = RuntimeError(
+            "gcli: error: failed to submit comment: request to "
+            "https://example.org/api/v1/repos/o/r/issues/1/comments failed "
+            "with code 403: API error: user is blocked by the poster or "
+            "repository owner")
+        with mock.patch.object(fairy, "submit_decision_action",
+                               side_effect=refusal) as submit, \
+                self.assertLogs(agent.logger, "ERROR"):
+            self.send(pr_ns=self.ns)
+            t = self.db.get("reviewed", "pr", "1")
+            self.assertEqual(t["send_blocked"], f"send failed: {refusal}")
+            self.assertNotIn("agent_promoted", t)
+            self.send(pr_ns=self.ns)
+        submit.assert_called_once()
+        self.assertEqual(self.db.find("pr", "1"), "reviewed")
+
     def test_vetted_auto_mode_promotes_only_what_the_vetter_passed(self) -> None:
         self.ns.vetted_auto_mode = True
         self.db.push("reviewed", "pr", "1", verdict_ticket(

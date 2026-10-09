@@ -1147,8 +1147,13 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
             if decision.action in fairy.ACTIONABLE_DECISIONS:
                 decision = dataclasses_replace(decision, llm_message=(
                     decision.llm_message + _unseen_changes_note(ns, ticket, snapshot)))
-            reason = post_decision(ns, kind, item, decision, cache=cache,
-                                   counts=counts)
+            try:
+                reason = post_decision(ns, kind, item, decision, cache=cache,
+                                       counts=counts)
+            except Exception as exc:
+                logger.exception("%s #%s: send failed", kind, number)
+                ticket.pop("agent_promoted", None)
+                reason = f"send failed: {exc}"
         if reason is None:
             ticket["review"]["message"] = decision.llm_message
             claim.finish("posted", dict(

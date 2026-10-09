@@ -45,6 +45,7 @@ or an exception, and anything else is a fatal internal failure.
     tools/redact.py tests/fixtures/issue_fairy/*.json
     tools/redact.py --check tests/fixtures/issue_fairy/*.json
     tools/redact.py --names $(find tests -type f)
+    tools/redact.py --ids $(git ls-files)
     tools/redact.py --lines 12,40-52 tests/fixtures/mail_fairy/a.eml
 """
 from __future__ import annotations
@@ -88,6 +89,15 @@ DATE_ONLY = re.compile(r"\d{4}-\d\d-\d\d\Z")
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
                      r"[0-9a-f]{4}-[0-9a-f]{12}\Z", re.I)
 HEX_RE = re.compile(r"(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\Z")
+ID_RE = re.compile(
+    r"(?<![\w-])(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"|(?:resp|msg|rs|fc|call|vs|file|batch|thread|run|asst|sess|conv|req|"
+    r"toolu|chatcmpl|cs|sk|rk|ghp|gho|ghs|ghu|ghr|github_pat|glpat|xai)"
+    r"[_-][\w-]*\d[\w-]*|AIza[\w-]{30,}|ya29\.[\w.-]{20,}"
+    r"|eyJ[\w-]{8,}\.[\w-]{8,}(?:\.[\w-]*)?)(?![\w-])"
+    r"|(?:session|conversation|thread|request|response|trace)[_ -]?id\W{1,4}"
+    r"([\w.:+/-]*\d[\w.:+/-]*)", re.I)
+LITERAL_JOINT_RE = re.compile(r"""['"]\s*\+?\s*\\?\n?\s*[rbuf]{0,2}['"]""", re.I)
 BASE32_RE = re.compile(r"[A-Z2-7]{26,}\Z")
 ADDRESS_PATTERN = r"[\w.+%-]+@[\w.-]+\.[a-z]{2,}"
 EMAIL_RE = re.compile(ADDRESS_PATTERN + r"\Z", re.I)
@@ -960,6 +970,28 @@ def check_names(text: str, red: Redactor) -> list[str]:
         walk(tree)
     return sorted(set(problems))
 
+def _is_dummy(value: str) -> bool:
+    """00000000-0000-0000-0000-000000000012, vs_000000, 0123456789abcdef"""
+    body = re.sub(r"[\W_]", "", value.lower())
+    digits = "0123456789abcdef"
+    return bool(re.fullmatch(r"[a-z]*(.)\1{5,}.{0,4}", body)) or (
+        set(body) <= set(digits) and all(
+            digits.index(b) == (digits.index(a) + 1) % 16
+            for a, b in zip(body, body[1:])))
+
+def check_ids(text: str, red: Redactor) -> list[str]:
+    """Session, request and similar IDs that are neither a clear dummy, a
+    pool member nor an exception, also where adjacent string literals
+    split one."""
+    found = set()
+    for source in (text, LITERAL_JOINT_RE.sub("", text)):
+        for match in ID_RE.finditer(source):
+            value = match.group(1) or match.group(0)
+            if not (len(value) < 8 or value in red.exceptions
+                    or red.pools.holds(Kind.UUID, value) or _is_dummy(value)):
+                found.add(value)
+    return sorted(found)
+
 def _report(paths: list[Path], check) -> int:
     """Print what ``check(text)`` finds in each file; return the count."""
     found = 0
@@ -983,6 +1015,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--names", action="store_true",
                     help="report names, addresses and name-carrying fields "
                          "that are not drawn, listed or conventional")
+    ap.add_argument("--ids", action="store_true",
+                    help="report session, request and similar IDs that are "
+                         "not clear dummies, drawn or listed")
     ap.add_argument("--lines", help="only these 1-based lines (a,b-c)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
@@ -995,6 +1030,11 @@ def main(argv: list[str] | None = None) -> int:
     files = [p for p in given
              if not any(str(p).endswith(e) or e in str(p)
                         for e in exempt_paths)]
+
+    if args.ids:
+        bad = _report(given, lambda text: check_ids(text, red))
+        print(f"checked {len(given)} files, {bad} foreign ID(s)")
+        return 1 if bad else 0
 
     if args.names:
         bad = _report(given, lambda text: check_names(text, red))

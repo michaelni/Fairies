@@ -43,6 +43,7 @@ was not pointed at.
 import contextlib
 import io
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -86,6 +87,21 @@ class FixtureValuesTests(unittest.TestCase):
             "name(s) not drawn, listed or conventional. Use a pool word "
             "or the Alice-and-Bob cast (alice, bob, jane doe, ...):\n"
             + said.getvalue(),
+        )
+
+    @unittest.skipUnless(shutil.which("git"), "git required")
+    def test_ids_anywhere_are_dummies_drawn_or_listed(self) -> None:
+        names = subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "ls-files"],
+            check=True, capture_output=True, text=True,
+        ).stdout.splitlines()
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said), contextlib.redirect_stderr(said):
+            status = redact.main([str(REPO_ROOT / n) for n in names] + ["--ids"])
+        self.assertEqual(
+            status, 0,
+            "session, request or similar ID(s); use a dummy such as "
+            "00000000-0000-0000-0000-000000000001:\n" + said.getvalue(),
         )
     def test_redaction_is_a_fixed_point_on_its_output(self) -> None:
         names = _files(REPO_ROOT / "tests" / "fixtures",
@@ -136,6 +152,15 @@ class DetectorTests(unittest.TestCase):
 
     def found(self, text: str) -> list[str]:
         return redact.check_names(text, self.red)
+
+    def test_an_id_split_across_literals_is_found(self) -> None:
+        session = "-".join(("d4c3b2a1", "f6e5", "4b8a", "9c0d", "e1f2a3b4c5d6"))
+        source = f"""x = ('"session_id":"{session[:20]}'\n     '{session[20:]}"')"""
+        self.assertIn(session, redact.check_ids(source, self.red))
+
+    def test_a_counting_dummy_id_passes(self) -> None:
+        self.assertEqual([], redact.check_ids(
+            '"session_id":"00000000-0000-0000-0000-000000000012"', self.red))
 
     def test_digits_before_the_at_are_not_an_id(self) -> None:
         self.assertFalse(

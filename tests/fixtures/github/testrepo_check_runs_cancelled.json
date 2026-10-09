@@ -6,7 +6,7 @@
       "name": "never-runs",
       "node_id": "CR_kwDOTlgupM8AAAAVDVf_Pg",
       "head_sha": "6014cfbfbf4474d3a9855d1ae8e4a179ee10a76f",
-      "external_id": "724103b0-aeb5-544f-aa60-4212528475ab",
+      "external_id": "00000000-0000-0000-0000-000000000001",
       "url": "https://api.github.com/repos/michaelni/testrepo/check-runs/90418183998",
       "html_url": "https://github.com/michaelni/testrepo/actions/runs/30401819215/job/90418183998",
       "details_url": "https://github.com/michaelni/testrepo/actions/runs/30401819215/job/90418183998",
@@ -26,7 +26,7 @@
       },
       "app": {
         "id": 15368,
-        "client_id": "Iv1.05c79e9ad1f6bdfa",
+        "client_id": "Iv1.0000000000000001",
         "slug": "github-actions",
         "node_id": "MDM6QXBwMTUzNjg=",
         "owner": {
@@ -145,7 +145,7 @@
       "name": "red",
       "node_id": "CR_kwDOTlgupM8AAAAVDVf9pQ",
       "head_sha": "6014cfbfbf4474d3a9855d1ae8e4a179ee10a76f",
-      "external_id": "9bd3f9fe-1d2d-548b-9761-cf04ba018bfe",
+      "external_id": "00000000-0000-0000-0000-000000000002",
       "url": "https://api.github.com/repos/michaelni/testrepo/check-runs/90418183589",
       "html_url": "https://github.com/michaelni/testrepo/actions/runs/30401819215/job/90418183589",
       "details_url": "https://github.com/michaelni/testrepo/actions/runs/30401819215/job/90418183589",
@@ -165,7 +165,7 @@
       },
       "app": {
         "id": 15368,
-        "client_id": "Iv1.05c79e9ad1f6bdfa",
+        "client_id": "Iv1.0000000000000001",
         "slug": "github-actions",
         "node_id": "MDM6QXBwMTUzNjg=",
         "owner": {
@@ -284,7 +284,7 @@
       "name": "green",
       "node_id": "CR_kwDOTlgupM8AAAAVDVf7qw",
       "head_sha": "6014cfbfbf4474d3a9855d1ae8e4a179ee10a76f",
-      "external_id": "81f165f1-d18f-517e-af2d-06197510bc6b",
+      "external_id": "00000000-0000-0000-0000-000000000003",
       "url": "https://api.github.com/repos/michaelni/testrepo/check-runs/90418183083",
       "html_url": "https://github.com/michaelni/testrepo/actions/runs/30401819215/job/90418183083",
       "details_url": "https://github.com/michaelni/testrepo/actions/runs/30401819215/job/90418183083",
@@ -304,7 +304,7 @@
       },
       "app": {
         "id": 15368,
-        "client_id": "Iv1.05c79e9ad1f6bdfa",
+        "client_id": "Iv1.0000000000000001",
         "slug": "github-actions",
         "node_id": "MDM6QXBwMTUzNjg=",
         "owner": {
@@ -423,7 +423,7 @@
       "name": "slow",
       "node_id": "CR_kwDOTlgupM8AAAAVDVf7Tg",
       "head_sha": "6014cfbfbf4474d3a9855d1ae8e4a179ee10a76f",
-      "external_id": "e73090af-74b9-59cb-bfe9-3d8461214a1f",
+      "external_id": "00000000-0000-0000-0000-000000000004",
       "url": "https://api.github.com/repos/michaelni/testrepo/check-runs/90418182990",
       "html_url": "https://github.com/michaelni/testrepo/actions/runs/30401819215/job/90418182990",
       "details_url": "https://github.com/michaelni/testrepo/actions/runs/30401819215/job/90418182990",
@@ -443,7 +443,7 @@
       },
       "app": {
         "id": 15368,
-        "client_id": "Iv1.05c79e9ad1f6bdfa",
+        "client_id": "Iv1.0000000000000001",
         "slug": "github-actions",
         "node_id": "MDM6QXBwMTUzNjg=",
         "owner": {

@@ -35,7 +35,8 @@ Given a passwordless ssh destination (``user@host``) it:
 1. checks the remote podman is reachable over ssh (``ssh DEST podman
    info``), with an actionable hint if the prerequisite is missing;
 2. builds the review image on the remote, rebuilding only when the
-   Containerfile changed (tracked via an image label);
+   Containerfile changed (tracked via an image label), and installs the
+   seccomp profile the containers run under (see podman_host);
 3. with the ``--<binary>-bin`` flags of a CLI backend, also builds that
    backend's thin image (for a host used as its ``--<backend>-host``),
    staging the pinned binaries in;
@@ -74,6 +75,7 @@ from podman_host import (  # noqa: E402
     RemoteHost,
     build_image_if_needed,
     image_label,
+    install_seccomp_profile,
     reap_stale_containers,
 )
 
@@ -278,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
         host=host, tag=args.tag, dockerfile=dockerfile,
         context_dir=args.context.resolve(), rebuild=args.rebuild,
     )
+    install_seccomp_profile(host)
     for cli in CLI_BACKENDS:
         binaries = image_binaries(args, cli)
         if None not in binaries.values():

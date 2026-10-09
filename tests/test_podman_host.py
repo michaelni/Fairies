@@ -41,6 +41,7 @@ they double as the regression test for the live transport.
 from __future__ import annotations
 
 import io
+import json
 import math
 import subprocess
 import sys
@@ -328,6 +329,46 @@ class BuildImageIfNeededTests(unittest.TestCase):
                 )
 
 
+class SeccompProfileTests(unittest.TestCase):
+    def test_hardened_profile_denies_namespaces_and_filters_clone(self) -> None:
+        profile = {"defaultAction": "SCMP_ACT_ERRNO", "syscalls": [
+            {"names": ["read", "clone", "unshare", "mount"], "action": "SCMP_ACT_ALLOW"},
+            {"names": ["setns"], "action": "SCMP_ACT_ALLOW"},
+        ]}
+        hardened = lc.harden_seccomp_profile(profile)
+        self.assertEqual("SCMP_ACT_ERRNO", hardened["defaultAction"])
+        rules = {name: rule for rule in hardened["syscalls"] for name in rule["names"]}
+        self.assertEqual({"read", "clone", "clone3"}, set(rules))
+        self.assertEqual(
+            [{"index": 0, "value": 0x7E020000, "valueTwo": 0,
+              "op": "SCMP_CMP_MASKED_EQ"}],
+            rules["clone"]["args"])
+        self.assertEqual(("SCMP_ACT_ERRNO", 38),
+                         (rules["clone3"]["action"], rules["clone3"]["errnoRet"]))
+        self.assertEqual(["read", "clone", "unshare", "mount"],
+                         profile["syscalls"][0]["names"])
+
+    def test_install_hardens_the_hosts_default_and_replaces_the_file(self) -> None:
+        default = json.dumps({"syscalls": [
+            {"names": ["unshare", "write"], "action": "SCMP_ACT_ALLOW"}]}).encode()
+        with mock.patch.object(lc, "run_on_remote_host", side_effect=[
+                lc._CmdResult(0, default, b""), lc._CmdResult(0, b"", b"")]) as run:
+            lc.install_seccomp_profile(HOST)
+        read, write = run.call_args_list
+        self.assertEqual((HOST, "cat", lc.HOST_DEFAULT_SECCOMP_PROFILE), read.args)
+        self.assertEqual((HOST, "sh", "-c"), write.args[:3])
+        self.assertIn(f"&& mv -f {lc.SECCOMP_PROFILE_PATH}.tmp "
+                      f"{lc.SECCOMP_PROFILE_PATH}", write.args[3])
+        written = json.loads(write.kwargs["input_bytes"])
+        self.assertEqual(["write"], written["syscalls"][0]["names"])
+
+    def test_install_fails_without_the_hosts_default(self) -> None:
+        with mock.patch.object(lc, "run_on_remote_host",
+                               return_value=lc._CmdResult(1, b"", b"No such file")):
+            with self.assertRaisesRegex(lc.ContainerInfraError, "No such file"):
+                lc.install_seccomp_profile(HOST)
+
+
 class ReapStaleContainersTests(unittest.TestCase):
     def _reap(self, run_side_effect, **kw):
         with mock.patch.object(lc.subprocess, "run",
@@ -443,6 +484,7 @@ class StartStopContainerTests(ContainerStateHarness, unittest.TestCase):
                       "--memory=2g", "--cpus=1",
                       f"--pids-limit={lc.CONTAINER_PIDS_LIMIT}",
                       "--security-opt=no-new-privileges",
+                      f"--security-opt=seccomp={lc.SECCOMP_PROFILE_PATH}",
                       "--userns=nomap",
                       "--stop-timeout=0",
                       "fairy:latest sleep infinity"):

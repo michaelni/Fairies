@@ -193,7 +193,9 @@ combiner one shared container instead, the vetter always gets its own. Egress
 to your LAN is blockable out-of-band (see "Blocking LAN egress" below).
 Repos are filled from host-local mirrors, so no multi-hundred-MB `.git`
 crosses the wire per review. Containers run with `--pids-limit`,
-`--security-opt=no-new-privileges` and `--userns=nomap`, so root inside the
+`--security-opt=no-new-privileges`, a seccomp profile that denies the
+namespace, mount and keyring syscalls (podman's default minus those,
+installed by `provision_remote.py`), and `--userns=nomap`, so root inside the
 container is a subordinate uid of the podman account that owns nothing of
 the account itself; a device node passed to the container (`gpu=`,
 `device=` in the host spec) needs an ACL granting that uid access.
@@ -202,7 +204,8 @@ Prerequisite, once, as root on the host: install `podman`. Nothing else --
 no `podman.socket`, no lingering; fairy uses rootless podman purely over ssh
 (`ssh DEST podman ...`).
 
-Provision the host (build the image + seed one bare mirror per repo);
+Provision the host (build the image, install the seccomp profile, seed one
+bare mirror per repo);
 idempotent, safe to re-run, and best called at the top of your launcher so
 the image and mirrors stay current:
 

@@ -74,7 +74,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Sequence
 
-from common import default_cache_path, tagged_thread_name
+from common import JsonObject, default_cache_path, tagged_thread_name
 
 logger = logging.getLogger(__name__)
 
@@ -378,7 +378,8 @@ class _CmdResult:
         return self.stderr.decode(errors="replace").strip()
 
 
-def _run_capture(cmd: list[str], *, timeout_s: float, label: str) -> _CmdResult:
+def _run_capture(cmd: list[str], *, timeout_s: float, label: str,
+                 input_bytes: bytes | None) -> _CmdResult:
     """Run ``cmd`` to completion capturing output, with debug timing logs.
 
     ``label`` tags the logs (e.g. ``"podman"`` / ``"ssh"``) so the debug
@@ -387,7 +388,8 @@ def _run_capture(cmd: list[str], *, timeout_s: float, label: str) -> _CmdResult:
     logger.debug("%s start cmd=%s timeout=%.1fs", label, shlex.join(cmd), timeout_s)
     t0 = time.monotonic()
     try:
-        cp = subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False)
+        cp = subprocess.run(cmd, input=input_bytes, capture_output=True,
+                            timeout=timeout_s, check=False)
     except subprocess.TimeoutExpired:
         logger.error("%s timeout cmd=%s timeout=%.1fs", label, shlex.join(cmd), timeout_s)
         raise
@@ -400,7 +402,8 @@ def _run_capture(cmd: list[str], *, timeout_s: float, label: str) -> _CmdResult:
 
 
 def _run_capture_capped(cmd: list[str], *, timeout_s: float, label: str,
-                        max_output_bytes: int) -> _CmdResult:
+                        max_output_bytes: int,
+                        input_bytes: bytes | None) -> _CmdResult:
     """``_run_capture`` with a hard per-stream output cap: the command
     reads data out of an untrusted container, so its output must stay
     bounded, and ``subprocess.run`` would buffer without limit. Raises
@@ -408,7 +411,9 @@ def _run_capture_capped(cmd: list[str], *, timeout_s: float, label: str,
     logger.debug("%s start cmd=%s timeout=%.1fs cap=%d",
                  label, shlex.join(cmd), timeout_s, max_output_bytes)
     t0 = time.monotonic()
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(
+        cmd, stdin=subprocess.PIPE if input_bytes is not None else None,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     sinks: dict[str, list[bytes]] = {"out": [], "err": []}
     overrun = threading.Event()
 
@@ -439,6 +444,12 @@ def _run_capture_capped(cmd: list[str], *, timeout_s: float, label: str,
     for thread in drainers:
         thread.start()
     try:
+        if input_bytes is not None:
+            try:
+                proc.stdin.write(input_bytes)
+            except BrokenPipeError:
+                pass
+            proc.stdin.close()
         try:
             rc = proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
@@ -479,6 +490,7 @@ def run_on_remote_host(
     *remote_argv: str,
     timeout_s: float = 120.0,
     max_output_bytes: int | None = None,
+    input_bytes: bytes | None = None,
 ) -> _CmdResult:
     """Run a fixed-shape control command on the podman host over ssh.
 
@@ -486,11 +498,14 @@ def run_on_remote_host(
     what may be passed through it. ``max_output_bytes`` bounds each
     output stream and fails closed on overrun (``ContainerInfraError``)
     -- for commands whose output an untrusted container controls.
+    ``input_bytes`` is the command's stdin.
     """
     if max_output_bytes is not None:
         return _run_capture_capped(host.argv(remote_argv), timeout_s=timeout_s,
-                                   label="ssh", max_output_bytes=max_output_bytes)
-    return _run_capture(host.argv(remote_argv), timeout_s=timeout_s, label="ssh")
+                                   label="ssh", max_output_bytes=max_output_bytes,
+                                   input_bytes=input_bytes)
+    return _run_capture(host.argv(remote_argv), timeout_s=timeout_s, label="ssh",
+                        input_bytes=input_bytes)
 
 
 def _podman(host: RemoteHost, *args: str, timeout_s: float = 60.0) -> _CmdResult:
@@ -639,6 +654,68 @@ CONTAINER_CPUS = "8"
 # constraining real builds/fuzzing.
 CONTAINER_PIDS_LIMIT = 4096
 
+# Relative to the podman account's home, like the mirror root.
+SECCOMP_PROFILE_PATH = "fairy-seccomp.json"
+HOST_DEFAULT_SECCOMP_PROFILE = "/usr/share/containers/seccomp.json"
+_SECCOMP_REMOVED_SYSCALLS = frozenset({
+    "clone", "clone3", "unshare", "setns",
+    "mount", "umount2", "pivot_root", "mount_setattr", "open_tree",
+    "move_mount", "fsopen", "fsconfig", "fsmount", "fspick",
+    "keyctl", "add_key", "request_key", "userfaultfd",
+})
+# CLONE_NEWNS | CLONE_NEWCGROUP | CLONE_NEWUTS | CLONE_NEWIPC |
+# CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNET
+_CLONE_NAMESPACE_FLAGS = 0x7E020000
+_ENOSYS = 38
+
+
+def harden_seccomp_profile(profile: JsonObject) -> JsonObject:
+    """podman's default seccomp profile without the syscalls that create
+    namespaces, mounts or kernel keyrings or register userfaultfd: a
+    nested user namespace hands PR code the capabilities most kernel
+    privilege escalations start from. ``clone`` stays allowed without
+    ``CLONE_NEW*`` flags; ``clone3`` fails with ENOSYS so libc falls
+    back to ``clone``."""
+    syscalls = []
+    for rule in profile["syscalls"]:
+        names = [name for name in rule["names"]
+                 if name not in _SECCOMP_REMOVED_SYSCALLS]
+        if names:
+            syscalls.append({**rule, "names": names})
+    syscalls.append({"names": ["clone"], "action": "SCMP_ACT_ALLOW",
+                     "args": [{"index": 0, "value": _CLONE_NAMESPACE_FLAGS,
+                               "valueTwo": 0, "op": "SCMP_CMP_MASKED_EQ"}]})
+    syscalls.append({"names": ["clone3"], "action": "SCMP_ACT_ERRNO",
+                     "errnoRet": _ENOSYS})
+    return {**profile, "syscalls": syscalls}
+
+
+def install_seccomp_profile(host: RemoteHost) -> None:
+    """Write ``harden_seccomp_profile`` of the host's own default profile
+    to ``SECCOMP_PROFILE_PATH`` on ``host``."""
+    default = run_on_remote_host(host, "cat", HOST_DEFAULT_SECCOMP_PROFILE)
+    if default.returncode != 0:
+        raise ContainerInfraError(
+            f"reading {HOST_DEFAULT_SECCOMP_PROFILE} on {host.ssh_dest} failed: "
+            f"{default.stderr_text}")
+    try:
+        profile = harden_seccomp_profile(json.loads(default.stdout))
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ContainerInfraError(
+            f"{HOST_DEFAULT_SECCOMP_PROFILE} on {host.ssh_dest} is not a "
+            f"seccomp profile: {exc!r}") from exc
+    logger.info("installing seccomp profile on %s: %s",
+                host.ssh_dest, SECCOMP_PROFILE_PATH)
+    staging = shlex.quote(SECCOMP_PROFILE_PATH + ".tmp")
+    cp = run_on_remote_host(
+        host, "sh", "-c",
+        f"cat > {staging} && mv -f {staging} {shlex.quote(SECCOMP_PROFILE_PATH)}",
+        input_bytes=json.dumps(profile).encode("utf-8"))
+    if cp.returncode != 0:
+        raise ContainerInfraError(
+            f"writing {SECCOMP_PROFILE_PATH} on {host.ssh_dest} failed: "
+            f"{cp.stderr_text}")
+
 _state_lock = threading.Lock()
 _running: dict[str, tuple[ContainerHandle, list[subprocess.Popen]]] = {}
 _paused: set[str] = set()
@@ -741,6 +818,9 @@ def start_ephemeral_container(
     accessible to that subordinate uid (an ACL on the node), and the
     image's directories must be real layers, since a directory podman
     creates at start belongs to the unmapped account.
+
+    The seccomp profile is the one ``install_seccomp_profile`` put on the
+    host; ``podman run`` fails naming the file on a host without it.
     """
     _hold_owner_lock(host)
     args = [
@@ -754,6 +834,7 @@ def start_ephemeral_container(
         # through a setuid binary. Reviews never need this (the image ships
         # no sudo and apt runs as the container's own root).
         "--security-opt=no-new-privileges",
+        f"--security-opt=seccomp={SECCOMP_PROFILE_PATH}",
         "--userns=nomap",
         "--stop-timeout=0",
         *extra_args,

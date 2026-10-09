@@ -115,11 +115,13 @@ class CliImageOptionTests(unittest.TestCase):
                     mock.patch.object(pr, "check_reachable"), \
                     mock.patch.object(pr, "reap_stale_containers", return_value=0) as reap, \
                     mock.patch.object(pr, "ensure_image"), \
+                    mock.patch.object(pr, "install_seccomp_profile") as seccomp, \
                     mock.patch.object(pr, "ensure_cli_image") as build:
                 pr.main(["--ssh", "fairy@h", *(
                     arg for binary in reviewer.image_binaries
                     for arg in (f"--{binary}-bin", f"/stage/{binary}"))])
                 build.assert_called_once()
+                seccomp.assert_called_once_with(lc.RemoteHost("fairy@h"))
                 built = build.call_args.kwargs
                 self.assertTrue(built["dockerfile"].is_file())
                 self.assertEqual(f"localhost/fairy-{cli}:latest", built["tag"])

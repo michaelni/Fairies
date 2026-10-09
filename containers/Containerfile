@@ -156,5 +156,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY recoll.conf mimemap /root/.recoll/
 COPY recollq /usr/local/bin/recollq
 
+# /work as an image layer: the directory podman creates for WORKDIR at
+# container start belongs to the host account, which --userns=nomap
+# leaves unmapped, so the container could not write to it.
+RUN mkdir /work
 WORKDIR /work
 CMD ["sleep", "infinity"]

@@ -99,6 +99,7 @@ from llm_review_api import (
     VERBOSITY_LEVELS,
     BadModelOutput,
     ProviderTurnFailed,
+    Review,
     ReviewContext,
     Reviewer,
 )
@@ -1781,6 +1782,23 @@ def main() -> int:
             debug_dir_specified=debug_dir_specified,
         )
 
+        def vet_verdict(review: Review) -> None:
+            workset_note(args, "stage", "vet")
+            inherited_branches[:] = review.branches
+            vetter = make_reviewer(
+                args.vet_model, args=args, resources=openai_resources,
+                role=make_vetter_role(review, task=args.task,
+                                      inherits_branches=args.persist_branches),
+                verbose=args.verbose)
+            # A stage that ran PR-derived code may have tampered with the
+            # containers it used, so the vetter opens its own.
+            vetting = vet_review(vetter, replace(
+                review_ctx, source_bundle=None, source_files=[],
+                source_notes=[], collect_branches=None,
+                open_shell=open_machine_shell if args.podman else None,
+                close_shells=close_machine_shells if args.podman else None))
+            workset_note(args, "vetting", vetting)
+
         triage_label_allowlist = triage_label_allowlist_from_request(request)
         requested_models: list[str] = []
         requested_effort: str | None = None
@@ -2012,21 +2030,7 @@ def main() -> int:
             workset_note(args, "vetting",
                          {"hold_for_human_inspection": True, "reason": posting_block})
         elif args.vet_model and (review.classification != "skip" or review.label_changes):
-            workset_note(args, "stage", "vet")
-            inherited_branches[:] = review.branches
-            vetter = make_reviewer(
-                args.vet_model, args=args, resources=openai_resources,
-                role=make_vetter_role(review, task=args.task,
-                                      inherits_branches=args.persist_branches),
-                verbose=args.verbose)
-            # A stage that ran PR-derived code may have tampered with the
-            # containers it used, so the vetter opens its own.
-            vetting = vet_review(vetter, replace(
-                review_ctx, source_bundle=None, source_files=[],
-                source_notes=[], collect_branches=None,
-                open_shell=open_machine_shell if args.podman else None,
-                close_shells=close_machine_shells if args.podman else None))
-            workset_note(args, "vetting", vetting)
+            vet_verdict(review)
 
         message = review.message
         if review.classification == "skip":

@@ -64,7 +64,7 @@ from pathlib import Path
 from typing import Iterator, Sequence
 
 from common import JsonObject
-from git_util import FORGE_REMOTES, git_push_refspecs, git_rev_parse
+from git_util import FORGE_REMOTES, git_push_refspecs
 from llm_review_api import (BRANCH_NAME_RE, BRANCH_TARGET_RE,
                             MAX_PERSIST_BRANCHES)
 from podman_host import (CONTAINER_EXEC_OUTPUT_CAP, ContainerHandle,
@@ -563,12 +563,14 @@ def _checked_record(record: JsonObject) -> tuple[str, str]:
 def materialized_record(record: JsonObject,
                         *, extra_objects: Path | None = None) -> Iterator[Path]:
     """A scratch bare repo holding a push record's tip under
-    ``refs/heads/<branch>``: the record's bundle fetched with its
-    prerequisites read from the ``objects_repo`` checkout (and
-    ``extra_objects``, e.g. the operator's patch repo, for diffing
-    against refs only that repo has). The repo is removed on exit.
-    Raises ``BranchTransferError`` on a malformed record, a missing
-    prerequisite, or a bundled tip that is not the recorded ``sha``."""
+    ``refs/heads/<branch>``: the record's bundle imported under
+    ``index-pack --strict``, since it was packed in a container that may
+    run PR code, with its prerequisites read from the ``objects_repo``
+    checkout (and ``extra_objects``, e.g. the operator's patch repo, for
+    diffing against refs only that repo has). The repo is removed on
+    exit. Raises ``BranchTransferError`` on a malformed record, a bundle
+    whose objects fail fsck or lack a prerequisite, or one that does not
+    hold the recorded ``sha``."""
     branch, sha = _checked_record(record)
     with tempfile.TemporaryDirectory(prefix="fairy-branch-") as tmp:
         scratch = Path(tmp) / "record.git"
@@ -585,26 +587,14 @@ def materialized_record(record: JsonObject,
             (scratch / "objects" / "info" / "alternates").write_text(
                 "\n".join(alternates) + "\n", encoding="utf-8")
         if record.get("bundle"):
-            bundle_path = Path(tmp) / "record.bundle"
             try:
-                bundle_path.write_bytes(
-                    base64.b64decode(str(record["bundle"]), validate=True))
+                bundle = base64.b64decode(str(record["bundle"]), validate=True)
             except (binascii.Error, ValueError) as exc:
                 raise BranchTransferError(
                     f"the bundle of {branch!r} is not base64: {exc}") from exc
-            _git(scratch, "fetch", "--no-tags", str(bundle_path),
-                 f"+refs/heads/{branch}:refs/heads/{branch}")
-        else:
-            _git(scratch, "update-ref", f"refs/heads/{branch}", sha)
-        try:
-            current = git_rev_parse(scratch, f"refs/heads/{branch}")
-        except RuntimeError as exc:
-            raise BranchTransferError(
-                f"materializing {branch!r} yielded no tip: {exc}") from exc
-        if current != sha:
-            raise BranchTransferError(
-                f"the bundle of {branch!r} holds {current[:12]}, the record "
-                f"says {sha[:12]}")
+            _git(scratch, "index-pack", "--stdin", "--fix-thin", "--strict",
+                 input_bytes=bundle.partition(b"\n\n")[2], binary=True)
+        _git(scratch, "update-ref", f"refs/heads/{branch}", sha)
         yield scratch
 
 

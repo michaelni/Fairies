@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
 import sys
 import tempfile
 import types
@@ -826,8 +827,6 @@ class PublishBranchRecordTests(unittest.TestCase):
     def test_ff_pushes_plainly_so_a_moved_forge_branch_refuses(self) -> None:
         with mock.patch.object(branch_persist, "_git",
                                side_effect=_fake_host_git()), \
-                mock.patch.object(branch_persist, "git_rev_parse",
-                                  return_value=GOOD_RECORD["sha"]), \
                 mock.patch.object(branch_persist, "git_push_refspecs") as push:
             name = branch_persist.publish_branch_record(
                 GOOD_RECORD, remote_url=self.URL)
@@ -842,25 +841,12 @@ class PublishBranchRecordTests(unittest.TestCase):
     def test_force_pushes_under_the_recorded_old_tips_lease(self) -> None:
         with mock.patch.object(branch_persist, "_git",
                                side_effect=_fake_host_git()), \
-                mock.patch.object(branch_persist, "git_rev_parse",
-                                  return_value=FORCE_RECORD["sha"]), \
                 mock.patch.object(branch_persist, "git_push_refspecs") as push:
             branch_persist.publish_branch_record(FORCE_RECORD,
                                                  remote_url=self.URL)
         self.assertEqual(
             push.call_args.kwargs["force_with_lease"],
             f"refs/heads/fairy/pr7-fix-overflow:{FORCE_RECORD['old_sha']}")
-
-    def test_a_bundle_with_the_wrong_tip_refuses_the_push(self) -> None:
-        with mock.patch.object(branch_persist, "_git",
-                               side_effect=_fake_host_git()), \
-                mock.patch.object(branch_persist, "git_rev_parse",
-                                  return_value="f" * 40), \
-                mock.patch.object(branch_persist, "git_push_refspecs",
-                                  side_effect=AssertionError("pushed")):
-            with self.assertRaises(branch_persist.BranchTransferError):
-                branch_persist.publish_branch_record(GOOD_RECORD,
-                                                     remote_url=self.URL)
 
     def test_delete_pushes_under_the_recorded_tips_lease(self) -> None:
         with mock.patch.object(branch_persist, "_git",
@@ -903,8 +889,6 @@ class PublishBranchRecordTests(unittest.TestCase):
         record = dict(GOOD_RECORD, bundle="")
         with mock.patch.object(branch_persist, "_git",
                                side_effect=_fake_host_git(calls)), \
-                mock.patch.object(branch_persist, "git_rev_parse",
-                                  return_value=record["sha"]), \
                 mock.patch.object(branch_persist, "git_push_refspecs"):
             branch_persist.publish_branch_record(record, remote_url=self.URL)
         self.assertIn(("update-ref", "refs/heads/pr7-fix-overflow",
@@ -1479,6 +1463,45 @@ class TicketRoundTripTests(unittest.TestCase):
                   "branches": [GOOD_RECORD, DELETE_RECORD]}
         rebuilt = agent.ticket_decision("pr", "5", {"review": review})
         self.assertEqual(rebuilt.branches, (DELETE_RECORD,))
+
+
+class MaterializedRecordTests(unittest.TestCase):
+    """Real git: the bundle a record carries was packed in a container
+    that may run PR code, so its objects are fsck'd on the way in."""
+
+    def _record(self, repo: Path, client: Path, *ident_lines: str) -> dict:
+        def git(*args: str, input_bytes: bytes | None = None) -> str:
+            return subprocess.run(["git", "-C", str(repo), *args], input=input_bytes,
+                                  capture_output=True, check=True).stdout.decode().strip()
+        tree = git("hash-object", "-t", "tree", "-w", "--stdin", input_bytes=b"")
+        sha = git("hash-object", "-t", "commit", "-w", "--stdin", "--literally",
+                  input_bytes="\n".join([f"tree {tree}", *ident_lines, "", "msg", ""]).encode())
+        git("update-ref", "refs/heads/b", sha)
+        bundle = subprocess.run(["git", "-C", str(repo), "bundle", "create", "-",
+                                 "refs/heads/b"], capture_output=True, check=True).stdout
+        return dict(GOOD_RECORD, branch="b", sha=sha, old_sha=None,
+                    bundle=base64.b64encode(bundle).decode(), objects_repo=str(client))
+
+    def test_the_bundles_objects_are_fscked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, client = Path(tmp) / "repo", Path(tmp) / "client"
+            for each in (repo, client):
+                subprocess.run(["git", "init", "-q", str(each)], check=True)
+            alice = "Alice <alice@example.org> 1 +0000"
+            good = self._record(repo, client, f"author {alice}", f"committer {alice}")
+            with branch_persist.materialized_record(good) as scratch:
+                self.assertEqual(good["sha"], subprocess.run(
+                    ["git", "-C", str(scratch), "rev-parse", "refs/heads/b"],
+                    capture_output=True, check=True).stdout.decode().strip())
+            no_committer = self._record(repo, client, f"author {alice}")
+            with self.assertRaisesRegex(branch_persist.BranchTransferError,
+                                        "index-pack"):
+                with branch_persist.materialized_record(no_committer):
+                    pass
+            with self.assertRaisesRegex(branch_persist.BranchTransferError,
+                                        "nonexistent object"):
+                with branch_persist.materialized_record(dict(good, sha="a" * 40)):
+                    pass
 
 
 if __name__ == "__main__":

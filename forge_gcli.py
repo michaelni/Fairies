@@ -702,11 +702,7 @@ def post_issue_comment(
         raise RuntimeError(
             f"gcli comment failed for {owner}/{repo}#{number} "
             f"(forge_type={forge_type!r}, kind={kind!r}, "
-            f"rc={cp.returncode}): {cp.stderr.strip()}\n"
-            f"If forge_type is github or gitlab, the gcli "
-            f"abstraction for ``gcli comment`` may not yet support "
-            f"that backend in the way mail_fairy expects. Please "
-            f"report or patch forge_gcli.post_issue_comment."
+            f"rc={cp.returncode}): {cp.stderr.strip()}"
         )
 
 

@@ -575,15 +575,15 @@ class CopyAndOpenShellTests(unittest.TestCase):
 
         def fake_popen(argv, **_kw):
             popen_argvs.append(argv)
+            if "mkdir" in argv[-1]:
+                return _StreamPopen(b"")
             return _FakePopen(argv, rc=0)
 
-        with mock.patch.object(lc.subprocess, "run", return_value=_completed(0)) as run, \
-                mock.patch.object(lc.subprocess, "Popen", side_effect=fake_popen):
+        with mock.patch.object(lc.subprocess, "Popen", side_effect=fake_popen):
             lc.copy_into_container(handle, Path("/x/agent.py"), "/work/.fairy")
-        self.assertEqual(_ssh("podman exec cid mkdir -p /work/.fairy"),
-                         run.call_args.args[0])
-        self.assertEqual(["tar", "-b", "1", "-C", "/x", "-cf", "-", "agent.py"], popen_argvs[0])
-        self.assertEqual(_ssh("podman cp - cid:/work/.fairy"), popen_argvs[1])
+        self.assertEqual(_ssh("podman exec cid mkdir -p /work/.fairy"), popen_argvs[0])
+        self.assertEqual(["tar", "-b", "1", "-C", "/x", "-cf", "-", "agent.py"], popen_argvs[1])
+        self.assertEqual(_ssh("podman cp - cid:/work/.fairy"), popen_argvs[2])
 
     def test_copied_tar_stream_ends_at_the_end_of_archive_marker(self) -> None:
         handle = lc.ContainerHandle(container_id="cid", image="i", network=None, host=HOST)
@@ -594,14 +594,15 @@ class CopyAndOpenShellTests(unittest.TestCase):
             stream = Path(scratch) / "stream.tar"
 
             def popen(argv, **kw):
+                if "mkdir" in argv[-1]:
+                    return _StreamPopen(b"")
                 if argv[0] != "tar":
                     argv = [sys.executable, "-c",
                             "import sys; open(sys.argv[1], 'wb').write(sys.stdin.buffer.read())",
                             str(stream)]
                 return real_popen(argv, **kw)
 
-            with mock.patch.object(lc.subprocess, "run", return_value=_completed(0)), \
-                    mock.patch.object(lc.subprocess, "Popen", side_effect=popen):
+            with mock.patch.object(lc.subprocess, "Popen", side_effect=popen):
                 lc.copy_into_container(handle, local, "/work/.grok-run")
             self.assertEqual(512 + 59 * 512 + 2 * 512, stream.stat().st_size)
 
@@ -610,12 +611,13 @@ class CopyAndOpenShellTests(unittest.TestCase):
         cp_argvs: list = []
 
         def fake_popen(argv, **_kw):
+            if "mkdir" in argv[-1]:
+                return _StreamPopen(b"")
             if argv[0] != "tar":
                 cp_argvs.append(argv)
             return _FakePopen(argv, rc=1, comm=(b"", b"cp boom"))
 
-        with mock.patch.object(lc.subprocess, "run", return_value=_completed(0)), \
-                mock.patch.object(lc.subprocess, "Popen", side_effect=fake_popen), \
+        with mock.patch.object(lc.subprocess, "Popen", side_effect=fake_popen), \
                 mock.patch.object(lc.time, "sleep") as sleep:
             with self.assertRaisesRegex(RuntimeError, "cp boom"):
                 lc.copy_into_container(handle, Path("/x/agent.py"), "/work/.fairy",
@@ -628,13 +630,14 @@ class CopyAndOpenShellTests(unittest.TestCase):
         cp_results = iter([1, 0])
 
         def fake_popen(argv, **_kw):
+            if "mkdir" in argv[-1]:
+                return _StreamPopen(b"")
             if argv[0] == "tar":
                 return _FakePopen(argv, rc=0)
             return _FakePopen(argv, rc=next(cp_results),
                               comm=(b"", b"io: read/write on closed pipe"))
 
-        with mock.patch.object(lc.subprocess, "run", return_value=_completed(0)), \
-                mock.patch.object(lc.subprocess, "Popen", side_effect=fake_popen), \
+        with mock.patch.object(lc.subprocess, "Popen", side_effect=fake_popen), \
                 mock.patch.object(lc.time, "sleep") as sleep:
             lc.copy_into_container(handle, Path("/x/agent.py"), "/work/.fairy")
         self.assertEqual(1, sleep.call_count)

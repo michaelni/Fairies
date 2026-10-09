@@ -67,7 +67,8 @@ from common import JsonObject
 from git_util import FORGE_REMOTES, git_push_refspecs, git_rev_parse
 from llm_review_api import (BRANCH_NAME_RE, BRANCH_TARGET_RE,
                             MAX_PERSIST_BRANCHES)
-from podman_host import ContainerHandle, copy_into_container, run_on_remote_host
+from podman_host import (CONTAINER_EXEC_OUTPUT_CAP, ContainerHandle,
+                         copy_into_container, run_on_remote_host)
 from podman_repos import RepoSpec
 
 __all__ = [
@@ -191,7 +192,7 @@ def _git(repo: Path, *args: str, check: bool = True,
 
 def _container_git(handle: ContainerHandle, repo_path: str, *args: str,
                    timeout_s: float = _GIT_TIMEOUT_S,
-                   max_output_bytes: int | None = None):
+                   max_output_bytes: int = CONTAINER_EXEC_OUTPUT_CAP):
     return run_on_remote_host(
         handle.host, "podman", "exec", handle.container_id,
         "git", "-C", repo_path, *args, timeout_s=timeout_s,
@@ -248,14 +249,16 @@ def setup_container_remotes(
         fake = _fake_remote_path(spec.name)
         cp = run_on_remote_host(handle.host, "podman", "exec",
                                 handle.container_id,
-                                "git", "init", "--bare", "--quiet", fake)
+                                "git", "init", "--bare", "--quiet", fake,
+                                max_output_bytes=CONTAINER_EXEC_OUTPUT_CAP)
         if cp.returncode == 0:
             # the bare repo's alternates read the checkout's objects, so
             # it stores only what the model pushes on top
             cp = run_on_remote_host(
                 handle.host, "podman", "exec", handle.container_id, "sh", "-c",
                 f"echo {spec.container_path}/.git/objects"
-                f" > {fake}/objects/info/alternates")
+                f" > {fake}/objects/info/alternates",
+                max_output_bytes=CONTAINER_EXEC_OUTPUT_CAP)
         if cp.returncode != 0:
             raise BranchTransferError(
                 f"creating the fairy remote for {spec.name!r} in container "

@@ -149,6 +149,7 @@ class ExecResult:
 
 
 HOST_RESPONSE_MARGIN_S = 30.0
+CONTAINER_EXEC_OUTPUT_CAP = 1 << 20
 
 # The legitimate agent has at most one response in flight; blocking the
 # reader pushes back on the pipe instead of growing host memory.
@@ -988,8 +989,9 @@ def copy_into_container(
     ``dest_dir`` is created first. A failed ``podman cp`` is retried up
     to ``attempts`` times with a short random delay."""
     local_path = Path(local_path)
-    cp = _podman(handle.host, "exec", handle.container_id, "mkdir", "-p", dest_dir,
-                 timeout_s=timeout_s)
+    cp = run_on_remote_host(handle.host, "podman", "exec", handle.container_id,
+                            "mkdir", "-p", dest_dir, timeout_s=timeout_s,
+                            max_output_bytes=CONTAINER_EXEC_OUTPUT_CAP)
     if cp.returncode != 0:
         raise ContainerInfraError(
             f"mkdir -p {dest_dir} in container failed: "

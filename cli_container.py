@@ -63,6 +63,7 @@ from typing import Callable, Sequence
 from common import EXIT_REVIEW_STOPPED_BY_HALT_FILE, tagged_thread_name
 from podman_host import (
     CONTAINER_CPUS,
+    CONTAINER_EXEC_OUTPUT_CAP,
     CONTAINER_MEMORY,
     ContainerHandle,
     ContainerInfraError,
@@ -212,8 +213,9 @@ class CliContainer:
             try:
                 rc = run_on_remote_host(
                     self.host, "podman", "exec", self._cid(),
-                    "sh", "-c", "kill -KILL -1", timeout_s=60.0).returncode
-            except subprocess.TimeoutExpired:
+                    "sh", "-c", "kill -KILL -1", timeout_s=60.0,
+                    max_output_bytes=CONTAINER_EXEC_OUTPUT_CAP).returncode
+            except (subprocess.TimeoutExpired, ContainerInfraError):
                 rc = None
         if rc not in (0, 1):
             logger.warning("killing the run failed (rc=%s); removing "

@@ -212,14 +212,16 @@ class KillRunTests(unittest.TestCase):
                     return_value=mock.Mock(returncode=rc))
                 kill.assert_called_once_with(
                     HOST, "podman", "exec", "cid", "sh", "-c", "kill -KILL -1",
-                    timeout_s=60.0)
+                    timeout_s=60.0,
+                    max_output_bytes=cli_container.CONTAINER_EXEC_OUTPUT_CAP)
                 stop.assert_not_called()
 
     def test_failed_kill_removes_the_container(self) -> None:
         for effect in (
                 {"return_value": mock.Mock(returncode=125)},
                 {"side_effect": cli_container.subprocess.TimeoutExpired(
-                    "ssh", 60.0)}):
+                    "ssh", 60.0)},
+                {"side_effect": cli_container.ContainerInfraError("flooded")}):
             with self.subTest(effect=effect):
                 self.setUp()
                 _, stop = self._kill_during_run(**effect)

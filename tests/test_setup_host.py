@@ -39,6 +39,7 @@ is mocked. The point is to lock down:
 
 from __future__ import annotations
 
+import shutil
 import sys
 import tempfile
 import unittest
@@ -177,36 +178,47 @@ def _pwd_entry(uid: int) -> mock.Mock:
 
 
 class BuildRootlessEgressNftTests(unittest.TestCase):
-    def test_keys_on_uid_exempts_dns_and_drops_lan(self) -> None:
+    def test_keys_on_uids_exempts_dns_and_drops_lan(self) -> None:
         script = setup_host.build_rootless_egress_nft(
-            uid=ROOTLESS_UID, table=ROOTLESS_TABLE)
+            uid_ranges=[(ROOTLESS_UID, ROOTLESS_UID), (100000, 165535)],
+            table=ROOTLESS_TABLE)
+        skuids = f"meta skuid {{ {ROOTLESS_UID}, 100000-165535 }}"
         self.assertIn(f"add table inet {ROOTLESS_TABLE}", script)
         self.assertIn("hook output priority filter - 10", script)
         # DNS exempted before the LAN drop, so name resolution via a LAN
         # resolver survives.
         for proto in ("udp", "tcp"):
-            self.assertIn(
-                f"meta skuid {ROOTLESS_UID} {proto} dport 53 accept", script)
+            self.assertIn(f"{skuids} {proto} dport 53 accept", script)
         for dest in setup_host.LAN_BLOCK_DESTS:
             self.assertIn(dest, script)
         for dest in setup_host.LAN_BLOCK_DESTS6:
             self.assertIn(dest, script)
-        self.assertIn(f"meta skuid {ROOTLESS_UID} ip daddr", script)
-        self.assertIn(
-            f"meta skuid {ROOTLESS_UID} fib daddr type local drop", script)
+        self.assertIn(f"{skuids} ip daddr", script)
+        self.assertIn(f"{skuids} fib daddr type local drop", script)
         self.assertLess(script.index("dport 53 accept"),
                         script.index("ip daddr"))
         self.assertLess(script.index("dport 53 accept"),
                         script.index("fib daddr type local"))
 
 
+SANDBOX_SKUIDS = f"meta skuid {{ {ROOTLESS_UID}, 200000-265535, 300000-300009 }}"
+
+
 class ConfigureRootlessEgressTests(unittest.TestCase):
+    def setUp(self) -> None:
+        subuid_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, subuid_dir)
+        self.subuid_file = Path(subuid_dir) / "subuid"
+        self.subuid_file.write_text(
+            f"other:100000:65536\nsandbox:200000:65536\n{ROOTLESS_UID}:300000:10\n",
+            encoding="utf-8")
+
     def _kwargs(self, **overrides: object) -> dict[str, object]:
         base: dict[str, object] = dict(
-            user="sandbox", table=ROOTLESS_TABLE,
+            users=["sandbox"], table=ROOTLESS_TABLE,
             nft_file=Path("/etc/fairy-egress.nft"),
             unit_file=Path("/etc/systemd/system/fairy-egress.service"),
-            apply=False,
+            apply=False, subuid_file=self.subuid_file,
         )
         base.update(overrides)
         return base
@@ -233,7 +245,20 @@ class ConfigureRootlessEgressTests(unittest.TestCase):
         self.assertEqual(0, rc)
         self.assertFalse(write.called)
         self.assertEqual(["nft", "--check", "-f", "-"], run.call_args.args[0])
-        self.assertIn(f"meta skuid {ROOTLESS_UID}", run.call_args.kwargs["input"])
+        self.assertIn(SANDBOX_SKUIDS, run.call_args.kwargs["input"])
+
+    def test_one_ruleset_covers_every_account(self) -> None:
+        entries = {"sandbox": _pwd_entry(ROOTLESS_UID), "builder": _pwd_entry(4343)}
+        with mock.patch.object(setup_host.pwd, "getpwnam",
+                               side_effect=entries.__getitem__), \
+             mock.patch.object(setup_host.os, "geteuid", return_value=0), \
+             mock.patch.object(setup_host.subprocess, "run",
+                               return_value=_completed(0)) as run, \
+             mock.patch.object(Path, "write_text"):
+            rc = setup_host.configure_rootless_egress(
+                **self._kwargs(users=["sandbox", "builder"]))
+        self.assertEqual(0, rc)
+        self.assertIn(SANDBOX_SKUIDS[:-2] + ", 4343 }", run.call_args.kwargs["input"])
 
     def test_root_dry_run_fails_on_rejected_script(self) -> None:
         with mock.patch.object(setup_host.pwd, "getpwnam",
@@ -281,8 +306,7 @@ class ConfigureRootlessEgressTests(unittest.TestCase):
                 rc = setup_host.configure_rootless_egress(
                     **self._kwargs(apply=True, nft_file=nft_file, unit_file=unit_file))
             self.assertEqual(0, rc)
-            self.assertIn(f"meta skuid {ROOTLESS_UID}",
-                          nft_file.read_text(encoding="utf-8"))
+            self.assertIn(SANDBOX_SKUIDS, nft_file.read_text(encoding="utf-8"))
             self.assertIn(str(nft_file), unit_file.read_text(encoding="utf-8"))
         commands = [call.args[0] for call in run.call_args_list]
         # nft -f loads now; enable (not --now) only persists across boot,

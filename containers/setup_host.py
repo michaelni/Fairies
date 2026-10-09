@@ -35,11 +35,13 @@ useful during review. The filter lives on the HOST, outside the
 container, so a fully compromised container cannot remove it. Default mode is dry-run (every
 command is printed, nothing runs); ``--apply`` executes.
 
-For rootless podman (``--rootless-user USER``, the production model): the
-network backend (slirp4netns or pasta) forwards container egress from a
-host socket owned by USER's uid, so the block is an OUTPUT drop keyed on
-``meta skuid <uid>`` -- the container cannot change that uid or touch
-host nftables, so it is bypass-proof from inside. Host-local
+For rootless podman (``--rootless-user USER``, repeatable, the production
+model): the network backend (slirp4netns or pasta) forwards container
+egress from a host socket owned by USER's uid, so the block is an OUTPUT
+drop keyed on ``meta skuid`` -- the container cannot change that uid or
+touch host nftables, so it is bypass-proof from inside. USER's
+subordinate uids (``/etc/subuid``) are keyed too: a process that escapes
+a ``--userns=nomap`` container runs as one of them. Host-local
 destinations (``fib daddr type local``: loopback and every address the
 host owns, including its public one, which no LAN range covers) are
 dropped too, so the account cannot reach host-only services such as
@@ -66,6 +68,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -82,6 +85,7 @@ DEFAULT_TABLE_NAME = "fairy_isolation"
 DEFAULT_ROOTLESS_TABLE = "fairy_egress"
 DEFAULT_NFT_FILE = Path("/etc/fairy-egress.nft")
 DEFAULT_UNIT_FILE = Path("/etc/systemd/system/fairy-egress.service")
+SUBUID_FILE = Path("/etc/subuid")
 
 # Destinations the container must NOT be able to reach. Excludes the
 # container's own subnet (added to the allow rule below) so intra-net
@@ -116,26 +120,44 @@ def build_nft_script(*, subnet: str, table: str) -> str:
     )
 
 
-def build_rootless_egress_nft(*, uid: int, table: str) -> str:
+def subordinate_uid_ranges(user: str, uid: int, *,
+                           subuid_file: Path = SUBUID_FILE) -> list[tuple[int, int]]:
+    """The ``(first, last)`` uid ranges ``subuid_file`` grants ``user``,
+    whose entries name the account or its uid."""
+    ranges = []
+    if subuid_file.is_file():
+        for line in subuid_file.read_text(encoding="utf-8").splitlines():
+            owner, _, rest = line.partition(":")
+            if owner in (user, str(uid)):
+                first, _, count = rest.partition(":")
+                ranges.append((int(first), int(first) + int(count) - 1))
+    return ranges
+
+
+def build_rootless_egress_nft(*, uid_ranges: Sequence[tuple[int, int]],
+                              table: str) -> str:
     """Render the idempotent uid-keyed OUTPUT ruleset (see module docstring).
 
     ``add``+``flush`` make re-running converge to the same state. Traffic
-    from ``uid`` to the LAN ranges and to host-local addresses is
-    dropped; DNS (port 53) and everything to the public internet pass.
+    from the ``(first, last)`` ``uid_ranges`` to the LAN ranges and to
+    host-local addresses is dropped; DNS (port 53) and everything to the
+    public internet pass.
     """
+    skuids = ", ".join(f"{first}-{last}" if last > first else str(first)
+                       for first, last in uid_ranges)
     dests = ", ".join(LAN_BLOCK_DESTS)
     dests6 = ", ".join(LAN_BLOCK_DESTS6)
     return (
         f"add table inet {table}\n"
         f"flush table inet {table}\n"
         f"add chain inet {table} output {{ type filter hook output priority filter - 10; policy accept; }}\n"
-        f"add rule inet {table} output meta skuid {uid} udp dport 53 accept\n"
-        f"add rule inet {table} output meta skuid {uid} tcp dport 53 accept\n"
+        f"add rule inet {table} output meta skuid {{ {skuids} }} udp dport 53 accept\n"
+        f"add rule inet {table} output meta skuid {{ {skuids} }} tcp dport 53 accept\n"
         f"# Restrict DNS to one resolver by dropping the two rules above and adding e.g.:\n"
-        f"# add rule inet {table} output meta skuid {uid} ip daddr 192.0.2.53 udp dport 53 accept\n"
-        f"add rule inet {table} output meta skuid {uid} ip daddr {{ {dests} }} drop\n"
-        f"add rule inet {table} output meta skuid {uid} ip6 daddr {{ {dests6} }} drop\n"
-        f"add rule inet {table} output meta skuid {uid} fib daddr type local drop\n"
+        f"# add rule inet {table} output meta skuid {{ {skuids} }} ip daddr 192.0.2.53 udp dport 53 accept\n"
+        f"add rule inet {table} output meta skuid {{ {skuids} }} ip daddr {{ {dests} }} drop\n"
+        f"add rule inet {table} output meta skuid {{ {skuids} }} ip6 daddr {{ {dests6} }} drop\n"
+        f"add rule inet {table} output meta skuid {{ {skuids} }} fib daddr type local drop\n"
     )
 
 
@@ -156,9 +178,11 @@ def build_egress_unit(*, nft_file: Path) -> str:
 
 
 def configure_rootless_egress(
-    *, user: str, table: str, nft_file: Path, unit_file: Path, apply: bool,
+    *, users: Sequence[str], table: str, nft_file: Path, unit_file: Path,
+    apply: bool, subuid_file: Path = SUBUID_FILE,
 ) -> int:
-    """Print or install the rootless uid-keyed LAN-egress block.
+    """Print or install the rootless uid-keyed LAN-egress block for the
+    accounts ``users`` and their subordinate uids from ``subuid_file``.
 
     ``--apply`` writes ``nft_file`` and ``unit_file``, loads the ruleset
     now with ``nft -f``, and enables the unit so it reloads on boot; it
@@ -171,15 +195,19 @@ def configure_rootless_egress(
     is active, which would leave an edited ruleset written-but-not-loaded
     on a re-apply. Returns a process exit code.
     """
-    try:
-        uid = pwd.getpwnam(user).pw_uid
-    except KeyError:
-        logger.error("no such user %r on this host", user)
-        return 2
-    if uid == 0:
-        logger.error("refusing to block root's egress (uid 0)")
-        return 2
-    nft_script = build_rootless_egress_nft(uid=uid, table=table)
+    uid_ranges: list[tuple[int, int]] = []
+    for user in users:
+        try:
+            uid = pwd.getpwnam(user).pw_uid
+        except KeyError:
+            logger.error("no such user %r on this host", user)
+            return 2
+        if uid == 0:
+            logger.error("refusing to block root's egress (uid 0)")
+            return 2
+        uid_ranges += [(uid, uid),
+                       *subordinate_uid_ranges(user, uid, subuid_file=subuid_file)]
+    nft_script = build_rootless_egress_nft(uid_ranges=uid_ranges, table=table)
     unit = build_egress_unit(nft_file=nft_file)
     commands = [
         ["nft", "-f", str(nft_file)],
@@ -204,7 +232,8 @@ def configure_rootless_egress(
         )
         return 1
 
-    logger.info("blocking LAN egress for user %s (uid %d)", user, uid)
+    logger.info("blocking LAN egress for %s (uids %s)", ", ".join(users),
+                ", ".join(f"{first}-{last}" for first, last in uid_ranges))
     nft_file.write_text(nft_script, encoding="utf-8")
     unit_file.write_text(unit, encoding="utf-8")
     for cmd in commands:
@@ -285,9 +314,11 @@ def configure_host(
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0] if __doc__ else "")
     p.add_argument(
-        "--rootless-user",
+        "--rootless-user", action="append", metavar="USER",
         help="rootless podman account whose LAN egress to block via a "
-             "uid-keyed OUTPUT rule (the production model; run --apply as root)",
+             "uid-keyed OUTPUT rule, its subordinate uids included; repeat "
+             "for every account, one ruleset covers them all (the "
+             "production model; run --apply as root)",
     )
     p.add_argument("--network-name", default=DEFAULT_NETWORK_NAME, help="podman network name")
     p.add_argument("--subnet", default=DEFAULT_SUBNET, help="IPv4 subnet for the isolated network")
@@ -307,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(logger, args.verbose, color=args.color)
     if args.rootless_user:
         return configure_rootless_egress(
-            user=args.rootless_user, table=DEFAULT_ROOTLESS_TABLE,
+            users=args.rootless_user, table=DEFAULT_ROOTLESS_TABLE,
             nft_file=DEFAULT_NFT_FILE, unit_file=DEFAULT_UNIT_FILE, apply=args.apply,
         )
     return configure_host(

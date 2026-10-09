@@ -245,15 +245,18 @@ host nftables rule that drops the podman account's new connections to
 RFC1918 / link-local / CGNAT and to the host's own addresses (loopback
 included, so no ssh to the host's sshd) and lets everything else
 through. Dry-run, then
-apply as root on the podman host:
+apply as root on the podman host, naming every account that runs containers
+(the review account and each CLI backend's account); one ruleset covers them
+all:
 
-    python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT
-    sudo python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT --apply
+    python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT --rootless-user CODEX_ACCOUNT
+    sudo python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT --rootless-user CODEX_ACCOUNT --apply
 
-The rule is keyed on the account's uid (rootless podman's slirp4netns/pasta
-forwards container egress from a socket owned by that uid), so it is
-bypass-proof from inside the container. `--apply` also installs a systemd
-unit that reloads it on boot.
+The rule is keyed on the accounts' uids (rootless podman's slirp4netns/pasta
+forwards container egress from a socket owned by that uid) and their
+subordinate uids from `/etc/subuid` (what a process escaping a
+`--userns=nomap` container runs as), so it is bypass-proof from inside the
+container. `--apply` also installs a systemd unit that reloads it on boot.
 
 - `SANDBOX_ACCOUNT` must be **dedicated** to running review containers: every
   LAN connection it opens is dropped, so it must not also run the fairy

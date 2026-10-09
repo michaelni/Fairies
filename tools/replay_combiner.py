@@ -129,7 +129,7 @@ def main() -> int:
 
     patch = request.get("patch") if isinstance(request.get("patch"), str) else ""
     source_bundle, source_files, source_notes = wrapper.build_source_bundle(
-        request, repo_root,
+        request, repo_root, wrapper.merge_into_target(request, repo_root),
         max_source_files=args.max_source_files,
         max_file_bytes=args.max_file_bytes,
         max_header_file_bytes=args.max_header_file_bytes,

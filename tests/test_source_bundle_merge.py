@@ -138,7 +138,7 @@ class SourceBundleMergeTests(unittest.TestCase):
                               lambda _repo, revision, relpath: REPO_FILES.get((revision, relpath))),
         ):
             return wrapper.build_source_bundle(
-                request, Path("repo"),
+                request, Path("repo"), wrapper.merge_into_target(request, Path("repo")),
                 max_source_files=5, max_file_bytes=10000,
                 max_header_file_bytes=10000, max_bundle_bytes=100000,
                 include_direct_includes=False, verbose=False,

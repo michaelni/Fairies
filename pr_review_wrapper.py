@@ -79,7 +79,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, NamedTuple, Sequence
 
 from openai import OpenAI
 
@@ -1081,9 +1081,41 @@ def resolve_target_tip(repo_root: Path, base_ref: str) -> str | None:
          base_ref))
 
 
+class TargetMerge(NamedTuple):
+    """git_merge_tree's ``tree`` and ``conflicts`` of the PR head merged
+    into ``tip``, the local tip of ``base_ref``."""
+    base_ref: str
+    tip: str
+    tree: str
+    conflicts: str
+
+
+def merge_into_target(request: JsonObject, repo_root: Path | None) -> TargetMerge | None:
+    """The PR head of ``request`` merged into the local tip of its
+    base_ref; None, logged, when it cannot be made."""
+    pr = request.get("pull_request")
+    if repo_root is None or not isinstance(pr, dict):
+        return None
+    head_sha, base_ref = pr.get("head_sha"), pr.get("base_ref")
+    if not (isinstance(head_sha, str) and head_sha and isinstance(base_ref, str) and base_ref):
+        return None
+    tip = resolve_target_tip(repo_root, base_ref)
+    merge = None
+    if tip:
+        try:
+            merge = TargetMerge(base_ref, tip, *git_merge_tree(repo_root, head_sha, tip))
+        except RuntimeError as exc:
+            logger.warning("merge into %s: %s", base_ref, exc)
+    logger.info("merge of %s into %s (%s): %s%s", head_sha, base_ref, tip,
+                merge.tree if merge else "unavailable",
+                ", conflicts" if merge and merge.conflicts else "")
+    return merge
+
+
 def build_source_bundle(
     request: JsonObject,
     repo_root: Path | None,
+    merge: TargetMerge | None,
     *,
     max_source_files: int,
     max_file_bytes: int,
@@ -1095,47 +1127,29 @@ def build_source_bundle(
     if repo_root is None:
         raise RuntimeError("no local git checkout found")
 
-    _pr, patch_base_sha, head_sha = parse_source_bundle_request_info(request)
+    _, patch_base_sha, head_sha = parse_source_bundle_request_info(request)
     changed_paths = git_changed_paths(repo_root, patch_base_sha, head_sha)
     logger.debug("source bundle: %s..%s changes %s", patch_base_sha, head_sha, changed_paths)
-
-    # Contents come from the predicted merge of PR head into the current target
-    # tip, so a model cannot conclude the PR "removes" unrelated target work.
-    merged_tree = base_sha = None
-    conflicts = ""
-    base_ref = _pr.get("base_ref") if isinstance(_pr.get("base_ref"), str) else ""
-    if base_ref:
-        base_sha = resolve_target_tip(repo_root, base_ref)
-        if base_sha:
-            try:
-                merged_tree, conflicts = git_merge_tree(repo_root, head_sha, base_sha)
-            except RuntimeError as exc:
-                logger.warning("source bundle: %s", exc)
-        logger.info(
-            "source bundle: merge of %s into %s (%s): %s%s",
-            head_sha, base_ref, base_sha, merged_tree or "unavailable",
-            ", conflicts" if conflicts else "",
-        )
 
     bundle_parts: list[str] = []
     notes: list[str] = []
     total_bytes = 0
 
+    # Contents come from the predicted merge of PR head into the current target
+    # tip, so a model cannot conclude the PR "removes" unrelated target work.
     header = (
         f"Repository: {repo_root.name}\n"
         f"Head SHA: {head_sha}\n"
         + (f"File contents are the merge result of the PR head into the current "
-           f"{base_ref} tip {base_sha}.\n"
-           if merged_tree else "")
+           f"{merge.base_ref} tip {merge.tip}.\n"
+           if merge else "")
         + f"Changed files: {len(changed_paths)}\n\n"
     )
     bundle_parts.append(header)
     total_bytes += len(header.encode("utf-8"))
 
     direct_paths = changed_paths[:max_source_files]
-    commit_shas = [head_sha]
-    if merged_tree:
-        commit_shas = [merged_tree] + commit_shas
+    commit_shas = [merge.tree, head_sha] if merge else [head_sha]
     ordered_paths, loaded_texts, source_revisions, include_notes = load_source_bundle_texts(
         repo_root,
         head_sha,
@@ -1146,8 +1160,8 @@ def build_source_bundle(
     notes.extend(include_notes)
 
     source_labels = {
-        relpath: (f"merge of PR head {head_sha} into {base_ref} {base_sha}"
-                  if revision == merged_tree else f"git show {revision}:{relpath}")
+        relpath: (f"merge of PR head {head_sha} into {merge.base_ref} {merge.tip}"
+                  if merge and revision == merge.tree else f"git show {revision}:{relpath}")
         for relpath, revision in source_revisions.items()
     }
     used_paths, truncated_paths, total_bytes = append_source_bundle_files(
@@ -1687,6 +1701,7 @@ def main() -> int:
             source_bundle, source_files, source_notes = build_source_bundle(
                 request,
                 repo_root,
+                merge_into_target(request, repo_root),
                 max_source_files=args.max_source_files,
                 max_file_bytes=args.max_file_bytes,
                 max_header_file_bytes=args.max_header_file_bytes,

@@ -795,8 +795,10 @@ has one, and when it happened. The kinds:
 - ``pinned``, ``unpinned``, ``auto_merge_scheduled``,
   ``auto_merge_cancelled``, ``converted_to_draft``, ``ready_for_review``,
   ``linked``, ``unlinked``, ``transferred``, ``marked_duplicate``,
-  ``unmarked_duplicate``, ``head_branch_restored``: what the name says,
-  no further fields.
+  ``unmarked_duplicate``, ``head_branch_restored``,
+  ``time_tracking_started``, ``time_tracking_cancelled``: what the name
+  says, no further fields.
+- ``time_tracking_stopped``: the stopwatch stopped after ``duration``.
 - ``review_dismissed``: a review was dismissed, with the ``reason``
   given.
 - ``due_date_set``, ``due_date_changed``, ``due_date_removed``: the

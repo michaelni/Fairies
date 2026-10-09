@@ -420,6 +420,21 @@ class TypedEventTests(unittest.TestCase):
                     forge_item.build_llm_discussion([], [], [], _load_timeline(name)),
                     [expected])
 
+    def test_time_tracking(self) -> None:
+        """No capture of ours; the types and bodies are as FFmpeg PR 20001's
+        timeline carries them."""
+        disc = forge_item.build_llm_discussion([], [], [], [
+            forge_gcli.project_timeline_event(
+                {"type": kind, "user": {"login": "michaelni"}, "created_at": at, "body": body})
+            for kind, at, body in (("start_tracking", "2025-01-22T14:05:00Z", ""),
+                                   ("stop_tracking", "2025-01-22T14:05:33Z", "33 seconds"),
+                                   ("cancel_tracking", "2025-01-22T14:06:00Z", ""))])
+        self.assertEqual([{k: v for k, v in item.items() if k not in ("author", "created_at")}
+                          for item in disc],
+                         [{"kind": "time_tracking_started"},
+                          {"kind": "time_tracking_stopped", "duration": "33 seconds"},
+                          {"kind": "time_tracking_cancelled"}])
+
     def test_a_dependency_on_a_deleted_issue_projects_empty(self) -> None:
         disc = forge_item.build_llm_discussion([], [], [], [
             forge_gcli.project_timeline_event(

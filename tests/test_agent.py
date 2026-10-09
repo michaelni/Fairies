@@ -1137,7 +1137,7 @@ class UnaffectingChangeSendTests(SendCase):
                          "PR updated_at changed")
 
     def test_a_timeline_entry_the_discussion_drops_blocks(self) -> None:
-        self.send_updated([LABEL, {"type": "start_tracking", "user": {"login": "a"},
+        self.send_updated([LABEL, {"type": "project", "user": {"login": "a"},
                                    "created_at": "2026-07-20T00:00:00Z", "body": ""}]
                           ).assert_not_called()
 

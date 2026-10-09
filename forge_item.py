@@ -181,6 +181,7 @@ FIELDLESS_KINDS = {
     "connected": "linked", "disconnected": "unlinked", "transferred": "transferred",
     "marked_as_duplicate": "marked_duplicate", "unmarked_as_duplicate": "unmarked_duplicate",
     "head_ref_restored": "head_branch_restored",
+    "start_tracking": "time_tracking_started", "cancel_tracking": "time_tracking_cancelled",
 }
 
 # Forge timeline entry -> the discussion kind and fields it becomes,
@@ -213,6 +214,7 @@ TIMELINE_ITEMS: dict[str, Callable[[dict], tuple[str, dict] | None]] = {
     "modified_deadline": lambda entry: ("due_date_changed", dict(zip(
         ("new_date", "old_date"), entry["body"].split("|", 1)))),
     "removed_deadline": lambda entry: ("due_date_removed", {"date": entry["body"]}),
+    "stop_tracking": lambda entry: ("time_tracking_stopped", {"duration": entry["body"]}),
     **{event: (lambda entry, kind=kind: (kind, {})) for event, kind in FIELDLESS_KINDS.items()},
     **dict.fromkeys(CROSS_REFERENCE_EVENTS, _mention),
     **dict.fromkeys(COMMIT_REFERENCE_EVENTS, lambda entry: ("mentioned_in_commit", {

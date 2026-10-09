@@ -1102,18 +1102,19 @@ def build_source_bundle(
     # Contents come from the predicted merge of PR head into the current target
     # tip, so a model cannot conclude the PR "removes" unrelated target work.
     merged_tree = base_sha = None
+    conflicts = ""
     base_ref = _pr.get("base_ref") if isinstance(_pr.get("base_ref"), str) else ""
     if base_ref:
         base_sha = resolve_target_tip(repo_root, base_ref)
         if base_sha:
             try:
-                merged_tree = git_merge_tree(repo_root, head_sha, base_sha)
+                merged_tree, conflicts = git_merge_tree(repo_root, head_sha, base_sha)
             except RuntimeError as exc:
                 logger.warning("source bundle: %s", exc)
-                base_sha = None
         logger.info(
-            "source bundle: merge of %s into %s (%s): %s",
+            "source bundle: merge of %s into %s (%s): %s%s",
             head_sha, base_ref, base_sha, merged_tree or "unavailable",
+            ", conflicts" if conflicts else "",
         )
 
     bundle_parts: list[str] = []
@@ -1135,11 +1136,6 @@ def build_source_bundle(
     commit_shas = [head_sha]
     if merged_tree:
         commit_shas = [merged_tree] + commit_shas
-    elif base_sha:
-        notes.append(
-            f"PR head does not merge cleanly into {base_ref} {base_sha}; "
-            f"source files are from the PR commits"
-        )
     ordered_paths, loaded_texts, source_revisions, include_notes = load_source_bundle_texts(
         repo_root,
         head_sha,

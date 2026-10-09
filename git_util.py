@@ -93,19 +93,22 @@ def git_merge_base(repo_root: Path, sha_a: str, sha_b: str) -> str:
     return _git_stdout(repo_root, "merge-base", sha_a, sha_b).decode().strip()
 
 
-def git_merge_tree(repo_root: Path, sha_a: str, sha_b: str) -> str | None:
-    """Tree OID of merging ``sha_a`` and ``sha_b`` without a worktree
-    (``git merge-tree --write-tree``, git 2.38+); None when the merge
-    conflicts; RuntimeError when git cannot merge them."""
+def git_merge_tree(repo_root: Path, sha_a: str, sha_b: str) -> tuple[str, str]:
+    """``(tree, conflicts)`` of merging ``sha_a`` and ``sha_b`` without a
+    worktree (``git merge-tree --write-tree --name-only``, git 2.38+):
+    the merged tree's OID, conflicted files carrying conflict markers,
+    and git's list of the conflicted files and its messages, empty for a
+    clean merge; RuntimeError when git cannot merge them."""
     cp = subprocess.run(
-        ["git", "-C", str(repo_root), "merge-tree", "--write-tree", sha_a, sha_b],
+        ["git", "-C", str(repo_root), "merge-tree", "--write-tree", "--name-only", sha_a, sha_b],
         check=False, text=True, capture_output=True,
     )
     if cp.returncode not in (0, 1) or not cp.stdout.strip():
         raise RuntimeError(
             f"git merge-tree {sha_a} {sha_b} in {repo_root} failed: "
             f"{cp.stderr.strip() or f'exit status {cp.returncode}'}")
-    return None if cp.returncode else cp.stdout.splitlines()[0].strip()
+    tree, _, conflicts = cp.stdout.partition("\n")
+    return tree.strip(), conflicts.strip()
 
 
 def _git_stdout(repo_root: Path, *args: str,

@@ -29,7 +29,7 @@
 
 git_patch_stream: format-patch per non-merge commit, git log per merge;
 git_remote_default_branch: the branch a remote's HEAD symref names;
-git_merge_tree: the merged tree, None on a conflict, an error when git fails;
+git_merge_tree: the merged tree and git's conflict report, an error when git fails;
 git_changed_paths: the files the head leaves in the tree;
 git_submodule_changes: the submodules the head adds, removes or updates."""
 import sys
@@ -136,26 +136,27 @@ class TreeChangesTests(unittest.TestCase):
 
 
 class MergeTreeTests(unittest.TestCase):
-    """Outputs of ``git merge-tree --write-tree`` recorded in a test repository."""
+    """Outputs of ``git merge-tree --write-tree --name-only`` recorded in a
+    test repository."""
 
-    def _merge_tree(self, returncode: int, stdout: str) -> str | None:
+    def _merge_tree(self, returncode: int, stdout: str) -> tuple[str, str]:
         with mock.patch.object(git_util.subprocess, "run", return_value=mock.Mock(
                 returncode=returncode, stdout=stdout, stderr="")):
             return git_util.git_merge_tree(Path("repo"), "head", "tip")
 
     def test_a_clean_merge_yields_its_tree(self) -> None:
         self.assertEqual(self._merge_tree(0, "d2ccaf859e42c58d44a928ea355770f121ea38d1\n"),
-                         "d2ccaf859e42c58d44a928ea355770f121ea38d1")
+                         ("d2ccaf859e42c58d44a928ea355770f121ea38d1", ""))
 
-    def test_a_conflict_yields_none(self) -> None:
-        self.assertIsNone(self._merge_tree(1, (
-            "9c984ccab288b0a289043c493ae1e58a7580fc1c\n"
-            "100644 0bbfb241ce76dab669e3fba205dd89ec6b85a8a8 1\tf.c\n"
-            "100644 03dd8137299d30165c2081ce4ab59ea70ddc029f 2\tf.c\n"
-            "100644 1a2d85c39ee79f163ab075a43900662257196aa7 3\tf.c\n"
+    def test_a_conflict_yields_its_tree_and_gits_report(self) -> None:
+        self.assertEqual(self._merge_tree(1, (
+            "31dcd2b84fd9476f81701b7566592ddb7b55ae23\n"
+            "f.c\n"
             "\n"
             "Auto-merging f.c\n"
-            "CONFLICT (content): Merge conflict in f.c\n")))
+            "CONFLICT (content): Merge conflict in f.c\n")),
+            ("31dcd2b84fd9476f81701b7566592ddb7b55ae23",
+             "f.c\n\nAuto-merging f.c\nCONFLICT (content): Merge conflict in f.c"))
 
     def test_an_unmergeable_revision_is_an_error(self) -> None:
         with self.assertRaises(RuntimeError):

@@ -239,6 +239,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--rebuild", action="store_true", help="force image rebuild even if current")
     p.add_argument(
+        "--no-review-image", action="store_true",
+        help="skip the review image: the host runs only a CLI backend's "
+             "container (built from its --<binary>-bin flags), no review shells",
+    )
+    p.add_argument(
         "--reap-older-than", default="60m", metavar="DURATION",
         help="reap leaked stopped review and CLI containers older than this "
              "podman duration (default: %(default)s); running and paused "
@@ -276,10 +281,11 @@ def main(argv: list[str] | None = None) -> int:
             older_than=args.reap_older_than)
         if reaped:
             logger.info("reaped %d stale container(s) on %s", reaped, args.ssh)
-    ensure_image(
-        host=host, tag=args.tag, dockerfile=dockerfile,
-        context_dir=args.context.resolve(), rebuild=args.rebuild,
-    )
+    if not args.no_review_image:
+        ensure_image(
+            host=host, tag=args.tag, dockerfile=dockerfile,
+            context_dir=args.context.resolve(), rebuild=args.rebuild,
+        )
     install_seccomp_profile(host)
     for cli in CLI_BACKENDS:
         binaries = image_binaries(args, cli)

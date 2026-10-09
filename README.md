@@ -213,7 +213,9 @@ the image and mirrors stay current:
         ~/forgejo_fairy/ffmpeg ~/forgejo_fairy/all_ffmpeg
 
 A review run never builds the image itself: it errors if the image is missing
-and otherwise reuses it as-is. Repo commits need no re-provision; each review
+and otherwise reuses it as-is. A host that only runs a CLI backend's
+container (`--codex-host` and the like) is provisioned with
+`--no-review-image` plus that backend's `--<binary>-bin` flags. Repo commits need no re-provision; each review
 syncs the checkout's current HEAD into the mirror automatically.
 
 Then point the reviewer at the host, either directly:

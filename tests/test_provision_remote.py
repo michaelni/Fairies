@@ -132,6 +132,20 @@ class CliImageOptionTests(unittest.TestCase):
                     {f"localhost/fairy-{each}:latest" for each in pr.CLI_BACKENDS},
                     set(reap.call_args.kwargs["images"]))
 
+    def test_a_cli_only_host_skips_the_review_image(self) -> None:
+        cli, reviewer = next(iter(pr.CLI_BACKENDS.items()))
+        with mock.patch.object(pr, "check_reachable"), \
+                mock.patch.object(pr, "reap_stale_containers", return_value=0), \
+                mock.patch.object(pr, "ensure_image") as image, \
+                mock.patch.object(pr, "install_seccomp_profile") as seccomp, \
+                mock.patch.object(pr, "ensure_cli_image") as build:
+            pr.main(["--ssh", "fairy@h", "--no-review-image", *(
+                arg for binary in reviewer.image_binaries
+                for arg in (f"--{binary}-bin", f"/stage/{binary}"))])
+        image.assert_not_called()
+        seccomp.assert_called_once()
+        self.assertEqual(f"localhost/fairy-{cli}:latest", build.call_args.kwargs["tag"])
+
     def test_codex_bin_needs_its_code_mode_host(self) -> None:
         with self.assertRaises(SystemExit):
             pr.parse_args(["--ssh", "fairy@h", "--codex-bin", "/stage/codex"])

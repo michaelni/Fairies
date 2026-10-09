@@ -960,6 +960,21 @@ def check_names(text: str, red: Redactor) -> list[str]:
         walk(tree)
     return sorted(set(problems))
 
+def _report(paths: list[Path], check) -> int:
+    """Print what ``check(text)`` finds in each file; return the count."""
+    found = 0
+    for path in paths:
+        data = path.read_bytes()
+        try:
+            text = data.decode()
+        except UnicodeDecodeError:
+            text = data.decode("latin-1")
+        left = check(text)
+        for item in left[:20]:
+            print(f"{path}: {item!r}", file=sys.stderr)
+        found += len(left)
+    return found
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("paths", nargs="+", type=Path)
@@ -982,17 +997,7 @@ def main(argv: list[str] | None = None) -> int:
                         for e in exempt_paths)]
 
     if args.names:
-        bad = 0
-        for path in given:
-            data = path.read_bytes()
-            try:
-                text = data.decode()
-            except UnicodeDecodeError:
-                text = data.decode("latin-1")
-            left = check_names(text, red)
-            for item in left[:20]:
-                print(f"{path}: {item!r}", file=sys.stderr)
-            bad += len(left)
+        bad = _report(given, lambda text: check_names(text, red))
         print(f"checked {len(given)} files, {bad} undrawn name(s)")
         if not args.check:
             return 1 if bad else 0

@@ -90,4 +90,4 @@ for additional development workflows being added over time.
 
 - codex, agy and grok run in their own podman container
 - each reviewer runs in its own podman container
-
+- Container setup audited with Mythos 5.1 (2026-10)

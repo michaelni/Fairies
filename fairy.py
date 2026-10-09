@@ -265,12 +265,11 @@ class Decision:
     # neither queued for auto-merge, blocked by conflicts nor held by
     # CI that waits for a human -- i.e. all fairy can do is wait for a
     # human to click "Merge". The end-of-run summary lists these as a
-    # reminder. ``pr.mergeable`` is implicitly True because the upstream
-    # conflicts gate would otherwise have skipped the PR before we got
-    # here.
+    # reminder.
     merge_ready: bool = False
-    # Non-bot reviewers whose latest review is APPROVED, when no one
-    # has CHANGES_REQUESTED outstanding and auto-merge is not queued.
+    # Non-bot reviewers whose latest review is APPROVED, when the forge
+    # can merge the PR, no one has CHANGES_REQUESTED outstanding and
+    # auto-merge is not queued.
     # Captures PRs fairy was never involved with that an external
     # maintainer has already approved -- i.e. the second flavor of
     # "needs a human to click Merge". Empty for the merge_ready case
@@ -713,7 +712,7 @@ def _add_pr_agent_args(p: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Let --force-review also review closed/merged PRs. Off by "
              "default: a forced PR whose state is not ``open`` is skipped "
-             "with ``not open``. (WIP/draft and conflicting PRs are always "
+             "with ``not open``. (WIP/draft PRs are always "
              "reviewed when forced, independent of this flag.)",
     )
     p.add_argument(
@@ -2473,7 +2472,7 @@ def prepare_pr(
     author = author_login(pr.get("user"))
 
     # ``--force-review`` means "review this PR no matter what".
-    # The WIP/mergeable gates below are heuristics for the cron mode
+    # The WIP gate below is a heuristic for the cron mode
     # -- when the operator named a PR explicitly we honor that and let
     # the LLM look at it. The closed/merged gate is the exception:
     # reviewing a non-open PR is opt-in via --force-review-non-open,
@@ -2653,10 +2652,6 @@ def prepare_pr(
     if is_marked_wip(pr, wip_re) and forced_review_reason is None:
         return skip("marked WIP/draft", last_activity_value=last_activity)
 
-    if not pr.get("mergeable") and not is_forced:
-        return skip("has conflicts with the target branch",
-                    last_activity_value=last_activity)
-
     # Compute review state once, here, so the value is available to the
     # end-of-run "external approvers" reminder list even on PRs that
     # are about to early-skip via the backoff gate just below or the
@@ -2667,7 +2662,7 @@ def prepare_pr(
     has_blocker = any(
         rs.state == "CHANGES_REQUESTED" for rs in states.values()
     )
-    if not has_blocker:
+    if not has_blocker and pr.get("mergeable"):
         # Stale approvals are excluded: the forge no longer counts them
         # towards mergeability, so listing the PR as "approved and
         # waiting to be merged" would tell the operator to merge
@@ -2777,7 +2772,8 @@ def prepare_pr(
                 cancelled_ci_contexts=cancelled_ctxs,
                 blocked_ci_contexts=blocked_ctxs,
                 ci_pending=has_pending_ci(statuses),
-                merge_ready=not (cancelled_ctxs or blocked_ctxs)
+                merge_ready=bool(pr.get("mergeable"))
+                and not (cancelled_ctxs or blocked_ctxs)
                 and get_auto_merge() != "merge",
                 approved_at=self_state.when,
             )
@@ -2803,7 +2799,7 @@ def prepare_pr(
     # most likely to have CI gated on a manual rerun / required-condition
     # release) silently fell off the summary.
     #
-    # Cohort: this runs only after WIP/conflict/CHANGES_REQUESTED/
+    # Cohort: this runs only after WIP/CHANGES_REQUESTED/
     # self-approved/last_activity-None/threshold-fresh have all skipped,
     # so the extra API call is bounded to PRs fairy would have looked
     # at anyway (just a bit later). Not cached: commit-status rows were

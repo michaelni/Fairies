@@ -82,7 +82,7 @@ REVIEW = {
 NOW = datetime(2026, 6, 10, tzinfo=timezone.utc)
 
 
-def _call(review: dict, *, min_age_days: float = 30) -> object:
+def _call(review: dict, *, min_age_days: float = 30, mergeable: bool = True) -> object:
     args = SimpleNamespace(
         force_skip_prs=frozenset(),
         force_review_prs=frozenset(),
@@ -97,7 +97,7 @@ def _call(review: dict, *, min_age_days: float = 30) -> object:
     pr = {
         "number": 20148,
         "state": "open",
-        "mergeable": True,
+        "mergeable": mergeable,
         "title": "avdevice/gdigrab: fix -show_region 1 overlay window",
         "head": {"sha": "c9f8d93bf1"},
     }
@@ -165,14 +165,14 @@ class ApprovedPrCiTests(unittest.TestCase):
          "created_at": "2026-09-26T21:38:12Z", "updated_at": "2026-09-26T21:38:12Z"},
     ]
 
-    def decide(self, wire: list[dict]) -> fairy.Decision:
+    def decide(self, wire: list[dict], mergeable: bool = True) -> fairy.Decision:
         with patch.object(
             fairy, "get_auto_merge_info", return_value="-",
         ), patch.object(
             fairy, "list_commit_statuses",
             return_value=[forge_gcli._project_status_row(r) for r in wire],
         ):
-            return _call({**REVIEW, "stale": False})
+            return _call({**REVIEW, "stale": False}, mergeable=mergeable)
 
     def test_ci_held_for_a_human_is_ci_blocked(self) -> None:
         decision = self.decide(self.PASSED + self.HELD)
@@ -183,6 +183,9 @@ class ApprovedPrCiTests(unittest.TestCase):
     def test_passed_ci_is_merge_ready(self) -> None:
         decision = self.decide(self.PASSED)
         self.assertEqual(agent.gate_state(decision), "merge-ready")
+
+    def test_a_conflicting_pr_is_not_merge_ready(self) -> None:
+        self.assertFalse(self.decide(self.PASSED, mergeable=False).merge_ready)
 
 
 class StaleExternalApprovalTests(unittest.TestCase):
@@ -210,6 +213,12 @@ class StaleExternalApprovalTests(unittest.TestCase):
             )
         self.assertEqual(decision.reason, "activity is newer than threshold")
         self.assertEqual(decision.external_approvers, ("bob",))
+
+    def test_external_approval_of_a_conflicting_pr_excluded(self) -> None:
+        decision = _call({**REVIEW, "user": self.EXT, "stale": False},
+                         min_age_days=365, mergeable=False)
+        self.assertEqual(decision.reason, "activity is newer than threshold")
+        self.assertEqual(decision.external_approvers, ())
 
 
 if __name__ == "__main__":

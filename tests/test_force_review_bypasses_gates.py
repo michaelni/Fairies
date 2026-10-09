@@ -27,11 +27,11 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-``--force-review`` bypasses the state/WIP/mergeable skip gates.
+``--force-review`` bypasses the state/WIP skip gates.
 
 Without the bypass these gates fire before ``forced_review_reason``
-ever sees the override, so a forced run on a closed/merged, draft,
-or conflicting PR returns a Decision skip and the LLM never looks
+ever sees the override, so a forced run on a closed/merged or draft
+PR returns a Decision skip and the LLM never looks
 at the PR. Bit the simulate-past harness on its first end-to-end
 run (3 of 4 candidate PRs got 0 LLM responses).
 
@@ -97,12 +97,10 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_wip_and_mergeable_gates_always_bypassed_by_force(self) -> None:
-        # WIP/draft and conflicting PRs are reviewed whenever forced,
-        # independent of --force-review-non-open.
+    def test_wip_gate_always_bypassed_by_force(self) -> None:
+        # WIP/draft PRs are reviewed whenever forced, independent of
+        # --force-review-non-open.
         cases = [
-            ("mergeable", {"state": "open", "mergeable": False, "title": "x"},
-             "has conflicts with the target branch"),
             ("wip-title", {"state": "open", "mergeable": True,
                            "title": "WIP: refactor"},
              "marked WIP/draft"),
@@ -119,6 +117,10 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
                 self.assertIsInstance(
                     _call(pr, force_review={1}, llm_review_cmd="./wrapper"),
                     fairy.PreparedPR)
+
+    def test_a_conflicting_pr_is_not_skipped_for_it(self) -> None:
+        pr = {"number": 21037, "state": "open", "mergeable": False, "title": "x"}
+        self.assertEqual(_call(pr).reason, "cannot determine PR head commit")
 
     def test_non_open_gate_is_opt_in_via_force_review_non_open(self) -> None:
         # A non-open PR is skipped on a bare forced run; only
@@ -149,11 +151,11 @@ class ForceReviewBypassesGatesTests(unittest.TestCase):
     def test_the_gate_skip_carries_the_threads_activity(self) -> None:
         # the age the TUI shows for a skipped PR is its discussion's,
         # not the label-edit-prone pr.updated_at
-        pr = {"number": 1, "state": "open", "mergeable": False, "title": "x",
+        pr = {"number": 1, "state": "open", "mergeable": True, "title": "WIP: x",
               "updated_at": "2026-08-30T00:00:00Z"}
         decision = _call(pr, thread=([], [{"created_at": "2026-08-01T00:00:00Z",
                                            "body": "hi"}], [], [], {}))
-        self.assertEqual(decision.reason, "has conflicts with the target branch")
+        self.assertEqual(decision.reason, "marked WIP/draft")
         self.assertEqual(decision.last_activity,
                          datetime(2026, 8, 1, tzinfo=timezone.utc))
 
@@ -205,11 +207,11 @@ class RequestedReviewOverridesWipGateTests(unittest.TestCase):
                 self.assertIsInstance(prepared, fairy.PreparedPR)
                 self.assertEqual(prepared.base_reason, reason)
 
-    def test_the_conflicts_gate_still_holds(self) -> None:
+    def test_a_conflicting_pr_is_reviewed(self) -> None:
         pr = {"number": 24737, "state": "open", "mergeable": False,
               "title": "WIP: libavformat/ftp: fix"}
-        decision = self._prepare(pr, reviews=(self.REQUEST_REVIEW,))
-        self.assertEqual(decision.reason, "has conflicts with the target branch")
+        self.assertIsInstance(self._prepare(pr, reviews=(self.REQUEST_REVIEW,)),
+                              fairy.PreparedPR)
 
 
 class ForcedReviewIgnoresTriageSkipTests(unittest.TestCase):

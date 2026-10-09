@@ -732,6 +732,15 @@ def start_ephemeral_container(
     ``WORKDIR`` instruction ("workdir ... does not exist on container")
     even though it exists and ``podman exec -w`` resolves it fine -- so
     the flag would only break startup without buying anything.
+
+    ``--userns=nomap`` leaves the podman account itself out of the
+    container's id mapping: root inside is the account's first
+    subordinate uid, so a process that escapes the container owns
+    nothing of the account -- not its home, its ssh keys, the mirrors or
+    its other containers. A device node a review needs must therefore be
+    accessible to that subordinate uid (an ACL on the node), and the
+    image's directories must be real layers, since a directory podman
+    creates at start belongs to the unmapped account.
     """
     _hold_owner_lock(host)
     args = [
@@ -745,6 +754,7 @@ def start_ephemeral_container(
         # through a setuid binary. Reviews never need this (the image ships
         # no sudo and apt runs as the container's own root).
         "--security-opt=no-new-privileges",
+        "--userns=nomap",
         "--stop-timeout=0",
         *extra_args,
         image, "sleep", "infinity",

@@ -443,6 +443,7 @@ class StartStopContainerTests(ContainerStateHarness, unittest.TestCase):
                       "--memory=2g", "--cpus=1",
                       f"--pids-limit={lc.CONTAINER_PIDS_LIMIT}",
                       "--security-opt=no-new-privileges",
+                      "--userns=nomap",
                       "--stop-timeout=0",
                       "fairy:latest sleep infinity"):
             self.assertIn(token, remote)

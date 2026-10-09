@@ -47,7 +47,7 @@ from common import (
     setup_logging,
 )
 from forge_gcli import add_forge_repo_args, norm_user
-from forge_item import labels, logins, milestone, reactions_by_content, timeline_events
+from forge_item import build_llm_discussion, labels, logins, milestone, reactions_by_content
 
 LOG = logging.getLogger("forgejo_export")
 MARKER = ".forgejo-exporter.json"
@@ -303,22 +303,9 @@ def norm_issue(issue: dict[str, Any], reactions: list[dict[str, Any]]) -> dict[s
     }
 
 
-def norm_comment(comment: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": comment.get("id"),
-        "author": norm_user(comment.get("user")),
-        "created_at": utc_str(comment.get("created_at")),
-        "updated_at": utc_str(comment.get("updated_at")),
-        "url": comment.get("html_url"),
-        **({"attachment_urls": urls} if (urls := attachment_urls(comment)) else {}),
-        **({"reactions": reactions_by_content(comment["reactions"])} if comment.get("reactions") else {}),
-        "body": comment.get("body") or "",
-    }
-
-
-def norm_timeline(timeline: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return by_time([{**event, "created_at": utc_str(event["created_at"])}
-                    for event in timeline_events(timeline)], "created_at")
+def norm_timeline(discussion: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [{key: utc_str(value) if key in ("created_at", "updated_at", "submitted_at") else value
+             for key, value in item.items()} for item in discussion]
 
 
 def pr_state(pr: dict[str, Any]) -> str:
@@ -362,37 +349,6 @@ def norm_pr(pr: dict[str, Any], reactions: list[dict[str, Any]], auto_merge: str
     }
 
 
-def norm_review(review: dict[str, Any]) -> dict[str, Any]:
-    when = review.get("submitted_at") or review.get("dismissed_at") or review.get("updated_at")
-    return {
-        "id": review.get("id"),
-        "state": review.get("state"),
-        "author": norm_user(review.get("user")),
-        "submitted_at": utc_str(when),
-        "commit_id": (review.get("commit_id") or "")[:12] or None,
-        "body": review.get("body") or "",
-    }
-
-
-def norm_review_comment(comment: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": comment.get("id"),
-        "review_id": comment.get("pull_request_review_id") or comment.get("review_id"),
-        "author": norm_user(comment.get("user")),
-        "created_at": utc_str(comment.get("created_at")),
-        "updated_at": utc_str(comment.get("updated_at")),
-        "path": comment.get("path"),
-        "line": comment.get("line") if comment.get("line") is not None else comment.get("position"),
-        "old_line": comment.get("old_line") if comment.get("old_line") is not None else comment.get("original_position"),
-        "side": comment.get("side"),
-        "commit_id": (comment.get("commit_id") or "")[:12] or None,
-        "original_commit_id": (comment.get("original_commit_id") or "")[:12] or None,
-        "diff_hunk": comment.get("diff_hunk"),
-        **({"reactions": reactions_by_content(comment["reactions"])} if comment.get("reactions") else {}),
-        "body": comment.get("body") or "",
-    }
-
-
 def norm_commit(commit: dict[str, Any]) -> dict[str, Any]:
     c = commit.get("commit") or {}
     a = c.get("author") or {}
@@ -420,10 +376,6 @@ def norm_file(item: dict[str, Any]) -> dict[str, Any]:
         "changes": item.get("changes"),
         "previous_filename": item.get("previous_filename"),
     }
-
-
-def by_time(items: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
-    return sorted(items, key=lambda x: (x.get(field) or "", int(x.get("id") or 0)))
 
 
 def attachment_lines(item: dict[str, Any]) -> list[str]:
@@ -492,10 +444,12 @@ def add_timeline_section(lines: list[str], events: list[dict[str, Any]]) -> None
             lines,
             f"### Event {i}: {event['kind']}",
             event["author"],
-            event["created_at"],
+            event.get("submitted_at") or event.get("created_at"),
             event.get("body") or "",
-            [f"{key}: {value}" for key, value in event.items()
-             if key not in ("kind", "author", "created_at", "body")],
+            [f"{key}: {value}" for key, value in event.items() if value is not None and key not in (
+                "kind", "author", "created_at", "submitted_at", "body", "attachment_urls", "reactions", "diff_hunk")]
+            + attachment_lines(event) + reaction_lines(event)
+            + (["```diff", event["diff_hunk"].rstrip(), "```"] if event.get("diff_hunk") else []),
         )
 
 
@@ -505,13 +459,7 @@ def render_issue_md(data: dict[str, Any]) -> str:
     if data.get("fetch_warnings"):
         lines += ["", "## Fetch warnings", ""]
         lines += [f"- {warning}" for warning in data["fetch_warnings"]]
-    lines += ["", "## Description", "", data["issue"]["body"], "", "## Comments", ""]
-    if not data["comments"]:
-        lines += ["_No comments._", ""]
-    else:
-        for i, comment in enumerate(data["comments"], 1):
-            add_message_block(lines, f"### Comment {i}", user_str(comment["author"]), comment["created_at"], comment["body"],
-                              attachment_lines(comment) + reaction_lines(comment))
+    lines += ["", "## Description", "", data["issue"]["body"], ""]
     add_timeline_section(lines, data["timeline"])
     return "\n".join(lines).rstrip() + "\n"
 
@@ -522,50 +470,8 @@ def render_pr_md(data: dict[str, Any]) -> str:
     if data.get("fetch_warnings"):
         lines += ["", "## Fetch warnings", ""]
         lines += [f"- {warning}" for warning in data["fetch_warnings"]]
-    lines += ["", "## Description", "", data["pull_request"]["body"], "", "## Conversation", ""]
-    if not data["issue_comments"]:
-        lines += ["_No issue comments._", ""]
-    else:
-        for i, comment in enumerate(data["issue_comments"], 1):
-            add_message_block(lines, f"### Comment {i}", user_str(comment["author"]), comment["created_at"], comment["body"],
-                              attachment_lines(comment) + reaction_lines(comment))
-
-    lines += ["## Reviews", ""]
-    if not data["reviews"]:
-        lines += ["_No reviews._", ""]
-    else:
-        for i, review in enumerate(data["reviews"], 1):
-            add_message_block(
-                lines,
-                f"### Review {i}",
-                user_str(review["author"]),
-                review["submitted_at"],
-                review["body"],
-                [f"State: {review.get('state') or '-'}", f"Commit: {review.get('commit_id') or '-'}"],
-            )
-
-    lines += ["## Review comments", ""]
-    if not data["review_comments"]:
-        lines += ["_No review comments._", ""]
-    else:
-        for i, comment in enumerate(data["review_comments"], 1):
-            add_message_block(
-                lines,
-                f"### Review comment {i}",
-                user_str(comment["author"]),
-                comment["created_at"],
-                comment["body"],
-                [
-                    f"Review: {comment.get('review_id') or '-'}",
-                    f"Path: {comment.get('path') or '-'}",
-                    f"Line: {comment.get('line') if comment.get('line') is not None else '-'}",
-                    f"Old line: {comment.get('old_line') if comment.get('old_line') is not None else '-'}",
-                    f"Side: {comment.get('side') or '-'}",
-                    f"Commit: {comment.get('commit_id') or '-'}",
-                    f"Original commit: {comment.get('original_commit_id') or '-'}",
-                    *reaction_lines(comment),
-                ],
-            )
+    lines += ["", "## Description", "", data["pull_request"]["body"], ""]
+    add_timeline_section(lines, data["timeline"])
 
     lines += ["## Commits", ""]
     if not data["commits"]:
@@ -607,7 +513,6 @@ def render_pr_md(data: dict[str, Any]) -> str:
                 "",
             ]
 
-    add_timeline_section(lines, data["timeline"])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -625,8 +530,7 @@ def export_issue(
         "number": num,
         "title": issue.get("title"),
         "issue": norm_issue(issue, reactions),
-        "comments": by_time([norm_comment(x) for x in comments], "created_at"),
-        "timeline": norm_timeline(timeline),
+        "timeline": norm_timeline(build_llm_discussion([], comments, [], timeline)),
         "fetch_warnings": fetch_warnings,
     }
     stable_write(base.with_suffix(".json"), dump_json(data))
@@ -656,12 +560,9 @@ def export_pr(
         "number": num,
         "title": pr.get("title"),
         "pull_request": norm_pr(pr, reactions, auto_merge),
-        "issue_comments": by_time([norm_comment(x) for x in issue_comments], "created_at"),
-        "reviews": by_time([norm_review(x) for x in reviews], "submitted_at"),
-        "review_comments": by_time([norm_review_comment(x) for x in review_comments], "created_at"),
+        "timeline": norm_timeline(build_llm_discussion(reviews, issue_comments, review_comments, timeline)),
         "commits": [norm_commit(x) for x in commits],
         "files": [norm_file(x) for x in files],
-        "timeline": norm_timeline(timeline),
         "fetch_warnings": fetch_warnings,
     }
     stable_write(base.with_suffix(".json"), dump_json(data))

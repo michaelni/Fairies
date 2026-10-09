@@ -51,6 +51,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import forge_gcli  # noqa: E402
+import forge_item  # noqa: E402
 import forgejo_export  # noqa: E402
 import gcli_cache  # noqa: E402
 
@@ -107,7 +108,8 @@ class AttachmentExportTests(unittest.TestCase):
         return forgejo_export.render_issue_md({
             "number": self.issue["number"], "title": self.issue["title"],
             "issue": forgejo_export.norm_issue(self.issue, []),
-            "comments": comments, "timeline": [], "fetch_warnings": [],
+            "timeline": forgejo_export.norm_timeline(forge_item.build_llm_discussion([], comments, [])),
+            "fetch_warnings": [],
         })
 
     def test_issue_md_lists_unlinked_attachment(self) -> None:
@@ -124,14 +126,12 @@ class AttachmentExportTests(unittest.TestCase):
         self.assertNotIn("attachment_urls",
                          forgejo_export.norm_issue({**self.issue, "assets": []}, []))
         self.assertNotIn("attachment_urls",
-                         forgejo_export.norm_comment({"id": 1, "body": "hi"}))
+                         forge_item.build_llm_discussion([], [{"id": 1, "body": "hi"}], [])[0])
 
     def test_comment_attachment_renders(self) -> None:
         zip_asset = self.issue["assets"][3]
-        comment = forgejo_export.norm_comment(
-            {"id": 1, "user": self.issue["user"], "body": "sample attached",
-             "assets": [zip_asset]}
-        )
+        comment = {"id": 1, "user": self.issue["user"], "body": "sample attached",
+                   "assets": [zip_asset]}
         self.assertIn(
             f"Attachment: {zip_asset['name']} ({zip_asset['size']} bytes) "
             f"{zip_asset['browser_download_url']}\n",
@@ -249,11 +249,12 @@ class ReactionRenderTests(unittest.TestCase):
         text = forgejo_export.render_issue_md({
             "number": 22546, "title": "t",
             "issue": forgejo_export.norm_issue({"number": 22546}, reactions),
-            "comments": [forgejo_export.norm_comment({"id": 37290, "body": "hi", "reactions": reactions})],
-            "timeline": [], "fetch_warnings": [],
+            "timeline": forgejo_export.norm_timeline(forge_item.build_llm_discussion(
+                [], [{"id": 37290, "body": "hi", "reactions": reactions}], [])),
+            "fetch_warnings": [],
         })
         self.assertIn("- Reactions: hooray: michaelni\n", text)
-        self.assertIn("When: -\nReactions: hooray: michaelni\n\nhi\n", text)
+        self.assertIn("When: -\nid: 37290\nReactions: hooray: michaelni\n\nhi\n", text)
 
 
 class TimelineRenderTests(unittest.TestCase):
@@ -262,17 +263,16 @@ class TimelineRenderTests(unittest.TestCase):
         forgejo_export.add_timeline_section(lines, [])
         self.assertEqual(lines, ["## Timeline", "", "_No timeline events._", ""])
 
-    def test_typed_events_render_without_the_comments(self) -> None:
-        raw = json.loads((Path(__file__).parent / "fixtures" / "issue_fairy"
-                          / "ffmpeg_issue_23738_timeline.json").read_text())
+    def test_typed_events_render_their_fields(self) -> None:
+        raw = json.loads((Path(__file__).parent / "fixtures" / "forgejo_pr_timeline"
+                          / "ffmpeg_pr_22729_timeline.json").read_text())
         lines: list[str] = []
         forgejo_export.add_timeline_section(lines, forgejo_export.norm_timeline(
-            [forge_gcli.project_timeline_event(event) for event in raw]))
+            forge_item.build_llm_discussion([], [], [], [forge_gcli.project_timeline_event(e) for e in raw])))
         text = "\n".join(lines)
-        self.assertIn("### Event 1: label_added\n\nFrom: ffmpeg-devel\n"
-                      "When: 2026-07-08 10:42:44 UTC\nlabel: new\n", text)
-        self.assertIn("### Event 2: label_removed", text)
-        self.assertNotIn("### Event 3", text)
+        self.assertIn("### Event 3: label_added\n\nFrom: ffmpeg-devel\n"
+                      "When: 2026-04-06 15:07:04 UTC\nlabel: new\n", text)
+        self.assertIn("### Event 2: auto_merge_scheduled\n\nFrom: michaelni\n", text)
 
 
 if __name__ == "__main__":

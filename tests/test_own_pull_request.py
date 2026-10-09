@@ -96,36 +96,37 @@ class OwnFairyBranchTests(unittest.TestCase):
         self.assertIsNone(fairy.own_fairy_branch(_args(), pr))
 
 
+def llm_payload(args: SimpleNamespace, pr: dict = PR, discussion: tuple[dict, ...] = (),
+                submodule_changes: list[dict] | None = None) -> dict:
+    captured: dict[str, str] = {}
+
+    def fake_run_cmd(_cmd, *, input_text: str, **_kw):
+        captured["input_text"] = input_text
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"classification": "approve", "message": ""}')
+
+    with (
+        patch.object(fairy, "patch_shas_for_run",
+                     return_value=("base", "head")),
+        patch.object(fairy, "fetch_patch_for_llm",
+                     return_value=("patch", False)),
+        patch.object(fairy.git_util, "git_submodule_changes",
+                     return_value=submodule_changes or []),
+        patch.object(fairy, "run_cmd", side_effect=fake_run_cmd),
+    ):
+        fairy.run_llm_review(args, pr, "no", list(discussion), "Forgejo_Fairy",
+                             reactions={"rocket": ["michaelni"]})
+    return json.loads(captured["input_text"])
+
+
 class PayloadTests(unittest.TestCase):
-    def _payload(self, args: SimpleNamespace, pr: dict = PR,
-                 submodule_changes: list[dict] | None = None) -> dict:
-        captured: dict[str, str] = {}
-
-        def fake_run_cmd(_cmd, *, input_text: str, **_kw):
-            captured["input_text"] = input_text
-            return SimpleNamespace(
-                returncode=0,
-                stdout='{"classification": "approve", "message": ""}')
-
-        with (
-            patch.object(fairy, "patch_shas_for_run",
-                         return_value=("base", "head")),
-            patch.object(fairy, "fetch_patch_for_llm",
-                         return_value=("patch", False)),
-            patch.object(fairy.git_util, "git_submodule_changes",
-                         return_value=submodule_changes or []),
-            patch.object(fairy, "run_cmd", side_effect=fake_run_cmd),
-        ):
-            fairy.run_llm_review(args, pr, "no", [], "Forgejo_Fairy",
-                                 reactions={"rocket": ["michaelni"]})
-        return json.loads(captured["input_text"])
-
     def test_the_standing_reaches_the_payload(self) -> None:
         """Shapes as FFmpeg PR #24846 carries them: user objects under
         ``assignees`` and ``requested_reviewers`` (null where the forge
         could not load one), a milestone object, ``is_locked`` and
         ``draft`` flags."""
-        pr = self._payload(_args(), {
+        pr = llm_payload(_args(), {
             **PR, "assignees": [{"login": "michaelni"}, None],
             "requested_reviewers": [{"login": "alice"}, None, {"login": "bob"}],
             "milestone": {"title": "FFmpeg 9.1 branching"},
@@ -137,7 +138,7 @@ class PayloadTests(unittest.TestCase):
              "milestone": "FFmpeg 9.1 branching", "locked": True, "draft": True})
 
     def test_a_bare_pull_request_has_empty_standing(self) -> None:
-        pr = self._payload(_args())["pull_request"]
+        pr = llm_payload(_args())["pull_request"]
         self.assertEqual(
             {k: pr[k] for k in ("assignees", "requested_reviewers", "milestone",
                                 "locked", "draft")},
@@ -145,11 +146,11 @@ class PayloadTests(unittest.TestCase):
              "locked": False, "draft": False})
 
     def test_the_descriptions_reactions_reach_the_payload(self) -> None:
-        pr = self._payload(_args())["pull_request"]
+        pr = llm_payload(_args())["pull_request"]
         self.assertEqual(pr["reactions"], {"rocket": ["michaelni"]})
 
     def test_own_pull_request_carries_head_repo_and_branch(self) -> None:
-        pr = self._payload(_args())["pull_request"]
+        pr = llm_payload(_args())["pull_request"]
         self.assertEqual(pr["head_repo"], "Forgejo_Fairy/FFmpeg")
         self.assertEqual(pr["fairy_branch"],
                          {"repo": "ffmpeg", "branch": "issue23991-bugfix"})
@@ -157,11 +158,11 @@ class PayloadTests(unittest.TestCase):
     def test_the_submodule_changes_reach_the_payload(self) -> None:
         added = {"path": "tests/checkasm/ext", "action": "added",
                  "old_commit": None, "new_commit": "4" * 40}
-        pr = self._payload(_args(), submodule_changes=[added])["pull_request"]
+        pr = llm_payload(_args(), submodule_changes=[added])["pull_request"]
         self.assertEqual(pr["submodule_changes"], [added])
 
     def test_foreign_pull_request_has_no_fairy_branch(self) -> None:
-        pr = self._payload(_args(branch_push=[]))["pull_request"]
+        pr = llm_payload(_args(branch_push=[]))["pull_request"]
         self.assertEqual(pr["head_repo"], "Forgejo_Fairy/FFmpeg")
         self.assertNotIn("fairy_branch", pr)
 

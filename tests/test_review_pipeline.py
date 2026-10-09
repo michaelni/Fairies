@@ -368,8 +368,8 @@ class ReviewPrTests(unittest.TestCase):
             "Error code: 429 - {'type': 'error', 'error': {'type': "
             "'rate_limit_error', 'code': '1310', 'message': "
             "'[1310][Weekly/Monthly Limit Exhausted. Your limit will reset "
-            "at 2026-08-25 18:29:11][2026082504062732b91fe525c340c5]'}, "
-            "'request_id': '2026082504062732b91fe525c340c5'}")
+            "at 2026-08-25 18:29:11][000000000000000000000000000001]'}, "
+            "'request_id': '000000000000000000000000000001'}")
         ctx = _ctx()
         survivor = Review("approve", "ok", model="openai:gpt-5.4")
         with self.assertLogs("llm_review_api", level="ERROR"):

@@ -315,9 +315,9 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.assertIn("the patch", self.container.input_text)
         self.assertIn("Review the following PR.", self.container.input_text)
 
-    # verbatim from a production codex run
+    # a production codex run with a dummy thread_id
     _REAL_EVENTS = (
-        '{"type":"thread.started","thread_id":"019f76bf-fbae-7c91-a0a2-c7691bcfa16b"}\n'
+        '{"type":"thread.started","thread_id":"00000000-0000-0000-0000-000000000001"}\n'
         '{"type":"turn.started"}\n'
         '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\\"route\\":\\"engage\\",\\"message\\":\\"\\",\\"reason\\":\\"The author pushed substantial force-pushed revisions after our May 3 review and stated that the previously identified issues were addressed; a fresh full review is warranted.\\",\\"prompt_injection\\":false,\\"requested_models\\":[],\\"requested_effort\\":null,\\"label_changes\\":[]}"}}\n'
         '{"type":"turn.completed","usage":{"input_tokens":99767,"cached_input_tokens":0,"output_tokens":186,"reasoning_output_tokens":113}}\n'

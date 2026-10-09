@@ -32,7 +32,7 @@ Generic schema validation of model output.
 OpenAI ``strict`` structured output is best-effort, not guaranteed, so
 ``check_schema`` re-validates every response against the exact schema we
 sent. The malformed reviewer fixture below is the real output that broke
-production (PR #23410, resp_07a40beaaa31ca6b...): the model emitted the
+production (PR #23410): the model emitted the
 key ``class`` instead of ``classification``, which the old hand-rolled
 checks turned into ``RuntimeError: invalid classification: None`` and an
 unhandled traceback.
@@ -151,7 +151,7 @@ class ValidateReviewTests(unittest.TestCase):
         self.assertEqual(result["message"], "looks ok")
 
     def _review_flagged(self, name: str) -> llm_review_api.Review:
-        # Real bogus verdict (PR #23553, resp_0b30b334ceafa773...): the
+        # Real bogus verdict (PR #23553): the
         # blocking issue rested on diffing the PR head against the master tip.
         class _Fixed(llm_review_api.Reviewer):
             role = llm_prompt.REVIEWER_ROLE

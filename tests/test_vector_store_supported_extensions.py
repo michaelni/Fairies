@@ -29,8 +29,8 @@
 
 SVG files must never be uploaded to a vector store.
 
-Regression: an ``.svg`` file silently poisoned vector store
-vs_6a272732f2608191ab291f0ad1285a51 -- ``files.list`` started returning a
+Regression: an ``.svg`` file silently poisoned a vector store --
+``files.list`` started returning a
 permanent 500 past the page that held it. Bisecting the store
 (``tools/openai_vector_store_bisect_poison.py``) named the single offending
 entry as that SVG. SVG is not in OpenAI's supported vector-store file types

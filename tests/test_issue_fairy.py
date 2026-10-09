@@ -50,6 +50,7 @@ if str(REPO_ROOT) not in sys.path:
 
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
+import forge_item  # noqa: E402
 import llm_prompt  # noqa: E402
 import llm_review_api  # noqa: E402
 import issue_fairy  # noqa: E402
@@ -470,12 +471,12 @@ class AttachmentTests(unittest.TestCase):
     def test_attachment_only_comment_survives_discussion(self) -> None:
         comments = load_fixture("ffmpeg_issue_23738_comments.json")
         comment = dict(comments[0], body="", assets=[self.ZIP])
-        items = fairy.build_llm_discussion([], [comment], [])
+        items = forge_item.build_llm_discussion([], [comment], [])
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["attachment_urls"],
                          [{"name": self.ZIP["name"], "size": self.ZIP["size"],
                            "url": self.ZIP_URL}])
-        self.assertNotIn("attachment_urls", fairy.build_llm_discussion([], [comments[0]], [])[0])
+        self.assertNotIn("attachment_urls", forge_item.build_llm_discussion([], [comments[0]], [])[0])
 class IssueLabelCommandTests(unittest.TestCase):
     def test_uses_gcli_issues_labels(self) -> None:
         args = make_args()

@@ -58,7 +58,7 @@ from forge_gcli import (
     gcli_api,
     post_issue_comment,
 )
-from forge_item import item_standing, labels, reactions_by_content
+from forge_item import build_llm_discussion, first_dt, item_standing, labels, reactions_by_content
 from llm_review_api import ISSUE_REPORT_CLASSIFICATIONS
 import workset
 import fairy
@@ -67,11 +67,9 @@ from fairy import (
     Decision,
     LLMReview,
     branch_publication_block,
-    build_llm_discussion,
     call_llm_with_retries,
     compile_user_mention_regex,
     decision_has_label_changes,
-    first_dt,
     flatten_label_args,
     flatten_pr_number_args,
     get_item_author_login,

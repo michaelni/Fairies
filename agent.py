@@ -83,7 +83,7 @@ import git_util
 import issue_fairy
 import worker
 import workset
-from forge_item import FIELDLESS_KINDS, item_standing, labels
+from forge_item import FIELDLESS_KINDS, build_llm_discussion, discussion_time, item_standing, labels
 from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     config_option_groups, grouped_help,
                     iso_to_dt, options_argv, parse_scoped_overrides,
@@ -270,7 +270,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                 "state": str(item.get("state") or ""),
                 "labels": labels(item),
             }
-        discussion = fairy.build_llm_discussion(
+        discussion = build_llm_discussion(
             reviews, comments, review_comments, timeline)
         last_change = next((d["state"] for d in reversed(discussion)
                             if d["kind"] == "state"), None)
@@ -652,7 +652,7 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
         else:
             if fresh_item.get("updated_at") == item.get("updated_at"):
                 prepared = dataclasses_replace(
-                    prepared, discussion=fairy.build_llm_discussion(*fresh_thread[:4]),
+                    prepared, discussion=build_llm_discussion(*fresh_thread[:4]),
                     reactions=fresh_thread[4])
         ticket = {
             "title": prepared.title,
@@ -1080,7 +1080,7 @@ def _unseen_changes_note(ns: argparse.Namespace, ticket: dict,
                if entry["kind"] in _UNSEEN_CHANGE_WORDS
                and (not entry["kind"].startswith("label_")
                     or entry["label"] in ns.triage_labels)
-               and fairy.discussion_time(entry) > sampled
+               and discussion_time(entry) > sampled
                and entry not in ticket.get("discussion", ())]
     return (f"\n\nThis review did not see the changes made after it "
             f"started: {', '.join(changes)}" if changes else "")

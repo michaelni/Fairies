@@ -67,7 +67,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
 import forge_item  # noqa: E402
 
@@ -163,7 +162,7 @@ class BuildLlmDiscussionSortTests(unittest.TestCase):
         later = {"user": {"login": "b"}, "body": "later",
                  "created_at": "2026-02-22T09:30:00Z",
                  "updated_at": "2026-02-22T09:30:00Z"}
-        items = fairy.build_llm_discussion([], [later, edited], [])
+        items = forge_item.build_llm_discussion([], [later, edited], [])
         self.assertEqual([i["body"] for i in items], ["edited", "later"])
 
 
@@ -189,7 +188,7 @@ class BuildLlmDiscussionWithTimelineTests(unittest.TestCase):
             },
         ]
 
-        items = fairy.build_llm_discussion(
+        items = forge_item.build_llm_discussion(
             reviews=[], comments=comments, review_comments=[],
             timeline=timeline,
         )
@@ -231,13 +230,13 @@ class BuildLlmDiscussionWithTimelineTests(unittest.TestCase):
             "created_at": "2026-05-25T01:52:46Z",
             "body": "hello",
         }]
-        items_default = fairy.build_llm_discussion(
+        items_default = forge_item.build_llm_discussion(
             reviews=[], comments=comments, review_comments=[],
         )
-        items_explicit_none = fairy.build_llm_discussion(
+        items_explicit_none = forge_item.build_llm_discussion(
             reviews=[], comments=comments, review_comments=[], timeline=None,
         )
-        items_empty = fairy.build_llm_discussion(
+        items_empty = forge_item.build_llm_discussion(
             reviews=[], comments=comments, review_comments=[], timeline=[],
         )
         self.assertEqual(items_default, items_explicit_none)
@@ -262,7 +261,7 @@ class ReviewRequestEventsTests(unittest.TestCase):
 
     def test_the_request_reaches_the_built_discussion(self) -> None:
         timeline = _load_timeline("ffmpeg_pr_23197_timeline.json")
-        disc = fairy.build_llm_discussion([], [], [], timeline)
+        disc = forge_item.build_llm_discussion([], [], [], timeline)
         self.assertEqual(
             [(d["author"], d["reviewer"]) for d in disc
              if d["kind"] == "review_request"],
@@ -290,7 +289,7 @@ class ReviewRequestEventsTests(unittest.TestCase):
             {"user": {"login": "carol"}, "state": "REQUEST_REVIEW",
              "submitted_at": "2026-05-22T02:00:00Z", "body": ""},
         ]
-        disc = fairy.build_llm_discussion(reviews, [], [])
+        disc = forge_item.build_llm_discussion(reviews, [], [])
         self.assertEqual([(d["author"], d["state"], d["body"]) for d in disc],
                          [("alice", "APPROVED", "")])
 
@@ -313,7 +312,7 @@ class StateEventsTests(unittest.TestCase):
 
     def test_the_state_changes_reach_the_built_discussion(self) -> None:
         timeline = _load_timeline("ffmpeg_pr_22268_state_timeline.json")
-        disc = fairy.build_llm_discussion([], [], [], timeline)
+        disc = forge_item.build_llm_discussion([], [], [], timeline)
         self.assertEqual([d["state"] for d in disc if d["kind"] == "state"],
                          ["closed", "reopened", "merged"])
 
@@ -362,7 +361,7 @@ class CrossReferenceProjectionTests(unittest.TestCase):
 
     def test_the_mentions_reach_the_built_discussion(self) -> None:
         timeline = _load_timeline("ffmpeg_issue_22956_ref_timeline.json")
-        disc = fairy.build_llm_discussion([], [], [], timeline)
+        disc = forge_item.build_llm_discussion([], [], [], timeline)
         self.assertEqual([d["kind"] for d in disc],
                          ["mentioned_in_description", "mentioned_in_comment",
                           "mentioned_in_commit", "mentioned_in_description"])
@@ -387,7 +386,7 @@ class TypedEventTests(unittest.TestCase):
     (a title change)."""
 
     def test_pr_24623_carries_its_typed_events(self) -> None:
-        disc = fairy.build_llm_discussion(
+        disc = forge_item.build_llm_discussion(
             [], [], [], _load_timeline("ffmpeg_pr_24623_timeline.json"))
         self.assertEqual(
             [d for d in disc if d["kind"] not in ("push", "label_added", "label_removed")],
@@ -414,11 +413,11 @@ class TypedEventTests(unittest.TestCase):
         ):
             with self.subTest(name):
                 self.assertEqual(
-                    fairy.build_llm_discussion([], [], [], _load_timeline(name)),
+                    forge_item.build_llm_discussion([], [], [], _load_timeline(name)),
                     [expected])
 
     def test_a_dependency_on_a_deleted_issue_projects_empty(self) -> None:
-        disc = fairy.build_llm_discussion([], [], [], [
+        disc = forge_item.build_llm_discussion([], [], [], [
             forge_gcli.project_timeline_event(
                 {"type": "remove_dependency", "user": {"login": "michaelni"},
                  "created_at": "2026-07-28T12:00:00Z", "dependent_issue": None})])
@@ -429,7 +428,7 @@ class TypedEventTests(unittest.TestCase):
         structure (modules/structs/issue_comment.go)."""
         item = {"number": 9, "title": "the blocker", "state": "open",
                 "repository": {"full_name": "o/r"}, "pull_request": None}
-        disc = fairy.build_llm_discussion([], [], [], [
+        disc = forge_item.build_llm_discussion([], [], [], [
             forge_gcli.project_timeline_event(
                 {"type": "add_dependency", "user": {"login": "michaelni"},
                  "created_at": "2026-07-28T12:00:00Z", "dependent_issue": item}),
@@ -454,7 +453,7 @@ class TypedEventTests(unittest.TestCase):
             {"type": "milestone", "milestone": {"title": "9.1"},
              "old_milestone": {"title": "9.0"}},
             {"type": "lock", "body": "too heated"}]
-        disc = fairy.build_llm_discussion([], [], [], [
+        disc = forge_item.build_llm_discussion([], [], [], [
             forge_gcli.project_timeline_event(
                 {"user": {"login": "michaelni"}, "created_at": "2026-07-28T12:00:00Z", **e})
             for e in entries])
@@ -475,7 +474,7 @@ class ReactionTests(unittest.TestCase):
                        {"user": "dowu", "content": "+1"},
                        {"user": None, "content": "-1"}]}
         review_comment = {**comment, "path": "f.c", "reactions": []}
-        disc = fairy.build_llm_discussion([], [comment], [review_comment], [])
+        disc = forge_item.build_llm_discussion([], [comment], [review_comment], [])
         self.assertEqual(disc[0]["reactions"], {"+1": ["michaelni", "dowu"], "-1": ["?"]})
         self.assertNotIn("reactions", disc[1])
 

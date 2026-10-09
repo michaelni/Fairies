@@ -85,6 +85,7 @@ import db_config
 import diff_render
 import fairy
 import filedb
+import forge_item
 import halt_marker
 import git_util
 import tui_core
@@ -1650,7 +1651,7 @@ class UILoop:
 
         def entries_before(when: datetime) -> int:
             return sum(1 for entry in disc if not isinstance(entry, dict)
-                       or fairy.discussion_time(entry) <= when)
+                       or forge_item.discussion_time(entry) <= when)
 
         separator_at = None
         if snapshot is not None:

@@ -97,7 +97,6 @@ from common import (
     parse_turn_failure,
     JsonObject,
     add_color_arg,
-    attachment_urls,
     iso_to_dt,
     parse_iso_datetime_arg,
     parse_side_args,
@@ -118,9 +117,13 @@ from forge_gcli import (
 from forge_item import (
     STATE_EVENTS,
     TIMELINE_ITEMS,
+    build_llm_discussion,
+    discussion_time,
+    first_dt,
     item_standing,
     labels,
     logins,
+    normalize_review_state,
     reactions_by_content,
     timeline_events,
 )
@@ -139,15 +142,12 @@ __all__ = [
     "add_side_agent_args",
     "add_side_identity_args",
     "apply_triage_labels",
-    "build_llm_discussion",
     "call_llm_with_retries",
     "compile_user_mention_regex",
     "compile_wip_regex",
     "decision_from_review",
     "decision_has_label_changes",
-    "discussion_time",
     "effective_review_states",
-    "first_dt",
     "flatten_label_args",
     "flatten_pr_number_args",
     "format_llm_classification",
@@ -1139,14 +1139,6 @@ def submit_decision_action(
     return None
 
 
-def first_dt(obj: ApiObject, *keys: str) -> datetime | None:
-    for key in keys:
-        dt = iso_to_dt(obj.get(key))
-        if dt is not None:
-            return dt
-    return None
-
-
 def max_dt(values: Iterable[datetime | None]) -> datetime | None:
     return max((v for v in values if v is not None), default=None)
 
@@ -1210,25 +1202,6 @@ def list_commit_statuses(args: argparse.Namespace, ref: str) -> list[ApiObject]:
         forge_gcli.list_commit_statuses(args, args.owner, args.repo, ref),
         getattr(args, "simulate_past", None), "created_at", "updated_at",
     )
-
-
-def normalize_review_state(state: str | None) -> str | None:
-    if not state:
-        return None
-    s = state.strip().upper().replace("-", "_").replace(" ", "_")
-    mapping = {
-        "APPROVE": "APPROVED",
-        "APPROVED": "APPROVED",
-        "REQUEST_CHANGES": "CHANGES_REQUESTED",
-        "REQUESTED_CHANGES": "CHANGES_REQUESTED",
-        "CHANGES_REQUESTED": "CHANGES_REQUESTED",
-        "REJECTED": "CHANGES_REQUESTED",
-        "COMMENT": "COMMENTED",
-        "COMMENTED": "COMMENTED",
-        "PENDING": "PENDING",
-    }
-    return mapping.get(s, s)
-
 
 
 def normalize_status_state(state: str | None) -> str | None:
@@ -1938,108 +1911,6 @@ def format_llm_classification(classification: str) -> str:
     }
     return mapping.get(classification, classification)
 
-
-
-def build_llm_discussion(
-    reviews: list[ApiObject],
-    comments: list[ApiObject],
-    review_comments: list[ApiObject],
-    timeline: list[ApiObject] | None = None,
-) -> list[DiscussionItem]:
-    """Merge the PR's comments, reviews, review comments and (optionally)
-    push events into a single chronologically-sorted list for the LLM.
-
-    ``timeline`` is the raw ``/issues/{n}/timeline`` payload; its typed
-    entries are consumed as ``timeline_events`` describes.
-    Passing ``None`` (or omitting it) yields a comments-only discussion.
-    The push items carry ``kind="push"`` plus ``head_sha`` /
-    ``is_force_push`` so the triage LLM can tell unambiguously that
-    new code arrived after its prior comment instead of guessing from
-    a SHA mentioned in the comment body. A review without a body is
-    kept when it carries a verdict (APPROVED / CHANGES_REQUESTED):
-    a bare approve click is discussion-worthy for the operator and
-    the LLM alike.
-    """
-    items: list[DiscussionItem] = []
-    if timeline:
-        items.extend(timeline_events(timeline))
-
-    for comment in comments:
-        body = comment.get("body")
-        if not isinstance(body, str):
-            body = ""
-        urls = attachment_urls(comment)
-        # a Forgejo comment can be an attachment with no text at all
-        if not body.strip() and not urls:
-            continue
-        user = comment.get("user") or {}
-        author = user.get("login") or user.get("username") or user.get("full_name") or "?"
-        item: DiscussionItem = {
-            "kind": "comment",
-            "author": author,
-            "created_at": comment.get("created_at"),
-            "updated_at": comment.get("updated_at"),
-            "body": body,
-        }
-        if urls:
-            item["attachment_urls"] = urls
-        if comment.get("reactions"):
-            item["reactions"] = reactions_by_content(comment["reactions"])
-        items.append(item)
-
-    for review in reviews:
-        body = review.get("body")
-        if not isinstance(body, str) or not body.strip():
-            if normalize_review_state(review.get("state")) \
-                    not in ("APPROVED", "CHANGES_REQUESTED"):
-                continue
-            body = ""
-        user = review.get("user") or {}
-        author = user.get("login") or user.get("username") or user.get("full_name") or "?"
-        items.append(
-            {
-                "kind": "review",
-                "author": author,
-                "state": review.get("state"),
-                "submitted_at": review.get("submitted_at"),
-                "updated_at": review.get("updated_at"),
-                "body": body,
-            }
-        )
-
-    for comment in review_comments:
-        body = comment.get("body")
-        if not isinstance(body, str) or not body.strip():
-            continue
-        user = comment.get("user") or {}
-        author = user.get("login") or user.get("username") or user.get("full_name") or "?"
-        items.append(
-            {
-                "kind": "review_comment",
-                "author": author,
-                "created_at": comment.get("created_at"),
-                "updated_at": comment.get("updated_at"),
-                "path": comment.get("path"),
-                "line": comment.get("line") if comment.get("line") is not None else comment.get("position"),
-                "side": comment.get("side"),
-                "commit_id": comment.get("commit_id"),
-                "body": body,
-                **({"reactions": reactions_by_content(comment["reactions"])}
-                   if comment.get("reactions") else {}),
-            }
-        )
-
-    items.sort(key=discussion_time)
-    return items
-
-
-def discussion_time(item: DiscussionItem) -> datetime:
-    """A discussion entry's arrival time: forges bump the item's
-    updated_at watermark on arrivals, never on edits (see gcli_cache),
-    so an entry compares by creation, not by when it was last edited.
-    The epoch for an entry without a stamp."""
-    return first_dt(item, "submitted_at", "created_at", "updated_at") \
-        or datetime.min.replace(tzinfo=timezone.utc)
 
 
 def with_operator_notes(discussion: list[DiscussionItem],

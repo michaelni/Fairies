@@ -234,7 +234,7 @@ class ContainerShellSession:
     def _drain_stderr(self) -> None:
         stderr = self._proc.stderr
         while True:
-            line = stderr.readline()
+            line = stderr.readline(65536)
             if not line:
                 return
             logger.debug("container shell stderr: %s",

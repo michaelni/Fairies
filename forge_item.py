@@ -53,6 +53,7 @@ __all__ = [
     "FIELDLESS_KINDS",
     "STATE_EVENTS",
     "TIMELINE_ITEMS",
+    "author_login",
     "build_llm_discussion",
     "discussion_time",
     "first_dt",
@@ -101,9 +102,14 @@ def logins(users: object) -> list[str]:
     return [user["login"] for user in users or () if isinstance(user, dict) and user.get("login")]
 
 
-def _timeline_name(user: dict | None) -> str:
+def author_login(user: dict | None) -> str:
+    """The login of the forge ``user``, "?" when the forge names none."""
     user = user or {}
-    return user.get("login") or user.get("full_name") or "?"
+    for key in ("login", "username", "full_name"):
+        value = user.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return "?"
 
 
 def _push_fields(entry: dict) -> dict | None:
@@ -122,7 +128,7 @@ STATE_EVENTS = {CLOSE_EVENT: "closed", REOPEN_EVENT: "reopened",
 
 
 def _assignee_name(entry: dict) -> str:
-    return entry.get("assignee_team") or _timeline_name(entry.get("assignee"))
+    return entry.get("assignee_team") or author_login(entry.get("assignee"))
 
 
 def _either(flag: str, when_set: str, when_clear: str,
@@ -211,7 +217,7 @@ def timeline_events(timeline: list[dict]) -> list[dict]:
         item = TIMELINE_ITEMS.get(entry.get("type"), lambda entry: None)(entry)
         if item is not None:
             kind, fields = item
-            items.append({"kind": kind, "author": _timeline_name(entry.get("user")),
+            items.append({"kind": kind, "author": author_login(entry.get("user")),
                           **fields, "created_at": entry.get("created_at")})
     return items
 
@@ -274,12 +280,10 @@ def build_llm_discussion(
         # a Forgejo comment can be an attachment with no text at all
         if not body.strip() and not urls:
             continue
-        user = comment.get("user") or {}
-        author = user.get("login") or user.get("username") or user.get("full_name") or "?"
         item: dict = {
             "kind": "comment",
             "id": comment.get("id"),
-            "author": author,
+            "author": author_login(comment.get("user")),
             "created_at": comment.get("created_at"),
             "updated_at": comment.get("updated_at"),
             "url": comment.get("html_url"),
@@ -298,13 +302,11 @@ def build_llm_discussion(
                     not in ("APPROVED", "CHANGES_REQUESTED"):
                 continue
             body = ""
-        user = review.get("user") or {}
-        author = user.get("login") or user.get("username") or user.get("full_name") or "?"
         items.append(
             {
                 "kind": "review",
                 "id": review.get("id"),
-                "author": author,
+                "author": author_login(review.get("user")),
                 "state": review.get("state"),
                 "submitted_at": review.get("submitted_at"),
                 "updated_at": review.get("updated_at"),
@@ -317,14 +319,12 @@ def build_llm_discussion(
         body = comment.get("body")
         if not isinstance(body, str) or not body.strip():
             continue
-        user = comment.get("user") or {}
-        author = user.get("login") or user.get("username") or user.get("full_name") or "?"
         items.append(
             {
                 "kind": "review_comment",
                 "id": comment.get("id"),
                 "review_id": comment.get("pull_request_review_id") or comment.get("review_id"),
-                "author": author,
+                "author": author_login(comment.get("user")),
                 "created_at": comment.get("created_at"),
                 "updated_at": comment.get("updated_at"),
                 "path": comment.get("path"),

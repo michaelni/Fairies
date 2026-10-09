@@ -83,7 +83,7 @@ import git_util
 import issue_fairy
 import worker
 import workset
-from forge_item import FIELDLESS_KINDS, build_llm_discussion, discussion_time, item_standing, labels
+from forge_item import FIELDLESS_KINDS, author_login, build_llm_discussion, discussion_time, item_standing, labels
 from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     config_option_groups, grouped_help,
                     iso_to_dt, options_argv, parse_scoped_overrides,
@@ -281,7 +281,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                            status["state"], last_change)
         snapshot = {
             "title": str(item.get("title") or ""),
-            "author": fairy.get_pr_author(item),
+            "author": author_login(item.get("user")),
             **item_standing(item),
             "reactions": reactions,
             "body": str(item.get("body") or ""),
@@ -298,7 +298,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     if ns.halt_keyword:
         for post in (item, *comments, *reviews, *review_comments):
             if ns.halt_keyword in str(post.get("body") or ""):
-                reason = (f"{fairy.get_pr_author(post)} posted "
+                reason = (f"{author_login(post.get('user'))} posted "
                           f"{ns.halt_keyword!r} in "
                           f"{post.get('html_url') or snapshot['html_url']}")
                 halt_marker.halt(halt_marker.path(db.root, ns.halt_file), reason)

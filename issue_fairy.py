@@ -58,7 +58,7 @@ from forge_gcli import (
     gcli_api,
     post_issue_comment,
 )
-from forge_item import build_llm_discussion, first_dt, item_standing, labels, reactions_by_content
+from forge_item import author_login, build_llm_discussion, first_dt, item_standing, labels, reactions_by_content
 from llm_review_api import ISSUE_REPORT_CLASSIFICATIONS
 import workset
 import fairy
@@ -74,7 +74,6 @@ from fairy import (
     flatten_pr_number_args,
     get_item_author_login,
     get_last_activity,
-    get_pr_author,
     invoke_llm_wrapper,
     item_body_mentions_user,
     label_names,
@@ -244,7 +243,7 @@ def prepare_issue(
         raise RuntimeError(f"the thread could not be fetched: {thread}") from thread
     _, comments, _, timeline, reactions = thread
     title = str(issue.get("title") or "")
-    author = get_pr_author(issue)
+    author = author_login(issue.get("user"))
 
     def skip(reason: str, last_activity: datetime | None) -> Decision:
         return Decision(number, title, author, "-", "skip", reason, last_activity)

@@ -117,6 +117,7 @@ from forge_gcli import (
 from forge_item import (
     STATE_EVENTS,
     TIMELINE_ITEMS,
+    author_login,
     build_llm_discussion,
     discussion_time,
     first_dt,
@@ -155,7 +156,6 @@ __all__ = [
     "get_item_author_login",
     "get_last_activity",
     "get_pr",
-    "get_pr_author",
     "get_pr_base_sha",
     "get_pr_head_branch",
     "get_pr_head_ref",
@@ -1491,15 +1491,6 @@ def build_ci_triage_payload(
     }
 
 
-def get_pr_author(pr: ApiObject) -> str:
-    user = pr.get("user") or {}
-    for key in ("login", "username", "full_name"):
-        value = user.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return "?"
-
-
 def get_pr_head_ref(pr: ApiObject) -> str | None:
     head = pr.get("head")
     if isinstance(head, dict):
@@ -2228,7 +2219,7 @@ def run_llm_review(
             "number": pr.get("number"),
             "title": pr.get("title") or "",
             "body": pr.get("body") or "",
-            "author": get_pr_author(pr),
+            "author": author_login(pr.get("user")),
             "html_url": pr.get("html_url") or "",
             "base_ref": ((pr.get("base") or {}).get("ref") if isinstance(pr.get("base"), dict) else "") or "",
             "head_ref": ((pr.get("head") or {}).get("ref") if isinstance(pr.get("head"), dict) else "") or "",
@@ -2478,7 +2469,7 @@ def prepare_pr(
         raise RuntimeError(f"the thread could not be fetched: {thread}") from thread
     reviews, comments, review_comments, timeline, reactions = thread
     title = str(pr.get("title") or "")
-    author = get_pr_author(pr)
+    author = author_login(pr.get("user"))
 
     # ``--force-review`` means "review this PR no matter what".
     # The WIP/mergeable gates below are heuristics for the cron mode
@@ -2963,7 +2954,7 @@ def safe_prepare_pr(
         return Decision(
             int(number) if str(number).isdigit() else -1,
             title,
-            get_pr_author(pr),
+            author_login(pr.get("user")),
             "-",
             "error",
             str(exc),

@@ -278,9 +278,11 @@ def build_llm_discussion(
         author = user.get("login") or user.get("username") or user.get("full_name") or "?"
         item: dict = {
             "kind": "comment",
+            "id": comment.get("id"),
             "author": author,
             "created_at": comment.get("created_at"),
             "updated_at": comment.get("updated_at"),
+            "url": comment.get("html_url"),
             "body": body,
         }
         if urls:
@@ -301,10 +303,12 @@ def build_llm_discussion(
         items.append(
             {
                 "kind": "review",
+                "id": review.get("id"),
                 "author": author,
                 "state": review.get("state"),
                 "submitted_at": review.get("submitted_at"),
                 "updated_at": review.get("updated_at"),
+                "commit_id": review.get("commit_id"),
                 "body": body,
             }
         )
@@ -318,13 +322,19 @@ def build_llm_discussion(
         items.append(
             {
                 "kind": "review_comment",
+                "id": comment.get("id"),
+                "review_id": comment.get("pull_request_review_id") or comment.get("review_id"),
                 "author": author,
                 "created_at": comment.get("created_at"),
                 "updated_at": comment.get("updated_at"),
                 "path": comment.get("path"),
                 "line": comment.get("line") if comment.get("line") is not None else comment.get("position"),
+                "old_line": comment.get("old_line") if comment.get("old_line") is not None
+                else comment.get("original_position"),
                 "side": comment.get("side"),
                 "commit_id": comment.get("commit_id"),
+                "original_commit_id": comment.get("original_commit_id"),
+                "diff_hunk": comment.get("diff_hunk"),
                 "body": body,
                 **({"reactions": reactions_by_content(comment["reactions"])}
                    if comment.get("reactions") else {}),

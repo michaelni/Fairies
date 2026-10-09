@@ -783,6 +783,8 @@ has one, and when it happened. The kinds:
 - ``title_changed``: ``old_title`` became ``new_title``.
 - ``target_branch_changed``: ``old_ref`` became ``new_ref``; both are
   absent when the forge does not name them.
+- ``issue_ref_changed``: the branch or tag the issue names went from
+  ``old_ref`` to ``new_ref``; either is absent when unset.
 - ``head_branch_deleted``: the head ``branch`` was deleted; absent when
   the forge does not name it.
 - ``dependency_added``, ``dependency_removed``: this item depends, or

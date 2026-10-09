@@ -41,6 +41,7 @@ merge_pull
 pull_scheduled_merge
 pull_cancel_scheduled_merge
 change_title
+change_issue_ref
 change_target_branch
 delete_branch
 add_dependency

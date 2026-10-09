@@ -201,6 +201,7 @@ TIMELINE_ITEMS: dict[str, Callable[[dict], tuple[str, dict] | None]] = {
     forge_gcli.TITLE_EVENT: lambda entry: ("title_changed", {
         "old_title": entry["old_title"], "new_title": entry["new_title"]}),
     forge_gcli.TARGET_BRANCH_EVENT: _ref_change("target_branch_changed"),
+    forge_gcli.ISSUE_REF_EVENT: _ref_change("issue_ref_changed"),
     forge_gcli.DELETE_BRANCH_EVENT: lambda entry: ("head_branch_deleted", {
         "branch": entry["old_ref"]} if entry.get("old_ref") else {}),
     **dict.fromkeys(DEPENDENCY_EVENTS, _either(

@@ -120,6 +120,7 @@ __all__ = [
     "TITLE_EVENT",
     "TARGET_BRANCH_EVENT",
     "DELETE_BRANCH_EVENT",
+    "ISSUE_REF_EVENT",
     "DEPENDENCY_EVENTS",
     "LOCK_EVENT",
     "UNLOCK_EVENT",
@@ -1031,6 +1032,7 @@ ASSIGNEES_EVENT = "assignees"
 TITLE_EVENT = "change_title"
 TARGET_BRANCH_EVENT = "change_target_branch"
 DELETE_BRANCH_EVENT = "delete_branch"
+ISSUE_REF_EVENT = "change_issue_ref"
 DEPENDENCY_EVENTS = frozenset({"add_dependency", "remove_dependency"})
 LOCK_EVENT = "lock"
 UNLOCK_EVENT = "unlock"
@@ -1141,7 +1143,7 @@ _FORGEJO_TYPED_KEYS: dict[str, Callable[[dict], dict]] = {
         "old_milestone": (e.get("old_milestone") or {}).get("title")},
     TITLE_EVENT: lambda e: {
         "old_title": e.get("old_title"), "new_title": e.get("new_title")},
-    **dict.fromkeys((TARGET_BRANCH_EVENT, DELETE_BRANCH_EVENT), lambda e: {
+    **dict.fromkeys((TARGET_BRANCH_EVENT, DELETE_BRANCH_EVENT, ISSUE_REF_EVENT), lambda e: {
         "old_ref": e.get("old_ref") or None, "new_ref": e.get("new_ref") or None}),
     **dict.fromkeys(DEPENDENCY_EVENTS, lambda e: {
         "dependent_issue": _item_summary(e.get("dependent_issue") or {}),

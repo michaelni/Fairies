@@ -857,7 +857,7 @@ Pick exactly one value for ``route``:
   * ``merge_conflicts`` shows the PR conflicts with its target branch
     and noone is actively working on that issue and it seems the author
     is unaware of it or unaware that it holds up the PR and the PR is
-    actually held up by that.
+    actually held up by that. Do not imply that a PR will be merged
   * A simple factual clarification is useful and clearly on-topic.
   Put the FULL reply in ``message``. Keep it short, friendly, and
   focused on the single point being addressed. Follow the normal

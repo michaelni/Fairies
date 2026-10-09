@@ -416,7 +416,8 @@ class VetStageTests(unittest.TestCase):
     records its result on the workset ticket, where the agent's vetted
     auto mode and the TUI read it."""
 
-    def _run(self, review: Review, *extra_args: str) -> tuple[dict, list]:
+    def _run(self, review: Review | None, *extra_args: str,
+             triage: dict | None = None) -> tuple[dict, list]:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         ticket = Path(tmp.name) / "pr-1.json"
@@ -430,7 +431,7 @@ class VetStageTests(unittest.TestCase):
         with mock.patch.object(wrapper, "vet_review", side_effect=fake_vet):
             exit_code, _out, _reached = _run_wrapper_with_stubbed_triage(
                 _fixture_request(),
-                {"route": "engage", "reason": "r", "label_changes": []},
+                triage or {"route": "engage", "reason": "r", "label_changes": []},
                 review_pr_stub=lambda ctx, reviewers, combiner, **kw: review,
                 model_args=["--model", "openai:gpt-5.4",
                             "--workset-file", str(ticket), *extra_args],
@@ -449,6 +450,26 @@ class VetStageTests(unittest.TestCase):
         self.assertEqual("openai:gpt-x", name)
         self.assertEqual("vetter", role)
         self.assertIn("LLM-GPT-5.4: one issue", texts[-1])
+
+    def test_triage_reply_is_vetted_and_triage_skip_is_not(self) -> None:
+        labels = [{"label": "needs docs", "op": "add", "reason": "r", "post": False}]
+        for route, vetted in (("reply_no_verdict", True), ("skip", False)):
+            with self.subTest(route=route):
+                ticket, seen = self._run(
+                    None, "--vet-model", "openai:gpt-x@low",
+                    triage={"route": route, "reason": "r", "message": "see the docs",
+                            "label_changes": labels})
+                if not vetted:
+                    self.assertEqual([], seen)
+                    self.assertNotIn("vetting", ticket)
+                    continue
+                self.assertEqual(ticket["vetting"],
+                                 {"hold_for_human_inspection": False, "reason": "clean"})
+                [(_name, role, texts)] = seen
+                self.assertEqual("vetter", role)
+                self.assertIn("classification: reply_no_verdict", texts[-1])
+                self.assertIn("needs docs", texts[-1])
+                self.assertIn("see the docs", texts[-1])
 
     def test_more_than_one_opened_pull_request_holds_without_the_vetter(self) -> None:
         branches = tuple({"repo": "example", "branch": f"pr1-{i}", "mode": "push",

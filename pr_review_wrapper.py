@@ -1783,6 +1783,7 @@ def main() -> int:
         )
 
         def vet_verdict(review: Review) -> None:
+            close_machine_shells(session for session, _ in shared_shells.values())
             workset_note(args, "stage", "vet")
             inherited_branches[:] = review.branches
             vetter = make_reviewer(
@@ -1884,13 +1885,18 @@ def main() -> int:
                         "triage route=reply_no_verdict; reason=%r; skipping main reviewer pass",
                         triage_result.get("reason", ""),
                     )
-                    emit_review_stdout(
+                    reply = Review(
                         # The issue verdict vocabulary has no verdict
                         # dimension, so its reply class is plain "reply".
                         "reply" if args.task == "issue" else "reply_no_verdict",
                         str(triage_result.get("message") or ""),
-                        label_changes=triage_label_changes,
+                        label_changes=tuple(triage_label_changes),
+                        model=triager.name,
                     )
+                    if args.vet_model:
+                        vet_verdict(reply)
+                    emit_review_stdout(reply.classification, reply.message,
+                                       label_changes=triage_label_changes)
                     return 0
                 if route == "engage":
                     if triage_label_changes:
@@ -2023,7 +2029,6 @@ def main() -> int:
                 len(poisoned_session_ids),
             )
             return EXIT_REVIEW_HALTED
-        close_machine_shells(session for session, _ in shared_shells.values())
 
         posting_block = unattended_posting_block(review.branches)
         if posting_block:

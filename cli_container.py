@@ -146,25 +146,22 @@ class CliContainer:
             local.write_text(text, encoding="utf-8")
             self.put_file(local, dest_dir, timeout_s=timeout_s)
 
-    def read_file(self, container_path: str,
-                  *, timeout_s: float = 60.0,
-                  max_bytes: int | None = None) -> str | None:
-        """``cat`` a file out of the container; ``None`` if it is absent.
+    def read_file(self, container_path: str, *, max_bytes: int,
+                  timeout_s: float = 60.0) -> str | None:
+        """The first ``max_bytes`` of a file in the container; ``None`` if
+        it is absent.
 
-        The container's filesystem is untrusted, so callers reading a
-        file whose content feeds a parser should pass ``max_bytes``: the
-        read is then ``head -c`` capped, and an oversized file comes back
-        silently truncated (its consumer's parse fails closed) instead of
-        streaming unbounded data into host memory. Bytes that are not
-        valid UTF-8 are replaced rather than raising.
+        The container's filesystem is untrusted: the file is read through
+        ``head -c``, so an oversized one comes back truncated and its
+        consumer's parse fails closed, and the wrapper reads under the
+        same cap, so a container whose ``head`` ignores it fails the read
+        (``ContainerInfraError``) instead of filling host memory. Bytes
+        that are not valid UTF-8 are replaced rather than raising.
         """
-        argv = ["cat", container_path] if max_bytes is None \
-            else ["head", "-c", str(max_bytes), container_path]
-        cp = subprocess.run(
-            self.exec_argv(argv),
-            capture_output=True, text=True, errors="replace", timeout=timeout_s,
-        )
-        return cp.stdout if cp.returncode == 0 else None
+        cp = run_on_remote_host(
+            self.host, "podman", "exec", self._cid(), "head", "-c", str(max_bytes),
+            container_path, timeout_s=timeout_s, max_output_bytes=max_bytes)
+        return cp.stdout.decode("utf-8", "replace") if cp.returncode == 0 else None
 
     def run(
         self,

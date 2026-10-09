@@ -169,19 +169,22 @@ class ExecArgvTests(unittest.TestCase):
             argv[-1],
         )
 
-    def test_read_file_cats_container_path(self) -> None:
+    def test_exec_argv_joins_the_remote_command(self) -> None:
         argv = self._container().exec_argv(["cat", "/work/.codex-run/out.json"])
         self.assertEqual(
             "podman exec abc123 cat /work/.codex-run/out.json", argv[-1])
 
-    def test_read_file_max_bytes_uses_head(self) -> None:
+    def test_read_file_heads_under_the_same_cap_on_both_sides(self) -> None:
         c = self._container()
-        with mock.patch.object(cli_container.subprocess, "run") as run:
-            run.return_value = mock.Mock(returncode=0, stdout="{}")
-            c.read_file("/work/.codex-run/last_message.json", max_bytes=1024)
-        self.assertEqual(
-            "podman exec abc123 head -c 1024 /work/.codex-run/last_message.json",
-            run.call_args.args[0][-1])
+        with mock.patch.object(cli_container, "run_on_remote_host") as run:
+            run.return_value = mock.Mock(returncode=0, stdout=b"{}")
+            self.assertEqual(
+                "{}", c.read_file("/work/.codex-run/last_message.json",
+                                  max_bytes=1024))
+        run.assert_called_once_with(
+            HOST, "podman", "exec", "abc123", "head", "-c", "1024",
+            "/work/.codex-run/last_message.json", timeout_s=60.0,
+            max_output_bytes=1024)
 
     def test_exec_before_start_is_error(self) -> None:
         c = CliContainer(image="img", host=HOST)

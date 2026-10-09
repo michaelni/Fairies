@@ -27,7 +27,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-Shell dispatch over the per-run unix socket (codex backend plumbing)."""
+Shell dispatch over the per-run unix socket (CLI agent plumbing)."""
 
 import json
 import os
@@ -111,7 +111,7 @@ class ServeDispatchTests(unittest.TestCase):
         payload = self._call({"command": "true", "machine": "riscv"})
         self.assertIn("unknown machine", payload["error"])
 
-    # the request stream arrives from inside the codex container
+    # the request stream arrives from inside the CLI agent container
 
     def test_bad_json_request_survives(self) -> None:
         self._serve([])
@@ -205,7 +205,7 @@ class ServeDispatchTests(unittest.TestCase):
 
 
 class RelayDispatchTests(unittest.TestCase):
-    """The codex-container transport: mcp_shell_bridge -> relay.py socket ->
+    """The CLI agent container transport: mcp_shell_bridge -> relay.py socket ->
     relay stdio -> serve_dispatch (the wrapper side), no bind mount / no
     reverse tunnel. Drives the real relay.py as a subprocess, exactly as
     the wrapper will over ``podman exec -i``."""

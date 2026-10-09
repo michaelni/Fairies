@@ -103,7 +103,7 @@ class RemoteHost:
         "-o", "BatchMode=yes",
         "-o", "ServerAliveInterval=30",
         "-o", "ServerAliveCountMax=3",
-        # The codex relay reads its readiness marker off this stderr; an
+        # The CLI agent relay reads its readiness marker off this stderr; an
         # ssh warning line there would masquerade as a failed relay start.
         "-o", "LogLevel=ERROR",
     )
@@ -938,7 +938,7 @@ def reap_orphaned_containers(host: RemoteHost) -> None:
 def reap_stale_containers(
     host: RemoteHost, *, images: Sequence[str], older_than: str = "60m",
 ) -> int:
-    """Force-remove leaked review/codex containers on ``host``.
+    """Force-remove leaked review/CLI agent containers on ``host``.
 
     Fairy's containers run ``sleep infinity``, so an interrupted or crashed
     run (before the wrapper's cleanup) leaves them behind. This reaps only
@@ -990,7 +990,7 @@ def pause_container(handle: ContainerHandle) -> None:
 
     Unlike :func:`stop_container` this leaves the container on the host --
     frozen, not removed -- so a review container suspected of tampering
-    (see the codex poison path) can be inspected later. A container that
+    (see the CLI agent poison path) can be inspected later. A container that
     cannot be paused is removed instead. The operator must ``podman rm -f``
     a paused one by hand once done, since nothing else will reclaim it;
     a later stop_container leaves it in place.

@@ -27,7 +27,7 @@
  * licensing of the file under the GNU General Public License version 2.
  */
 
-The MCP stdio bridge between the codex CLI and the shell dispatch socket."""
+The MCP stdio bridge between the CLI agent and the shell dispatch socket."""
 
 import json
 import os

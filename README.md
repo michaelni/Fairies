@@ -89,7 +89,7 @@ item's body or discussion the agent writes `halted` into the db root
 config halts them all), naming who posted it where, and agent and
 workers do nothing further -- no review, no post, not even an
 operator's `y` -- until the operator removes that file. A review
-already running has its containers -- codex's too -- paused for
+already running has its containers -- the CLI agent's too -- paused for
 inspection within a second and stops; its ticket returns to
 `queued/` for after the halt is lifted.
 
@@ -251,8 +251,8 @@ apply as root on the podman host, naming every account that runs containers
 (the review account and each CLI backend's account); one ruleset covers them
 all:
 
-    python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT --rootless-user CODEX_ACCOUNT
-    sudo python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT --rootless-user CODEX_ACCOUNT --apply
+    python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT --rootless-user CLI_AGENT_ACCOUNT
+    sudo python3 containers/setup_host.py --rootless-user SANDBOX_ACCOUNT --rootless-user CLI_AGENT_ACCOUNT --apply
 
 The rule is keyed on the accounts' uids (rootless podman's slirp4netns/pasta
 forwards container egress from a socket owned by that uid) and their
@@ -324,7 +324,7 @@ between the codex and review containers. Cap concurrent passes with
 `low`, `medium`, `high`, `max`; `agy models` lists the models the
 subscription offers) runs the pass through Google's Antigravity CLI in
 headless mode, on the subscription of the Google account it is logged in
-as. Like codex it runs in an ephemeral container on `--agy-host`, never on
+as. Like every CLI agent it runs in an ephemeral container on `--agy-host`, never on
 the wrapper host; an `agy:` spec without `--agy-host` is a hard error at
 startup. Through the pipeline, pass `--agy-host` and `--agy-home` in the
 configurator's `--prs` section.
@@ -338,7 +338,7 @@ interactive `agy` as fairy's own account and keep the
 container per run, and a token agy rejects is set aside as
 `antigravity-oauth-token.invalid` until a human logs in again.
 
-The security model is codex's: agy's own shell, file and web tools stay
+The security model is every CLI agent's: agy's own shell, file and web tools stay
 auto-denied, the MCP shell into the review containers is the only tool
 granted, and agy's egress is Google's API. Cap concurrent passes with
 `--concurrency agy:N`.
@@ -348,7 +348,7 @@ granted, and agy's egress is Google's API. Cap concurrent passes with
 `grok:MODEL[@EFFORT]` (e.g. `grok:grok-4.7@high`; efforts `low`, `medium`,
 `high`, `xhigh`; `grok models` lists the models the subscription offers)
 runs the pass through xAI's Grok Build CLI in headless mode, on the
-subscription of the account it is logged in as. Like codex it runs in an
+subscription of the account it is logged in as. Like every CLI agent it runs in an
 ephemeral container on `--grok-host`, never on the wrapper host; a `grok:`
 spec without `--grok-host` is a hard error at startup. Through the
 pipeline, pass `--grok-host` and `--grok-home` in the configurator's
@@ -367,7 +367,7 @@ it finds there (`CLAUDE.md`, `AGENTS.md`) to xAI.
 A run with a `grok:` reviewer gives every reviewer at most 150 KB of patch
 and 150 KB of source inline.
 
-The security model is codex's: of grok's own tools only the two that call
+The security model is every CLI agent's: of grok's own tools only the two that call
 MCP tools remain, they are denied every file, and the MCP shell into the
 review containers is the only tool they can call. Cap concurrent passes
 with `--concurrency grok:N`.

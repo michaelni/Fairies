@@ -1260,7 +1260,7 @@ def stop_containers_on_termination() -> None:
     """On SIGTERM, or when the parent process (fairy's worker) exits,
     remove every container this run started and exit with 143. Pause
     them within a second of the halt file appearing: a review stops only
-    at its next boundary, and a codex pass that makes no further shell
+    at its next boundary, and a CLI agent pass that makes no further shell
     call never reaches one."""
     parent_pid = os.getppid()
     terminated = threading.Event()

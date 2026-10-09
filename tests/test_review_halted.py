@@ -164,7 +164,7 @@ class HaltStopsSiblingReviewersTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as caught:
                 shell_tool.exec_shell_call(
                     None, {"command": "true"}, max_timeout_s=1.0)
-        # SystemExit so it escapes the codex dispatch loop's except Exception;
+        # SystemExit so it escapes the CLI agent dispatch loop's except Exception;
         # the status keeps the wrapper's halted exit code intact.
         self.assertEqual(EXIT_REVIEW_HALTED, caught.exception.code)
 

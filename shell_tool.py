@@ -31,7 +31,7 @@ The model-facing shell tool's vendor-neutral core: run one parsed
 shell-tool call on a ``ContainerShellSession`` and return the JSON-able
 result payload.
 
-The OpenAI Responses loop, the Anthropic Messages loop and the codex MCP
+The OpenAI Responses loop, the Anthropic Messages loop and the CLI agent MCP
 bridge share this; they differ only in the wire envelope
 (``function_call`` / ``tool_use`` / MCP ``tools/call``) they wrap around
 it, which stays in each per-vendor reviewer. The canonical tool schema
@@ -136,7 +136,7 @@ def exec_shell_call(
     ``[1.0, max_timeout_s]``.
     """
     abort_if_cancelled()
-    # SystemExit, not a plain raise: the codex dispatch loop turns any
+    # SystemExit, not a plain raise: the CLI agent dispatch loop turns any
     # Exception into a tool-error payload and lets the model carry on.
     if _halted:
         raise SystemExit(EXIT_REVIEW_HALTED)

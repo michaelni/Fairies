@@ -243,11 +243,11 @@ class KillRunTests(unittest.TestCase):
 
 
 class RunTests(ContainerStateHarness, unittest.TestCase):
-    def test_pausing_the_container_ends_a_codex_that_never_returns(self) -> None:
+    def test_pausing_the_container_ends_a_cli_agent_that_never_returns(self) -> None:
         self.record_podman()
         c = CliContainer(image="img", host=HOST)
-        codex = [sys.executable, "-c", "import time; time.sleep(60)"]
-        with mock.patch.object(c, "exec_argv", return_value=codex):
+        cli_agent = [sys.executable, "-c", "import time; time.sleep(60)"]
+        with mock.patch.object(c, "exec_argv", return_value=cli_agent):
             c.start()
             pause = threading.Timer(0.5, podman_host.pause_container, [c.handle])
             pause.start()
@@ -344,12 +344,12 @@ class RelayCancelTests(unittest.TestCase):
             relay._serve()
         return relay
 
-    def test_cancel_at_a_shell_call_kills_codex_and_keeps_the_container(self) -> None:
+    def test_cancel_at_a_shell_call_kills_the_cli_agent_and_keeps_the_container(self) -> None:
         container = self._serve(SystemExit).container
         container.kill_run.assert_called_once()
         container.stop.assert_not_called()
 
-    def test_a_halt_leaves_the_codex_container_to_the_halt_pause(self) -> None:
+    def test_a_halt_leaves_the_cli_agent_container_to_the_halt_pause(self) -> None:
         container = self._serve(SystemExit(EXIT_REVIEW_STOPPED_BY_HALT_FILE)).container
         container.kill_run.assert_not_called()
         container.stop.assert_not_called()
@@ -367,7 +367,7 @@ class RelayCancelTests(unittest.TestCase):
             relay.raise_if_channel_lost()
 
     def test_closed_relay_pipe_neither_raises_nor_stops(self) -> None:
-        """A shell call that outlives codex writes its response to the
+        """A shell call that outlives the CLI agent writes its response to the
         stopped relay's closed stdin; the dispatch thread must end quietly
         instead of dying with the traceback seen in production 2026-08-14."""
         self._serve(ValueError("write to closed file")).container.kill_run.assert_not_called()

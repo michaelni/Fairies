@@ -39,8 +39,8 @@ each through ``shell_tool.exec_machine_call`` into the review containers,
 writing the results back down the relay's stdin. No socket of its own
 crosses the host boundary.
 
-One ``serve_dispatch`` call == one codex run == one ``shells`` dict, so
-each codex pass gets its own lazily-opened per-machine review containers,
+One ``serve_dispatch`` call == one CLI agent run == one ``shells`` dict, so
+each CLI agent pass gets its own lazily-opened per-machine review containers,
 the same isolation ``run_parallel`` gives the other backends. Sessions it
 opens go through the wrapper-supplied ``open_shell`` callback, which
 registers them for the wrapper's own cleanup.
@@ -100,15 +100,15 @@ def serve_dispatch(
     max_timeout_s: float,
     shells: dict[str, ContainerShellSession] | None = None,
 ) -> None:
-    """Serve one codex run's shell dispatch over a byte-stream pair.
+    """Serve one CLI agent run's shell dispatch over a byte-stream pair.
 
     ``reader``/``writer`` are binary file-like objects carrying the
     newline-delimited ``{"id", "args"}`` / ``{"id", "payload"}`` protocol,
     transport-agnostic, so the wrapper drives it over a ``podman exec -i``
-    channel into the codex container (the ``relay.py`` side) exactly as it
+    channel into the CLI agent container (the ``relay.py`` side) exactly as it
     drives the review shells, no socket of its own required.
 
-    One call == one codex run, with a private ``shells`` dict. Pass ``shells``
+    One call == one CLI agent run, with a private ``shells`` dict. Pass ``shells``
     in to observe which sessions the run opened (the relay does, to poison
     them for forensics on a crash); it defaults to a fresh private dict.
     Returns on EOF (``reader`` exhausted).

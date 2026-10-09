@@ -269,7 +269,8 @@ def _pr_user_text(
         "discussion_items": len(discussion),
         "vector_store_repo_heads": request.get("vector_store_repo_heads"),
     }
-    info.update({key: pr[key] for key in ("fairy_branch", "submodule_changes") if pr.get(key)})
+    info.update({key: pr[key] for key in ("fairy_branch", "submodule_changes", "merge_conflicts")
+                 if pr.get(key)})
 
     text = (
         f"{lead}\n\n"

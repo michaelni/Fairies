@@ -1143,6 +1143,8 @@ def build_source_bundle(
         + (f"File contents are the merge result of the PR head into the current "
            f"{merge.base_ref} tip {merge.tip}.\n"
            if merge else "")
+        + ("The files listed in merge_conflicts carry git's conflict markers.\n"
+           if merge and merge.conflicts else "")
         + f"Changed files: {len(changed_paths)}\n\n"
     )
     bundle_parts.append(header)
@@ -1690,6 +1692,10 @@ def main() -> int:
                 podman_repo_specs=podman_repo_specs,
             )
 
+        target_merge = merge_into_target(request, repo_root) if args.task == "pr" else None
+        if target_merge and target_merge.conflicts:
+            request["pull_request"]["merge_conflicts"] = target_merge.conflicts
+
         source_bundle: str | None
         source_files: list[str]
         source_notes: list[str]
@@ -1701,7 +1707,7 @@ def main() -> int:
             source_bundle, source_files, source_notes = build_source_bundle(
                 request,
                 repo_root,
-                merge_into_target(request, repo_root),
+                target_merge,
                 max_source_files=args.max_source_files,
                 max_file_bytes=args.max_file_bytes,
                 max_header_file_bytes=args.max_header_file_bytes,

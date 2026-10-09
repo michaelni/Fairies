@@ -156,6 +156,7 @@ class SourceBundleMergeTests(unittest.TestCase):
         bundle, used, notes = self._bundle(merge=(CONFLICTED_TREE, CONFLICTS))
         self.assertEqual(["f.c"], used)
         self.assertIn("<<<<<<< pr\npr_change\n=======\nmaster_change\n>>>>>>> master", bundle)
+        self.assertIn("listed in merge_conflicts carry git's conflict markers", bundle)
 
     def test_failed_merge_falls_back_to_pr_commits(self) -> None:
         bundle, used, notes = self._bundle(merge=RuntimeError("git merge-tree failed"))

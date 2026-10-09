@@ -115,8 +115,8 @@ class PushEventsFromTimelineTests(unittest.TestCase):
         # current ``pull_request.head_sha``.
         self.assertEqual(pushes[0]["head_sha"], PR_23197_INITIAL_SHA)
         self.assertEqual(pushes[1]["head_sha"], PR_23197_NEW_HEAD_SHA)
-        self.assertEqual(pushes[0]["commit_count"], 1)
-        self.assertEqual(pushes[1]["commit_count"], 2)
+        self.assertEqual(pushes[0]["commit_ids"], [PR_23197_INITIAL_SHA])
+        self.assertEqual(len(pushes[1]["commit_ids"]), 2)
 
     def test_empty_timeline_yields_no_push_events(self) -> None:
         self.assertEqual(forge_item.timeline_events([]), [])

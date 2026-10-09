@@ -767,9 +767,9 @@ has one, and when it happened. The kinds:
   ``review`` with an empty body is a bare verdict click; its ``state``
   still counts.
 - ``push``: a real push to the PR head branch (the author or a
-  maintainer landed new commits), with ``head_sha`` and
-  ``is_force_push``. A push newer than our last reply/review means the
-  author has pushed new code.
+  maintainer landed new commits), with ``head_sha``, ``is_force_push``
+  and the pushed ``commit_ids``. A push newer than our last
+  reply/review means the author has pushed new code.
 - ``review_request``, ``review_request_withdrawn``: ``author`` asked
   ``reviewer`` for a review, or took the request back. A request
   naming the current reviewer identity is a direct invitation.

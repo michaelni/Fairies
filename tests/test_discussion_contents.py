@@ -28,8 +28,8 @@
  */
 
 What fairy gives the LLM and what forgejo_export writes about an item:
-one timeline holding each comment once, and the full name of each
-author named."""
+one timeline holding each comment once, the full name of each author
+named and every commit of each push."""
 
 from __future__ import annotations
 
@@ -60,6 +60,10 @@ COMMENTS = load_fixture("ffmpeg_issue_23738_comments.json")
 TIMELINE = [forge_gcli.project_timeline_event(e)
             for e in load_fixture("ffmpeg_issue_23738_timeline.json")]
 NAMED_PR = next(pr for pr in load_fixture("ffmpeg_open_pulls.json") if pr["user"]["full_name"])
+RAW_PR_TIMELINE = json.loads((REPO_ROOT / "tests" / "fixtures" / "forgejo_pr_timeline"
+                              / "ffmpeg_pr_22729_timeline.json").read_text())
+PR_TIMELINE = [forge_gcli.project_timeline_event(e) for e in RAW_PR_TIMELINE]
+PUSHED = [json.loads(e["body"])["commit_ids"] for e in RAW_PR_TIMELINE if e["type"] == "pull_push"]
 
 
 def issue_llm_input() -> tuple[dict, str]:
@@ -146,6 +150,25 @@ class FullNameTests(unittest.TestCase):
                 self.assertIn(f"From: {comment['user']['login']} ({comment['user']['full_name']})", text)
         data, text = exported_pr(NAMED_PR, [], COMMENTS, TIMELINE)
         self.assertIn(f"- Author: {NAMED_PR['user']['login']} ({NAMED_PR['user']['full_name']}, ", text)
+
+
+
+class PushTests(unittest.TestCase):
+    """PR 22729 got a push of one commit, then a force-push of two."""
+
+    def assert_every_commit(self, discussion: list[dict], text: str) -> None:
+        self.assertEqual([len(commit_ids) for commit_ids in PUSHED], [1, 2])
+        self.assertEqual([item["commit_ids"] for item in discussion if item["kind"] == "push"], PUSHED)
+        for sha in sum(PUSHED, []):
+            self.assertIn(sha, text)
+
+    def test_the_llm_gets_every_pushed_commit(self) -> None:
+        payload, text = pr_llm_input(PR, [], [], PR_TIMELINE)
+        self.assert_every_commit(payload["discussion"], text)
+
+    def test_the_export_writes_every_pushed_commit(self) -> None:
+        data, text = exported_pr(PR, [], [], PR_TIMELINE)
+        self.assert_every_commit(data["timeline"], text)
 
 
 if __name__ == "__main__":

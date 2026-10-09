@@ -1681,7 +1681,7 @@ class UILoop:
                                  or c.get("created_at") or ""))
                 if c.get("kind") == "push":
                     what = ("force-pushed" if c.get("is_force_push") else "pushed") \
-                        + f" {c.get('commit_count')} commit(s) {str(c.get('head_sha') or '')[:10]}"
+                        + f" {len(c.get('commit_ids') or ())} commit(s) {str(c.get('head_sha') or '')[:10]}"
                 elif c.get("kind") in _THREAD_LINES:
                     what = _THREAD_LINES[c["kind"]](c)
                 else:

@@ -1674,7 +1674,7 @@ class DetailTests(DbCase):
             discussion=[
                 {"kind": "comment", "author": "carol",
                  "created_at": "2026-07-18T09:00:00Z", "body": "please rebase"},
-                {"kind": "push", "author": "a", "commit_count": 1,
+                {"kind": "push", "author": "a", "commit_ids": ["abcdef1234"],
                  "created_at": "2026-08-07T12:00:00Z", "head_sha": "abcdef1234"},
                 {"kind": "comment", "author": "carol",
                  "created_at": "2026-08-10T09:00:00Z", "body": "rebased"}]))
@@ -1697,7 +1697,7 @@ class DetailTests(DbCase):
             {"kind": "push", "author": "a",
              "created_at": "2026-07-18T12:00:00Z",
              "head_sha": "abcdef1234567890", "is_force_push": True,
-             "commit_count": 2},
+             "commit_ids": ["0123456789abcdef", "abcdef1234567890"]},
         ]
         self.db.push("reviewed", "pr", "5",
                      verdict(5, msg="persisted body", discussion=disc))
@@ -1888,7 +1888,7 @@ class DetailTests(DbCase):
     def test_separator_names_the_sampling_time_not_the_forge_update(self) -> None:
         """FFmpeg/FFmpeg #24724: pushed 2026-10-02T22:16:34Z, queued
         for its review 2026-10-03T05:05:04Z, pushed again after it."""
-        pushes = [{"kind": "push", "author": "a", "commit_count": 1,
+        pushes = [{"kind": "push", "author": "a", "commit_ids": [sha],
                    "head_sha": sha, "created_at": at}
                   for sha, at in (("a3d3717d68", "2026-10-02T22:16:34Z"),
                                   ("e8ef341ff9", "2026-10-03T06:43:37Z"))]

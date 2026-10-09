@@ -128,7 +128,7 @@ def _push_fields(entry: dict) -> dict | None:
     commit_ids = entry["commit_ids"]
     return {"head_sha": commit_ids[-1] if commit_ids else None,
             "is_force_push": entry.get("is_force_push"),
-            "commit_count": len(commit_ids)}
+            "commit_ids": commit_ids}
 
 
 STATE_EVENTS = {CLOSE_EVENT: "closed", REOPEN_EVENT: "reopened",

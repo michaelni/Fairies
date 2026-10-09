@@ -150,7 +150,7 @@ class PushGroupingTests(unittest.TestCase):
             _github("testrepo_pr4_timeline.json"))
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["kind"], "push")
-        self.assertEqual(items[0]["commit_count"], 7)
+        self.assertEqual(len(items[0]["commit_ids"]), 7)
         self.assertTrue(items[0]["head_sha"])
 
 

@@ -37,9 +37,9 @@ Coverage map (one test per pinned property):
   within TTL fresh / edit-prone past TTL stale / absent stale / None
   stale
 * ``get`` end-to-end: hit serves no fetch, miss fetches only missing
-  immutable, edit-prone miss expands to trio, siblings carried across
-  same updated_at, siblings dropped across advance, TTL expiry
-  refetches trio only, unknown field rejected on both kinds
+  immutable, edit-prone miss expands to all edit-prone, siblings carried
+  across same updated_at, siblings dropped across advance, TTL expiry
+  refetches edit-prone only, unknown field rejected on both kinds
 * stable-fetch loop: settles in one attempt, retries on advance,
   exhausts attempts, reviews fetched before review_comments
 * bot scratch round-trips through pickle
@@ -252,13 +252,13 @@ class ConstantsTests(unittest.TestCase):
         # -> empty cache -> stable-fetch loop refills.
         self.assertEqual(SCHEMA_VERSION, 7)
 
-    def test_edit_prone_is_the_trio(self) -> None:
+    def test_edit_prone_fields_pinned(self) -> None:
         # Adding here forces TTL refetches on data that doesn't need
         # them; removing resurrects the edit/delete blindspot for
         # that field.
         self.assertEqual(
             EDIT_PRONE,
-            frozenset({"issue_comments", "reviews", "review_comments"}),
+            frozenset({"issue_comments", "reviews", "review_comments", "timeline"}),
         )
 
     def test_issue_fields_subset_of_pr_fields(self) -> None:
@@ -418,11 +418,11 @@ class ForgeIdentityKeyTests(unittest.TestCase):
 
     def test_forge_type_case_does_not_split_the_slot(self) -> None:
         cache = Cache()
-        _seed_entry(cache, {"timeline": ({"t": 1},)})
+        _seed_entry(cache, {"commits": ({"t": 1},)})
         fetchers = patch_fetch(self)
-        call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("timeline",),
+        call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("commits",),
                  args=SimpleNamespace(forge_type="GITEA", gcli_account=""))
-        self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 0)
+        self.assertEqual(len(fetchers[("pulls", "commits")].calls), 0)
 
 
 class GetEndToEndTests(unittest.TestCase):
@@ -430,14 +430,14 @@ class GetEndToEndTests(unittest.TestCase):
     def test_initial_miss_fetches_only_requested_immutable(self) -> None:
         cache = Cache()
         fetchers = patch_fetch(self)
-        call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("timeline",))
-        self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 1)
-        for k in PR_FIELDS - {"timeline"}:
+        call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("commits",))
+        self.assertEqual(len(fetchers[("pulls", "commits")].calls), 1)
+        for k in PR_FIELDS - {"commits"}:
             self.assertEqual(len(fetchers[("pulls", k)].calls), 0,
                              f"{k} fetched unexpectedly")
 
-    def test_edit_prone_request_expands_to_trio(self) -> None:
-        # Asking for ``reviews`` alone fetches the whole trio so they
+    def test_edit_prone_request_expands_to_all_edit_prone(self) -> None:
+        # Asking for ``reviews`` alone fetches every edit-prone field so they
         # share a single comments_fetched_at stamp.
         cache = Cache()
         fetchers = patch_fetch(self)
@@ -452,7 +452,7 @@ class GetEndToEndTests(unittest.TestCase):
 
     def test_cache_hit_calls_no_fetcher(self) -> None:
         # ``comments_fetched_at`` must be within ``MAX_AGE`` of NOW for
-        # the edit-prone trio to count as fresh.
+        # the edit-prone fields to count as fresh.
         cache = Cache()
         _seed_entry(cache, {
             "timeline": ({"t": 1},),
@@ -538,7 +538,7 @@ class GetEndToEndTests(unittest.TestCase):
         self.assertEqual(self.attach_calls, [])
         self.assertEqual(sum(len(f.calls) for f in fetchers.values()), 0)
 
-    def test_ttl_expiry_refetches_trio_only(self) -> None:
+    def test_ttl_expiry_refetches_edit_prone_only(self) -> None:
         stale = NOW - timedelta(hours=48)
         cache = Cache()
         _seed_entry(cache, {
@@ -547,6 +547,7 @@ class GetEndToEndTests(unittest.TestCase):
             "reviews": (),
             "review_comments": (),
             "commits": ({"sha": "abc"},),
+            "files": ({"filename": "a.c"},),
         }, comments_fetched_at=stale)
         fetchers = patch_fetch(self)
         call_get(cache, "pulls", fetchers, make_refetch([LIVE]), ("issue_comments",))
@@ -558,7 +559,7 @@ class GetEndToEndTests(unittest.TestCase):
                              f"{k} refetched unexpectedly")
         entry = cache.entries[entry_key(ARGS, "pulls", "o", "r", 1)]
         self.assertEqual(entry.fields["commits"], ({"sha": "abc"},))
-        self.assertEqual(entry.fields["timeline"], ({"x": 1},))
+        self.assertEqual(entry.fields["files"], ({"filename": "a.c"},))
         self.assertEqual(entry.comments_fetched_at, NOW)
 
     def test_updated_at_mismatch_is_a_miss(self) -> None:
@@ -572,22 +573,22 @@ class GetEndToEndTests(unittest.TestCase):
 
     def test_a_hit_returns_the_callers_item(self) -> None:
         cache = Cache()
-        _seed_entry(cache, {"timeline": ({"x": 1},)})
+        _seed_entry(cache, {"commits": ({"x": 1},)})
         caller = {"number": 1, "updated_at": LIVE.isoformat()}
-        item, _ = get(cache, ARGS, "pulls", "o", "r", caller, "timeline",
+        item, _ = get(cache, ARGS, "pulls", "o", "r", caller, "commits",
                       max_age=MAX_AGE, reactions_max_age=MAX_AGE, now=NOW,
                       refetch=make_refetch([LIVE]))
         self.assertIs(item, caller)
 
     def test_immutable_field_ignores_ttl(self) -> None:
         cache = Cache()
-        _seed_entry(cache, {"timeline": ({"x": 1},)},
+        _seed_entry(cache, {"commits": ({"x": 1},)},
                     comments_fetched_at=None)
         fetchers = patch_fetch(self)
         _, result = call_get(cache, "pulls", fetchers, make_refetch([LIVE]),
-                          ("timeline",), now=NOW + timedelta(days=100))
-        self.assertEqual(result["timeline"], ({"x": 1},))
-        self.assertEqual(len(fetchers[("pulls", "timeline")].calls), 0)
+                          ("commits",), now=NOW + timedelta(days=100))
+        self.assertEqual(result["commits"], ({"x": 1},))
+        self.assertEqual(len(fetchers[("pulls", "commits")].calls), 0)
 
     def test_an_item_without_updated_at_raises(self) -> None:
         with self.assertRaises(RuntimeError):
@@ -651,17 +652,18 @@ class StableFetchTests(unittest.TestCase):
         self.assertEqual(entry.fields["timeline"], ({"attempt": 2},))
 
     def test_a_move_refetches_the_fields_served_from_the_cache(self) -> None:
-        """FFmpeg #23512: the timeline was cached, the trio past max_age;
-        updated_at moved and the timeline was dropped, never fetched."""
+        """FFmpeg #23512: a field that is not edit-prone was cached, the
+        edit-prone ones past max_age; updated_at moved and the cached field
+        was dropped, never fetched."""
         moved = utc("2026-05-21T10:05:00Z")
         cache = Cache()
-        _seed_entry(cache, {"timeline": ({"old": True},)},
+        _seed_entry(cache, {"commits": ({"old": True},)},
                     comments_fetched_at=None)
-        fetchers = patch_fetch(self, **{"pulls.timeline": [[{"new": True}]]})
+        fetchers = patch_fetch(self, **{"pulls.commits": [[{"new": True}]]})
         _, result = call_get(cache, "pulls", fetchers,
                              make_refetch([moved, moved]),
-                             ("timeline", "issue_comments"))
-        self.assertEqual(result["timeline"], ({"new": True},))
+                             ("commits", "issue_comments"))
+        self.assertEqual(result["commits"], ({"new": True},))
 
     def test_continuous_advance_exhausts_attempts(self) -> None:
         moving = [utc(f"2026-05-21T10:0{i}:00Z")

@@ -33,9 +33,9 @@ Used by fairy.py and forgejo_export.py.
 Each entry is keyed on the server's ``updated_at``. Forges bump it on
 every additive change (push, comment, review, label). Edits and
 deletes of existing items do NOT bump ``updated_at`` on any supported
-forge, so the three edit-prone fields (``issue_comments``,
-``reviews``, ``review_comments``) additionally age out via
-``max_age``. Reactions bump nothing either and cost one request per
+forge, so the edit-prone fields (``issue_comments``,
+``reviews``, ``review_comments`` and ``timeline``, which carries the
+edited text of a review) additionally age out via ``max_age``. Reactions bump nothing either and cost one request per
 comment, so they are kept by comment id and age out on their own
 ``reactions_max_age``. The stable-fetch loop in
 :func:`get` brackets the field fetches between two ``updated_at``
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 7
 MAX_REFETCH_ATTEMPTS = 3
-EDIT_PRONE = frozenset({"issue_comments", "reviews", "review_comments"})
+EDIT_PRONE = frozenset({"issue_comments", "reviews", "review_comments", "timeline"})
 # The comment fields and the scope ``forge_gcli.attach_reactions`` takes
 # for their reactions; the item's own are the ``reactions`` field.
 _COMMENT_SCOPES = {"issue_comments": "issues", "review_comments": "pulls"}

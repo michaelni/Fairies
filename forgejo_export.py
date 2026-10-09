@@ -77,8 +77,8 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=24.0,
         help="Maximum age of cached PR/issue comments + reviews in hours before "
-             "refetching (default: 24). Backstops the three edit-prone fields "
-             "(issue_comments, reviews, review_comments) which the forge does "
+             "refetching (default: 24). Backstops the edit-prone fields "
+             "(issue_comments, reviews, review_comments, timeline) which the forge does "
              "not bump updated_at for on edit/delete.",
     )
     p.add_argument(

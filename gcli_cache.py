@@ -188,10 +188,20 @@ def load_cache(path: Path) -> Cache:
         logger.warning("gcli_cache load %s: %s; empty cache", path, exc)
         return Cache()
     if isinstance(obj, Cache) and obj.version == SCHEMA_VERSION:
-        logger.debug("gcli_cache load %s: %d entries", path, len(obj.entries))
+        logger.debug("gcli_cache load %s: %d entries, dropped %d timelines without review ids",
+                     path, len(obj.entries), _drop_timelines_without_review_ids(obj))
         return obj
     logger.info("gcli_cache load %s: wrong shape/version; empty cache", path)
     return Cache()
+
+
+def _drop_timelines_without_review_ids(cache: Cache) -> int:
+    stale = [entry for entry in cache.entries.values()
+             if any(event.get("type") == forge_gcli.REVIEW_EVENT and "review_id" not in event
+                    for event in entry.fields.get("timeline", ()))]
+    for entry in stale:
+        del entry.fields["timeline"]
+    return len(stale)
 
 
 def save_cache(path: Path, cache: Cache) -> None:

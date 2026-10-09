@@ -126,6 +126,7 @@ __all__ = [
     "PIN_EVENT",
     "UNPIN_EVENT",
     "DISMISS_REVIEW_EVENT",
+    "REVIEW_EVENT",
     "CROSS_REFERENCE_EVENTS",
     "COMMIT_REFERENCE_EVENTS",
     "CLOSE_EVENT",
@@ -1036,6 +1037,7 @@ UNLOCK_EVENT = "unlock"
 PIN_EVENT = "pin"
 UNPIN_EVENT = "unpin"
 DISMISS_REVIEW_EVENT = "dismiss_review"
+REVIEW_EVENT = "review"
 _GITHUB_FIELDLESS = {"locked": LOCK_EVENT, "unlocked": UNLOCK_EVENT, "pinned": PIN_EVENT,
                      "unpinned": UNPIN_EVENT, "review_dismissed": DISMISS_REVIEW_EVENT}
 # Where the mention of a cross reference sits, by event type. Forgejo
@@ -1129,6 +1131,7 @@ def project_timeline_event(event: dict) -> dict:
 
 _FORGEJO_TYPED_KEYS: dict[str, Callable[[dict], dict]] = {
     PUSH_EVENT: lambda e: _push_fields(e.get("body") or ""),
+    REVIEW_EVENT: lambda e: {"review_id": e.get("review_id")},
     **dict.fromkeys((REVIEW_REQUEST_EVENT, ASSIGNEES_EVENT), lambda e: {
         "assignee": norm_user(e.get("assignee")),
         "assignee_team": (e.get("assignee_team") or {}).get("name"),

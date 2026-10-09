@@ -29,7 +29,7 @@
 
 What fairy gives the LLM and what forgejo_export writes about an item:
 one timeline holding each comment once, the full name of each author
-named and every commit of each push."""
+named, every commit of each push and each review's current text."""
 
 from __future__ import annotations
 
@@ -60,10 +60,13 @@ COMMENTS = load_fixture("ffmpeg_issue_23738_comments.json")
 TIMELINE = [forge_gcli.project_timeline_event(e)
             for e in load_fixture("ffmpeg_issue_23738_timeline.json")]
 NAMED_PR = next(pr for pr in load_fixture("ffmpeg_open_pulls.json") if pr["user"]["full_name"])
-RAW_PR_TIMELINE = json.loads((REPO_ROOT / "tests" / "fixtures" / "forgejo_pr_timeline"
-                              / "ffmpeg_pr_22729_timeline.json").read_text())
+PR_FIXTURES = REPO_ROOT / "tests" / "fixtures" / "forgejo_pr_timeline"
+RAW_PR_TIMELINE = json.loads((PR_FIXTURES / "ffmpeg_pr_22729_timeline.json").read_text())
 PR_TIMELINE = [forge_gcli.project_timeline_event(e) for e in RAW_PR_TIMELINE]
 PUSHED = [json.loads(e["body"])["commit_ids"] for e in RAW_PR_TIMELINE if e["type"] == "pull_push"]
+EDITED_REVIEWS = json.loads((PR_FIXTURES / "ffmpeg_pr_22305_edited_review_reviews.json").read_text())
+EDITED_TIMELINE = [forge_gcli.project_timeline_event(e) for e in json.loads(
+    (PR_FIXTURES / "ffmpeg_pr_22305_edited_review_timeline.json").read_text())]
 
 
 def issue_llm_input() -> tuple[dict, str]:
@@ -169,6 +172,27 @@ class PushTests(unittest.TestCase):
     def test_the_export_writes_every_pushed_commit(self) -> None:
         data, text = exported_pr(PR, [], [], PR_TIMELINE)
         self.assert_every_commit(data["timeline"], text)
+
+
+
+class EditedReviewTests(unittest.TestCase):
+    """PR 22305's review was edited after it was submitted; Forgejo's
+    review listing still has the text as submitted, the timeline the
+    edited one."""
+
+    def assert_edited_text(self, discussion: list[dict], text: str) -> None:
+        edited, = (entry["body"] for entry in EDITED_TIMELINE)
+        self.assertNotEqual(edited, EDITED_REVIEWS[0]["body"])
+        self.assertEqual([item["body"] for item in discussion if item["kind"] == "review"], [edited])
+        self.assertIn(edited, text)
+
+    def test_the_llm_gets_the_edited_text(self) -> None:
+        payload, text = pr_llm_input(PR, EDITED_REVIEWS, [], EDITED_TIMELINE)
+        self.assert_edited_text(payload["discussion"], text)
+
+    def test_the_export_writes_the_edited_text(self) -> None:
+        data, text = exported_pr(PR, EDITED_REVIEWS, [], EDITED_TIMELINE)
+        self.assert_edited_text(data["timeline"], text)
 
 
 if __name__ == "__main__":

@@ -47,6 +47,7 @@ from forge_gcli import (
     MERGE_EVENT,
     PUSH_EVENT,
     REOPEN_EVENT,
+    REVIEW_EVENT,
 )
 
 __all__ = [
@@ -274,7 +275,9 @@ def build_llm_discussion(
     a SHA mentioned in the comment body. A review without a body is
     kept when it carries a verdict (APPROVED / CHANGES_REQUESTED):
     a bare approve click is discussion-worthy for the operator and
-    the LLM alike.
+    the LLM alike. A review's text is the one its timeline entry
+    carries: Forgejo's review listing kept the text as first submitted
+    after an edit (observed 2026-10-09 on Forgejo 16.0.5).
     """
     items: list[dict] = []
     if timeline:
@@ -303,8 +306,10 @@ def build_llm_discussion(
             item["reactions"] = reactions_by_content(comment["reactions"])
         items.append(item)
 
+    edited = {entry["review_id"]: entry["body"]
+              for entry in timeline or () if entry["type"] == REVIEW_EVENT}
     for review in reviews:
-        body = review.get("body")
+        body = edited.get(review.get("id"), review.get("body"))
         if not isinstance(body, str) or not body.strip():
             if normalize_review_state(review.get("state")) \
                     not in ("APPROVED", "CHANGES_REQUESTED"):

@@ -27,6 +27,7 @@ review_request
 review_request_removed
 reviewed
 approved
+REQUEST_CHANGES
 merge
 rebase
 rebase-merge

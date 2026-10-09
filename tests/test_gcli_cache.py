@@ -47,6 +47,7 @@ Coverage map (one test per pinned property):
 
 from __future__ import annotations
 
+import json
 import pickle
 import sys
 import unittest
@@ -323,6 +324,23 @@ class PersistenceTests(unittest.TestCase):
         with self.tmp.open("wb") as f:
             pickle.dump({"some": "dict"}, f)
         self.assertEqual(load_cache(self.tmp), Cache())
+
+    def test_a_timeline_without_review_ids_is_dropped(self) -> None:
+        raw = json.loads((REPO_ROOT / "tests" / "fixtures" / "forgejo_pr_timeline"
+                          / "ffmpeg_pr_22305_edited_review_timeline.json").read_text())
+        timeline = tuple(forge_gcli.project_timeline_event(event) for event in raw)
+        without_ids = tuple({k: v for k, v in event.items() if k != "review_id"} for event in timeline)
+        cache = Cache()
+        for n, cached in ((1, timeline), (2, without_ids)):
+            cache.entries[EntryKey("gitea", "", "pulls", "o", "r", n)] = Entry(
+                updated_at=LIVE, fetched_at=LIVE, comments_fetched_at=LIVE,
+                fields={"timeline": cached, "commits": ()})
+        save_cache(self.tmp, cache)
+        loaded = load_cache(self.tmp)
+        self.assertEqual(loaded.entries[EntryKey("gitea", "", "pulls", "o", "r", 1)].fields,
+                         {"timeline": timeline, "commits": ()})
+        self.assertEqual(loaded.entries[EntryKey("gitea", "", "pulls", "o", "r", 2)].fields,
+                         {"commits": ()})
 
     def test_wrong_version_yields_empty_cache(self) -> None:
         save_cache(self.tmp, Cache(version=SCHEMA_VERSION + 1))

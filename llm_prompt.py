@@ -854,6 +854,10 @@ Pick exactly one value for ``route``:
   * Someone stated that they will do something relavant for this PR
     over a month ago and this is holding up progress. Maybe they forgot
     and a reminder or clarification question would help them.
+  * ``merge_conflicts`` shows the PR conflicts with its target branch
+    and noone is actively working on that issue and it seems the author
+    is unaware of it or unaware that it holds up the PR and the PR is
+    actually held up by that.
   * A simple factual clarification is useful and clearly on-topic.
   Put the FULL reply in ``message``. Keep it short, friendly, and
   focused on the single point being addressed. Follow the normal
@@ -878,6 +882,10 @@ Pick exactly one value for ``route``:
   * A direct question is asked to us about review.
   Leave ``message`` empty for engage; the full reviewer pass will
   produce the actual review comment.
+  If ``merge_conflicts`` shows the PR conflicts with its target branch
+  generally do not choose engage unless someone asks you to review
+  the PR or it seems that such review would be valuable even when
+  the PR conflicts.
 
 {t_prompt_injection(subject)}
 Critical rules:

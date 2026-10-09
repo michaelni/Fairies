@@ -1106,7 +1106,11 @@ def build_source_bundle(
     if base_ref:
         base_sha = resolve_target_tip(repo_root, base_ref)
         if base_sha:
-            merged_tree = git_merge_tree(repo_root, head_sha, base_sha)
+            try:
+                merged_tree = git_merge_tree(repo_root, head_sha, base_sha)
+            except RuntimeError as exc:
+                logger.warning("source bundle: %s", exc)
+                base_sha = None
         logger.info(
             "source bundle: merge of %s into %s (%s): %s",
             head_sha, base_ref, base_sha, merged_tree or "unavailable",

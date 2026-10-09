@@ -118,7 +118,7 @@ index 6bb9624..03dd813 100644
 
 
 class SourceBundleMergeTests(unittest.TestCase):
-    def _bundle(self, merged_tree: str | None = MERGED_TREE,
+    def _bundle(self, merged_tree: str | None | RuntimeError = MERGED_TREE,
                 patch: str = PATCH) -> tuple[str, list[str], list[str]]:
         request = {
             "pull_request": {"base_sha": MERGE_BASE, "head_sha": HEAD_SHA,
@@ -128,7 +128,7 @@ class SourceBundleMergeTests(unittest.TestCase):
         with (
             mock.patch.object(wrapper, "git_changed_paths", return_value=["f.c"]),
             mock.patch.object(wrapper, "resolve_target_tip", return_value=TARGET_TIP),
-            mock.patch.object(wrapper, "git_merge_tree", return_value=merged_tree),
+            mock.patch.object(wrapper, "git_merge_tree", side_effect=[merged_tree]),
             mock.patch.object(wrapper, "git_show_file",
                               lambda _repo, revision, relpath: REPO_FILES.get((revision, relpath))),
         ):
@@ -154,6 +154,11 @@ class SourceBundleMergeTests(unittest.TestCase):
         self.assertNotIn("master_change", bundle)
         self.assertIn(f"git show {HEAD_SHA}:f.c", bundle)
         self.assertTrue(any("does not merge cleanly" in n for n in notes))
+
+    def test_failed_merge_falls_back_without_claiming_a_conflict(self) -> None:
+        bundle, used, notes = self._bundle(merged_tree=RuntimeError("git merge-tree failed"))
+        self.assertIn(f"git show {HEAD_SHA}:f.c", bundle)
+        self.assertFalse(any("does not merge cleanly" in n for n in notes))
 
     def test_patch_cut_inside_a_diff_header(self) -> None:
         bundle, used, notes = self._bundle(patch=PATCH[:PATCH.index(" b/f.c") + len(" b/f")])

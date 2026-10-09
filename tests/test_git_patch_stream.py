@@ -29,7 +29,7 @@
 
 git_patch_stream: format-patch per non-merge commit, git log per merge;
 git_remote_default_branch: the branch a remote's HEAD symref names;
-git_merge_tree: the merged tree, None on a conflict;
+git_merge_tree: the merged tree, None on a conflict, an error when git fails;
 git_changed_paths: the files the head leaves in the tree;
 git_submodule_changes: the submodules the head adds, removes or updates."""
 import sys
@@ -156,6 +156,10 @@ class MergeTreeTests(unittest.TestCase):
             "\n"
             "Auto-merging f.c\n"
             "CONFLICT (content): Merge conflict in f.c\n")))
+
+    def test_an_unmergeable_revision_is_an_error(self) -> None:
+        with self.assertRaises(RuntimeError):
+            self._merge_tree(1, "")
 
 
 if __name__ == "__main__":

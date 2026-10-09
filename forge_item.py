@@ -153,6 +153,12 @@ def _milestone(entry: dict) -> tuple[str, dict]:
     return ("milestone_set", {"milestone": new}) if new else ("milestone_removed", {"milestone": old})
 
 
+def _ref_change(kind: str) -> Callable[[dict], tuple[str, dict]]:
+    """An entry whose ``old_ref`` became ``new_ref``, either absent when
+    the forge names none."""
+    return lambda entry: (kind, {key: entry[key] for key in ("old_ref", "new_ref") if entry.get(key)})
+
+
 _MENTION_KINDS = {"description": "mentioned_in_description",
                   "comment": "mentioned_in_comment", None: "mentioned"}
 
@@ -194,8 +200,7 @@ TIMELINE_ITEMS: dict[str, Callable[[dict], tuple[str, dict] | None]] = {
     forge_gcli.MILESTONE_EVENT: _milestone,
     forge_gcli.TITLE_EVENT: lambda entry: ("title_changed", {
         "old_title": entry["old_title"], "new_title": entry["new_title"]}),
-    forge_gcli.TARGET_BRANCH_EVENT: lambda entry: ("target_branch_changed", {
-        key: entry[key] for key in ("old_ref", "new_ref") if entry.get(key)}),
+    forge_gcli.TARGET_BRANCH_EVENT: _ref_change("target_branch_changed"),
     forge_gcli.DELETE_BRANCH_EVENT: lambda entry: ("head_branch_deleted", {
         "branch": entry["old_ref"]} if entry.get("old_ref") else {}),
     **dict.fromkeys(DEPENDENCY_EVENTS, _either(

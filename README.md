@@ -65,6 +65,14 @@ or when a watch cannot be set up (logged), they poll every second:
   options on its command line override the config.toml values for
   this run (e.g. a different `--llm-review-cmd`; before a `--prs` /
   `--issues` marker they apply to both sides, after one to that side).
+- A provider's exhausted balance or usage window (codex's plan limit,
+  z.ai's 1113/1308/1310, grok's 402, an agy bucket, Gemini's daily
+  quota) holds that account for every fairy process on the machine,
+  recorded under `~/.fairy/retry_backoff/`, until the reset the provider
+  named and at least 15 minutes, doubling per repeat; a ticket whose
+  every reviewer is held waits in `error/` until the first is due. Delete
+  the account's file there to release it earlier, e.g. after buying
+  credits.
 - `fairy_tui.py` (optional): a pure view; every key is a file
   operation on the same db.
 

@@ -53,7 +53,7 @@ from grok_reviewer import (
     build_grok_command,
     result_event,
 )
-from llm_review_api import ProviderTurnFailed
+from llm_review_api import ProviderTurnFailed, QuotaExhausted
 from test_cli_container import ROLE, FakeCliContainer, make_ctx
 from test_retry_backoff import isolate
 
@@ -134,6 +134,16 @@ class _GrokContainer(FakeCliContainer):
         if path.endswith("/agent.md"):
             return self.copied["agent.md"]
         return super().read_file(path, **kw)
+_BALANCE_EXHAUSTED_RESULT = (
+    r'{"duration_api_ms":0,"duration_ms":300,"errors":["Internal error: {\n  \"message\": '
+    r'\"API error (status 402 Payment Required): Grok Build usage balance exhausted\",\n  '
+    r'\"http_status\": 402\n}"],"is_error":true,"modelUsage":{},"num_turns":0,'
+    r'"session_id":"00000000-0000-0000-0000-000000000005","stop_reason":null,'
+    r'"subtype":"error_during_execution","total_cost_usd":0.0,"type":"result",'
+    r'"usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"input_tokens":0,'
+    r'"output_tokens":0,"server_tool_use":{"web_search_requests":0}},'
+    r'"uuid":"00000000-0000-0000-0000-000000000006"}' "\n"
+)
 _UNKNOWN_MODEL_RESULT = (
     r'{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":0,"duration_api_ms":0,'
     r'"num_turns":0,"stop_reason":null,"total_cost_usd":0.0,"usage":{"input_tokens":0,"output_tokens":0,'
@@ -304,6 +314,16 @@ class GrokReviewerRunTests(unittest.TestCase):
             self._run(reviewer=self._reviewer(grok_home=home),
                       stdout=_UNKNOWN_MODEL_RESULT, returncode=1)
         self.assertTrue(Path(home, CREDENTIAL_NAME).is_file())
+
+    def test_an_exhausted_balance_holds_the_account(self) -> None:
+        reviewer = self._reviewer()
+        with self.assertRaisesRegex(QuotaExhausted, "402 Payment Required"):
+            self._run(reviewer=reviewer, stdout=_BALANCE_EXHAUSTED_RESULT, returncode=1)
+        self.assertEqual(1, len(self.container.run_cmds))
+        self.assertEqual([], self._poisoned_after(
+            QuotaExhausted, reviewer=reviewer, stdout=_BALANCE_EXHAUSTED_RESULT,
+            returncode=1))
+        self.assertEqual([], self.container.run_cmds)
 
     def test_missing_or_rejected_credential_sets_it_aside(self) -> None:
         home = _grok_home()

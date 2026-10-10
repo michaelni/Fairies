@@ -44,10 +44,10 @@ review containers is the one MCP server configured.
 
 A result that names a missing or rejected credential before the first
 turn is a credential failure: the host credential is set aside and a
-human restores it. Every other run without a schema-forced answer is a
-``ProviderTurnFailed`` that takes the retry and fallback path. An
-exhausted allowance should instead drop the pass as ``QuotaExhausted``;
-how grok words it has not been observed, so it is retried like the rest.
+human restores it. A result whose errors name a 402 is an exhausted
+balance: a ``QuotaExhausted`` that holds the account. Every other run
+without a schema-forced answer is a ``ProviderTurnFailed`` that takes
+the retry and fallback path.
 
 ``--concurrency grok:N`` caps how many passes run at once.
 """
@@ -62,7 +62,7 @@ import subprocess
 from cli_container import CliContainer
 from cli_reviewer import MCP_TOOL_TIMEOUT_S, CliReviewer, Staged, last_event
 from common import JsonObject
-from llm_review_api import ProviderTurnFailed
+from llm_review_api import ProviderTurnFailed, quota_exhausted
 
 __all__ = [
     "CREDENTIAL_NAME",
@@ -249,6 +249,10 @@ class GrokReviewer(CliReviewer):
                 mark in error_text for mark in
                 ("Not signed in", "Invalid or expired credentials")):
             raise self._invalidate_credential(error_text)
+        if "402 Payment Required" in error_text:
+            raise quota_exhausted(
+                self.quota_key,
+                f"{self.name}: grok balance exhausted; errors: {error_text}")
         if "structured_output" not in result:
             raise GrokTurnFailed(
                 f"{self.name}: grok ended with {result.get('subtype')!r} and "

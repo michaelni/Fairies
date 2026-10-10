@@ -33,6 +33,7 @@ success forgets the failures."""
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import time
@@ -66,10 +67,13 @@ class RetryBackoffTests(unittest.TestCase):
     def wait_for(self, key: str, base: float) -> float:
         with self.assertRaises(retry_backoff.RetryTooSoon) as caught:
             retry_backoff.ensure_due(key, base)
+        self.assertAlmostEqual(caught.exception.wait_seconds,
+                               retry_backoff.due_in(key, base), delta=1)
         return caught.exception.wait_seconds
 
     def test_unknown_key_and_truncated_record_are_due(self) -> None:
         retry_backoff.ensure_due("pr/1", 60)
+        self.assertEqual(0, retry_backoff.due_in("pr/1", 60))
         retry_backoff.record("pr/1", _ERROR)
         failures_file, = (Path(self.tmp.name) / "retry_backoff").iterdir()
         failures_file.write_text("")
@@ -117,8 +121,18 @@ class RetryBackoffTests(unittest.TestCase):
         retry_backoff.record("pr/1", "second")
         failures_file, = (Path(self.tmp.name) / "retry_backoff").iterdir()
         lines = failures_file.read_text(encoding="utf-8").splitlines()
-        self.assertEqual([l.split(" ", 2)[::2] for l in lines],
+        self.assertEqual([l.split(" ", 3)[::3] for l in lines],
                          [["0", "first line two"], ["0", "second"]])
+        self.assertEqual(f"pid={os.getpid()}", lines[0].split(" ")[2])
+
+    def test_the_hold_names_the_last_recorded_failure(self) -> None:
+        retry_backoff.record("pr/1", "first")
+        retry_backoff.record("pr/1", _ERROR)
+        with self.assertRaises(retry_backoff.RetryTooSoon) as caught:
+            retry_backoff.ensure_due("pr/1", 60)
+        self.assertRegex(str(caught.exception),
+                         rf"last failure \(possibly another process' call\): "
+                         rf"\S+ pid={os.getpid()} {re.escape(_ERROR)}$")
 
 
 if __name__ == "__main__":

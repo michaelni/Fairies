@@ -47,8 +47,9 @@ import httpx  # noqa: E402
 
 import common  # noqa: E402
 import gemini_reviewer  # noqa: E402
-from llm_review_api import ProviderTurnFailed  # noqa: E402
+from llm_review_api import ProviderTurnFailed, QuotaExhausted  # noqa: E402
 from tests.test_anthropic_reviewer import _ctx, _FakeShell  # noqa: E402
+from tests.test_retry_backoff import isolate  # noqa: E402
 
 QUOTA_429 = json.loads((Path(__file__).parent / "fixtures" / "gemini"
                         / "free_tier_429.json").read_text())
@@ -86,6 +87,9 @@ def _reviewer(client: _ScriptedClient, **kwargs: object) -> gemini_reviewer.Gemi
 
 
 class GeminiReviewLoopTests(unittest.TestCase):
+    def setUp(self) -> None:
+        isolate(self)
+
     def test_shell_round_then_submit(self) -> None:
         shell = _FakeShell()
         shell_turn = _reply(("shell", {"command": "git log -1"}, "c1"))
@@ -113,12 +117,17 @@ class GeminiReviewLoopTests(unittest.TestCase):
         self.assertEqual("minor_issues_approve", review.classification)
         self.assertEqual(2, len(client.bodies))
 
-    def test_exhausted_daily_quota_is_not_retried(self) -> None:
+    def test_exhausted_daily_quota_holds_the_model_until_due(self) -> None:
         client = _ScriptedClient([(429, PER_DAY)])
+        reviewer = _reviewer(client)
         with mock.patch.object(common.time, "sleep") as sleep, \
-                self.assertRaises(httpx.HTTPStatusError):
-            _reviewer(client).review(_ctx(None))
+                self.assertRaisesRegex(QuotaExhausted, "PerDay"), \
+                self.assertLogs(gemini_reviewer.logger, "ERROR"):
+            reviewer.review(_ctx(None))
         sleep.assert_not_called()
+        with self.assertRaisesRegex(QuotaExhausted, "possibly another process"):
+            reviewer.review(_ctx(None))
+        self.assertEqual(1, len(client.bodies))
 
     def test_empty_reply_is_a_provider_ended_turn(self) -> None:
         client = _ScriptedClient([(200, {"promptFeedback": {"blockReason": "OTHER"}})])

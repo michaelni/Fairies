@@ -45,7 +45,9 @@ import concurrency
 from common import (LLM_HTTP_TIMEOUT_S, JsonObject, call_with_retry,
                     dump_response_debug_artifacts, load_api_key)
 from llm_prompt import REVIEWER_ROLE
-from llm_review_api import ProviderTurnFailed, ReviewContext, Reviewer, RoleSpec
+from llm_review_api import (ProviderTurnFailed, ReviewContext, Reviewer, RoleSpec,
+                            ensure_quota, quota_exhausted)
+import retry_backoff
 from shell_tool import abort_if_cancelled
 from tool_loop import Conversation, ToolCall, review_prompt, review_tools, run_tool_loop
 
@@ -71,16 +73,8 @@ def _daily_quota(response: httpx.Response) -> str | None:
 
 
 def _retryable(exc: Exception) -> bool:
-    # Rate limits (https://ai.google.dev/gemini-api/docs/rate-limits) answer
-    # 429 until the window passes; back off instead of failing the review,
-    # unless the exhausted window is a whole day.
-    if not (isinstance(exc, httpx.HTTPStatusError)
-            and exc.response.status_code in (429, 500, 502, 503, 504)):
-        return False
-    quota = _daily_quota(exc.response) if exc.response.status_code == 429 else None
-    if quota:
-        logger.error("generate_content: daily quota %s exhausted; not retrying", quota)
-    return quota is None
+    return (isinstance(exc, httpx.HTTPStatusError)
+            and exc.response.status_code in (429, 500, 502, 503, 504))
 
 
 class GeminiReviewer(Reviewer):
@@ -125,12 +119,20 @@ class GeminiReviewer(Reviewer):
             raise RuntimeError(f"{self.api_key_env} is not set (env or .env)")
         return httpx.Client(timeout=LLM_HTTP_TIMEOUT_S, headers={"x-goog-api-key": api_key})
 
+    @property
+    def quota_key(self) -> str:
+        """The ``retry_backoff`` key of the key variable's per-model quota."""
+        return f"gemini/{self.api_key_env}/{self.model}"
+
     def run(self, ctx: ReviewContext) -> dict[str, object]:
+        ensure_quota(self.quota_key)
         system, texts = review_prompt(self.role, ctx, vendor="gemini", model=self.model)
         conversation = _Conversation(self, ctx, system, texts, review_tools(self.role, ctx))
-        return run_tool_loop(conversation, self.role, ctx, what="generate_content",
-                             max_tool_rounds=self.max_tool_rounds,
-                             exec_timeout_s=self.exec_timeout_s)
+        result = run_tool_loop(conversation, self.role, ctx, what="generate_content",
+                               max_tool_rounds=self.max_tool_rounds,
+                               exec_timeout_s=self.exec_timeout_s)
+        retry_backoff.record(self.quota_key, "")
+        return result
 
 
 class _Conversation(Conversation):
@@ -163,6 +165,17 @@ class _Conversation(Conversation):
             if response.is_error:
                 logger.warning("generate_content HTTP %d: %s",
                                response.status_code, response.text[:2000])
+                # Rate limits (https://ai.google.dev/gemini-api/docs/rate-limits) answer
+                # 429 until the window passes; back off instead of failing the review,
+                # unless the exhausted window is a whole day.
+                quota = _daily_quota(response) if response.status_code == 429 else None
+                if quota:
+                    logger.error("generate_content: daily quota %s exhausted; not retrying",
+                                 quota)
+                    raise quota_exhausted(
+                        reviewer.quota_key,
+                        f"{reviewer.name}: daily quota {quota} exhausted: "
+                        f"{response.text[:2000]}")
             return response.raise_for_status().json()
 
         abort_if_cancelled()

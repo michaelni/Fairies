@@ -55,6 +55,7 @@ from grok_reviewer import (
 )
 from llm_review_api import ProviderTurnFailed
 from test_cli_container import ROLE, FakeCliContainer, make_ctx
+from test_retry_backoff import isolate
 
 GROK_HOST = podman_host.parse_shell_host("fairy@grokbox")
 
@@ -188,6 +189,7 @@ class ResultEventTests(unittest.TestCase):
 class GrokReviewerRunTests(unittest.TestCase):
     def setUp(self) -> None:
         self._relay_sessions = []
+        isolate(self)
 
     def _reviewer(self, *, grok_home=None, **kw):
         return GrokReviewer("grok-4.7", name="grok:grok-4.7", role=ROLE,

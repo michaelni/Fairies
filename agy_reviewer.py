@@ -44,25 +44,26 @@ An authentication prompt is a credential failure: the token is set
 aside and a human restores it. agy shows the same prompt with a valid
 token while Google is unreachable, so a network outage takes that path
 too. A run that ends without a final object otherwise is checked
-against ``agy -p /usage``: an exhausted quota is a ``CliUsageLimit``,
-anything else a ``ProviderTurnFailed`` that takes the retry and
-fallback path.
+against ``agy -p /usage``: an exhausted quota is a ``QuotaExhausted``
+holding the account's model group until the bucket resets, anything
+else a ``ProviderTurnFailed`` that takes the retry and fallback path.
 
 ``--concurrency agy:N`` caps how many passes run at once.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import logging
 from pathlib import Path
 import subprocess
 
 from cli_container import CliContainer
-from cli_reviewer import (CliReviewer, CliUsageLimit, Staged, last_event,
+from cli_reviewer import (CliReviewer, Staged, last_event,
                           parse_event_line)
 from common import JsonObject
-from llm_review_api import BadModelOutput, ProviderTurnFailed
+from llm_review_api import BadModelOutput, ProviderTurnFailed, quota_exhausted
 
 __all__ = [
     "TOKEN_NAME",
@@ -259,6 +260,10 @@ class AgyReviewer(CliReviewer):
             json.dumps({"event": "user", "message": {"content": prompt}}) + "\n",
             files)
 
+    @property
+    def quota_key(self) -> str:
+        return f"{super().quota_key}/{model_family(self.model)}"
+
     def _prompt_tail(self, use_shell: bool) -> str:
         return (
             f"Your own terminal and file tools are not the review machine; the "
@@ -280,10 +285,15 @@ class AgyReviewer(CliReviewer):
         if result is None or result.get("status") != "SUCCESS":
             bucket = self._exhausted_bucket(container)
             if bucket is not None:
-                raise CliUsageLimit(
+                try:
+                    resets_at = datetime.fromisoformat(str(bucket.get("reset_time"))).timestamp()
+                except ValueError:
+                    resets_at = 0
+                raise quota_exhausted(
+                    self.quota_key,
                     f"{self.name}: agy quota exhausted for {self.model} "
-                    f"({bucket.get('name')}, resets {bucket.get('reset_time')})"
-                )
+                    f"({bucket.get('name')}, resets {bucket.get('reset_time')})",
+                    resets_at)
         if result is None:
             raise RuntimeError(
                 f"{self.name}: agy produced no result event "

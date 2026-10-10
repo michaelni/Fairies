@@ -63,16 +63,16 @@ import concurrency
 from common import JsonObject, dump_response_debug_artifacts
 from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import (BadModelOutput, BranchCollectionFailed,
-                            ProviderTurnFailed, ReviewContext,
-                            Reviewer, RoleSpec)
+                            ProviderTurnFailed, QuotaExhausted, ReviewContext,
+                            Reviewer, RoleSpec, ensure_quota)
 from podman_host import ContainerInfraError, ShellHostSpec
+import retry_backoff
 import shell_tool
 
 __all__ = [
     "MCP_TOOL_TIMEOUT_S",
     "CliAuthFailed",
     "CliReviewer",
-    "CliUsageLimit",
     "Staged",
     "last_event",
     "parse_event_line",
@@ -88,10 +88,6 @@ _RELAY_PATH = _REPO_DIR / "containers" / "relay.py"
 # Deliberately far above the real per-command cap, which is enforced
 # wrapper-side (exec_shell_call clamps to --podman-exec-timeout).
 MCP_TOOL_TIMEOUT_S = 86_400
-
-
-class CliUsageLimit(RuntimeError):
-    """The subscription's usage window is exhausted; do not retry."""
 
 
 class CliAuthFailed(RuntimeError):
@@ -164,7 +160,8 @@ class CliReviewer(Reviewer):
     ``default_image``, the tag of the backend's image, follows from
     ``backend``.
 
-    ``run(ctx)`` raises ``CliUsageLimit`` on an exhausted plan window,
+    ``run(ctx)`` raises ``QuotaExhausted`` while the credential's account
+    is held off for an exhausted balance or usage window (``quota_key``),
     ``CliAuthFailed`` after setting the host credential aside as
     ``<name>.invalid`` so later passes fail fast, ``ProviderTurnFailed``
     when the provider ended the turn, and ``BadModelOutput`` when the
@@ -227,6 +224,11 @@ class CliReviewer(Reviewer):
         return f"{self.run_dir}/shell.sock"
 
     @property
+    def quota_key(self) -> str:
+        """The ``retry_backoff`` key of the credential's account."""
+        return f"{self.backend}/{self.credential_local}"
+
+    @property
     def credential_container_path(self) -> str:
         return f"{self.credential_dir}/{self.credential_local.name}"
 
@@ -274,7 +276,7 @@ class CliReviewer(Reviewer):
                       proc: subprocess.CompletedProcess,
                       error_text: str) -> object:
         """The CLI's final object for ``role.validate``, or a raised
-        ``CliUsageLimit`` / ``CliAuthFailed`` / ``ProviderTurnFailed`` /
+        ``QuotaExhausted`` / ``CliAuthFailed`` / ``ProviderTurnFailed`` /
         ``RuntimeError`` (``BadModelOutput`` when the CLI ran but its
         final message is not JSON)."""
 
@@ -337,6 +339,7 @@ class CliReviewer(Reviewer):
                 f"{self.name}: {self.backend} requires --{self.backend}-host; "
                 f"there is no local {self.backend} backend."
             )
+        ensure_quota(self.quota_key)
         use_shell = bool(ctx.machines) and ctx.open_shell is not None
         prompt = self._build_prompt(ctx, use_shell)
         scratch = tempfile.mkdtemp(prefix=f"fairy-{self.backend}-")  # local staging only
@@ -415,6 +418,7 @@ class CliReviewer(Reviewer):
             self._dump_debug_artifacts(ctx, prompt, staged.cmd, proc, usage)
             result = self.role.validate(
                 self._final_object(container, proc, error_text))
+            retry_backoff.record(self.quota_key, "")
             ctx.collect_into(
                 result, relay.opened_sessions() if relay is not None else [])
             if self.verbose:
@@ -422,7 +426,7 @@ class CliReviewer(Reviewer):
                 logger.debug("%s %s verdict=%s", self.backend,
                              self.role.name, verdict)
             return result
-        except (CliAuthFailed, CliUsageLimit, ProviderTurnFailed):
+        except (CliAuthFailed, QuotaExhausted, ProviderTurnFailed):
             raise  # clean provider-side stop; the containers are not suspect
         except BadModelOutput:
             raise  # the CLI ran fine, only the final JSON was malformed

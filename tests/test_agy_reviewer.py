@@ -30,6 +30,7 @@
 AgyReviewer: command construction, stream-json parsing, run() behavior."""
 
 import argparse
+from datetime import datetime
 import json
 import subprocess
 import tempfile
@@ -52,9 +53,10 @@ from agy_reviewer import (
     exhausted_bucket,
     summarize_agy_events,
 )
-from cli_reviewer import CliAuthFailed, CliUsageLimit
-from llm_review_api import BadModelOutput, ProviderTurnFailed
+from cli_reviewer import CliAuthFailed
+from llm_review_api import BadModelOutput, ProviderTurnFailed, QuotaExhausted
 from test_cli_container import ROLE, FakeCliContainer, make_ctx
+from test_retry_backoff import isolate
 
 AGY_HOST = podman_host.parse_shell_host("fairy@agybox")
 
@@ -119,12 +121,13 @@ _USAGE_ENVELOPE = (
 )
 
 
-def _usage_with(bucket_id: str, remaining: float) -> str:
+def _usage_with(bucket_id: str, remaining: float, reset_time: str | None = None) -> str:
     envelope = json.loads(_USAGE_ENVELOPE)
     for group in envelope["command"]["data"]["groups"]:
         for bucket in group["buckets"]:
             if bucket["id"] == bucket_id:
                 bucket["remaining_fraction"] = remaining
+                bucket["reset_time"] = reset_time or bucket["reset_time"]
     return json.dumps(envelope) + "\n"
 
 
@@ -188,6 +191,7 @@ class EventParsingTests(unittest.TestCase):
 class AgyReviewerRunTests(unittest.TestCase):
     def setUp(self) -> None:
         self._relay_sessions = []
+        isolate(self)
 
     def _reviewer(self, *, agy_home=None, **kw):
         return AgyReviewer("gemini-3.1-pro-high", name="agy:gemini-3.1-pro-high",
@@ -302,15 +306,23 @@ class AgyReviewerRunTests(unittest.TestCase):
         (main_cmd, usage_cmd) = self.container.run_cmds
         self.assertEqual(["agy", "-p", "/usage", "--output-format", "json"], usage_cmd)
 
-    def test_error_status_with_the_models_quota_at_zero_is_a_usage_limit(self) -> None:
+    def test_error_status_with_the_models_quota_at_zero_holds_the_group(self) -> None:
         envelope = json.loads(_AUTH_FAILED_ENVELOPE)
         envelope["error"] = "internal error"
-        with self.assertRaisesRegex(CliUsageLimit, "gemini-3.1-pro-high"):
-            self._run(stdout=_result_event(json.dumps(envelope)), returncode=1,
-                      usage=_usage_with("gemini-weekly", 0))
+        home = _agy_home()
+        reviewer = self._reviewer(agy_home=home)
+        with self.assertRaisesRegex(QuotaExhausted, "gemini-3.1-pro-high") as caught:
+            self._run(reviewer=reviewer, stdout=_result_event(json.dumps(envelope)),
+                      returncode=1,
+                      usage=_usage_with("gemini-weekly", 0, "2099-10-05T02:49:45Z"))
+        self.assertAlmostEqual(datetime.fromisoformat("2099-10-05T02:49:45Z").timestamp(),
+                               caught.exception.due_at, delta=1)
         self.assertEqual([], self._poisoned_after(
-            CliUsageLimit, stdout="", returncode=1,
-            usage=_usage_with("gemini-weekly", 0)))
+            QuotaExhausted, reviewer=reviewer, stdout="", returncode=1))
+        self.assertEqual([], self.container.run_cmds)
+        self._run(reviewer=AgyReviewer(
+            "claude-opus-4-6-thinking", name="agy:claude-opus-4-6-thinking",
+            role=ROLE, host=AGY_HOST, home=home))
 
     def test_a_successful_run_never_queries_usage(self) -> None:
         self._run()

@@ -32,27 +32,31 @@ model-catalog hardening, the ``--json`` event stream and codex's error
 strings, on top of ``cli_reviewer.CliReviewer`` which runs the pinned
 codex binary in a container on the ``--codex-host``.
 
-``usage_limit_reached`` raises ``CliUsageLimit`` immediately and
-run_parallel drops the pass, keeping surviving drafts.
+A usage-limit message raises ``QuotaExhausted``, holding the account
+until the time the message names; run_parallel drops the pass, keeping
+surviving drafts.
 
 ``--concurrency codex:N`` caps how many passes run at once.
 """
 
 from __future__ import annotations
 
+import calendar
 import json
 import logging
 import os
 from pathlib import Path
+import re
 import subprocess
+import time
 
 from cli_container import CliContainer
-from cli_reviewer import (MCP_TOOL_TIMEOUT_S, CliReviewer, CliUsageLimit,
-                          Staged, parse_event_line)
+from cli_reviewer import (MCP_TOOL_TIMEOUT_S, CliReviewer, Staged,
+                          parse_event_line)
 from codex_catalog import harden_codex_catalog, resolve_codex_home
 from common import JsonObject
 from llm_review_api import (BadModelOutput, ProviderContentFlagged,
-                            ProviderTurnFailed)
+                            ProviderTurnFailed, quota_exhausted)
 
 __all__ = [
     "CODEX_EFFORTS",
@@ -203,6 +207,20 @@ def _is_usage_limit(error_text: str) -> bool:
     return "usage_limit_reached" in lowered or "usage limit" in lowered
 
 
+def _try_again_at(error_text: str) -> float:
+    """The epoch second of the ``try again at Aug 8th, 2099 3:34 AM`` a
+    usage-limit message names, on the container's UTC clock; 0 without
+    one."""
+    found = re.search(r"try again at ([A-Za-z]+) (\d+)(?:st|nd|rd|th)?, (\d{4}) "
+                      r"(\d{1,2}:\d{2} [AP]M)", error_text)
+    if found is None:
+        return 0
+    try:
+        return calendar.timegm(time.strptime(" ".join(found.groups()), "%b %d %Y %I:%M %p"))
+    except ValueError:
+        return 0
+
+
 def _is_auth_failure(error_text: str) -> bool:
     # codex-cli 0.147.0's terminal credential failures (strings(1) over the
     # binary): dead refresh tokens end in "Please log out and sign in
@@ -328,10 +346,11 @@ class CodexReviewer(CliReviewer):
                       proc: subprocess.CompletedProcess,
                       error_text: str) -> object:
         if _is_usage_limit(error_text) or _is_usage_limit(proc.stderr):
-            raise CliUsageLimit(
-                f"{self.name}: plan usage limit reached; details: "
-                f"{error_text or proc.stderr.strip()[-500:]}"
-            )
+            details = error_text or proc.stderr.strip()[-500:]
+            raise quota_exhausted(
+                self.quota_key,
+                f"{self.name}: plan usage limit reached; details: {details}",
+                _try_again_at(details))
         # Treat the last-message file, not the exit code, as the
         # success signal: codex has exited 0 with no output.
         last_message = (container.read_file(

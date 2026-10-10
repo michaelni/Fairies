@@ -39,7 +39,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import calendar
 import sys
+import time
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import cli_reviewer
@@ -48,7 +50,8 @@ import concurrency
 import podman_host
 import review_pipeline
 from test_cli_container import MACHINES, ROLE, FakeCliContainer, make_ctx
-from cli_reviewer import CliAuthFailed, CliUsageLimit
+from test_retry_backoff import isolate
+from cli_reviewer import CliAuthFailed
 from codex_reviewer import (
     CodexReviewer,
     CodexTurnFailed,
@@ -56,7 +59,7 @@ from codex_reviewer import (
     resolve_web_search,
     summarize_codex_events,
 )
-from llm_review_api import (BadModelOutput, BranchCollectionFailed,
+from llm_review_api import (BadModelOutput, BranchCollectionFailed, QuotaExhausted,
                             ProviderContentFlagged)
 
 CODEX_HOST = podman_host.parse_shell_host("fairy@codexbox")
@@ -203,7 +206,20 @@ class EventParsingTests(unittest.TestCase):
         self.assertEqual("", error_text)
 
 
+_USAGE_LIMIT_EVENT = (
+    '{"thread_id": "00000000-0000-0000-0000-000000000001", "type": "thread.started"}\n'
+    '{"type": "turn.started"}\n'
+    '{"message": "You\'ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage '
+    'to purchase more credits or try again at Aug 8th, 2099 3:34 AM.", "type": "error"}\n'
+    '{"error": {"message": "You\'ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage '
+    'to purchase more credits or try again at Aug 8th, 2099 3:34 AM."}, "type": "turn.failed"}\n'
+)
+
+
 class CodexReviewerRunTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.records = isolate(self)
+
     def _reviewer(self, *, codex_home=None, **kw):
         return CodexReviewer(
             "gpt-5.6-sol", name="codex:gpt-5.6-sol", role=ROLE,
@@ -339,12 +355,31 @@ class CodexReviewerRunTests(unittest.TestCase):
                          .read_text(encoding="utf-8"))
         self.assertIn("hardened_catalog.json", self.container.copied)
 
-    def test_usage_limit_is_hard_failure(self) -> None:
-        jsonl = json.dumps({"type": "turn.failed", "error": {
-            "message": "You've hit your usage limit",
-            "type": "usage_limit_reached"}})
-        with self.assertRaises(CliUsageLimit):
-            self._run(jsonl=jsonl, last_message=None, returncode=1)
+    def test_usage_limit_holds_the_account_until_the_named_time(self) -> None:
+        reviewer = self._reviewer()
+        with self.assertRaises(QuotaExhausted) as caught:
+            self._run(reviewer=reviewer, jsonl=_USAGE_LIMIT_EVENT, last_message=None,
+                      returncode=1)
+        self.assertGreater(caught.exception.due_at, time.time() + 600)
+        record, = self.records.iterdir()
+        self.assertEqual(
+            f"{calendar.timegm(time.strptime('2099-08-08 03:34', '%Y-%m-%d %H:%M'))}",
+            record.read_text(encoding="utf-8").split(" ")[0])
+        self.assertEqual(1, len(self.container.run_cmds))
+        with self.assertRaisesRegex(QuotaExhausted, "possibly another process"):
+            self._run(reviewer=reviewer, jsonl=_USAGE_LIMIT_EVENT, last_message=None,
+                      returncode=1)
+        self.assertEqual([], self.container.run_cmds)
+
+    def test_a_success_releases_the_account(self) -> None:
+        reviewer = self._reviewer()
+        with self.assertRaises(QuotaExhausted):
+            self._run(reviewer=reviewer, jsonl=_USAGE_LIMIT_EVENT, last_message=None,
+                      returncode=1)
+        record, = self.records.iterdir()
+        record.write_text("")
+        self._run(reviewer=reviewer)
+        self.assertEqual([], list(self.records.iterdir()))
 
     def test_missing_final_message_is_error(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "no final message"):
@@ -518,10 +553,8 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.addCleanup(lambda: delattr(self, "_relay_sessions"))
         poisoned = []
         ctx = make_ctx(report_poisoned=poisoned.append)
-        jsonl = json.dumps({"type": "turn.failed",
-                            "error": {"type": "usage_limit_reached"}})
-        with self.assertRaises(CliUsageLimit):
-            self._run(ctx=ctx, jsonl=jsonl, last_message=None)
+        with self.assertRaises(QuotaExhausted):
+            self._run(ctx=ctx, jsonl=_USAGE_LIMIT_EVENT, last_message=None)
         self.assertEqual([], poisoned)  # clean quota stop
 
     # verbatim from the codex run on PR #23750, 2026-07-28: the provider

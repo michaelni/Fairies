@@ -46,7 +46,7 @@ A result that names a missing or rejected credential before the first
 turn is a credential failure: the host credential is set aside and a
 human restores it. Every other run without a schema-forced answer is a
 ``ProviderTurnFailed`` that takes the retry and fallback path. An
-exhausted allowance should instead drop the pass as ``CliUsageLimit``;
+exhausted allowance should instead drop the pass as ``QuotaExhausted``;
 how grok words it has not been observed, so it is retried like the rest.
 
 ``--concurrency grok:N`` caps how many passes run at once.

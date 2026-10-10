@@ -48,8 +48,11 @@ import concurrency
 from common import (LLM_HTTP_TIMEOUT_S, JsonObject, call_with_retry,
                     dump_response_debug_artifacts, load_api_key)
 from llm_prompt import REVIEWER_ROLE
-from llm_review_api import ReviewContext, Reviewer, RoleSpec
-from anthropic_common import ANTHROPIC_API_URL, MessagesError, retryable
+from llm_review_api import (ReviewContext, Reviewer, RoleSpec, ensure_quota,
+                            quota_exhausted)
+from anthropic_common import (ANTHROPIC_API_URL, MessagesError, is_quota_exhausted,
+                              quota_reset_epoch, retryable)
+import retry_backoff
 from shell_tool import abort_if_cancelled
 from tool_loop import Conversation, ToolCall, review_prompt, review_tools, run_tool_loop
 
@@ -142,12 +145,20 @@ class AnthropicReviewer(Reviewer):
         return httpx.Client(base_url=self.base_url, timeout=LLM_HTTP_TIMEOUT_S, headers={
             "x-api-key": api_key, "anthropic-version": "2023-06-01"})
 
+    @property
+    def quota_key(self) -> str:
+        """The ``retry_backoff`` key of the key variable's account."""
+        return f"{self.name.partition(':')[0]}/{self.api_key_env}"
+
     def run(self, ctx: ReviewContext) -> dict[str, object]:
+        ensure_quota(self.quota_key)
         system, texts = review_prompt(self.role, ctx, vendor="anthropic", model=self.model)
         conversation = _Conversation(self, ctx, system, texts, review_tools(self.role, ctx))
-        return run_tool_loop(conversation, self.role, ctx, what="messages.create",
-                             max_tool_rounds=self.max_tool_rounds,
-                             exec_timeout_s=self.exec_timeout_s)
+        result = run_tool_loop(conversation, self.role, ctx, what="messages.create",
+                               max_tool_rounds=self.max_tool_rounds,
+                               exec_timeout_s=self.exec_timeout_s)
+        retry_backoff.record(self.quota_key, "")
+        return result
 
 
 class _Conversation(Conversation):
@@ -197,6 +208,12 @@ class _Conversation(Conversation):
             body = response.json() if response.is_success else {}
             if not response.is_success or body.get("type") == "error":
                 logger.warning("messages HTTP %d: %s", response.status_code, response.text[:2000])
+                if response.status_code == 429 and is_quota_exhausted(response):
+                    logger.error("messages HTTP 429: balance or usage window exhausted; "
+                                 "not retrying: %s", response.text[:2000])
+                    raise quota_exhausted(reviewer.quota_key,
+                                          f"{reviewer.name}: {response.text[:2000]}",
+                                          quota_reset_epoch(response.text))
                 response.raise_for_status()
                 error = body.get("error")
                 raise MessagesError(error if isinstance(error, dict) else {"message": response.text[:2000]})

@@ -37,7 +37,10 @@ OpenAI-specific code.
 
 from __future__ import annotations
 
+from datetime import datetime
 import logging
+import re
+import time
 
 import httpx
 
@@ -46,6 +49,8 @@ from common import JsonObject
 __all__ = [
     "ANTHROPIC_API_URL",
     "MessagesError",
+    "is_quota_exhausted",
+    "quota_reset_epoch",
     "retryable",
 ]
 
@@ -78,7 +83,7 @@ class MessagesError(RuntimeError):
 ZAI_QUOTA_EXHAUSTED_CODES = frozenset({"1113", "1308"})
 
 
-def _is_quota_exhausted(response: httpx.Response) -> bool:
+def is_quota_exhausted(response: httpx.Response) -> bool:
     """True for a billing/quota 429 that retrying cannot fix soon
     (``ZAI_QUOTA_EXHAUSTED_CODES``).
 
@@ -97,11 +102,34 @@ def _is_quota_exhausted(response: httpx.Response) -> bool:
             or "usage limit reached" in text)
 
 
+_ZAI_RESET_RE = re.compile(r"reset at (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\]\[(\d{14})")
+
+
+def quota_reset_epoch(message: str) -> float:
+    """The epoch second a z.ai quota error says the limit resets, 0 when
+    it names none.
+
+    ``[1308][... Your limit will reset at 2099-01-01 18:29:11]
+    [209901010406270000000000000001]`` states the reset on the clock the
+    request id's leading timestamp is on, so the reset lies their
+    difference ahead of now.
+    """
+    found = _ZAI_RESET_RE.search(message)
+    if found is None:
+        return 0
+    try:
+        reset = datetime.strptime(found.group(1), "%Y-%m-%d %H:%M:%S")
+        requested = datetime.strptime(found.group(2), "%Y%m%d%H%M%S")
+    except ValueError:
+        return 0
+    return time.time() + (reset - requested).total_seconds()
+
+
 def retryable(exc: Exception) -> bool:
     """Whether ``common.call_with_retry`` should retry ``exc``: a Messages
-    rate-limit (429) / overloaded (529) / 5xx reply, except z.ai's quota
-    exhaustion, or a ``MessagesError`` of the types the API maps to those
-    statuses (https://platform.claude.com/docs/en/api/errors).
+    rate-limit (429) / overloaded (529) / 5xx reply, or a ``MessagesError``
+    of the types the API maps to those statuses
+    (https://platform.claude.com/docs/en/api/errors).
 
     Connection errors and timeouts are not retried: like the OpenAI main
     call, an unpredictable long request is restarted by the outer caller
@@ -113,8 +141,4 @@ def retryable(exc: Exception) -> bool:
     if not isinstance(exc, httpx.HTTPStatusError):
         return False
     status = exc.response.status_code
-    if status == 429 and _is_quota_exhausted(exc.response):
-        logger.error("messages HTTP 429: balance or usage window exhausted; not retrying: %s",
-                     exc.response.text[:2000])
-        return False
     return status == 429 or status >= 500

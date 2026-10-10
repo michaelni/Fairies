@@ -39,6 +39,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -51,10 +52,11 @@ if str(REPO_ROOT) not in sys.path:
 
 import common  # noqa: E402
 import podman_host  # noqa: E402
-from llm_review_api import BadModelOutput, ReviewContext  # noqa: E402
+from llm_review_api import BadModelOutput, QuotaExhausted, ReviewContext  # noqa: E402
 import anthropic_reviewer  # noqa: E402
 import llm_prompt  # noqa: E402
-from test_anthropic_retry import OPENROUTER_EMPTY_BODY  # noqa: E402
+from test_anthropic_retry import OPENROUTER_EMPTY_BODY, ZAI_USAGE_WINDOW_BODY  # noqa: E402
+from test_retry_backoff import isolate  # noqa: E402
 
 
 def _reply(content: list[dict]) -> dict:
@@ -62,16 +64,23 @@ def _reply(content: list[dict]) -> dict:
 
 
 class _ScriptedClient:
-    """Answers each POST with the next queued reply, recording the request."""
+    """Answers each POST with the next queued reply, a body or a
+    ``(status, body)``, recording the request."""
 
-    def __init__(self, replies: list[dict]) -> None:
+    def __init__(self, replies: list[dict | tuple[int, dict]]) -> None:
         self._replies = list(replies)
         self.calls: list[dict] = []
 
     def post(self, url: str, *, json: dict) -> httpx.Response:
         self.calls.append(dict(json))
-        return httpx.Response(200, json=self._replies.pop(0),
-                              request=httpx.Request("POST", url))
+        reply = self._replies.pop(0)
+        status, body = reply if isinstance(reply, tuple) else (200, reply)
+        return httpx.Response(status, json=body, request=httpx.Request("POST", url))
+
+
+class _IsolatedCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.records = isolate(self)
 
 
 class _FakeShell:
@@ -108,7 +117,7 @@ def _ctx(shell: _FakeShell | None) -> ReviewContext:
     )
 
 
-class AnthropicReviewLoopTests(unittest.TestCase):
+class AnthropicReviewLoopTests(_IsolatedCase):
     def test_shell_round_then_submit(self) -> None:
         shell = _FakeShell()
         client = _ScriptedClient([
@@ -255,6 +264,26 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         self.assertEqual("approve", review.classification)
         self.assertEqual(2, len(client.calls))
 
+    def test_a_quota_exhaustion_holds_the_key_until_the_reset(self) -> None:
+        client = _ScriptedClient([(429, ZAI_USAGE_WINDOW_BODY)])
+        reviewer = anthropic_reviewer.AnthropicReviewer(
+            "glm-5.3", name="zai:glm-5.3", base_url="https://api.example.com/anthropic",
+            api_key_env="ZAI_API_KEY")
+        reviewer._client = lambda: client  # type: ignore[method-assign]
+
+        with mock.patch.object(common.time, "sleep") as sleep, \
+                self.assertRaisesRegex(QuotaExhausted, "1308"), \
+                self.assertLogs(anthropic_reviewer.logger, "ERROR"):
+            reviewer.run(_ctx(None))
+        sleep.assert_not_called()
+        record, = self.records.iterdir()
+        self.assertAlmostEqual(time.time() + 543,
+                               float(record.read_text(encoding="utf-8").split(" ")[0]),
+                               delta=2)
+        with self.assertRaisesRegex(QuotaExhausted, "possibly another process"):
+            reviewer.run(_ctx(None))
+        self.assertEqual(1, len(client.calls))
+
     def test_triager_role_via_submit_review(self) -> None:
         from llm_prompt import make_triager_role
 
@@ -277,7 +306,7 @@ class AnthropicReviewLoopTests(unittest.TestCase):
         self.assertIn("route", client.calls[0]["tools"][0]["input_schema"]["properties"])
 
 
-class EffortThinkingTests(unittest.TestCase):
+class EffortThinkingTests(_IsolatedCase):
     def _submit(self) -> dict:
         return _reply([dict(type="tool_use", id="t1", name="submit_review",
                                 input={"classification": "approve", "message": "",
@@ -358,7 +387,7 @@ class EffortThinkingTests(unittest.TestCase):
         self.assertEqual("tool_use", echoed[1]["type"])
 
 
-class PersistBranchesTests(unittest.TestCase):
+class PersistBranchesTests(_IsolatedCase):
     """When collection is wired up, the reviewer hands its own shell
     sessions and its validated branch declarations and pull_requests to
     ctx.collect_branches, and the collected records land on the Review."""

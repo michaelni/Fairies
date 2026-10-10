@@ -38,6 +38,7 @@ bodies, so the test runs without network.
 from __future__ import annotations
 
 import sys
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -62,7 +63,7 @@ _ZAI_BALANCE_BODY = {
         "message": "[1113][Insufficient balance or no resource package. Please recharge.",
     },
 }
-_ZAI_USAGE_WINDOW_BODY = {
+ZAI_USAGE_WINDOW_BODY = {
     "type": "error",
     "error": {
         "type": "rate_limit_error",
@@ -132,33 +133,35 @@ def _retry(func: _Scripted) -> object:
 
 class QuotaExhaustedTests(unittest.TestCase):
     def test_detects_structured_1113(self) -> None:
-        self.assertTrue(anthropic_common._is_quota_exhausted(_response(429, _ZAI_BALANCE_BODY)))
+        self.assertTrue(anthropic_common.is_quota_exhausted(_response(429, _ZAI_BALANCE_BODY)))
 
     def test_detects_structured_1308(self) -> None:
-        self.assertTrue(anthropic_common._is_quota_exhausted(_response(429, _ZAI_USAGE_WINDOW_BODY)))
+        self.assertTrue(anthropic_common.is_quota_exhausted(_response(429, ZAI_USAGE_WINDOW_BODY)))
 
     def test_detects_message_fallback(self) -> None:
-        self.assertTrue(anthropic_common._is_quota_exhausted(
+        self.assertTrue(anthropic_common.is_quota_exhausted(
             _response(429, "Insufficient balance or no resource package")))
 
     def test_plain_rate_limit_is_not_quota(self) -> None:
-        self.assertFalse(anthropic_common._is_quota_exhausted(
+        self.assertFalse(anthropic_common.is_quota_exhausted(
             _response(429, {"type": "error", "error": {"type": "rate_limit_error"}})))
 
 
+class QuotaResetTests(unittest.TestCase):
+    def test_the_reset_lies_its_distance_from_the_request_id_ahead(self) -> None:
+        self.assertAlmostEqual(
+            time.time() + 543,
+            anthropic_common.quota_reset_epoch(ZAI_USAGE_WINDOW_BODY["error"]["message"]),
+            delta=2)
+
+    def test_a_message_without_a_reset_names_no_time(self) -> None:
+        self.assertEqual(0, anthropic_common.quota_reset_epoch(
+            _ZAI_BALANCE_BODY["error"]["message"]))
+        self.assertEqual(0, anthropic_common.quota_reset_epoch(
+            "[1308][Your limit will reset at 2026-07-03 11:11:54][000000000000000000000000000001]"))
+
+
 class RetryTests(unittest.TestCase):
-    def test_balance_error_is_not_retried(self) -> None:
-        func = _Scripted([_status_error(429, _ZAI_BALANCE_BODY)])
-        with self.assertRaises(httpx.HTTPStatusError):
-            _retry(func)
-        self.assertEqual(1, func.calls)
-
-    def test_usage_window_error_is_not_retried(self) -> None:
-        func = _Scripted([_status_error(429, _ZAI_USAGE_WINDOW_BODY)])
-        with self.assertRaises(httpx.HTTPStatusError):
-            _retry(func)
-        self.assertEqual(1, func.calls)
-
     def test_bad_request_is_not_retried(self) -> None:
         func = _Scripted([_status_error(400, "invalid_request_error")])
         with self.assertRaises(httpx.HTTPStatusError):

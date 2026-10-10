@@ -416,6 +416,7 @@ def evaluate_issue(args: argparse.Namespace, prepared: PreparedIssue) -> Decisio
             prepared.number, prepared.title, prepared.author, "-", "skip",
             f"LLM analysis failed: {exc}",
             prepared.last_activity, "error", "",
+            retry_at=exc.retry_at if isinstance(exc, fairy.ReviewQuotaExhausted) else None,
         )
     return issue_decision_from_review(prepared, review)
 

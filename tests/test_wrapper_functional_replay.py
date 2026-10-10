@@ -79,8 +79,8 @@ except ModuleNotFoundError:
 
 import pr_review_wrapper as wrapper
 import openai_reviewer
-from llm_review_api import Review
-from common import EXIT_REVIEW_STOPPED_BY_HALT_FILE
+from llm_review_api import QuotaExhausted, Review
+from common import EXIT_QUOTA_EXHAUSTED, EXIT_REVIEW_STOPPED_BY_HALT_FILE
 from test_podman_host import ContainerStateHarness
 
 
@@ -335,6 +335,18 @@ class EngageLabelOwnershipTests(unittest.TestCase):
             {"label": "enhancement", "op": "add", "reason": "triage guess", "post": False},
         ],
     }
+
+    def test_an_ensemble_held_off_by_quota_exits_with_the_due_time(self) -> None:
+        def held(ctx: object, reviewers: list, combiner: object, **kw: object) -> Review:
+            raise QuotaExhausted("all reviewers failed: codex:gpt: usage limit", 1791646674.0)
+
+        exit_code, out, _reached = _run_wrapper_with_stubbed_triage(
+            _fixture_request(),
+            {"route": "engage", "reason": "r", "label_changes": []},
+            review_pr_stub=held)
+        self.assertEqual(EXIT_QUOTA_EXHAUSTED, exit_code)
+        self.assertEqual({"error": "all reviewers failed: codex:gpt: usage limit",
+                          "due_at": 1791646674.0}, json.loads(out))
 
     def test_reviewer_labels_emitted_triage_labels_discarded(self) -> None:
         reviewer_labels = (

@@ -528,12 +528,18 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
             backoff_h = float(prior_data.get("skip_backoff_h") or 0)
         error_backoff_h = 0.0
         if prior == "error" and prior_data and number not in forced_ns:
+            retry_at = iso_to_dt(prior_data.get("retry_at"))
             wait = backoff_wait_h(prior_data.get("error_backoff_h", 0))
+            if retry_at is not None:
+                if now < retry_at:
+                    continue
+                error_backoff_h = float(prior_data.get("error_backoff_h") or 0)
             # served waits double like the skip backoff: a 100%-failing
             # item costs log2, not linear, retries until someone looks
-            if _age_h(prior_data, now) < wait:
+            elif _age_h(prior_data, now) < wait:
                 continue  # a persistently failing item must not burn spend every cycle
-            error_backoff_h = wait
+            else:
+                error_backoff_h = wait
         if kind == "pr":
             posted = prior_data if prior == "posted" and prior_data else {}
             prepared = fairy.safe_prepare_pr(

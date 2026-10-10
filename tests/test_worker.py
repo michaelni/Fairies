@@ -32,6 +32,8 @@ worker: claims become verdict tickets in the right directories."""
 from __future__ import annotations
 
 import contextlib
+import dataclasses
+from datetime import datetime, timezone
 import io
 import sys
 import tempfile
@@ -206,6 +208,14 @@ class VerdictRoutingTests(WorkerCase):
         self.assertEqual(t["error"], "llm")
         # the guard makes an operator x on the error row stick
         self.assertEqual(t["expected_updated_at"], "2026-07-19T10:00:00Z")
+
+    def test_a_quota_hold_names_when_the_ticket_is_due(self) -> None:
+        self.db.push("queued", "pr", "5", queued_ticket(5))
+        due = datetime(2026, 10, 10, 17, 0, tzinfo=timezone.utc)
+        state = self.run_one(5, lambda ns, p: dataclasses.replace(
+            decision(5, action="error", llm="error", msg=""), retry_at=due))
+        self.assertEqual(state, "error")
+        self.assertEqual(self.db.get("error", "pr", "5")["retry_at"], due.isoformat())
 
     def test_wrapper_stage_notes_reach_the_claimed_ticket(self) -> None:
         self.db.push("queued", "pr", "5", queued_ticket(5))

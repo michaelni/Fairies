@@ -416,6 +416,18 @@ class LLMPayloadTests(unittest.TestCase):
         self.assertEqual(d.reason,
                          "LLM analysis failed: provider ended the turns")
 
+    def test_a_quota_hold_names_when_the_issue_is_due(self) -> None:
+        args = make_args(llm_max_attempts=3)
+        p = prepare(args, real_issue(),
+                    now=PrepareIssueGateTests.LAST_COMMENT + timedelta(days=2))
+        due = datetime(2026, 10, 10, 17, 0, tzinfo=timezone.utc)
+        with mock.patch.object(
+            issue_fairy, "run_llm_issue",
+            side_effect=fairy.ReviewQuotaExhausted("held", due),
+        ):
+            d = issue_fairy.evaluate_issue(args, p)
+        self.assertEqual((d.llm_classification, d.retry_at), ("error", due))
+
 
 class AttachmentTests(unittest.TestCase):
     """Issue 20572's reproduction ZIP was attached to the issue but never

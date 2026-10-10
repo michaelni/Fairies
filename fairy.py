@@ -90,10 +90,12 @@ from cli_backends import CLI_BACKENDS
 import git_util
 import gcli_cache
 from common import (
+    EXIT_QUOTA_EXHAUSTED,
     EXIT_REVIEW_CANCELLED,
     EXIT_REVIEW_HALTED,
     EXIT_REVIEW_STOPPED_BY_HALT_FILE,
     EXIT_TURN_FAILED,
+    parse_quota_hold,
     parse_turn_failure,
     JsonObject,
     add_color_arg,
@@ -228,6 +230,17 @@ class ReviewTurnFailed(RuntimeError):
     error/ and the agent's doubling backoff paces the next try."""
 
 
+class ReviewQuotaExhausted(RuntimeError):
+    """Every reviewer's account is held off for an exhausted quota
+    (``EXIT_QUOTA_EXHAUSTED``); the item waits in error/ until
+    ``retry_at``, when the first of them is due, instead of for the
+    doubling backoff."""
+
+    def __init__(self, message: str, retry_at: datetime) -> None:
+        super().__init__(message)
+        self.retry_at = retry_at
+
+
 @dataclass(frozen=True)
 class LLMReview:
     classification: str
@@ -253,6 +266,7 @@ class Decision:
     expected_head_sha: str | None = None
     expected_patch_ids: tuple[str, ...] | None = None
     expected_body: str | None = None
+    retry_at: datetime | None = None
     # Names of commit-status contexts whose latest state needs a
     # human to act in the Forgejo UI. Both fields are propagated to
     # the end-of-run summary which lists affected PRs grouped by
@@ -2104,6 +2118,11 @@ def invoke_llm_wrapper(
             "LLM review gave up: provider-ended turns exhausted the "
             f"wrapper's in-run retry budget: {parse_turn_failure(cp.stdout)}"
         )
+    if cp.returncode == EXIT_QUOTA_EXHAUSTED:
+        error, due_at = parse_quota_hold(cp.stdout)
+        raise ReviewQuotaExhausted(
+            f"LLM review held, every account's quota is exhausted: {error}",
+            datetime.fromtimestamp(due_at, timezone.utc))
     if cp.returncode != 0:
         raise RuntimeError(
             f"LLM review command failed with exit code {cp.returncode}"
@@ -2146,11 +2165,12 @@ def call_llm_with_retries(
     ``invoke`` receives the attempt's extra wrapper args (the
     flex->default service-tier fallback on the final attempt, else
     None; see ``flex_fallback_extra_args``). Re-raises the last error
-    when every attempt failed; ``ReviewHalted``, ``ReviewTurnFailed``
-    and ``ReviewCancelled`` immediately: a PR that left a container
-    suspect must not be run again, a spent turn-failure budget makes
-    more attempts of the whole ensemble pointless, and a cancelled
-    review is not wanted at all.
+    when every attempt failed; ``ReviewHalted``, ``ReviewTurnFailed``,
+    ``ReviewQuotaExhausted`` and ``ReviewCancelled`` immediately: a PR
+    that left a container suspect must not be run again, a spent
+    turn-failure budget or an exhausted quota makes more attempts of
+    the whole ensemble pointless, and a cancelled review is not wanted
+    at all.
     """
     max_attempts = max(1, int(getattr(args, "llm_max_attempts", 1) or 1))
     retry_delay = max(0.0, float(getattr(args, "llm_retry_delay", 0.0) or 0.0))
@@ -2167,7 +2187,7 @@ def call_llm_with_retries(
         try:
             review = invoke(extra_cmd_args)
         except (KeyboardInterrupt, ReviewHalted, ReviewTurnFailed,
-                ReviewCancelled):
+                ReviewQuotaExhausted, ReviewCancelled):
             raise
         except Exception as exc:
             last_exc = exc
@@ -2987,6 +3007,7 @@ def safe_apply_llm_review_to_prepared(
             prepared.last_activity,
             "error",
             "",
+            retry_at=exc.retry_at if isinstance(exc, ReviewQuotaExhausted) else None,
             cancelled_ci_contexts=prepared.cancelled_ci_contexts,
             blocked_ci_contexts=prepared.blocked_ci_contexts,
             external_approvers=prepared.external_approvers,

@@ -91,7 +91,8 @@ def verdict_fields(decision: fairy.Decision, prepared,
     if decision.llm_classification == "error":
         # the guard makes an operator x on the error row stick
         return {"error": decision.reason, "llm_at": now,
-                "expected_updated_at": item.get("updated_at")}
+                "expected_updated_at": item.get("updated_at"),
+                "retry_at": decision.retry_at.isoformat() if decision.retry_at else None}
     return {
         "error": None,
         "review": {

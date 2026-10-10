@@ -39,6 +39,7 @@ containers for another 4.5 minutes.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import subprocess
 import sys
 import tempfile
@@ -55,9 +56,9 @@ import fairy  # noqa: E402
 import podman_host  # noqa: E402
 import pr_review_wrapper  # noqa: E402
 import shell_tool  # noqa: E402
-from common import (EXIT_REVIEW_CANCELLED, EXIT_REVIEW_HALTED,  # noqa: E402
-                    EXIT_REVIEW_STOPPED_BY_HALT_FILE, EXIT_TURN_FAILED,
-                    format_turn_failure)
+from common import (EXIT_QUOTA_EXHAUSTED, EXIT_REVIEW_CANCELLED,  # noqa: E402
+                    EXIT_REVIEW_HALTED, EXIT_REVIEW_STOPPED_BY_HALT_FILE,
+                    EXIT_TURN_FAILED, format_quota_hold, format_turn_failure)
 
 
 def _args(attempts: int) -> argparse.Namespace:
@@ -96,6 +97,17 @@ class ReviewHaltedRetryPolicyTests(unittest.TestCase):
             raise fairy.ReviewTurnFailed("in-run retry budget spent")
 
         with self.assertRaises(fairy.ReviewTurnFailed):
+            fairy.call_llm_with_retries(_args(3), 23750, invoke)
+        self.assertEqual(1, len(calls))
+
+    def test_quota_held_review_is_not_retried(self) -> None:
+        calls = []
+
+        def invoke(extra_cmd_args):
+            calls.append(extra_cmd_args)
+            raise fairy.ReviewQuotaExhausted("held", datetime.now(timezone.utc))
+
+        with self.assertRaises(fairy.ReviewQuotaExhausted):
             fairy.call_llm_with_retries(_args(3), 23750, invoke)
         self.assertEqual(1, len(calls))
 
@@ -140,6 +152,27 @@ class TurnFailedErrorPropagationTests(unittest.TestCase):
                     label_allowlist=[])
         self.assertIn(self.PROVIDER_ERROR, str(caught.exception))
         self.assertIn("in-run retry budget", str(caught.exception))
+
+
+class QuotaExitPropagationTests(unittest.TestCase):
+    def test_the_due_time_reaches_the_exception(self) -> None:
+        args = argparse.Namespace(
+            llm_review_cmd="./pr_review_wrapper.py", verbose=0,
+            llm_timeout=10)
+        cp = subprocess.CompletedProcess(
+            [], EXIT_QUOTA_EXHAUSTED,
+            stdout=format_quota_hold("all reviewers failed: zai:glm: [1308]",
+                                     1791646674.0) + "\n",
+            stderr="")
+        with mock.patch.object(fairy, "run_cmd", return_value=cp):
+            with self.assertRaises(fairy.ReviewQuotaExhausted) as caught:
+                fairy.invoke_llm_wrapper(
+                    args, {}, number=42,
+                    allowed_classifications=frozenset(),
+                    label_allowlist=[])
+        self.assertIn("zai:glm: [1308]", str(caught.exception))
+        self.assertEqual(datetime(2026, 10, 10, 15, 37, 54, tzinfo=timezone.utc),
+                         caught.exception.retry_at)
 
 
 class CancelledExitPropagationTests(unittest.TestCase):

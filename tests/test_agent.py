@@ -1922,6 +1922,17 @@ class PortedGateContractTests(AgentCase):
         self.assertEqual(self.db.find("pr", "1"), "queued")  # and never forgotten
         self.assertEqual(self.db.get("queued", "pr", "1")["error_backoff_h"], 24)
 
+    def test_a_quota_held_error_waits_for_its_due_time_without_doubling(self) -> None:
+        self.db.push("error", "pr", "1", {
+            "error": "held", "error_backoff_h": 24,
+            "retry_at": (NOW + timedelta(hours=1)).isoformat()})
+        self.age("error", "pr", "1", hours=49)
+        self.scan([make_pr(1)])
+        self.prepare.assert_not_called()
+        self.assertEqual(self.db.find("pr", "1"), "error")
+        self.scan([make_pr(1)], now=NOW + timedelta(hours=2))
+        self.assertEqual(self.db.get("queued", "pr", "1")["error_backoff_h"], 24)
+
     def test_error_backoff_doubles_per_served_wait(self) -> None:
         self.db.push("error", "pr", "1",
                      {"error": "boom", "error_backoff_h": 24})

@@ -84,8 +84,10 @@ from typing import Iterable, NamedTuple, Sequence
 from openai import OpenAI
 
 from common import (
+    EXIT_QUOTA_EXHAUSTED,
     EXIT_REVIEW_HALTED,
     EXIT_TURN_FAILED,
+    format_quota_hold,
     format_turn_failure,
     add_color_arg,
     apply_config_file_defaults,
@@ -99,6 +101,7 @@ from llm_review_api import (
     VERBOSITY_LEVELS,
     BadModelOutput,
     ProviderTurnFailed,
+    QuotaExhausted,
     Review,
     ReviewContext,
     Reviewer,
@@ -2015,6 +2018,10 @@ def main() -> int:
             logger.error("giving up, provider ended the turns: %s", exc)
             sys.stdout.write(format_turn_failure(exc) + "\n")
             return EXIT_TURN_FAILED
+        except QuotaExhausted as exc:
+            logger.error("giving up, every account's quota is exhausted: %s", exc)
+            sys.stdout.write(format_quota_hold(str(exc), exc.due_at) + "\n")
+            return EXIT_QUOTA_EXHAUSTED
         except Exception:
             if not poisoned_session_ids:
                 raise

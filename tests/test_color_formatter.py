@@ -85,6 +85,12 @@ class ColorFormatterTests(unittest.TestCase):
         self.assertTrue(out.startswith("\x1b[1;33m"))
         self.assertTrue(out.endswith("\x1b[0m"))
 
+    def test_backoff_keyword_is_bold_magenta_within_the_level_color(self) -> None:
+        out = self.fmt.format(_record(logging.ERROR, "x BACKOFF y"))
+        self.assertEqual("\x1b[1;31mT x \x1b[1;35mBACKOFF\x1b[1;31m y\x1b[0m", out)
+        out = self.fmt.format(_record(logging.INFO, "x BACKOFF y"))
+        self.assertEqual("T x \x1b[1;35mBACKOFF\x1b[0m y", out)
+
     def test_error_is_bold_red(self) -> None:
         out = self.fmt.format(_record(logging.ERROR))
         self.assertTrue(out.startswith("\x1b[1;31m"))

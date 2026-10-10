@@ -353,7 +353,8 @@ def ensure_quota(account: str) -> None:
     try:
         retry_backoff.ensure_due(account, QUOTA_BACKOFF_BASE_S)
     except RetryTooSoon as exc:
-        raise QuotaExhausted(str(exc), time.time() + exc.wait_seconds) from exc
+        raise QuotaExhausted(f"BACKOFF, no provider call: {exc}",
+                             time.time() + exc.wait_seconds) from exc
 
 
 def quota_exhausted(account: str, error: str, resets_at: float = 0) -> QuotaExhausted:

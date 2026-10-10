@@ -281,8 +281,9 @@ class _ColorFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        text = super().format(record)
         color = _LEVEL_COLOR.get(record.levelno)
+        text = super().format(record).replace(
+            "BACKOFF", f"\x1b[1;35mBACKOFF{color or _COLOR_RESET}")
         if color is None:
             return text
         return f"{color}{text}{_COLOR_RESET}"

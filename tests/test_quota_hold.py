@@ -61,7 +61,8 @@ class QuotaHoldTests(unittest.TestCase):
         with self.assertRaises(QuotaExhausted) as held:
             ensure_quota("codex/home")
         self.assertAlmostEqual(exc.due_at, held.exception.due_at, delta=2)
-        self.assertIn("plan usage limit reached", str(held.exception))
+        self.assertRegex(str(held.exception),
+                         "^BACKOFF, no provider call: .*plan usage limit reached")
         self.assertEqual(1, len(list(self.records.iterdir())))
         ensure_quota("zai/ZAI_API_KEY")
 

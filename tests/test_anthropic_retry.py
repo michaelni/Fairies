@@ -72,6 +72,15 @@ ZAI_USAGE_WINDOW_BODY = {
                    "reset at 2026-07-03 11:11:54][20260703110251648ad94226c14a7e]",
     },
 }
+ZAI_WEEKLY_LIMIT_BODY = {
+    "type": "error",
+    "error": {
+        "type": "rate_limit_error",
+        "code": "1310",
+        "message": "[1310][Weekly/Monthly Limit Exhausted. Your limit will reset "
+                   "at 2099-01-01 18:29:11][209901010406270000000000000001]",
+    },
+}
 # Real body observed from z.ai (2026-07) during peak load, as HTTP 529.
 _ZAI_OVERLOADED_BODY = {
     "type": "error",
@@ -138,6 +147,9 @@ class QuotaExhaustedTests(unittest.TestCase):
     def test_detects_structured_1308(self) -> None:
         self.assertTrue(anthropic_common.is_quota_exhausted(_response(429, ZAI_USAGE_WINDOW_BODY)))
 
+    def test_detects_structured_1310(self) -> None:
+        self.assertTrue(anthropic_common.is_quota_exhausted(_response(429, ZAI_WEEKLY_LIMIT_BODY)))
+
     def test_detects_message_fallback(self) -> None:
         self.assertTrue(anthropic_common.is_quota_exhausted(
             _response(429, "Insufficient balance or no resource package")))
@@ -152,6 +164,12 @@ class QuotaResetTests(unittest.TestCase):
         self.assertAlmostEqual(
             time.time() + 543,
             anthropic_common.quota_reset_epoch(ZAI_USAGE_WINDOW_BODY["error"]["message"]),
+            delta=2)
+
+    def test_a_weekly_reset_lies_days_ahead(self) -> None:
+        self.assertAlmostEqual(
+            time.time() + 14 * 3600 + 22 * 60 + 44,
+            anthropic_common.quota_reset_epoch(ZAI_WEEKLY_LIMIT_BODY["error"]["message"]),
             delta=2)
 
     def test_a_message_without_a_reset_names_no_time(self) -> None:

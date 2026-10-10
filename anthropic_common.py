@@ -70,17 +70,19 @@ class MessagesError(RuntimeError):
         self.error = error
 
 
-# z.ai signals two "stop calling, waiting won't help soon" states as an
-# HTTP 429 with these error codes (Anthropic proper uses neither; both
+# z.ai signals three "stop calling, waiting won't help soon" states as an
+# HTTP 429 with these error codes (Anthropic proper uses none; all
 # observed on z.ai's Anthropic-compatible endpoint and stable per z.ai's
 # error-code table):
 #   1113 -- out of balance / no resource package: dead until re-funded
 #           (observed 2026-06).
 #   1308 -- 5-hour usage window exhausted: dead until the window resets,
 #           which can be hours away (observed 2026-07).
-# Neither must consume the retry budget; retrying just hammers a dead
+#   1310 -- weekly/monthly limit exhausted: dead until it resets, which
+#           can be days away.
+# None must consume the retry budget; retrying just hammers a dead
 # endpoint while the caller's deadline runs out.
-ZAI_QUOTA_EXHAUSTED_CODES = frozenset({"1113", "1308"})
+ZAI_QUOTA_EXHAUSTED_CODES = frozenset({"1113", "1308", "1310"})
 
 
 def is_quota_exhausted(response: httpx.Response) -> bool:

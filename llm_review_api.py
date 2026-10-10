@@ -51,6 +51,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -62,6 +63,8 @@ from typing import TypeVar
 from anthropic_common import ANTHROPIC_API_URL
 from common import JsonObject
 from podman_host import ContainerInfraError, ContainerShellSession, ShellHostSpec
+import retry_backoff
+from retry_backoff import RetryTooSoon
 
 __all__ = [
     "ANTHROPIC_ENDPOINTS",
@@ -73,6 +76,7 @@ __all__ = [
     "ISSUE_REPORT_CLASSIFICATIONS",
     "ISSUE_REPORT_SCHEMA",
     "MAX_PERSIST_BRANCHES",
+    "QUOTA_BACKOFF_BASE_S",
     "TERMINAL_ROUTES",
     "TRIAGE_REQUESTABLE_EFFORTS",
     "TRIAGE_ROUTES",
@@ -89,6 +93,7 @@ __all__ = [
     "BranchCollectionFailed",
     "ProviderContentFlagged",
     "ProviderTurnFailed",
+    "QuotaExhausted",
     "Review",
     "ReviewContext",
     "Reviewer",
@@ -98,8 +103,10 @@ __all__ = [
     "build_review_schema",
     "build_triage_schema",
     "check_schema",
+    "ensure_quota",
     "model_label",
     "model_needs_diff_tripwire",
+    "quota_exhausted",
     "review_with_turn_retries",
     "run_parallel",
     "sanitize_label_changes",
@@ -326,6 +333,43 @@ class BranchCollectionFailed(RuntimeError):
     """Packing the verdict's declared branches out of the review
     containers failed -- after the model finished, so it is no evidence
     about the model or the containers."""
+
+
+class QuotaExhausted(RuntimeError):
+    """The account's balance or usage window is exhausted; ``due_at`` is
+    the epoch second of the next attempt ``retry_backoff`` allows."""
+
+    def __init__(self, message: str, due_at: float) -> None:
+        super().__init__(message)
+        self.due_at = due_at
+
+
+QUOTA_BACKOFF_BASE_S = 15 * 60
+
+
+def ensure_quota(account: str) -> None:
+    """Raise ``QuotaExhausted`` while ``retry_backoff`` holds every fairy
+    process off ``account``."""
+    try:
+        retry_backoff.ensure_due(account, QUOTA_BACKOFF_BASE_S)
+    except RetryTooSoon as exc:
+        raise QuotaExhausted(str(exc), time.time() + exc.wait_seconds) from exc
+
+
+def quota_exhausted(account: str, error: str, resets_at: float = 0) -> QuotaExhausted:
+    """Record ``error`` as an exhaustion of ``account``, which holds every
+    fairy process off it for ``QUOTA_BACKOFF_BASE_S`` doubled per
+    consecutive exhaustion, and return the ``QuotaExhausted`` to raise.
+    While a hold is in effect the exhaustion is one another pass already
+    recorded and is not counted again.
+
+    resets_at: epoch second the server says the quota resets, 0 when it
+               named none
+    """
+    if not retry_backoff.due_in(account, QUOTA_BACKOFF_BASE_S):
+        retry_backoff.record(account, error, resets_at)
+    return QuotaExhausted(
+        error, time.time() + retry_backoff.due_in(account, QUOTA_BACKOFF_BASE_S))
 
 
 # Distinct non-zero exit code for "the model's JSON did not match the
@@ -1110,12 +1154,15 @@ class Reviewer(ABC):
     reviewer's turns keep being ended by the provider; their own
     ``fallbacks`` are not chained. A fallback with ``flag_only`` set
     is used only for ``ProviderContentFlagged``; other turn failures skip it.
+    ``quota_key`` is the ``retry_backoff`` key of the account the reviewer
+    spends, ``None`` for a backend without a quota hold.
     """
 
     name: str
     role: RoleSpec
     fallbacks: tuple["Reviewer", ...] = ()
     flag_only: bool = False
+    quota_key: str | None = None
 
     @abstractmethod
     def run(self, ctx: ReviewContext) -> dict[str, object]:
@@ -1155,16 +1202,25 @@ def review_with_turn_retries(
 
     The first reviewer retries ``ProviderTurnFailed`` up to ``attempts``
     (>= 1) total attempts; ``ProviderContentFlagged`` switches to the
-    next reviewer at the first flag instead, when there is one. A
-    fallback is invoked at most once per run: a stand-in may live on
-    expensive API credits, so every failure of one -- whatever the
-    kind -- is raised as ``ProviderTurnFailed``, which exits the
-    wrapper EXIT_TURN_FAILED and thereby keeps the outer
-    --llm-max-attempts loop from invoking it again. A ``flag_only``
-    fallback is reached only via a content flag; a spent budget skips
-    past it. The walk is forward only."""
+    next reviewer at the first flag instead, when there is one, and a
+    ``QuotaExhausted`` at once. A fallback is invoked at most once per
+    run: a stand-in may live on expensive API credits, so every failure
+    of one -- whatever the kind -- is raised as ``ProviderTurnFailed``,
+    which exits the wrapper EXIT_TURN_FAILED and thereby keeps the outer
+    --llm-max-attempts loop from invoking it again; except a quota hold,
+    raised as the ``QuotaExhausted`` due first among those met. A
+    ``flag_only`` fallback is reached only via a content flag; a spent
+    budget or a quota hold skips past it. The walk is forward only."""
     pending = list(reviewer.fallbacks)
     budget, is_fallback = attempts, False
+    held: list[QuotaExhausted] = []
+
+    def stand_in() -> Reviewer | None:
+        while pending and pending[0].flag_only:
+            logger.info("%s handles only content flags; skipped",
+                        pending.pop(0).name)
+        return pending[0] if pending else None
+
     while True:
         for attempt in range(1, budget + 1):
             try:
@@ -1180,14 +1236,19 @@ def review_with_turn_retries(
                         "%s: provider ended the turn (%s); attempt %d/%d",
                         reviewer.name, exc, attempt + 1, budget)
                     continue
-                while pending and pending[0].flag_only:
-                    logger.info("%s handles only content flags; skipped",
-                                pending.pop(0).name)
-                if not pending:
+                if stand_in() is None:
                     raise
                 logger.warning(
                     "%s: turn-failure budget spent (%s); switching to %s",
                     reviewer.name, exc, pending[0].name)
+                break
+            except QuotaExhausted as exc:
+                held.append(exc)
+                if stand_in() is None:
+                    raise QuotaExhausted("; ".join(map(str, held)),
+                                         min(h.due_at for h in held))
+                logger.warning("%s: quota exhausted (%s); switching to %s",
+                               reviewer.name, exc, pending[0].name)
                 break
             except Exception as exc:
                 if not is_fallback:
@@ -1205,9 +1266,11 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
     dropped with a logged traceback so the surviving drafts still produce
     a review; only when every reviewer fails is the run aborted -- as
     ``ProviderTurnFailed`` when each of them died of one, so the wrapper
-    exits ``EXIT_TURN_FAILED`` like an exhausted combiner does. A
-    provider-ended turn is re-run in the reviewer's own thread, up to
-    ``TURN_FAILED_REVIEWER_ATTEMPTS`` attempts, before the drop.
+    exits ``EXIT_TURN_FAILED`` like an exhausted combiner does, and as
+    ``QuotaExhausted``, due when the earliest-held account is, when every
+    reviewer was held off by its quota. A provider-ended turn is re-run
+    in the reviewer's own thread, up to ``TURN_FAILED_REVIEWER_ATTEMPTS``
+    attempts, before the drop.
 
     Each reviewer opens its shells via ``ctx.open_shell``. Results are
     gathered only after every thread finishes, so the shared ``ctx`` is
@@ -1244,7 +1307,9 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
                 if isinstance(exc, ContainerInfraError) else "failed", reason,
             )
     if not drafts:
+        message = f"all reviewers failed: {'; '.join(ctx.failed_reviewers)}"
+        if all(isinstance(exc, QuotaExhausted) for exc in failures):
+            raise QuotaExhausted(message, min(exc.due_at for exc in failures))
         raise (ProviderTurnFailed if all(isinstance(exc, ProviderTurnFailed)
-                                         for exc in failures) else RuntimeError)(
-            f"all reviewers failed: {'; '.join(ctx.failed_reviewers)}")
+                                         for exc in failures) else RuntimeError)(message)
     return drafts

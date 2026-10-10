@@ -50,10 +50,12 @@ if str(REPO_ROOT) not in sys.path:
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
 from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
                             ProviderContentFlagged, ProviderTurnFailed,
+                            QuotaExhausted, quota_exhausted,
                             review_with_turn_retries)
 from podman_host import ContainerInfraError, ContainerShellError  # noqa: E402
 import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
+from test_retry_backoff import isolate  # noqa: E402
 from codex_reviewer import CodexReviewer, CodexTurnFailed  # noqa: E402
 import workset  # noqa: E402
 from openai_reviewer import OpenAIReviewer  # noqa: E402
@@ -108,6 +110,16 @@ class _FailingReviewer(Reviewer):
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
         raise RuntimeError(self.error)
+
+
+class _HeldReviewer(Reviewer):
+    """A reviewer whose account's quota is exhausted until ``due_at``."""
+
+    def __init__(self, name: str, due_at: float) -> None:
+        self.name, self.due_at = name, due_at
+
+    def run(self, ctx: ReviewContext) -> dict[str, object]:
+        raise QuotaExhausted(f"{self.name}: quota exhausted", self.due_at)
 
 
 class _FlaggedReviewer(Reviewer):
@@ -305,6 +317,9 @@ class VetReviewTests(unittest.TestCase):
 
 
 class ReviewPrTests(unittest.TestCase):
+    def setUp(self) -> None:
+        isolate(self)
+
     def test_single_reviewer_no_combiner_returns_draft(self) -> None:
         ctx = _ctx()
         draft = Review("minor_issues_approve", "nit", model="a")
@@ -483,6 +498,35 @@ class ReviewPrTests(unittest.TestCase):
             review_pipeline.review_pr(
                 ctx, [_FakeReviewer("zai:glm", d1)], combiner)
         self.assertEqual(8, combiner.calls)
+
+    def test_all_reviewers_held_off_by_quota_abort_due_at_the_earliest(self) -> None:
+        ctx = _ctx()
+        with self.assertRaises(QuotaExhausted) as caught, \
+                self.assertLogs("llm_review_api", level="ERROR"):
+            review_pipeline.review_pr(
+                ctx, [_HeldReviewer("codex:a", 2000.0), _HeldReviewer("zai:b", 1000.0)],
+                _FakeReviewer("combiner", Review("approve", "ok", model="c")))
+        self.assertEqual(1000.0, caught.exception.due_at)
+        self.assertIn("codex:a: quota exhausted", str(caught.exception))
+
+    def test_a_held_combiner_is_known_before_the_reviewers_spend_anything(self) -> None:
+        ctx = _ctx()
+        reviewer = _FakeReviewer("a", Review("approve", "ok", model="a"))
+        combiner = _FakeReviewer("combiner", Review("approve", "ok", model="c"))
+        combiner.quota_key = "codex/home"
+        quota_exhausted("codex/home", "plan usage limit reached")
+        with self.assertRaisesRegex(QuotaExhausted, "plan usage limit reached"):
+            review_pipeline.review_pr(ctx, [reviewer], combiner)
+        self.assertIsNone(reviewer.seen_drafts)
+
+    def test_a_quota_hold_beside_another_failure_is_an_ordinary_failure(self) -> None:
+        ctx = _ctx()
+        with self.assertRaises(RuntimeError) as caught, \
+                self.assertLogs("llm_review_api", level="ERROR"):
+            review_pipeline.review_pr(
+                ctx, [_HeldReviewer("codex:a", 2000.0), _FailingReviewer("zai:b")],
+                _FakeReviewer("combiner", Review("approve", "ok", model="c")))
+        self.assertNotIsInstance(caught.exception, QuotaExhausted)
 
     def test_all_reviewers_turn_failed_skips_the_outer_loop(self) -> None:
         """An all-flagged (or all-turn-failed) ensemble aborts as
@@ -755,6 +799,27 @@ class TurnRetryFallbackTests(unittest.TestCase):
             out = review_with_turn_retries(primary, _ctx(), attempts=4)
         self.assertIs(out, self.DRAFT)
         self.assertEqual(3, primary.calls)
+
+    def test_a_held_primary_switches_to_its_fallback_at_once(self) -> None:
+        primary = _HeldReviewer("codex:sol", 2000.0)
+        flag_only = _FlaggedReviewer("codex:sol+second", self.DRAFT, fail_times=0)
+        flag_only.flag_only = True
+        fallback = _FlaggedReviewer("zai:glm", self.DRAFT, fail_times=0)
+        primary.fallbacks = (flag_only, fallback)
+        with self.assertLogs("llm_review_api", level="WARNING"):
+            out = review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertIs(out, self.DRAFT)
+        self.assertEqual([0, 1], [flag_only.calls, fallback.calls])
+
+    def test_held_primary_and_fallback_raise_the_earliest_due_time(self) -> None:
+        primary = _HeldReviewer("codex:sol", 2000.0)
+        primary.fallbacks = (_HeldReviewer("zai:glm", 1000.0),)
+        with self.assertRaises(QuotaExhausted) as caught, \
+                self.assertLogs("llm_review_api", level="WARNING"):
+            review_with_turn_retries(primary, _ctx(), attempts=4)
+        self.assertEqual(1000.0, caught.exception.due_at)
+        self.assertIn("codex:sol: quota exhausted; zai:glm: quota exhausted",
+                      str(caught.exception))
 
     def test_two_fallbacks_run_in_order(self) -> None:
         primary = _FlaggedReviewer("codex:sol", self.DRAFT, fail_times=99,

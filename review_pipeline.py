@@ -59,6 +59,7 @@ from llm_review_api import (
     ReviewContext,
     Reviewer,
     RoleSpec,
+    ensure_quota,
     review_with_turn_retries,
     run_parallel,
 )
@@ -314,6 +315,8 @@ def review_pr(
     propagates and the wrapper exits ``EXIT_TURN_FAILED``, which skips
     the outer --llm-max-attempts loop.
     """
+    if combiner is not None and combiner.quota_key:
+        ensure_quota(combiner.quota_key)
     if len(model_reviewers) == 1:
         drafts = [review_with_turn_retries(
             model_reviewers[0], ctx, TURN_FAILED_REVIEWER_ATTEMPTS)]

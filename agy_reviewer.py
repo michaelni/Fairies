@@ -159,6 +159,11 @@ def summarize_agy_events(jsonl: str) -> tuple[JsonObject, JsonObject | None]:
     return (usage if isinstance(usage, dict) else {}), event["result"]
 
 
+def model_family(model: str) -> str:
+    """The first word of the model slug, which names its usage group."""
+    return model.split("-", 1)[0].lower()
+
+
 def exhausted_bucket(usage_json: str, model: str) -> JsonObject | None:
     """The usage bucket of ``model``'s group that has nothing left, from
     ``agy -p /usage --output-format json`` output; ``None`` when every
@@ -169,7 +174,7 @@ def exhausted_bucket(usage_json: str, model: str) -> JsonObject | None:
     name: agy 1.2.12 groups ``gemini-*`` under "Gemini Models" and
     ``claude-*`` / ``gpt-*`` under "Claude and GPT models".
     """
-    family = model.split("-", 1)[0].lower()
+    family = model_family(model)
     for line in usage_json.splitlines():
         envelope = parse_event_line(line)
         if envelope is None:

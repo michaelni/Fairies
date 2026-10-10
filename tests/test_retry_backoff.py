@@ -50,18 +50,24 @@ import retry_backoff  # noqa: E402
 _ERROR = "podman exec: Error: container fairy-pr-23750 is not running"
 
 
+def isolate(test: unittest.TestCase) -> Path:
+    """Point retry_backoff at a temporary directory for ``test``; returns
+    the directory the failure records land in."""
+    tmp = tempfile.TemporaryDirectory()
+    test.addCleanup(tmp.cleanup)
+    test.enterContext(mock.patch.object(
+        retry_backoff, "default_cache_path", lambda name: Path(tmp.name) / name))
+    return Path(tmp.name) / "retry_backoff"
+
+
 class RetryBackoffTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.enterContext(mock.patch.object(
-            retry_backoff, "default_cache_path",
-            lambda name: Path(self.tmp.name) / name))
+        self.records = isolate(self)
 
     def fail_times(self, key: str, times: int, seconds_ago: float) -> None:
         for _ in range(times):
             retry_backoff.record(key, _ERROR)
-        failures_file, = (Path(self.tmp.name) / "retry_backoff").iterdir()
+        failures_file, = self.records.iterdir()
         os.utime(failures_file, times=(time.time() - seconds_ago,) * 2)
 
     def wait_for(self, key: str, base: float) -> float:
@@ -75,7 +81,7 @@ class RetryBackoffTests(unittest.TestCase):
         retry_backoff.ensure_due("pr/1", 60)
         self.assertEqual(0, retry_backoff.due_in("pr/1", 60))
         retry_backoff.record("pr/1", _ERROR)
-        failures_file, = (Path(self.tmp.name) / "retry_backoff").iterdir()
+        failures_file, = self.records.iterdir()
         failures_file.write_text("")
         retry_backoff.ensure_due("pr/1", 60)
 
@@ -110,8 +116,7 @@ class RetryBackoffTests(unittest.TestCase):
         retry_backoff.record("pr-1", _ERROR)
         retry_backoff.record("pr/2", "")
         self.assertEqual(
-            sorted(p.name.split(".")[0]
-                   for p in (Path(self.tmp.name) / "retry_backoff").iterdir()),
+            sorted(p.name.split(".")[0] for p in self.records.iterdir()),
             ["pr-1", "pr-1"])
         self.wait_for("pr/1", 60)
         retry_backoff.ensure_due("pr/2", 60)
@@ -119,7 +124,7 @@ class RetryBackoffTests(unittest.TestCase):
     def test_each_failure_is_one_line_of_the_record(self) -> None:
         retry_backoff.record("pr/1", "first\nline two")
         retry_backoff.record("pr/1", "second")
-        failures_file, = (Path(self.tmp.name) / "retry_backoff").iterdir()
+        failures_file, = self.records.iterdir()
         lines = failures_file.read_text(encoding="utf-8").splitlines()
         self.assertEqual([l.split(" ", 3)[::3] for l in lines],
                          [["0", "first line two"], ["0", "second"]])

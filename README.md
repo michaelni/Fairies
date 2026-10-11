@@ -130,9 +130,11 @@ you can use `--fallback-model PROVIDER:MODEL[@EFFORT]` for other failures
 2. Put API keys in the environment or `.env`: `OPENAI_API_KEY`, plus
    `ANTHROPIC_API_KEY` / `ZAI_API_KEY` when those providers are used.
 3. Clone your repository next to fairy and add the PR head refs
-   (used for patch generation and available inside the review container):
+   (used for patch generation and available inside the review container).
+   The user agent lets your forge admin tell fairy's fetches from crawlers:
 
        git config --add remote.fforge.fetch '+refs/pull/*/head:refs/remotes/fforge/pr/*'
+       git config http.userAgent forgejo-fairy
        git fetch fforge
 
 4. Write a project-facts file: what your build/test system is and the

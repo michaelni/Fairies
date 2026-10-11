@@ -41,6 +41,7 @@ ensure_repo() {
     git -C "$1" config --get-all remote.fforge.fetch | grep -qF refs/pull || \
         git -C "$1" config --add remote.fforge.fetch \
             '+refs/pull/*/head:refs/remotes/fforge/pr/*'
+    git -C "$1" config http.userAgent forgejo-fairy
     (cd "$1" && git checkout master && git fetch fforge && git pull --rebase)
 }
 

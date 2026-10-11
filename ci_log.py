@@ -62,6 +62,9 @@ logger = logging.getLogger("ci_log")
 # anti-bot challenge. Expected stable across Forgejo releases.)
 _JOB_URL_RE = re.compile(r"^https?://.+?/actions/runs/\d+/jobs/\d+(?:/|$)")
 
+# Sent on every request so the forge can tell fairy from anonymous crawlers.
+USER_AGENT = "forgejo-fairy"
+
 # Trailing bytes requested via HTTP Range; the server honours it (206 +
 # Content-Range), so only this much crosses the wire in the common case.
 # Comfortably larger than any sane ``max_lines`` worth of log.
@@ -91,7 +94,8 @@ def _resolve_log_url(target_url: str, *, timeout: float) -> str:
     so this is more robust than assuming ``attempt/1``. Only the final URL
     is used; the page body is not read.
     """
-    with urllib.request.urlopen(target_url, timeout=timeout) as resp:
+    req = urllib.request.Request(target_url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.geturl().rstrip("/") + "/logs"
 
 
@@ -121,7 +125,8 @@ def fetch_job_log_tail(
     try:
         log_url = _resolve_log_url(target_url, timeout=timeout)
         logger.debug("fetching log tail: %s", log_url)
-        req = urllib.request.Request(log_url, headers={"Range": f"bytes=-{_TAIL_FETCH_BYTES}"})
+        req = urllib.request.Request(log_url, headers={
+            "User-Agent": USER_AGENT, "Range": f"bytes=-{_TAIL_FETCH_BYTES}"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             content_range = resp.headers.get("Content-Range", "")
             cap = _TAIL_FETCH_BYTES + 4096 if resp.status == 206 else _FULL_READ_CAP

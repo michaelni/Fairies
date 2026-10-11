@@ -54,6 +54,7 @@ import io
 import sys
 import unittest
 import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -134,6 +135,27 @@ class FetchGuardrailTests(unittest.TestCase):
         self.assertIsNone(
             ci_log.fetch_job_log_tail("https://ci.example.org/build/1", max_lines=50)
         )
+
+
+class FetchUserAgentTests(unittest.TestCase):
+    """Both requests, the redirect probe and the log itself, identify fairy."""
+
+    def test_both_requests_send_user_agent(self) -> None:
+        seen: list[urllib.request.Request] = []
+
+        def fake_urlopen(req: urllib.request.Request, timeout: float) -> mock.MagicMock:
+            seen.append(req)
+            if len(seen) > 1:
+                raise urllib.error.URLError("offline")
+            resp = mock.MagicMock()
+            resp.__enter__.return_value.geturl.return_value = REAL_TARGET_URL + "/attempt/1"
+            return resp
+
+        with mock.patch.object(ci_log.urllib.request, "urlopen", side_effect=fake_urlopen):
+            ci_log.fetch_job_log_tail(REAL_TARGET_URL, max_lines=50)
+        self.assertEqual([r.full_url for r in seen],
+                         [REAL_TARGET_URL, REAL_TARGET_URL + "/attempt/1/logs"])
+        self.assertEqual([r.get_header("User-agent") for r in seen], [ci_log.USER_AGENT] * 2)
 
 
 class FetchErrorStringTests(unittest.TestCase):

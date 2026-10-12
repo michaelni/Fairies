@@ -480,6 +480,36 @@ class CollectDeclaredBranchesTests(unittest.TestCase):
         self.assertEqual(bundled_from, ["cid456"])
         self.assertEqual(collect(draft_tip)[0].sha, draft_tip)
 
+    def test_every_inherited_tip_of_a_shared_name_is_inherited(self) -> None:
+        """Two drafts declaring the same branch name hand the next stage
+        two records of it; a container left at either tip was not pushed to."""
+        handle2 = podman_host.ContainerHandle(
+            "cid456", "img", None, podman_host.RemoteHost("fairy@h"))
+        pushed_tip = "a" * 40
+        inherited = [{"repo": "ffmpeg", "branch": "fix", "sha": "1" * 40},
+                     {"repo": "ffmpeg", "branch": "fix", "sha": "2" * 40}]
+
+        def fake_cgit(handle, repo_path, *args, **kwargs):
+            if args[0] == "for-each-ref":
+                return _cmd(stdout=b"")
+            if args[:2] == ("bundle", "create"):
+                self.assertIs(handle, HANDLE)
+                return _cmd(stdout=b"BUNDLE")
+            raise AssertionError(args)
+
+        with mock.patch.object(
+                branch_persist, "_list_fake_refs",
+                side_effect=lambda handle, repo: {
+                    "fix": "2" * 40 if handle is handle2 else pushed_tip}), \
+                mock.patch.object(branch_persist, "_container_git",
+                                  side_effect=fake_cgit):
+            records = branch_persist.collect_declared_branches(
+                [(HANDLE, {"ffmpeg": {}}), (handle2, {"ffmpeg": {}})],
+                [{"repo": "ffmpeg", "branch": "fix", "action": "push"}],
+                [], repo_specs=[_repo_spec()], base_shas={},
+                inherited=inherited)
+        self.assertEqual(records[0].sha, pushed_tip)
+
     def test_differing_pushes_to_two_containers_are_dropped(self) -> None:
         handle2 = podman_host.ContainerHandle(
             "cid456", "img", None, podman_host.RemoteHost("fairy@h"))

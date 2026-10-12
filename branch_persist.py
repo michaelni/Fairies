@@ -480,11 +480,10 @@ def collect_declared_branches(
                 logger.warning("declared branch %r is on no fairy remote of "
                                "%r; dropped", branch, repo)
                 continue
-            inherited_tip = next((r["sha"] for r in inherited
-                                  if (r["repo"], r["branch"]) == (repo, branch)),
-                                 None)
+            inherited_tips = {r["sha"] for r in inherited
+                              if (r["repo"], r["branch"]) == (repo, branch)}
             pushed = [h for h in holders
-                      if h[2] not in (h[1].get(branch), inherited_tip)]
+                      if h[2] not in (h[1].get(branch), *inherited_tips)]
             if len({h[2] for h in pushed}) > 1:
                 logger.warning("declared branch %r of %r was pushed with "
                                "differing tips to %d containers; dropped",

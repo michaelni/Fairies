@@ -1480,19 +1480,9 @@ def apply_issue_label_changes(
     Skips ``remove`` when the label is not currently attached so gcli
     is not asked to delete something that is already absent.
 
-    Stock gcli (<= 2.12.0) cannot attach labels reliably on
-    Forgejo/Gitea: ``pulls labels add NAME`` resolves NAME to an id,
-    sends the id *as a JSON string*, and newer Gitea/Forgejo
-    releases then treat that string as another name lookup, don't
-    find it, and return 200 with no labels attached. Older servers
-    reject strings outright via ``[]int64`` binding. Org-level
-    labels are also unreachable because gcli only probes the repo's
-    labels for the lookup.
-
-    The bot requires a gcli built from a tree that includes both
-    ``gitea: send issue label ids as JSON numbers, not strings`` and
-    ``gitea: also look up org-level labels by name`` (see ``~/gcli``
-    on the deployment host; submitted upstream).
+    Needs the patched gcli described under "Supported forges" in the
+    README; stock gcli attaches nothing and cannot remove org-level
+    labels.
     """
     if not labels_add and not labels_remove:
         return

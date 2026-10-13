@@ -463,6 +463,19 @@ forge for each PR's real open/closed/merged state (slower).
 * GitLab (untested)
 * Gitea (untested)
 
+Labels on Forgejo and Gitea need gcli built with three patches on top
+of 2.13.0-devel; stock gcli (<= 2.12.0) sends the label id as a JSON
+string, which newer servers take for a label name and silently attach
+nothing, and it only resolves the repository's own labels, so org-level
+labels are unreachable:
+
+* `gitea: send issue label ids as JSON numbers, not strings`
+* `gitea: also look up org-level labels by name`
+* `gitea: remove issue labels by name, not by id` -- Forgejo 16.0.6
+  resolves a numeric id in the remove path only among the repository's
+  labels, so removing an org-level label by id fails with 422 "label
+  does not exist".
+
 ## License
 
 GPL v2, with removable clause that allows us to change to a different version

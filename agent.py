@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import secrets
 import subprocess
 import sys
 import time
@@ -1370,7 +1371,8 @@ def make_parser() -> argparse.ArgumentParser:
                    help="filedb root; its config.toml, written by "
                         "configurator.py, carries the side options")
     p.add_argument("--loop", type=float, default=0, metavar="SECONDS",
-                   help="tick every N seconds: one listing per side tells "
+                   help="tick every N seconds, give or take 10% at random: "
+                        "one listing per side tells "
                         "what moved on the forge, a rescan of that follows, "
                         "of everything hourly; operator files "
                         "(requests/, outgoing/) and a worker's verdict "
@@ -1512,13 +1514,20 @@ def main() -> int:
     sides = sides_of(pr_ns, issue_ns)
     next_scan = next_full = 0.0
 
+    def schedule_scan() -> None:
+        """The next scan comes --loop seconds from now, give or take 10%
+        at random: a predictable tick would let an attacker show fairy a
+        doctored ticket exactly when it looks and restore it after."""
+        nonlocal next_scan
+        next_scan = time.monotonic() + args.loop * (
+            secrets.SystemRandom().uniform(0.9, 1.1))
+
     def scan_due() -> bool | None:
         """None until the next tick; then whether the due pass is a
         full one (always without --loop, else hourly)."""
-        nonlocal next_scan
         if time.monotonic() < next_scan:
             return None
-        next_scan = time.monotonic() + args.loop
+        schedule_scan()
         return not args.loop or time.monotonic() >= next_full
 
     marker = halt_marker.path(db.root, lead.halt_file)
@@ -1527,7 +1536,7 @@ def main() -> int:
             if (halt := halt_marker.reason(marker)) is not None:
                 logger.warning("halted: %s -- remove %s to resume",
                                halt, marker)
-                next_scan = time.monotonic() + args.loop
+                schedule_scan()
             elif (full := scan_due()) is not None:
                 one_pass(db, pr_ns, issue_ns, args, full=full)
                 if full:

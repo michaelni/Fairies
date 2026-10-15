@@ -2304,6 +2304,22 @@ class LoopTests(unittest.TestCase):
             self.run_main("--loop 100", [None], wait=wait, watched=False)
         self.assertEqual(waits, [agent.WATCH_FALLBACK_POLL_S])
 
+    def test_the_scan_interval_is_jittered(self) -> None:
+        """A tick at exactly --loop seconds would tell an attacker when
+        to show fairy a doctored ticket."""
+        waits = []
+
+        def wait(timeout=None):
+            waits.append(timeout)
+            raise _StopLoop()
+
+        with mock.patch.object(agent.secrets, "SystemRandom") as rng, \
+                self.assertRaises(_StopLoop):
+            rng.return_value.uniform.return_value = 1.1
+            self.run_main("--loop 100", [None], wait=wait)
+        rng.return_value.uniform.assert_called_once_with(0.9, 1.1)
+        self.assertTrue(109.0 < waits[0] <= 110.0, waits)
+
     def test_a_failed_pass_is_fatal_in_one_shot_mode(self) -> None:
         with self.assertRaises(RuntimeError):
             self.run_main("", [RuntimeError("forge 500")])

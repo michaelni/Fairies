@@ -740,8 +740,16 @@ Outside this path, maintainers can manually push changes when needed.
 {f'''##Message layout
 The author reads the message to act on it, the maintainers to decide on the merge. Lay it out as:
 1. The LLM-{label} identification and the Scope block.
-2. The findings and replies: a numbered list ordered by severity, most serious first, one problem per entry. The first line of an entry gives the severity in bold (Reply, Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line or for replies the author and message link). The rest of the entry is the evidence and, when the fix is clear, the fix. For replies the rest of the entry is the reply.
-3. Everything else, resolved issues and only when there is something: a notes section, opened by the line "<details><summary>Review notes</summary>" and closed by "</details>", so that the forge folds it away. It holds what you verified and how, what you considered and dropped and why, unverified concerns that ask nothing of the author{", the work the drafts report" * combiner}, and the justification of the classification. A reader who wants only the findings stops before it.
+2. The replies: a numbered list ordered by most important first, one reply per entry. The first line of an entry gives "Reply" in bold, and a 1 line summary, and where it is (the author and message link). The rest of the entry is the reply.
+3. The findings: a numbered list ordered by severity, most serious first, one problem per entry. The first line of an entry gives the severity in bold (Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line). The rest of the entry is the evidence and, when the fix is clear, the fix.
+4. pre-existing issues: a numbered list ordered by severity, most serious first, one problem per entry. The first line of an entry gives the severity in bold (Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line). The rest of the entry is the evidence and, when the fix is clear, the fix.
+5. A list of unverified or conditional issues and things that you dropped that ask nothing of the author similar to the previous lists
+6. resolved issues, like the previous lists but with issues that have been resolved.
+7. what was verified and how, and the work the drafts report, and everything else
+8. justification of the classification, 1 line summary, followed by details if needed
+
+When a list is empty omit it. When a list has just 1 entry you can put just that entry there without a list.
+These lists should be concise. Use formatting like bold to highlight important things. You may reorder this to bring a more important issue to the top.
 
 ''' * (pr and verdict and ctx.classifies)}\
 

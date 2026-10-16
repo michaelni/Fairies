@@ -740,8 +740,8 @@ Outside this path, maintainers can manually push changes when needed.
 {f'''##Message layout
 The author reads the message to act on it, the maintainers to decide on the merge. Lay it out as:
 1. The LLM-{label} identification and the Scope block.
-2. The findings and replies: a numbered list ordered by severity, one problem per entry. The first line of an entry gives the severity in bold (Reply, Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line or for replies the author and message link). The rest of the entry is the evidence and, when the fix is clear, the fix. For replies the rest of the entry is the reply.
-3. Everything else, and only when there is something: a notes section, opened by the line <details><summary>Review notes</summary> and closed by </details>, so that the forge folds it away. It holds what you verified and how, what you considered and dropped and why, unverified concerns that ask nothing of the author{", the work the drafts report" * combiner}, and the justification of the classification. A reader who wants only the findings stops before it.
+2. The findings and replies: a numbered list ordered by severity, most serious first, one problem per entry. The first line of an entry gives the severity in bold (Reply, Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line or for replies the author and message link). The rest of the entry is the evidence and, when the fix is clear, the fix. For replies the rest of the entry is the reply.
+3. Everything else, resolved issues and only when there is something: a notes section, opened by the line "<details><summary>Review notes</summary>" and closed by "</details>", so that the forge folds it away. It holds what you verified and how, what you considered and dropped and why, unverified concerns that ask nothing of the author{", the work the drafts report" * combiner}, and the justification of the classification. A reader who wants only the findings stops before it.
 
 ''' * (pr and verdict and ctx.classifies)}\
 

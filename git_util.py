@@ -209,6 +209,10 @@ def git_diff(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
                        "--minimal", base_sha, head_sha)
 
 
+def git_rev_list(repo_root: Path, *args: str) -> list[str]:
+    return _git_stdout(repo_root, "rev-list", *args).decode().split()
+
+
 def git_patch_ids(repo_root: Path, shas: Sequence[str]) -> dict[str, str]:
     """``{sha: patch-id}`` for ``shas``: ``git diff-tree --stdin`` feeds
     every commit's diff to one ``git patch-id --stable``. A commit
@@ -238,8 +242,8 @@ def git_series_patch_ids(repo_root: Path, base_sha: str, head_sha: str) -> list[
     """The patch-id of every non-merge commit of ``base..head``, oldest
     first: the identity of the series, which a rebase that keeps each
     patch leaves unchanged."""
-    shas = _git_stdout(repo_root, "rev-list", "--reverse", "--no-merges",
-                       f"{base_sha}..{head_sha}").decode().split()
+    shas = git_rev_list(repo_root, "--reverse", "--no-merges",
+                        f"{base_sha}..{head_sha}")
     ids = git_patch_ids(repo_root, shas)
     return [ids[sha] for sha in shas if sha in ids]
 

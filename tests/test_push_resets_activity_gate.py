@@ -95,7 +95,8 @@ PUSH_TIMELINE = [{
 
 
 def _call(*, timeline: list[dict], min_age_days: float = 0.25,
-          reviews: list[dict] = [REQUEST_REVIEW]) -> object:
+          reviews: list[dict] = [REQUEST_REVIEW],
+          settle_hours: dict[str, float] = {}) -> object:
     args = SimpleNamespace(
         force_skip_prs=frozenset(),
         force_review_prs=frozenset(),
@@ -106,6 +107,7 @@ def _call(*, timeline: list[dict], min_age_days: float = 0.25,
         llm_review_cmd=None,
         include_self_approved=False,
         min_age_days=min_age_days,
+        settle_hours=settle_hours,
     )
     pr = {
         "number": 22961,
@@ -114,6 +116,7 @@ def _call(*, timeline: list[dict], min_age_days: float = 0.25,
         "title": "Add libavutil/int128.h and libavutil/rational64.h, use in swscale",
         "head": {"sha": HEAD_SHA},
         "updated_at": PUSH_AT,
+        "user": {"login": "alice", "username": "alice"},
     }
     with patch.object(
         fairy, "list_commit_statuses", return_value=[],
@@ -153,6 +156,16 @@ class PushResetsActivityGateTests(unittest.TestCase):
         # old push then clears the threshold gate.
         decision = _call(timeline=PUSH_TIMELINE, min_age_days=10, reviews=[])
         self.assertEqual(decision.action, "skip")
+        self.assertEqual(decision.reason, "no commit statuses / CI results found")
+
+    def test_settle_hours_lengthen_the_authors_window(self) -> None:
+        # 48h for alice holds her 12h old push; 48h for bob leaves
+        # alice at the 6h default.
+        decision = _call(timeline=PUSH_TIMELINE, min_age_days=10, reviews=[],
+                         settle_hours={"alice": 48.0})
+        self.assertEqual(decision.reason, "activity is newer than threshold")
+        decision = _call(timeline=PUSH_TIMELINE, min_age_days=10, reviews=[],
+                         settle_hours={"bob": 48.0})
         self.assertEqual(decision.reason, "no commit statuses / CI results found")
 
 

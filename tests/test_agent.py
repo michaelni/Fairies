@@ -48,6 +48,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import agent  # noqa: E402
+import author_settle  # noqa: E402
 import db_config  # noqa: E402
 import fairy  # noqa: E402
 import forge_gcli  # noqa: E402
@@ -2537,3 +2538,22 @@ class IncrementalScanTests(AgentCase):
                          NOW - timedelta(days=7))
         self.assertEqual(cutoff(self.ns, NOW.isoformat(), NOW),
                          NOW - agent.LISTING_OVERLAP)
+
+
+class SettleHoursTests(AgentCase):
+    def test_full_pass_with_a_stamp_recomputes_the_hours(self) -> None:
+        self.ns.patch_repo = Path("mirror")
+        self.ns.scan_closed_days = 30
+        with mock.patch.object(author_settle, "landed_patch_ids",
+                               return_value={"p1"}) as landed, \
+                mock.patch.object(author_settle, "settle_hours",
+                                  return_value={"alice": 48.0}) as hours:
+            self.scan([make_pr(1)])
+            self.assertEqual(self.ns.settle_hours, {})
+            self.scan([make_pr(1)], full=False)
+            self.assertEqual(self.ns.settle_hours, {})
+            self.scan([make_pr(1)])
+        self.assertEqual(self.ns.settle_hours, {"alice": 48.0})
+        landed.assert_called_once_with(self.db, Path("mirror"),
+                                       NOW - timedelta(days=60))
+        hours.assert_called_once_with(self.db, "fairy", {"p1"})

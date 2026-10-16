@@ -72,6 +72,7 @@ def make_args(**overrides: object) -> argparse.Namespace:
         forge_type="gitea",
         verbose=0,
         min_age_days=1.0,
+        settle_hours={},
         llm_review_cmd="wrapper-cmd",
         podman_host=None,
         llm_timeout=60,

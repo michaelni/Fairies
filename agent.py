@@ -73,6 +73,7 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
 
+import author_settle
 import ci_log
 import db_config
 import fairy
@@ -914,6 +915,15 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                     serve_operator=serve_operator)
                 continue
             full_side = full or not stamps.get(kind)
+            if kind == "pr" and full and stamps.get(kind) and ns.patch_repo \
+                    and ns.scan_closed_days > 0 and (reviewer := login(kind)):
+                try:
+                    ns.settle_hours = author_settle.settle_hours(
+                        db, reviewer, author_settle.landed_patch_ids(
+                            db, ns.patch_repo,
+                            now - timedelta(days=2 * ns.scan_closed_days)))
+                except Exception:
+                    logger.exception("%s: settle hours kept from the last pass", kind)
             cutoff = listing_cutoff(
                 ns, retry.get(kind) if full_side and retry.get(kind) else stamps.get(kind),
                 now)

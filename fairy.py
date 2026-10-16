@@ -141,7 +141,6 @@ __all__ = [
     "Decision",
     "LLMReview",
     "LabelChange",
-    "REVIEWED_PR_MIN_AGE_DAYS",
     "add_llm_exec_args",
     "add_side_agent_args",
     "add_side_identity_args",
@@ -181,6 +180,7 @@ __all__ = [
     "reviewed_patch_ids",
     "safe_apply_llm_review_to_prepared",
     "safe_prepare_pr",
+    "settle_days",
     "submit_decision_action",
     "validate_sides",
     "validate_worker_sides",
@@ -405,6 +405,10 @@ def flatten_label_args(values: list[list[str]] | None) -> list[str]:
     ))
 
 
+def settle_days(args: argparse.Namespace, author: str) -> float:
+    return args.settle_hours.get(author, REVIEWED_PR_MIN_AGE_DAYS * 24) / 24
+
+
 def add_side_identity_args(p: argparse.ArgumentParser) -> None:
     """The side options every fairy process needs: the repo identity
     and credentials, logging and the gcli cache."""
@@ -486,7 +490,8 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
             "red. Does not apply when a "
             "human @-mentions fairy, the item is forced, or fairy is a "
             "requested reviewer. Once fairy has engaged, the effective "
-            "threshold drops to at most 6h. "
+            "threshold drops to 6h, longer for authors whose pull requests "
+            "draw many reviews per landed one (see author_settle). "
             "Default: 7 for PRs, 14 for issues."
         ),
     )
@@ -794,6 +799,7 @@ def parse_args(argv: list[str] | None = None, *, agent: bool = True,
     if agent:
         args.force_review_prs = flatten_pr_number_args(args.force_review)
         args.force_skip_prs = flatten_pr_number_args(args.force_skip)
+        args.settle_hours = {}
     if worker:
         args.triage_labels = flatten_label_args(args.triage_label)
     return args
@@ -2805,7 +2811,7 @@ def prepare_pr(
     if self_login and any(
             (user.get("login") or user.get("username")) == self_login
             for user in (it.get("user") or {} for it in reviews + comments + review_comments)):
-        min_age_days = min(min_age_days, REVIEWED_PR_MIN_AGE_DAYS)
+        min_age_days = min(min_age_days, settle_days(args, author))
     if last_activity > now - timedelta(days=min_age_days):
         return skip(
             "activity is newer than threshold",

@@ -93,6 +93,7 @@ def _call(review: dict, *, min_age_days: float = 30, mergeable: bool = True) -> 
         llm_review_cmd=None,
         include_self_approved=False,
         min_age_days=min_age_days,
+        settle_hours={},
     )
     pr = {
         "number": 20148,

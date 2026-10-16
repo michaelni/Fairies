@@ -85,7 +85,7 @@ def _call(comments: list[dict], *, posted_classification: str | None = None,
         force_review_non_open=False, force_engage=False,
         owner="FFmpeg", repo="FFmpeg", simulate_past=None, verbose=False,
         llm_review_cmd="./wrapper", include_self_approved=False,
-        min_age_days=0.25,
+        min_age_days=0.25, settle_hours={},
     )
     with (
         patch.object(fairy, "get_auto_merge_info", return_value="no"),

@@ -143,6 +143,7 @@ def parse_args(argv: list[str] | None = None, *, agent: bool = True,
     if agent:
         args.force_review_issues = flatten_pr_number_args(args.force_review)
         args.force_skip_issues = flatten_pr_number_args(args.force_skip)
+        args.settle_hours = {}
     if worker:
         args.triage_labels = flatten_label_args(args.triage_label)
     return args
@@ -337,7 +338,7 @@ def prepare_issue(
         # full --min-age-days.
         min_age_days = float(args.min_age_days)
         if self_last is not None and last_nonself is not None and last_nonself > self_last:
-            min_age_days = min(min_age_days, fairy.REVIEWED_PR_MIN_AGE_DAYS)
+            min_age_days = min(min_age_days, fairy.settle_days(args, author))
         if last_activity > now - timedelta(days=min_age_days):
             return skip("activity is newer than threshold", last_activity)
 

@@ -748,7 +748,7 @@ The author reads the message to act on it, the maintainers to decide on the merg
 7. what was verified and how, and the work the drafts report, and everything else
 8. justification of the classification, 1 line summary, followed by details if needed
 
-When a list is empty omit it. When it is not empty preface it with a well vissible heading so the reader can quickly skip to what she is interrested in. When a list has just 1 entry you can put just that entry below the heading without a list.
+When a list is empty omit it. When it is not empty preface it with a well vissible heading so the reader can quickly skip to what she is interrested in.
 These lists should be concise. Use formatting like bold to highlight important things. You may reorder this to bring a more important issue to the top.
 
 ''' * (pr and verdict and ctx.classifies)}\

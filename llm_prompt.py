@@ -749,6 +749,7 @@ The author reads the message to act on it, the maintainers to decide on the merg
 8. justification of the classification, 1 line summary, followed by details if needed
 
 When a list is empty omit it. When it is not empty preface it with a well vissible heading so the reader can quickly skip to what she is interrested in.
+In every list the first line of an entry is a bold one-line summary with where it is; the evidence, reply or reason follows on the lines below it.
 These lists should be concise. Use formatting like bold to highlight important things. You may reorder this to bring a more important issue to the top.
 
 ''' * (pr and verdict and ctx.classifies)}\

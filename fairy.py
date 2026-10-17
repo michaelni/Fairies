@@ -132,7 +132,9 @@ from forge_item import (
     reactions_by_content,
     timeline_events,
 )
-from llm_output_hacks import fold_entries, link_published_branch, names_published_branch
+from llm_output_hacks import (
+    fold_entries, fold_sections, link_published_branch, names_published_branch,
+)
 import workset
 
 __all__ = [
@@ -2154,9 +2156,9 @@ def invoke_llm_wrapper(
     branches = parse_branch_records(data.get("branches"))
     return LLMReview(
         classification=classification,
-        message=fold_entries(link_published_branches(
+        message=fold_sections(fold_entries(link_published_branches(
             args, name_unpublished_branches(message.strip(), branches),
-            branches, ticket_url)),
+            branches, ticket_url))),
         label_changes=label_changes,
         branches=branches,
     )

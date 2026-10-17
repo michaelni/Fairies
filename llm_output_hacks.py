@@ -44,8 +44,8 @@ import logging
 import re
 from typing import Callable
 
-__all__ = ["fold_entries", "hide_scope_block", "link_published_branch",
-           "names_published_branch"]
+__all__ = ["fold_entries", "fold_sections", "hide_scope_block",
+           "link_published_branch", "names_published_branch"]
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,8 @@ _BOLD_LEAD = re.compile(r"^(?P<lead>\*\*(?:(?!\*\*).)+\*\*[.:]?) +(?P<rest>\S.*)
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC = re.compile(r"(?<![*\w])\*(?!\*)([^*]+?)\*(?![*\w])")
+_HEADING = re.compile(r"^(?:#{1,6} +(?P<text>.+?)|\*\*(?P<bold>[^*]+)\*\*) *$")
+_FOLDED_SECTIONS = ("Dropped claims", "Verification")
 
 
 def _inline_html(markdown: str) -> str:
@@ -148,6 +150,38 @@ def fold_entries(message: str) -> str:
         i = end
     if folded:
         logger.info("%d review entries folded into <details> blocks", folded)
+    return "\n".join(out)
+
+
+def fold_sections(message: str) -> str:
+    """Fold the sections the prompt lays out under the headings
+    ``Dropped claims`` and ``Verification``, each from its heading to
+    the next heading or margin paragraph opening with bold text, into a
+    ``<details>`` block headed by the heading text."""
+    lines = message.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        heading = _HEADING.match(lines[i])
+        title = (heading["text"] or heading["bold"]).strip() if heading else ""
+        if lines[i].startswith("```"):
+            end = _fenced_block_end(lines, i)
+            out += lines[i:end]
+        elif title.lower() in map(str.lower, _FOLDED_SECTIONS):
+            end = i + 1
+            while end < len(lines) and not re.match(r"#{1,6} |\*\*", lines[end]):
+                end = _fenced_block_end(lines, end) if lines[end].startswith("```") else end + 1
+            while not lines[end - 1].strip():
+                end -= 1
+            body = lines[i + 1:end]
+            while body and not body[0].strip():
+                body.pop(0)
+            out += [f"<details><summary><b>{title}</b></summary>", "", *body, "</details>"]
+            logger.info("section %r folded into a <details> block (%d lines)", title, len(body))
+        else:
+            end = i + 1
+            out.append(lines[i])
+        i = end
     return "\n".join(out)
 
 

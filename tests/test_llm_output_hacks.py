@@ -28,8 +28,8 @@
  */
 
 llm_output_hacks: plain-text scope blocks end up in an HTML comment,
-published branches and their tips become links, bold list entries fold
-into details blocks."""
+published branches and their tips become links, bold list entries and
+the dropped-claims and verification sections fold into details blocks."""
 
 import sys
 import unittest
@@ -38,7 +38,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from llm_output_hacks import (
-    fold_entries, hide_scope_block, link_published_branch, names_published_branch,
+    fold_entries, fold_sections, hide_scope_block, link_published_branch,
+    names_published_branch,
 )
 
 GPT6_HEAD = """LLM-GPT-6-ASTRA — combined review of 1ce2a4db3060.
@@ -246,3 +247,56 @@ class TestFoldEntries(unittest.TestCase):
             "1. <details><summary><b>Minor:</b> a &lt; b, <i>every</i> <code>x&lt;y&gt;</code></summary>"
             "\n\n   body\n   </details>\n")
 
+
+SECTIONS = """### Findings
+1. **Minor — the commit message overstates the effect of `reconnect_at_eof`.** b5f143807b35
+
+### Dropped claims
+1. **GROK-4.7 (code): drop the claim that a whole-body `200` response to a Range request is illegal.** RFC 9110 permits it.
+
+**Verification**
+My seekable disconnect test cut the second segment at byte 8,000: the parent read 106 packets, the head 24.
+
+```sh
+# the playlist used
+./ffmpeg -i http://127.0.0.1:8000/vod.m3u8 -f null -
+```
+
+I verified and retained **`fairy/pr25148-tooling`** at 9d1b4831c17d.
+
+**Classification: major_issues.** The verified finite-input replay makes the current code worse if merged.
+"""
+
+FOLDED_SECTIONS = """### Findings
+1. **Minor — the commit message overstates the effect of `reconnect_at_eof`.** b5f143807b35
+
+<details><summary><b>Dropped claims</b></summary>
+
+1. **GROK-4.7 (code): drop the claim that a whole-body `200` response to a Range request is illegal.** RFC 9110 permits it.
+</details>
+
+<details><summary><b>Verification</b></summary>
+
+My seekable disconnect test cut the second segment at byte 8,000: the parent read 106 packets, the head 24.
+
+```sh
+# the playlist used
+./ffmpeg -i http://127.0.0.1:8000/vod.m3u8 -f null -
+```
+
+I verified and retained **`fairy/pr25148-tooling`** at 9d1b4831c17d.
+</details>
+
+**Classification: major_issues.** The verified finite-input replay makes the current code worse if merged.
+"""
+
+
+class TestFoldSections(unittest.TestCase):
+    def test_named_sections_fold_up_to_the_next_heading_or_bold_paragraph(self) -> None:
+        self.assertEqual(fold_sections(SECTIONS), FOLDED_SECTIONS)
+        self.assertEqual(fold_sections("### Verification\nran fate\n### Replies\n"),
+                         "<details><summary><b>Verification</b></summary>\n\nran fate\n</details>\n### Replies\n")
+
+    def test_other_sections_and_a_message_without_headings_are_untouched(self) -> None:
+        self.assertEqual(fold_sections(HIDDEN_HEAD), HIDDEN_HEAD)
+        self.assertEqual(fold_sections("plain text\n"), "plain text\n")

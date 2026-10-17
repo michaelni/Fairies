@@ -584,9 +584,9 @@ each produced by a different model; produce one combined review.
   it matters. You can include both sides of a disagreement if you like.
 - Classify the {subject_long} with the same classes and rules as a normal
   review, based on the verified, merged issues.
-- Prefix each issue with the name(s) of the model(s) whose draft raised it, add
+- End each issue with the name(s) of the model(s) whose draft raised it, add
   their kind (design/code) if needed to make them unique;
-  prefix issues you added yourself with your own model name. Add (combiner) if
+  end issues you added yourself with your own model name. Add (combiner) if
   needed to make it unique.
 - If a draft reports work its model performed (e.g. "build is clean",
   "ran FATE", "fuzzed the decoder"), keep the relevant

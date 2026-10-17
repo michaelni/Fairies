@@ -750,7 +750,8 @@ The author reads the message to act on it, the maintainers to decide on the merg
 9. The classification: a bulleted list with one entry, its first line the classification in bold with a 1 line justification, details below if needed
 
 When a list is empty omit it. When it is not empty preface it with a well vissible heading so the reader can quickly skip to what she is interrested in.
-In every list the first line of an entry is a bold one-line summary with where it is; the evidence, reply or reason follows on the lines below it.
+In every list the first line of an entry is a bold one-line summary with where it is; the evidence, reply or reason follows on the lines below it, stating results, not the process that produced them.
+The forge folds "Dropped claims" and "Verification" away: name persisted branches and opened pull requests in the entry they serve or on a line of their own, never only there.
 These lists should be concise. Use formatting like bold to highlight important things. You may reorder this to bring a more important issue to the top.
 
 ''' * (pr and verdict and ctx.classifies)}\

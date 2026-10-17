@@ -1144,7 +1144,7 @@ def _styles(t: blessed.Terminal) -> dict:
             "sc_done": c(135),                "sc_dim": c(244),
             "sc_rebased": c(208),
             "sampled": c(114),
-            "mention_fold": mix(t.bold, c(244)),
+            "fold": mix(t.bold, c(244)),
             "cursor": t.reverse,
             # log-pane levels; palette mirrors common._ColorFormatter
             "log_debug": t.dim_bright_black,  "log_warn": t.bold_yellow,
@@ -1192,7 +1192,7 @@ def _styles(t: blessed.Terminal) -> dict:
         "sc_done": t.magenta,   "sc_dim": t.bright_black,
         "sc_rebased": t.bold_yellow,
         "sampled": t.green,
-        "mention_fold": t.bold,
+        "fold": t.bold,
         "cursor": t.reverse,
         "log_debug": t.dim_bright_black, "log_warn": t.bold_yellow,
         "log_err": t.bold_red,
@@ -1348,7 +1348,7 @@ class UILoop:
         # pane -> the line sequence last painted into it; [] and {}
         # ask it where its patches and hunks start
         self._painted: dict[str, list] = {}
-        self.unfolded_mentions: set[tuple[str, str, filedb.TicketId, int]] = set()
+        self.unfolded: set[tuple[str, str, filedb.TicketId, int]] = set()
         self._clip_cmd = _clipboard_cmd()
         self.styles = _styles(term)
         self.needs_poll = Event()  # set by the filesystem watcher
@@ -1694,9 +1694,9 @@ class UILoop:
                 body = c.get("body")
                 if c.get("kind") in _MENTION_KINDS:
                     unfolded = (item.repo, item.kind, item.number,
-                                mentions) in self.unfolded_mentions
+                                mentions) in self.unfolded
                     mentions += 1
-                    header = [("mention_fold", "▾ " if unfolded else "▸ ")] + header
+                    header = [("fold", "▾ " if unfolded else "▸ ")] + header
                     if not unfolded:
                         body = None
                 tail += [[], header]
@@ -2662,7 +2662,7 @@ class UILoop:
             return
         if not (0 <= row < len(rows)) or col < 0:
             return
-        if pane == "br" and self._toggle_mention_at(row):
+        if pane == "br" and self._toggle_fold_at(row):
             return
         token = tui_core.token_at(rows[row], col)
         if token is not None:
@@ -2670,22 +2670,22 @@ class UILoop:
             return
         self._copy_patch_at(pane, row)
 
-    def _toggle_mention_at(self, row: int) -> bool:
+    def _toggle_fold_at(self, row: int) -> bool:
         """Fold or unfold the mention whose ▸/▾ header sits on the
         message pane's visible ``row``; False when the row is no such
-        header. ``unfolded_mentions`` keys each by the item and the
+        header. ``unfolded`` keys each by the item and the
         mention's ordinal in the discussion."""
         content = self._painted.get("br") or []
         clicked = self.scroll["br"] + row
         if _leading_style(next(iter(content[clicked:clicked + 1]), None)) \
-                != "mention_fold":
+                != "fold":
             return False
         item = self._cursor_item()
         if item is None:
             return False
-        n = sum(_leading_style(line) == "mention_fold"
+        n = sum(_leading_style(line) == "fold"
                 for line in content[:clicked])
-        self.unfolded_mentions ^= {(item.repo, item.kind, item.number, n)}
+        self.unfolded ^= {(item.repo, item.kind, item.number, n)}
         self.model.dirty.set()
         return True
 

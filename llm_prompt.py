@@ -746,7 +746,7 @@ The author reads the message to act on it, the maintainers to decide on the merg
 5. A numbered list of unverified or conditional issues and things that you dropped that ask nothing of the author similar to the previous lists
 6. resolved issues, like the previous lists but with issues that have been resolved.
 7. what was verified and how, and the work the drafts report, and everything else
-8. justification of the classification, 1 line summary, followed by details if needed
+8. The classification: a bulleted list with one entry, its first line the classification in bold with a 1 line justification, details below if needed
 
 When a list is empty omit it. When it is not empty preface it with a well vissible heading so the reader can quickly skip to what she is interrested in.
 In every list the first line of an entry is a bold one-line summary with where it is; the evidence, reply or reason follows on the lines below it.

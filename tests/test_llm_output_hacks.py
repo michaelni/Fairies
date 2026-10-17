@@ -28,7 +28,8 @@
  */
 
 llm_output_hacks: plain-text scope blocks end up in an HTML comment,
-published branches and their tips become links."""
+published branches and their tips become links, bold list entries fold
+into details blocks."""
 
 import sys
 import unittest
@@ -37,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from llm_output_hacks import (
-    hide_scope_block, link_published_branch, names_published_branch,
+    fold_entries, hide_scope_block, link_published_branch, names_published_branch,
 )
 
 GPT6_HEAD = """LLM-GPT-6-ASTRA — combined review of 1ce2a4db3060.
@@ -184,3 +185,64 @@ class NamesPublishedBranchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+FINDING = """### Findings
+1. **Moderate — [GPT-6-ASTRA code/design] The D3D11 path ignores `AV_HWFRAME_MAP_DIRECT`.** bdb29eff08a9, [libavutil/hwcontext_amf.c:951](https://code.ffmpeg.org/FFmpeg/FFmpeg/src/commit/bdb29eff08a91db943e17be20655c2fda7385eb3/libavutil/hwcontext_amf.c#L951).
+   The helper receives no mapping flags and unconditionally calls `Convert(AMF_MEMORY_DX11)`.
+
+   ```c
+   if (flags & AV_HWFRAME_MAP_DIRECT)
+       return AVERROR(ENOSYS);
+   ```
+   The probe confirms that this rejects host-memory direct mapping.
+
+### Verification
+- The [hardware-configuration contract](https://example.org/c) requires a frames context.
+"""
+
+FOLDED_FINDING = """### Findings
+1. <details><summary><b>Moderate — [GPT-6-ASTRA code/design] The D3D11 path ignores <code>AV_HWFRAME_MAP_DIRECT</code>.</b> bdb29eff08a9, <a href="https://code.ffmpeg.org/FFmpeg/FFmpeg/src/commit/bdb29eff08a91db943e17be20655c2fda7385eb3/libavutil/hwcontext_amf.c#L951">libavutil/hwcontext_amf.c:951</a>.</summary>
+
+   The helper receives no mapping flags and unconditionally calls `Convert(AMF_MEMORY_DX11)`.
+
+   ```c
+   if (flags & AV_HWFRAME_MAP_DIRECT)
+       return AVERROR(ENOSYS);
+   ```
+   The probe confirms that this rejects host-memory direct mapping.
+   </details>
+
+### Verification
+- The [hardware-configuration contract](https://example.org/c) requires a frames context.
+"""
+
+ONE_LINERS = """- **GROK-4.7 (code/design): Untested P010 is not evidence of broken P010 support.** Its format mapping and acceptance are consistent with the code.
+- **Classification: major_issues.**
+"""
+
+FOLDED_ONE_LINERS = """- <details><summary><b>GROK-4.7 (code/design): Untested P010 is not evidence of broken P010 support.</b></summary>
+
+  Its format mapping and acceptance are consistent with the code.
+  </details>
+- **Classification: major_issues.**
+"""
+
+
+class TestFoldEntries(unittest.TestCase):
+    def test_bold_entry_with_a_body_folds_and_its_first_line_becomes_html(self) -> None:
+        self.assertEqual(fold_entries(FINDING), FOLDED_FINDING)
+
+    def test_one_line_entry_splits_after_its_bold_lead(self) -> None:
+        self.assertEqual(fold_entries(ONE_LINERS), FOLDED_ONE_LINERS)
+
+    def test_fenced_code_at_the_margin_is_untouched(self) -> None:
+        fenced = "```\n1. **not** an entry\n   body\n```\n"
+        self.assertEqual(fold_entries(fenced), fenced)
+
+    def test_summary_escapes_html_and_keeps_italics(self) -> None:
+        self.assertEqual(
+            fold_entries("1. **Minor:** a < b, *every* `x<y>`\n   body\n"),
+            "1. <details><summary><b>Minor:</b> a &lt; b, <i>every</i> <code>x&lt;y&gt;</code></summary>"
+            "\n\n   body\n   </details>\n")
+

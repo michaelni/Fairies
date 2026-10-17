@@ -119,6 +119,11 @@ class LinkPublishedBranchTests(unittest.TestCase):
                 f" and {COMMIT_URL} and [the fairy/pr23842-test-ref branch]({BRANCH_URL})")
         self.assertEqual(linked(text), text)
 
+    def test_a_folded_summary_already_linked_is_untouched(self) -> None:
+        text = (f'<summary><b>cleanup <a href="{COMMIT_URL}">dc21a3ef5d6e</a> on'
+                f' <a href="{BRANCH_URL}">fairy/pr23842-test-ref</a></b></summary>')
+        self.assertEqual(linked(text), text)
+
     def test_bracket_ahead_of_a_link_is_not_part_of_it(self) -> None:
         self.assertEqual(
             linked("video at [48, 53418363) on fairy/pr23842-test-ref."

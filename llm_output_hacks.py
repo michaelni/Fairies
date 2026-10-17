@@ -189,8 +189,8 @@ def _link_mentions(message: str, pattern: str,
                    url_of: Callable[[str], str | None]) -> str:
     """Turn every bare or backticked match of ``pattern`` that
     ``url_of`` knows a page for, and every code span holding such a
-    match, into a markdown link; matches already inside a link or URL
-    stay."""
+    match, into a markdown link; matches already inside a link, an
+    HTML anchor or a URL stay."""
     mention = rf"(?<![\w/\[`+-])(?P<tick>`?)(?P<mention>{pattern})(?P=tick)(?![\w/\]`+-])"
 
     def link(match: re.Match[str]) -> str:
@@ -199,8 +199,8 @@ def _link_mentions(message: str, pattern: str,
         url = next(filter(None, (url_of(found["mention"]) for found in mentions)), None)
         return match[0] if url is None else f"[{match['mention'] or match[0]}]({url})"
     link_text = rf"(?:{_code_span('text_ticks')}|(?!{_code_span('lone_ticks')})[^\[\]\n])*"
-    return re.sub(rf"\[{link_text}\]\([^)\s]*\)|{mention}|(?P<code>{_code_span('ticks')})",
-                  link, message)
+    return re.sub(rf"<a href=\"[^\"]*\">.*?</a>|\[{link_text}\]\([^)\s]*\)|{mention}"
+                  rf"|(?P<code>{_code_span('ticks')})", link, message)
 
 
 def _by_forge_name(prose: str, forge_branch: str) -> str:

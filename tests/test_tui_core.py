@@ -227,6 +227,15 @@ class RenderMarkdownTests(unittest.TestCase):
         )
         self.assertLessEqual(styles(lines), tui_core.MARKDOWN_STYLES)
 
+    def test_forge_inline_html_and_entities_render_as_their_markdown(self) -> None:
+        segs = tui_core._inline(
+            '<b>Major</b> — <code>a &lt; b</code> at <a href="https://example.org/x">dashdec.c:824</a>,'
+            ' <i>every</i> &amp; `&lt;`')
+        self.assertEqual(segs, [
+            ("bold", "Major"), ("text", " — "), ("code", "a < b"), ("text", " at "),
+            ("link", "dashdec.c:824"), ("url", " (https://example.org/x)"), ("text", ", "),
+            ("italic", "every"), ("text", " & "), ("code", "&lt;")])
+
     def test_html_comment_block_shows_dimmed(self) -> None:
         lines = render_markdown(
             "LGTM overall.\n"

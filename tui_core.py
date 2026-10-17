@@ -41,6 +41,7 @@ review-specific (decisions, pipelines, forges).
 
 from __future__ import annotations
 
+import html
 import re
 from collections import deque
 from dataclasses import dataclass
@@ -286,16 +287,31 @@ _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 _TABLE_SEP_RE = re.compile(r"\s*\|?[\s:|-]+\|?\s*$")
 _INLINE_RE = re.compile(
     r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*\s][^*]*\*|~~.+?~~|`[^`]+`"
-    r"|\[[^\]]+\]\([^)\s]+\)|https?://[^\s)\]>]+)"
+    r"|\[[^\]]+\]\([^)\s]+\)|https?://[^\s)\]>]+"
+    r"|<(?:b|strong|i|em|code)>.+?</(?:b|strong|i|em|code)>|<a href=\"[^\"]*\">.+?</a>)"
 )
+_HTML_SPAN_RE = re.compile(r'<(b|strong|i|em|code|a)(?: href="([^"]*)")?>(.*)</\1>', re.DOTALL)
+_HTML_SPAN_STYLES = {"b": "bold", "strong": "bold", "i": "italic", "em": "italic"}
 
 
 def _inline(text: str, base: str = "text") -> list[tuple[str, str]]:
+    """Styled segments of one line: markdown spans, the inline HTML a
+    forge renders (b, strong, i, em, code, a) and character entities."""
     segs: list[tuple[str, str]] = []
     for part in _INLINE_RE.split(text):
         if not part:
             continue
-        if part.startswith("***") and part.endswith("***") and len(part) > 6:
+        if (span := _HTML_SPAN_RE.fullmatch(part)):
+            tag, url, inner = span.groups()
+            if tag == "code":
+                segs.append(("code", html.unescape(inner)))
+            elif tag == "a":
+                segs.append(("link", html.unescape(inner)))
+                if url != inner:
+                    segs.append(("url", f" ({url})"))
+            else:
+                segs.extend(_inline(inner, _HTML_SPAN_STYLES[tag]))
+        elif part.startswith("***") and part.endswith("***") and len(part) > 6:
             segs.extend(_inline(part[3:-3], "bold_italic"))
         elif part.startswith("**") and part.endswith("**") and len(part) > 4:
             segs.extend(_inline(part[2:-2], "bold"))
@@ -313,7 +329,7 @@ def _inline(text: str, base: str = "text") -> list[tuple[str, str]]:
         elif part.startswith("*") and part.endswith("*") and len(part) > 2:
             segs.extend(_inline(part[1:-1], "italic"))
         else:
-            segs.append((base, part))
+            segs.append((base, html.unescape(part)))
     return segs
 
 

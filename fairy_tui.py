@@ -1227,6 +1227,12 @@ def _clipboard_cmd() -> list[str] | None:
     return None
 
 
+def _fold_keys_of(lines: list, source: str, index: int = 0) -> list[tuple[str, int, int]]:
+    """The fold keys of the ▸/▾ headers in ``lines``, in order."""
+    return [(source, index, k) for k in
+            range(sum(_leading_style(line) == "fold" for line in lines))]
+
+
 def _leading_style(line) -> str | None:
     """The style of a pane line's first segment; None for a plain
     string, an empty line or a single (style, text) row."""
@@ -1348,7 +1354,8 @@ class UILoop:
         # pane -> the line sequence last painted into it; [] and {}
         # ask it where its patches and hunks start
         self._painted: dict[str, list] = {}
-        self.unfolded: set[tuple[str, str, filedb.TicketId, int]] = set()
+        self.unfolded: set[tuple[str, str, filedb.TicketId, tuple[str, int, int]]] = set()
+        self._fold_keys: list[tuple[str, int, int]] = []
         self._clip_cmd = _clipboard_cmd()
         self.styles = _styles(term)
         self.needs_poll = Event()  # set by the filesystem watcher
@@ -1539,6 +1546,7 @@ class UILoop:
         # so the operator sees where it went (e.g. "state posted")
         key = m._cursor_key() or m.cursor_key
         item = m.items.get(key) if key else None
+        self._fold_keys = []
         if item is None:
             return [[("text", "(no item selected)")]]
         data = item.data
@@ -1607,8 +1615,8 @@ class UILoop:
         if decision is not None:
             # render_markdown, not a clipped line: long apply
             # descriptions and reasons must wrap, never silently vanish
-            head += tui_core.render_markdown(
-                fairy.manual_action_description(decision), width)
+            head += self._markdown(item, fairy.manual_action_description(decision),
+                                   width, "head")
         status_line = f"state {item.state}"
         if review.get("classification"):
             status_line += ("   llm "
@@ -1617,7 +1625,7 @@ class UILoop:
                 status_line += "   reviewed " + _when(data["llm_at"])
         head += [[("text", status_line[:width])]]
         if data.get("reason"):
-            head += tui_core.render_markdown(f"reason: {data['reason']}", width)
+            head += self._markdown(item, f"reason: {data['reason']}", width, "head")
         for fieldname in ("cancelled_ci_contexts", "blocked_ci_contexts",
                           "external_approvers"):
             vals = data.get(fieldname) or []
@@ -1659,6 +1667,7 @@ class UILoop:
             if sampled is not None:
                 separator_at = entries_before(sampled)
         review_lines = self._review_lines(item, width)
+        review_keys = _fold_keys_of(review_lines, "review")
         review_at = len(disc)
         if item.state == "posted" and review_lines:
             posted = iso_to_dt(str(data.get("posted_at") or ""))
@@ -1669,12 +1678,12 @@ class UILoop:
             separator = [("sampled", (
                 f"── sampled {'for the review ' if review else ''}"
                 f"{_when(data.get('sampled_at'))} ──")[:width])]
-            mentions = 0
             for i, c in enumerate(disc):
                 if i == separator_at:
                     tail += [[], separator]
                 if i == review_at:
                     tail += review_lines
+                    self._fold_keys += review_keys
                 if not isinstance(c, dict):
                     continue
                 when = _when(str(c.get("submitted_at") or c.get("updated_at")
@@ -1694,8 +1703,8 @@ class UILoop:
                 body = c.get("body")
                 if c.get("kind") in _MENTION_KINDS:
                     unfolded = (item.repo, item.kind, item.number,
-                                mentions) in self.unfolded
-                    mentions += 1
+                                ("mention", i, 0)) in self.unfolded
+                    self._fold_keys.append(("mention", i, 0))
                     header = [("fold", "▾ " if unfolded else "▸ ")] + header
                     if not unfolded:
                         body = None
@@ -1703,7 +1712,7 @@ class UILoop:
                 if c.get("kind") == "description_edit":
                     tail += diff_render.render_diff(str(body))
                 elif body:
-                    tail += tui_core.render_markdown(str(body), width)
+                    tail += self._markdown(item, str(body), width, "comment", i)
                 if c.get("reactions"):
                     tail.append([("label", "  " + "  ".join(
                         f"{content} {', '.join(map(str, users))}"
@@ -1714,13 +1723,14 @@ class UILoop:
                 tail += [[], separator]
         if review_at == len(disc):
             tail += review_lines
+            self._fold_keys += review_keys
         if not review:
             return head + [[("text", f"({item.state}: no review)")]] + tail
         if not review_lines:
             return head + tail
         fairy_block = head + tail
         branch_parts: list = []
-        for record in _ticket_branches(data):
+        for index, record in enumerate(_ticket_branches(data)):
             pr = record.get("pr")
             style = "br_pr_mark" if isinstance(pr, dict) else "br_mark"
             forge_branch = f"{branch_persist.FAIRY_BRANCH_PREFIX}{record.get('branch')}"
@@ -1749,7 +1759,7 @@ class UILoop:
             ])
             if isinstance(pr, dict) and pr.get("body"):
                 branch_parts.append(
-                    tui_core.render_markdown(str(pr["body"]), width))
+                    self._markdown(item, str(pr["body"]), width, "branch", index))
             branch_parts.append(self._branch_diff_body(item, record))
         if not branch_parts:
             return fairy_block
@@ -1769,8 +1779,8 @@ class UILoop:
             + (" *[posted]*" if c.get("post") else "")
             for c in review.get("label_changes") or []
             if isinstance(c, dict)), width)
-        message = tui_core.render_markdown(review.get("message") or "",
-                                           width)
+        message = tui_core.render_markdown(
+            review.get("message") or "", width, self._open_folds(item, "review"))
         if not labels and not message and not _ticket_branches(data):
             return []
         w = width - len("fairy")
@@ -2671,23 +2681,40 @@ class UILoop:
         self._copy_patch_at(pane, row)
 
     def _toggle_fold_at(self, row: int) -> bool:
-        """Fold or unfold the mention whose ▸/▾ header sits on the
-        message pane's visible ``row``; False when the row is no such
-        header. ``unfolded`` keys each by the item and the
-        mention's ordinal in the discussion."""
+        """Fold or unfold the mention or ``<details>`` block whose ▸/▾
+        header sits on the message pane's visible ``row``; False when
+        the row is no such header."""
         content = self._painted.get("br") or []
         clicked = self.scroll["br"] + row
         if _leading_style(next(iter(content[clicked:clicked + 1]), None)) \
                 != "fold":
             return False
         item = self._cursor_item()
-        if item is None:
-            return False
         n = sum(_leading_style(line) == "fold"
                 for line in content[:clicked])
-        self.unfolded ^= {(item.repo, item.kind, item.number, n)}
+        if item is None or n >= len(self._fold_keys):
+            return False
+        self.unfolded ^= {(item.repo, item.kind, item.number, self._fold_keys[n])}
         self.model.dirty.set()
         return True
+
+    def _open_folds(self, item: Item, source: str, index: int = 0) -> set[int]:
+        """The ordinals of the item's unfolded ``<details>`` blocks in
+        the text ``source``/``index`` names: the mention or comment at
+        discussion index, the review, the pull request of the branch
+        at index, or the head of the pane."""
+        return {k for repo, kind, number, (origin, i, k) in self.unfolded
+                if (repo, kind, number, origin, i)
+                == (item.repo, item.kind, item.number, source, index)}
+
+    def _markdown(self, item: Item, text: str, width: int,
+                  source: str, index: int = 0) -> list[tui_core.StyledLine]:
+        """``text`` rendered with the item's open folds, its fold keys
+        appended to ``_fold_keys``: for text that goes into the pane
+        right where it is rendered."""
+        lines = tui_core.render_markdown(text, width, self._open_folds(item, source, index))
+        self._fold_keys += _fold_keys_of(lines, source, index)
+        return lines
 
     def _copy_patch_at(self, pane: str, row: int) -> None:
         """The patch whose commit header sits on the pane's visible

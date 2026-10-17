@@ -1516,6 +1516,35 @@ class DetailTests(DbCase):
         self.assertNotIn("at length", "\n".join(ui._shown["br"][2]))
         self.assertEqual(sent, [])
 
+    def test_clicking_a_details_header_unfolds_the_entry(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, msg=(
+            "LLM-X\n1. <details><summary><b>Minor</b> — the `reconnect_at_eof` claim</summary>\n"
+            "\n   the folded evidence\n   </details>\n"
+            "<details><summary><b>Verification</b></summary>\n\nran fate\n</details>\n")))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.paint()
+        rect, gutter, rows = ui._shown["br"]
+        self.assertNotIn("folded evidence", "\n".join(rows))
+        header = next(i for i, r in enumerate(rows) if r.startswith("1. ▸ Minor"))
+        with mock.patch.object(ui, "_to_clipboard", side_effect=AssertionError):
+            ui._copy_click("br", rect.x + gutter, rect.y + 1 + header)
+            ui.paint()
+            rows = ui._shown["br"][2]
+            self.assertIn("1. ▾ Minor — the reconnect_at_eof claim", rows[header])
+            self.assertIn("the folded evidence", rows[header + 1])
+            self.assertIn("▸ Verification", rows[header + 2])
+            ui._copy_click("br", rect.x + gutter, rect.y + 1 + header + 2)
+            ui.paint()
+            rows = ui._shown["br"][2]
+            self.assertIn("▾ Verification", rows[header + 2])
+            self.assertIn("ran fate", rows[header + 3])
+            ui._copy_click("br", rect.x + gutter, rect.y + 1 + header)
+            ui.paint()
+        rows = ui._shown["br"][2]
+        self.assertNotIn("folded evidence", "\n".join(rows))
+        self.assertIn("ran fate", rows[header + 2])
+
     def test_a_click_on_a_list_row_still_copies_its_number(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()

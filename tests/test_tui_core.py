@@ -236,6 +236,42 @@ class RenderMarkdownTests(unittest.TestCase):
             ("link", "dashdec.c:824"), ("url", " (https://example.org/x)"), ("text", ", "),
             ("italic", "every"), ("text", " & "), ("code", "&lt;")])
 
+    FOLDED = (
+        "### Findings\n"
+        "1. <details><summary><b>Minor</b> — the <code>reconnect_at_eof</code> claim</summary>\n"
+        "\n"
+        "   Evidence paragraph with `code`.\n"
+        "   </details>\n"
+        "<details><summary><b>Verification</b></summary>\n"
+        "\n"
+        "ran fate\n"
+        "- <details><summary><b>inner</b></summary>\n"
+        "\n"
+        "  inner body\n"
+        "  </details>\n"
+        "</details>\n"
+        "after\n"
+    )
+
+    def test_details_blocks_fold_to_their_summary_header(self) -> None:
+        texts = [line_text(x) for x in render_markdown(self.FOLDED, width=60)]
+        self.assertEqual(texts, [
+            "Findings", "1. ▸ Minor — the reconnect_at_eof claim",
+            "▸ Verification", "• ▸ inner", "after"])
+        lines = render_markdown(self.FOLDED, width=60)
+        self.assertEqual([x[0] for x in lines if x and x[0][0] == "fold"],
+                         [("fold", "1. ▸ "), ("fold", "▸ "), ("fold", "• ▸ ")])
+
+    def test_unfolded_blocks_show_their_body(self) -> None:
+        texts = [line_text(x) for x in render_markdown(self.FOLDED, width=60, unfolded={0, 2})]
+        self.assertEqual(texts, [
+            "Findings", "1. ▾ Minor — the reconnect_at_eof claim", "Evidence paragraph with code.",
+            "▸ Verification", "• ▾ inner", "after"])
+        texts = [line_text(x) for x in render_markdown(self.FOLDED, width=60, unfolded={1})]
+        self.assertEqual(texts, [
+            "Findings", "1. ▸ Minor — the reconnect_at_eof claim",
+            "▾ Verification", "ran fate", "• ▸ inner", "after"])
+
     def test_html_comment_block_shows_dimmed(self) -> None:
         lines = render_markdown(
             "LGTM overall.\n"

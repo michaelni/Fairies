@@ -47,6 +47,7 @@ from collections import deque
 from dataclasses import dataclass
 from itertools import islice
 from threading import Lock
+from typing import Collection
 
 __all__ = ["Chain", "Rect", "GridLayout", "RingBuffer", "StyledLine",
            "MARKDOWN_STYLES", "wrap", "render_markdown", "sanitize",
@@ -58,7 +59,7 @@ StyledLine = list[tuple[str, str]]
 MARKDOWN_STYLES = frozenset({
     "h1", "h2", "h3", "h4", "bold", "italic", "bold_italic", "strike",
     "code", "codeblock", "codeblock_lang", "quote", "quote_bar", "bullet",
-    "checkbox_on", "checkbox_off", "link", "url", "hr",
+    "checkbox_on", "checkbox_off", "link", "url", "hr", "fold",
     "table_border", "th", "text", "comment",
 })
 
@@ -285,6 +286,7 @@ _HR_RE = re.compile(r"\s*([-*_])(\s*\1){2,}\s*$")
 _QUOTE_RE = re.compile(r"\s*(?:>\s?)+(.*)")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 _TABLE_SEP_RE = re.compile(r"\s*\|?[\s:|-]+\|?\s*$")
+_DETAILS_RE = re.compile(r"(?:([-*+]|\d+[.)])\s+)?<details>\s*<summary>(.*?)</summary>\s*$")
 _INLINE_RE = re.compile(
     r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*\s][^*]*\*|~~.+?~~|`[^`]+`"
     r"|\[[^\]]+\]\([^)\s]+\)|https?://[^\s)\]>]+"
@@ -444,14 +446,18 @@ def wrap(
     return lines
 
 
-def render_markdown(text: str, width: int) -> list[StyledLine]:
+def render_markdown(text: str, width: int,
+                    unfolded: Collection[int] = ()) -> list[StyledLine]:
     """Render a markdown message to width-bounded styled lines: ATX
     headings, bold/italic/strike/code/link spans, fenced blocks (verbatim,
     full-width for a background, language tag kept), pipe tables with
     alignment, ``-``/``*``/``1.`` lists with hanging indent and
     checkboxes, gutter-barred re-wrapped quotes, horizontal rules,
-    wrapped paragraphs, and HTML comments -- which forges hide but a
-    review pane must show, dimmed, delimiters kept."""
+    wrapped paragraphs, HTML comments -- which forges hide but a
+    review pane must show, dimmed, delimiters kept -- and ``<details>``
+    blocks: their summary line becomes a ▸/▾ header (style ``fold``),
+    their body shows only for the blocks, numbered in source order,
+    in ``unfolded``; the headers of nested blocks always show."""
     width = max(8, width)
     out: list[StyledLine] = []
     para: list[str] = []
@@ -459,6 +465,9 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
     table: list[str] = []
     in_fence = False
     in_comment = False
+    folds: list[bool] = []
+    fold_count = 0
+    skip_blank = False
 
     def flush() -> None:
         if para:
@@ -479,17 +488,18 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
     for raw in text.splitlines():
         line = raw.rstrip()
         stripped = line.strip()
+        hidden = not all(folds)
         if not in_fence and (in_comment or stripped.startswith("<!--")):
             flush()
-            if stripped:
+            if stripped and not hidden:
                 out.extend(wrap([("comment", stripped)], width))
-            else:
+            elif not hidden:
                 blank()
             in_comment = "-->" not in stripped
             continue
         if stripped.startswith("```"):
             flush()
-            if not in_fence:
+            if not in_fence and not hidden:
                 blank()
                 if (lang := stripped[3:].strip()):
                     out.append([("codeblock_lang", f" {lang}"[:width])])
@@ -497,7 +507,26 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
             continue
         if in_fence:
             # Full-width so the painter's background reads as a block.
-            out.append([("codeblock", (" " + raw).ljust(width)[:width])])
+            if not hidden:
+                out.append([("codeblock", (" " + raw).ljust(width)[:width])])
+            continue
+        if (details := _DETAILS_RE.fullmatch(stripped)):
+            flush()
+            marker, summary = details.groups()
+            folds.append(fold_count in unfolded)
+            fold_count += 1
+            prefix = ("• " if marker in "-*+" else f"{marker} ") if marker else ""
+            out.extend(wrap(
+                _inline(summary), width,
+                initial=("fold", f"{prefix}{'▾' if folds[-1] else '▸'} "),
+                subsequent=" " * (len(prefix) + 2)))
+            skip_blank = folds[-1]
+            continue
+        if stripped == "</details>" and folds:
+            flush()
+            folds.pop()
+            continue
+        if hidden:
             continue
         if stripped.startswith("|"):
             if not table:
@@ -508,8 +537,10 @@ def render_markdown(text: str, width: int) -> list[StyledLine]:
             flush()
         if not stripped:
             flush()
-            blank()
+            if not skip_blank:
+                blank()
             continue
+        skip_blank = False
         if (heading := _HEADING_RE.match(line)):
             flush()
             blank()

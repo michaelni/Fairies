@@ -743,7 +743,7 @@ The author reads the message to act on it, the maintainers to decide on the merg
 2. The replies: a numbered list ordered by most important first, one reply per entry. The first line of an entry gives "Reply" in bold, and a 1 line summary, and where it is (the author and message link). The rest of the entry is the reply.
 3. The findings: a numbered list ordered by severity, most serious first, one problem per entry. The first line of an entry gives the severity in bold (Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line). The rest of the entry is the evidence and, when the fix is clear, the fix.
 4. pre-existing issues: a numbered list ordered by severity, most serious first, one problem per entry. The first line of an entry gives the severity in bold (Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line). The rest of the entry is the evidence and, when the fix is clear, the fix.
-5. A list of unverified or conditional issues and things that you dropped that ask nothing of the author similar to the previous lists
+5. A numbered list of unverified or conditional issues and things that you dropped that ask nothing of the author similar to the previous lists
 6. resolved issues, like the previous lists but with issues that have been resolved.
 7. what was verified and how, and the work the drafts report, and everything else
 8. justification of the classification, 1 line summary, followed by details if needed

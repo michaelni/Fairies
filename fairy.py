@@ -133,7 +133,8 @@ from forge_item import (
     timeline_events,
 )
 from llm_output_hacks import (
-    fold_entries, fold_sections, link_published_branch, names_published_branch,
+    fold_entries, fold_sections, link_published_branch, link_source_locations,
+    names_published_branch,
 )
 import workset
 
@@ -909,6 +910,17 @@ def link_published_branches(
             forge_gcli.branch_page_url(args, ticket_url, owner, spec.forge_repo, forge_branch),
             forge_gcli.commit_page_url(args, ticket_url, owner, spec.forge_repo, record["sha"]))
     return message
+
+
+def link_ticket_source_locations(args: argparse.Namespace, message: str,
+                                 ticket_url: str) -> str:
+    """Link the message's ``path:line`` file locations to the source
+    view, at the commit named before them, of the ticket's repository
+    on the forge serving ``ticket_url``."""
+    if not ticket_url:
+        return message
+    return link_source_locations(message, lambda sha, path, line: forge_gcli.source_page_url(
+        args, ticket_url, args.owner, args.repo, sha, path, line))
 
 
 def name_unpublished_branches(message: str, branches: tuple[JsonObject, ...]) -> str:
@@ -2154,11 +2166,12 @@ def invoke_llm_wrapper(
         raise RuntimeError(f"unsupported LLM classification: {classification!r}")
     label_changes = parse_label_changes(data.get("label_changes"), label_allowlist)
     branches = parse_branch_records(data.get("branches"))
+    message = name_unpublished_branches(message.strip(), branches)
+    message = link_published_branches(args, message, branches, ticket_url)
+    message = link_ticket_source_locations(args, message, ticket_url)
     return LLMReview(
         classification=classification,
-        message=fold_sections(fold_entries(link_published_branches(
-            args, name_unpublished_branches(message.strip(), branches),
-            branches, ticket_url))),
+        message=fold_sections(fold_entries(message)),
         label_changes=label_changes,
         branches=branches,
     )

@@ -165,6 +165,7 @@ __all__ = [
     "run_cmd",
     "run_gcli",
     "self_login",
+    "source_page_url",
 ]
 
 
@@ -727,6 +728,14 @@ def commit_page_url(args: argparse.Namespace, forge_url: str,
     ``forge_url``."""
     commit = "-/commit" if _forge_type(args) == "gitlab" else "commit"
     return urljoin(forge_url, f"/{owner}/{repo}/{commit}/{sha}")
+
+
+def source_page_url(args: argparse.Namespace, forge_url: str, owner: str,
+                    repo: str, sha: str, path: str, line: int) -> str:
+    """The page of ``line`` of file ``path`` at commit ``sha`` in
+    ``owner/repo`` on the forge serving ``forge_url``."""
+    blob = {"github": "blob", "gitlab": "-/blob"}.get(_forge_type(args), "src/commit")
+    return urljoin(forge_url, f"/{owner}/{repo}/{blob}/{sha}/{path}#L{line}")
 
 
 def issues_listing_takes_type_filter(args: argparse.Namespace) -> bool:

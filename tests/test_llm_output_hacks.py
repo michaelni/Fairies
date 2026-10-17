@@ -28,8 +28,9 @@
  */
 
 llm_output_hacks: plain-text scope blocks end up in an HTML comment,
-published branches and their tips become links, bold list entries and
-the dropped-claims and verification sections fold into details blocks."""
+published branches and their tips become links, file locations link to
+the source view at their commit, bold list entries and the dropped-claims
+and verification sections fold into details blocks."""
 
 import sys
 import unittest
@@ -39,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from llm_output_hacks import (
     fold_entries, fold_sections, hide_scope_block, link_published_branch,
-    names_published_branch,
+    link_source_locations, names_published_branch,
 )
 
 GPT6_HEAD = """LLM-GPT-6-ASTRA — combined review of 1ce2a4db3060.
@@ -305,3 +306,34 @@ class TestFoldSections(unittest.TestCase):
     def test_other_sections_and_a_message_without_headings_are_untouched(self) -> None:
         self.assertEqual(fold_sections(HIDDEN_HEAD), HIDDEN_HEAD)
         self.assertEqual(fold_sections("plain text\n"), "plain text\n")
+
+
+def source_url(sha: str, path: str, line: int) -> str:
+    return f"https://forge/o/r/src/commit/{sha}/{path}#L{line}"
+
+
+class LinkSourceLocationsTests(unittest.TestCase):
+    def test_locations_after_a_hash_on_their_line_are_linked(self) -> None:
+        self.assertEqual(
+            link_source_locations(
+                "1. **Minor — The slow path repeats a guard — 842a8fb21401, "
+                "`libswscale/aarch64/rgb2rgb_neon.S:741`.**\n"
+                "   The guard at libswscale/aarch64/rgb2rgb_neon.S:752 runs per pair.\n",
+                source_url),
+            "1. **Minor — The slow path repeats a guard — 842a8fb21401, "
+            "[`libswscale/aarch64/rgb2rgb_neon.S:741`]"
+            "(https://forge/o/r/src/commit/842a8fb21401/libswscale/aarch64/rgb2rgb_neon.S#L741).**\n"
+            "   The guard at libswscale/aarch64/rgb2rgb_neon.S:752 runs per pair.\n")
+
+    def test_last_hash_before_the_location_wins(self) -> None:
+        self.assertEqual(
+            link_source_locations("parent 17ec99894249, head b3844494c02e, `tests/checkasm/vvc_alf.c:162`",
+                                  source_url),
+            "parent 17ec99894249, head b3844494c02e, [`tests/checkasm/vvc_alf.c:162`]"
+            "(https://forge/o/r/src/commit/b3844494c02e/tests/checkasm/vvc_alf.c#L162)")
+
+    def test_basenames_links_anchors_urls_and_fenced_code_stay(self) -> None:
+        text = ("b3844494c02e, `alf.S:493`, [a/b.c:1](https://x/a/b.c#L1), "
+                '<a href="https://x">a/b.c:2</a>, https://x/src/commit/b3844494c02e/a/b.c:3\n'
+                "```\nb3844494c02e a/b.c:4\n```\n12345678 a/b.c:5\n")
+        self.assertEqual(link_source_locations(text, source_url), text)

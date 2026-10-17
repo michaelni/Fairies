@@ -45,7 +45,7 @@ import re
 from typing import Callable
 
 __all__ = ["fold_entries", "fold_sections", "hide_scope_block",
-           "link_published_branch", "names_published_branch"]
+           "link_published_branch", "link_source_locations", "names_published_branch"]
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +223,28 @@ def link_published_branch(message: str, forge_branch: str, sha: str,
                               lambda text: commit_url if sha.startswith(text) else None)
     parts = re.split(_FENCED_CODE, message)
     return "".join(part if i % 2 else link(part) for i, part in enumerate(parts))
+
+
+_COMMIT_HASH = re.compile(r"(?<![\w/])(?=[0-9]*[a-f])[0-9a-f]{7,40}(?![\w/])")
+_SOURCE_LOCATION = re.compile(
+    r"<a href=\"[^\"]*\">.*?</a>|\[[^\]]*\]\([^)\s]*\)"
+    r"|(?<![\w/\[`+-])(?P<tick>`?)(?P<path>(?:[\w.+-]+/)+[\w.+-]+):(?P<line>\d+)(?P=tick)(?![\w/\]`+-])")
+
+
+def link_source_locations(message: str,
+                          url_of: Callable[[str, str, int], str]) -> str:
+    """Link every ``path:line`` that names a file by a path with a
+    directory in it, bare or backticked, to ``url_of(sha, path, line)``
+    for the last commit hash before it on its line; locations without
+    such a hash, already linked ones and fenced code stay."""
+    def link(match: re.Match[str]) -> str:
+        hashes = _COMMIT_HASH.findall(match.string[:match.start()].rpartition("\n")[2])
+        if not match["path"] or not hashes:
+            return match[0]
+        return f"[{match[0]}]({url_of(hashes[-1], match['path'], int(match['line']))})"
+    parts = re.split(_FENCED_CODE, message)
+    return "".join(part if i % 2 else _SOURCE_LOCATION.sub(link, part)
+                   for i, part in enumerate(parts))
 
 
 def names_published_branch(message: str, forge_branch: str) -> bool:

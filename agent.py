@@ -659,6 +659,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                            kind, number, exc)
         else:
             if fresh_item.get("updated_at") == item.get("updated_at"):
+                fresh_thread = fairy.thread_before(
+                    fresh_thread, getattr(ns, "simulate_past", None))
                 prepared = dataclasses_replace(
                     prepared, discussion=build_llm_discussion(*fresh_thread[:4]),
                     reactions=fresh_thread[4])

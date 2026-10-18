@@ -184,6 +184,7 @@ __all__ = [
     "reviewed_patch_ids",
     "safe_apply_llm_review_to_prepared",
     "safe_prepare_pr",
+    "thread_before",
     "settle_days",
     "submit_decision_action",
     "validate_sides",
@@ -1723,14 +1724,14 @@ def thread_before(
     thread: tuple[list, list, list, list, dict], cutoff: datetime | None,
 ) -> tuple[list, list, list, list, dict]:
     """``thread``, a PR's (reviews, comments, review_comments, timeline,
-    reactions) as get_pr_thread returns it, without the reviews and
-    comments ``--simulate-past`` ``cutoff`` puts in the future."""
+    reactions) as get_pr_thread returns it, without the activity
+    ``--simulate-past`` ``cutoff`` puts in the future."""
     reviews, comments, review_comments, timeline, reactions = thread
     return (
         filter_activity_after(reviews, cutoff, "submitted_at", "updated_at", "created_at"),
         filter_activity_after(comments, cutoff, "updated_at", "created_at"),
         filter_activity_after(review_comments, cutoff, "updated_at", "created_at"),
-        timeline,
+        filter_activity_after(timeline, cutoff, "created_at"),
         reactions,
     )
 
@@ -2610,8 +2611,7 @@ def prepare_pr(
     # auto-merge / LLM-discussion consumers already read.
     latest_push = max_dt([
         first_dt(item, "created_at")
-        for item in timeline_events(
-            filter_activity_after(timeline, args.simulate_past, "created_at"))
+        for item in timeline_events(timeline)
         if item["kind"] == "push"
     ])
     if latest_push is not None and (last_activity is None or latest_push > last_activity):

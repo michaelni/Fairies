@@ -155,6 +155,25 @@ class TicketRoutingTests(AgentCase):
         self.assertEqual(t["prepared"]["discussion"][0]["reactions"], {"+1": ["dave"]})
         self.assertEqual(self.db.get("items", "pr", "1")["reactions"], {})
 
+    def test_the_refresh_keeps_the_sampled_discussion_at_the_simulate_past_cutoff(self) -> None:
+        """FFmpeg PR 21603 replayed at its cutoff of 2026-10-09T19:35:54Z:
+        the review fairy posted at 23:17 that day stays out of the
+        sampled discussion."""
+        self.ns.simulate_past = datetime(2026, 10, 9, 19, 35, 54, tzinfo=timezone.utc)
+        asked = {"user": {"login": "michaelni"}, "created_at": "2026-10-09T13:57:08Z",
+                 "updated_at": "2026-10-09T13:57:08Z",
+                 "body": "please rebase this so it can be tested, it currently conflicts with the target branch"}
+        posted = {"user": {"login": "Forgejo_Fairy"}, "created_at": "2026-10-09T23:17:41Z",
+                  "updated_at": "2026-10-09T23:17:41Z",
+                  "body": "LLM-GPT-6-ASTRA combined review of 156b13080f49 and 096ed8b4ceb2."}
+        labelled = {"type": forge_gcli.LABEL_EVENT, "user": {"login": "Forgejo_Fairy"},
+                    "created_at": "2026-10-09T23:17:42Z", "label": {"name": "major_issues"}}
+        self.thread.return_value = ([], [asked, posted], [], [labelled], {})
+        self.scan([make_pr(1)])
+        discussion = self.db.get("queued", "pr", "1")["prepared"]["discussion"]
+        self.assertEqual([(d["kind"], d["created_at"]) for d in discussion],
+                         [("comment", "2026-10-09T13:57:08Z")])
+
     def test_an_item_that_moved_under_the_refresh_keeps_the_sampled_thread(self) -> None:
         moved = dict(make_pr(1), updated_at="2026-07-19T10:00:10Z")
         self.fetch_thread.side_effect = lambda ns, kind, item, *rest, **kw: (

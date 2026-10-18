@@ -430,9 +430,9 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--verbosity",
-        default="high",
+        default="medium",
         choices=list(VERBOSITY_LEVELS),
-        help="Output verbosity for every stage (default: high). Currently "
+        help="Output verbosity for every stage (default: medium). Currently "
              "openai (``text.verbosity``) and codex (``model_verbosity``) "
              "only; anthropic/zai have no verbosity parameter. "
              "--final-verbosity overrides it for the user-visible stage.",

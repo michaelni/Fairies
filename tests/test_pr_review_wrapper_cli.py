@@ -207,7 +207,7 @@ class ReviewBudgetOptionTests(unittest.TestCase):
         # None makes main() fall back to --verbosity, so the split is
         # invisible until an operator asks for it.
         args = parse()
-        self.assertEqual("high", args.verbosity)
+        self.assertEqual("medium", args.verbosity)
         self.assertIsNone(args.final_verbosity)
 
     def test_final_verbosity_accepts_the_verbosity_levels(self) -> None:

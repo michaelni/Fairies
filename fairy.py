@@ -1719,6 +1719,22 @@ def filter_activity_after(
     return kept
 
 
+def thread_before(
+    thread: tuple[list, list, list, list, dict], cutoff: datetime | None,
+) -> tuple[list, list, list, list, dict]:
+    """``thread``, a PR's (reviews, comments, review_comments, timeline,
+    reactions) as get_pr_thread returns it, without the reviews and
+    comments ``--simulate-past`` ``cutoff`` puts in the future."""
+    reviews, comments, review_comments, timeline, reactions = thread
+    return (
+        filter_activity_after(reviews, cutoff, "submitted_at", "updated_at", "created_at"),
+        filter_activity_after(comments, cutoff, "updated_at", "created_at"),
+        filter_activity_after(review_comments, cutoff, "updated_at", "created_at"),
+        timeline,
+        reactions,
+    )
+
+
 def get_last_activity(
     pr: ApiObject,
     reviews: list[ApiObject],
@@ -2509,7 +2525,8 @@ def prepare_pr(
     number = int(pr["number"])
     if isinstance(thread, Exception):
         raise RuntimeError(f"the thread could not be fetched: {thread}") from thread
-    reviews, comments, review_comments, timeline, reactions = thread
+    reviews, comments, review_comments, timeline, reactions = \
+        thread_before(thread, args.simulate_past)
     title = str(pr.get("title") or "")
     author = author_login(pr.get("user"))
 
@@ -2570,22 +2587,6 @@ def prepare_pr(
             approved_at=approved_at,
         )
 
-    ignore_after = args.simulate_past
-    reviews = filter_activity_after(
-        reviews,
-        ignore_after,
-        "submitted_at",
-        "updated_at",
-        "created_at",
-    )
-    comments = filter_activity_after(comments, ignore_after, "updated_at", "created_at")
-    review_comments = filter_activity_after(
-        review_comments,
-        ignore_after,
-        "updated_at",
-        "created_at",
-    )
-
     # Deliberately compute last_activity from discussion items only (reviews,
     # comments, review_comments) and NOT from ``pr.updated_at``. Forgejo bumps
     # ``pr.updated_at`` for label add/remove, assignee changes, milestone
@@ -2610,7 +2611,7 @@ def prepare_pr(
     latest_push = max_dt([
         first_dt(item, "created_at")
         for item in timeline_events(
-            filter_activity_after(timeline, ignore_after, "created_at"))
+            filter_activity_after(timeline, args.simulate_past, "created_at"))
         if item["kind"] == "push"
     ])
     if latest_push is not None and (last_activity is None or latest_push > last_activity):

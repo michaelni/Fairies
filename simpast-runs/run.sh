@@ -57,6 +57,8 @@
 #   PODMAN_SSH  ssh dest for the podman host   (e.g. fairy@podman-host)
 #   TREE        checkout to run fairy from     (default this repo)
 #   WRAPPER_EXTRA  extra wrapper args, e.g. "--extra-model zai:glm-5.3 --combine-model openai:gpt-5.4"
+#   DRY_RUN     non-empty writes each cell's config and stops before the
+#               agent runs, so a setup can be checked without spending tokens
 #
 # The LLM shell always runs in an ephemeral Podman container on
 # PODMAN_SSH, matching production. Provision the host first
@@ -81,6 +83,7 @@ set -euo pipefail
 cd "${TREE:-$(dirname "$0")/..}"
 ROOT=$(pwd)
 WRAPPER_EXTRA=${WRAPPER_EXTRA:-}
+DRY_RUN=${DRY_RUN:-}
 
 PRS=(${PRS:-22290 22337 22624 20997})
 CUTOFF=${CUTOFF:-2026-04-23T20:00:00+0000}
@@ -151,14 +154,16 @@ run_one() {
             --model $MODEL $TRIAGE_ARGS
             --service-tier $TIER --reasoning-summary detailed
             --debug-response-dir $outdir/openaidebug --verbose" \
-        --verbose 2 >"$outdir/run.log" 2>&1 \
-        && CLICOLOR_FORCE=1 ./agent.py --drain "${#PRS[@]}" --db-root "$outdir/db" \
-            2>&1 | tee -a "$outdir/run.log" | sed -u "$pfx"
+        --verbose 2 >"$outdir/run.log" 2>&1
     then
-        touch "$outdir/.done"; echo "<<< done ${label}_${i}"
-    else
-        echo "!!! FAILED ${label}_${i} (see $outdir/run.log)"
+        [[ -n "$DRY_RUN" ]] && { echo "dry run: ${label}_${i} configured in $outdir/db"; return; }
+        if CLICOLOR_FORCE=1 ./agent.py --drain "${#PRS[@]}" --db-root "$outdir/db" \
+            2>&1 | tee -a "$outdir/run.log" | sed -u "$pfx"
+        then
+            touch "$outdir/.done"; echo "<<< done ${label}_${i}"; return
+        fi
     fi
+    echo "!!! FAILED ${label}_${i} (see $outdir/run.log)"
 }
 
 for arm in "$@"; do

@@ -233,9 +233,9 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     """Refresh the item's filedb snapshot: its fields, discussion and
     forge status -- for a PR the "open"/"closed"/"merged" state, the
     auto-merge schedule, the approval and change-request counts
-    (latest non-stale review per author), the series' patch-ids and the
-    type and time of each timeline event, for an issue the
-    "open"/"closed" state and its labels. A failure
+    (latest non-stale review per author) and the series' patch-ids,
+    for an issue the "open"/"closed" state and its labels, and for
+    both the type and time of each timeline event. A failure
     costs freshness, never the scan of the item; returns the item, as of
     its thread, the thread, or the exception its fetch raised, and the
     snapshot written, None when it could not be refreshed. Raises
@@ -264,8 +264,6 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                 "base_sha": base_sha,
                 "head_sha": head_sha,
                 "patch_ids": _patch_ids(db, ns, kind, token, base_sha, head_sha),
-                "events": [{"type": event["type"], "created_at": event["created_at"]}
-                           for event in timeline],
             }
         else:
             status = {
@@ -290,6 +288,8 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
             "html_url": str(item.get("html_url") or ""),
             "updated_at": item.get("updated_at"),
             **status,
+            "events": [{"type": event["type"], "created_at": event["created_at"]}
+                       for event in timeline],
             "discussion": discussion,
         }
         db.push(filedb.ITEM_STATE, kind, token, snapshot)
@@ -449,8 +449,8 @@ def _review_stands(kind: str, ticket: dict, item: dict,
     """Whether the review ``ticket`` still answers the forge ``item``,
     whose items/ record is ``snapshot``."""
     stands = ticket.get("expected_updated_at") == item.get("updated_at")
-    if kind == "pr" and (not stands or ticket.get("expected_head_sha")
-                         != fairy.get_pr_head_sha(item)):
+    if not stands or kind == "pr" and ticket.get("expected_head_sha") \
+            != fairy.get_pr_head_sha(item):
         stands = fairy.review_unaffected_since(
             snapshot, ticket.get("expected_updated_at"),
             ticket.get("expected_head_sha"),
@@ -1053,13 +1053,13 @@ def staleness_reason(ns: argparse.Namespace, kind: str, item: dict,
                      decision: fairy.Decision,
                      snapshot: dict | None) -> str | None:
     """Why ``decision`` must not be posted onto ``item`` as it is now:
-    the item moved since the review, or is no longer open. A PR's
+    the item moved since the review, or is no longer open. The item's
     ``snapshot`` (its refreshed items/ record) tells pushes that only
-    rebased the series, review requests and label changes, which do not
-    count as moving."""
+    rebased the series, review requests, label changes and mentions,
+    which do not count as moving."""
     if kind == "pr":
         return fairy.check_pr_still_unchanged(ns, item, decision, snapshot)
-    return issue_fairy.check_issue_still_unchanged(ns, item, decision)
+    return issue_fairy.check_issue_still_unchanged(ns, item, decision, snapshot)
 
 
 # How the closing line of a posted verdict words a change its review

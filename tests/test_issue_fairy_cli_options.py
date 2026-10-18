@@ -161,9 +161,9 @@ class ForceReviewIssueTests(unittest.TestCase):
                                   "reply", "m")
         closed = make_issue(5, "closed")
         blocked = issue_fairy.check_issue_still_unchanged(
-            issue_ns("--force-review 5"), closed, decision)
+            issue_ns("--force-review 5"), closed, decision, None)
         unnamed = issue_fairy.check_issue_still_unchanged(
-            issue_ns(""), closed, decision)
+            issue_ns(""), closed, decision, None)
         self.assertIsNone(blocked)
         self.assertEqual(unnamed, "issue is no longer open")
 

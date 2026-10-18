@@ -1066,16 +1066,17 @@ def review_unaffected_since(snapshot: dict | None, sampled_at: str | None,
                             expected_head_sha: str | None,
                             expected_patch_ids: Sequence[str] | None,
                             expected_body: str | None) -> bool:
-    """Whether everything that arrived on a PR after a review sampled
-    it at ``sampled_at`` leaves the review standing, per the PR's items/
+    """Whether everything that arrived on a PR or issue after a review
+    sampled it at ``sampled_at`` leaves the review standing, per its items/
     ``snapshot``: nothing of ``VOIDING_KINDS`` (new words, a state or
     target-branch change), no timeline entry the discussion does not
     carry, pushes only if they kept the series -- and at least one
     entry, an update with nothing recorded behind it is unexplained --
     and the description still ``expected_body``. The series is kept
     while the head is still ``expected_head_sha`` or the patch-ids
-    still ``expected_patch_ids`` (None when unknown). False when
-    ``snapshot`` or ``sampled_at`` is unknown."""
+    still ``expected_patch_ids`` (None when unknown); an issue, which
+    has no head, passes None for both. False when ``snapshot`` or
+    ``sampled_at`` is unknown."""
     sampled = iso_to_dt(sampled_at)
     if snapshot is None or sampled is None:
         return False
@@ -1086,7 +1087,7 @@ def review_unaffected_since(snapshot: dict | None, sampled_at: str | None,
     return (bool(kinds) and not kinds & VOIDING_KINDS
             and types <= _STANDING_EVENTS
             and snapshot["body"] == expected_body
-            and (snapshot["head_sha"] == expected_head_sha
+            and (snapshot.get("head_sha") == expected_head_sha
                  or expected_patch_ids is not None
                  and snapshot["patch_ids"] == list(expected_patch_ids)))
 

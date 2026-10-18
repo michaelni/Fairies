@@ -1208,6 +1208,44 @@ class UnaffectingChangeSendTests(SendCase):
         self.prepare.assert_not_called()
 
 
+# FFmpeg issue #22956: mentioned from #22981's description, then from
+# a comment on #22981, from a commit and from #24677's description
+ISSUE_22956_TIMELINE = [forge_gcli.project_timeline_event(event) for event in json.loads(
+    (Path(__file__).parent / "fixtures" / "forgejo_pr_timeline"
+     / "ffmpeg_issue_22956_ref_timeline.json").read_text(encoding="utf-8"))]
+
+
+def mentioned_issue_ticket() -> dict:
+    """A reply to #22956 reviewed after its first mention."""
+    return verdict_ticket(5, "reply", expected_head_sha=None,
+                          expected_updated_at="2026-05-01T09:30:52Z")
+
+
+class IssueMentionSendTests(SendCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.db.push("outgoing", "issue", "5", mentioned_issue_ticket())
+
+    def send_mentioned(self, comments: list[dict]) -> mock.Mock:
+        self.thread.return_value = ([], comments, [], ISSUE_22956_TIMELINE, {})
+        with mock.patch.object(issue_fairy, "submit_issue_decision",
+                               return_value=None) as submit:
+            self.send(issue_ns=issue_fairy.parse_args(["--owner", "o", "--repo", "r"]),
+                      changed={"updated_at": "later"})
+        return submit
+
+    def test_mentions_post(self) -> None:
+        self.send_mentioned([]).assert_called_once()
+        self.assertEqual(self.db.find("issue", "5"), "posted")
+
+    def test_a_comment_beside_the_mentions_blocks(self) -> None:
+        self.send_mentioned([{"user": {"login": "carol"}, "body": "ping",
+                              "created_at": "2026-09-25T00:00:00Z"}]
+                            ).assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "issue", "5")["send_blocked"],
+                         "issue updated_at changed")
+
+
 class SendTests(SendCase):
     def test_actionable_outgoing_is_posted(self) -> None:
         self.db.push("outgoing", "pr", "1", verdict_ticket(1))
@@ -2025,6 +2063,14 @@ class IssueSideScanTests(AgentCase):
         self.scan_issues([make_issue(1)], prepare=AssertionError)
         self.prepare_issue.assert_not_called()
         self.assertEqual(self.db.find("issue", "1"), "reviewed")
+
+    def test_issue_standing_verdict_survives_mentions(self) -> None:
+        self.db.push("reviewed", "issue", "5", mentioned_issue_ticket())
+        self.thread.return_value = ([], [], [], ISSUE_22956_TIMELINE, {})
+        self.scan_issues([dict(make_issue(5), updated_at="later")],
+                         prepare=AssertionError)
+        self.prepare_issue.assert_not_called()
+        self.assertEqual(self.db.find("issue", "5"), "reviewed")
 
     def test_a_failed_thread_fetch_shows_its_cause(self) -> None:
         self.thread.side_effect = RuntimeError("forge down")

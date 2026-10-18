@@ -460,12 +460,16 @@ def issue_decision_from_review(prepared: PreparedIssue, review: LLMReview) -> De
 
 def check_issue_still_unchanged(
     args: argparse.Namespace, current: ApiObject, decision: Decision,
+    snapshot: dict | None,
 ) -> str | None:
     if current.get("state") != "open" and decision.pr_number not in args.force_review_issues:
         return "issue is no longer open"
     if (
         decision.expected_pr_updated_at is not None
         and current.get("updated_at") != decision.expected_pr_updated_at
+        and not fairy.review_unaffected_since(
+            snapshot, decision.expected_pr_updated_at, None, None,
+            decision.expected_body)
     ):
         return "issue updated_at changed"
     return None

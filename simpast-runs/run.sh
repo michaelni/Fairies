@@ -110,7 +110,7 @@ if [[ -n "$TRIAGE_MODEL" ]]; then
 fi
 PODMAN_SSH=${PODMAN_SSH:-}
 [[ -n "$PODMAN_SSH" ]] || { echo "PODMAN_SSH=user@host required" >&2; exit 2; }
-CONTAINER_ARGS="--podman --shell-host $PODMAN_SSH --podman-max-tool-rounds 100"
+CONTAINER_ARGS="--podman --shell-host $PODMAN_SSH --podman-max-tool-rounds 200"
 (($# >= 1)) || { echo "usage: $0 <arm-ref> [arm-ref ...]" >&2; exit 2; }
 
 # Write the prompt to the working tree only (never the index), so a

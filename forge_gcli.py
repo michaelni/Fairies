@@ -136,6 +136,7 @@ __all__ = [
     "add_forge_repo_args",
     "auto_merge_state",
     "apply_issue_label_changes",
+    "run_item_action",
     "branch_page_url",
     "build_repo_path",
     "commit_page_url",

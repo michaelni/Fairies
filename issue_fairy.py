@@ -57,6 +57,7 @@ from forge_gcli import (
     build_repo_path,
     gcli_api,
     post_issue_comment,
+    run_item_action,
 )
 from forge_item import author_login, authorship, build_llm_discussion, first_dt, item_standing, labels, reactions_by_content
 from llm_review_api import ISSUE_REPORT_CLASSIFICATIONS
@@ -441,6 +442,7 @@ def issue_review_decision(
         # like fairy's skip: a skip only ever applies labels, so its
         # branches would claim a publication that cannot happen
         branches=review.branches if review.classification == "reply" else (),
+        close=review.close and review.classification == "reply",
     )
 
 
@@ -526,4 +528,6 @@ def submit_issue_decision(
             args, decision.pr_number, decision.label_changes, current,
             kind=KIND_ISSUE,
         )
+    if decision.close:
+        run_item_action(args, args.owner, args.repo, decision.pr_number, KIND_ISSUE, "close")
     return None

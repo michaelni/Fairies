@@ -1487,6 +1487,15 @@ class TicketRoundTripTests(unittest.TestCase):
         rebuilt = agent.ticket_decision("pr", "5", {"review": fields["review"]})
         self.assertEqual(rebuilt.branches, (GOOD_RECORD, DELETE_RECORD))
 
+    def test_close_survives_verdict_fields_and_ticket_decision(self) -> None:
+        decision = fairy.Decision(5, "t", "a", "-", "comment", "llm", None,
+                                  llm_classification="moderate_issues", close=True)
+        fields = worker.verdict_fields(
+            decision, SimpleNamespace(pr={}, discussion=[], reviewer_username="fairy"),
+            fairy.parse_args(["--owner", "o", "--repo", "r"]))
+        self.assertIs(True, fields["review"]["close"])
+        self.assertTrue(agent.ticket_decision("pr", "5", {"review": fields["review"]}).close)
+
     def test_a_branch_edited_out_of_the_message_is_not_published(self) -> None:
         review = {"classification": "moderate_issues",
                   "message": "msg\n\nDeleted branch `fairy/pr7-stale`.",

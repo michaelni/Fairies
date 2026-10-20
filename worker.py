@@ -98,6 +98,7 @@ def verdict_fields(decision: fairy.Decision, prepared,
         "review": {
             "classification": decision.llm_classification,
             "message": decision.llm_message,
+            "close": decision.close,
             "label_changes": [
                 {"label": c.label, "op": c.op, "reason": c.reason, "post": c.post}
                 for c in decision.label_changes

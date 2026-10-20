@@ -1012,6 +1012,7 @@ def ticket_decision(kind: str, number, ticket: dict) -> fairy.Decision | None:
         message=review.get("message", ""),
         # field-by-field, not **c: tickets are hand-editable and one
         # typo'd key must not kill the TUI or wedge the agent loop
+        close=review.get("close") is True,
         label_changes=tuple(
             fairy.LabelChange(str(c.get("label") or ""), str(c.get("op") or ""),
                               str(c.get("reason") or ""), bool(c.get("post")))
@@ -1121,6 +1122,9 @@ def post_decision(ns: argparse.Namespace, kind: str, item: dict,
         counts[decision.action] += 1
     if fairy.decision_has_label_changes(decision):
         fairy.apply_triage_labels(ns, item, decision)
+    if decision.close:
+        forge_gcli.run_item_action(ns, ns.owner, ns.repo, decision.pr_number,
+                                   forge_gcli.KIND_PR, "close")
     return None
 
 
@@ -1154,7 +1158,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
             return "reviewed"
         if dry_run:
             logger.info("%s #%s: DRY RUN, would post: %s", kind, number,
-                        fairy.manual_action_description(decision))
+                        fairy.manual_action_description(decision, kind))
             claim.abort()
             return None
         item, snapshot = ingest_item(db, ns, kind, number, cache)
@@ -1178,7 +1182,7 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
             claim.finish("posted", dict(
                 ticket, posted_at=datetime.now(timezone.utc).isoformat()))
             logger.info("%s #%s posted: %s", kind, number,
-                        fairy.manual_action_description(decision))
+                        fairy.manual_action_description(decision, kind))
             return "posted"
         if ticket.pop("agent_promoted", None) and ns.auto_mode:
             # Auto mode must not stall on a stale verdict: without
@@ -1292,7 +1296,7 @@ def ask_pass(db: filedb.Db, kinds: set[str], retry=None) -> None:
                 break
             print(f"\n{ticket.get('html_url') or f'{kind} #{number}'}"
                   f"  {ticket.get('title', '')}")
-            print(fairy.manual_action_description(decision))
+            print(fairy.manual_action_description(decision, kind))
             message = (ticket.get("review") or {}).get("message") or ""
             if message:
                 print(message)

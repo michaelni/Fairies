@@ -250,6 +250,7 @@ class ReviewQuotaExhausted(RuntimeError):
 class LLMReview:
     classification: str
     message: str
+    close: bool = False
     label_changes: tuple[LabelChange, ...] = ()
     # Collected branch records (see branch_persist): quarantined branches
     # this review wants published as fairy/<name> on approval.
@@ -296,6 +297,8 @@ class Decision:
     external_approvers: tuple[str, ...] = ()
     label_changes: tuple[LabelChange, ...] = ()
     branches: tuple[JsonObject, ...] = ()
+    # close the PR / issue once the message and labels are out
+    close: bool = False
     # For merge_ready: when fairy's approval review was submitted, so
     # the operator surface can show how long the merge has waited.
     approved_at: datetime | None = None
@@ -1839,7 +1842,9 @@ def decision_has_label_changes(decision: Decision) -> bool:
     return bool(decision.label_changes)
 
 
-def manual_action_description(decision: Decision) -> str:
+def manual_action_description(decision: Decision, kind: str) -> str:
+    """The forge side effects of sending ``decision``, for the operator;
+    ``kind`` is ``forge_gcli.KIND_PR`` / ``KIND_ISSUE``."""
     parts: list[str] = []
     if decision.action in ACTIONABLE_DECISIONS:
         parts.append(decision.action.replace("_", "-"))
@@ -1868,6 +1873,8 @@ def manual_action_description(decision: Decision) -> str:
             + ([f"delete {deletions} branch(es)"] if deletions else []) \
             + ([f"open {pr_count} PR(s)"] if pr_count else [])
         parts.append(", ".join(branch_parts))
+    if decision.close:
+        parts.append(f"CLOSES the {'PR' if kind == forge_gcli.KIND_PR else 'issue'}")
     return " + ".join(parts) if parts else decision.action
 
 
@@ -2190,6 +2197,7 @@ def invoke_llm_wrapper(
     return LLMReview(
         classification=classification,
         message=fold_sections(fold_entries(message)),
+        close=data.get("close") is True,
         label_changes=label_changes,
         branches=branches,
     )
@@ -2407,7 +2415,7 @@ def decision_from_review(
 ) -> Decision:
     reason = base_reason
     verdict_kwargs = {"label_changes": review.label_changes,
-                      "branches": review.branches}
+                      "branches": review.branches, "close": review.close}
     # the forge refuses a review approving its author's own PR
     approve = "comment" if author == reviewer_username else "approve"
     if review.classification == "approve":

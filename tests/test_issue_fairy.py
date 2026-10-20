@@ -87,6 +87,33 @@ def make_args(**overrides: object) -> argparse.Namespace:
     return args
 
 
+class IssueCloseTests(unittest.TestCase):
+    def _decision(self, classification: str) -> fairy.Decision:
+        return issue_fairy.issue_review_decision(
+            LLMReview(classification, "m", close=True), number=4321, title="t",
+            author="a", reason="llm", last_activity=None)
+
+    def test_only_a_reply_closes(self) -> None:
+        self.assertTrue(self._decision("reply").close)
+        self.assertFalse(self._decision("skip").close)
+
+    def test_the_issue_is_closed_after_the_comment(self) -> None:
+        order: list[str] = []
+        args = argparse.Namespace(owner="o", repo="r", branch_push=[], cache="/nonexistent")
+        with mock.patch.object(issue_fairy, "post_issue_comment",
+                               side_effect=lambda *a, **k: order.append("comment")), \
+                mock.patch.object(issue_fairy, "run_item_action",
+                                  side_effect=lambda *a: order.append(a[-1])) as close, \
+                mock.patch.object(issue_fairy.gcli_cache, "entry_key", return_value="k"), \
+                mock.patch.object(issue_fairy.gcli_cache, "save_cache"):
+            reason = issue_fairy.submit_issue_decision(
+                args, {"number": 4321}, self._decision("reply"),
+                cache=argparse.Namespace(entries={}), submitted_counts={"comment": 0})
+        self.assertIsNone(reason)
+        self.assertEqual(order, ["comment", "close"])
+        self.assertEqual(close.call_args.args[1:], ("o", "r", 4321, "issue", "close"))
+
+
 class IssueReportSchemaTests(unittest.TestCase):
     def test_accepts_every_issue_classification(self) -> None:
         for classification in llm_review_api.ISSUE_REPORT_CLASSIFICATIONS:

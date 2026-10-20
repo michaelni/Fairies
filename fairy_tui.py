@@ -1615,7 +1615,7 @@ class UILoop:
         if decision is not None:
             # render_markdown, not a clipped line: long apply
             # descriptions and reasons must wrap, never silently vanish
-            head += self._markdown(item, fairy.manual_action_description(decision),
+            head += self._markdown(item, fairy.manual_action_description(decision, item.kind),
                                    width, "head")
         status_line = f"state {item.state}"
         if review.get("classification"):

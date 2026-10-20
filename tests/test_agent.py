@@ -957,9 +957,9 @@ class TicketDecisionTests(AgentCase):
         self.assertEqual(d.auto_merge, "merge")
         self.assertEqual(d.action, "approve")
         self.assertIn("auto-merge scheduled: approving MERGES the PR",
-                      fairy.manual_action_description(d))
+                      fairy.manual_action_description(d, "pr"))
         plain = agent.ticket_decision("pr", "2", verdict_ticket(2, "approve"))
-        self.assertNotIn("MERGES", fairy.manual_action_description(plain))
+        self.assertNotIn("MERGES", fairy.manual_action_description(plain, "pr"))
 
     def test_own_pr_is_commented_not_approved(self) -> None:
         own = agent.ticket_decision("pr", "1", verdict_ticket(
@@ -1493,6 +1493,26 @@ class SendTests(SendCase):
         submit.assert_not_called()  # nothing to comment/approve
         self.assertEqual(apply.call_args.args[1]["number"], 1)
         self.assertEqual(self.db.find("pr", "1"), "posted")
+
+    def test_a_closing_verdict_closes_the_pr_after_posting(self) -> None:
+        self.db.push("outgoing", "pr", "1", verdict_ticket(1, "major_issues"))
+        self.db.try_move("outgoing", "outgoing", "pr", "1",
+                         mutate=lambda d: d["review"].update(close=True))
+        order: list[str] = []
+        with mock.patch.object(fairy, "submit_decision_action",
+                               side_effect=lambda *a, **k: order.append("post")), \
+                mock.patch.object(forge_gcli, "run_item_action",
+                                  side_effect=lambda *a: order.append(a[-1])) as close:
+            self.send(pr_ns=self.ns)
+        self.assertEqual(order, ["post", "close"])
+        self.assertEqual(close.call_args.args[3:], (1, "pr", "close"))
+        self.assertEqual(self.db.find("pr", "1"), "posted")
+
+    def test_a_skip_never_closes(self) -> None:
+        self.assertFalse(agent.ticket_decision("pr", "1", verdict_ticket(
+            1, "skip", labels=[{"label": "l", "op": "add"}], close=True)).close)
+        self.assertFalse(agent.ticket_decision("issue", "1", verdict_ticket(
+            1, "skip", labels=[{"label": "l", "op": "add"}], close=True)).close)
 
     def test_label_only_guard_failure_posts_nothing(self) -> None:
         labels = [{"label": "needs docs", "op": "add", "reason": "", "post": False}]

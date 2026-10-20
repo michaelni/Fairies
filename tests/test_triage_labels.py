@@ -301,13 +301,32 @@ class PrAutoApproveLabelParsingTests(unittest.TestCase):
         )
         self.assertEqual(parsed, (paa.LabelChange("needs-review", "add", "r", False),))
 
+    def test_close_is_parsed_from_the_wrapper_and_named_in_the_action(self) -> None:
+        ns = paa.parse_args(["--owner", "o", "--repo", "r",
+                             "--llm-review-cmd", "wrapper", "--patch-repo", "p"])
+        done = subprocess.CompletedProcess(
+            [], 0, stdout='{"classification": "major_issues", "message": "m", "close": true}',
+            stderr="")
+        with mock.patch.object(paa, "run_cmd", return_value=done):
+            review = paa.invoke_llm_wrapper(
+                ns, {}, number=1, allowed_classifications=frozenset({"major_issues"}),
+                label_allowlist=[])
+        self.assertTrue(review.close)
+        decision = paa.decision_from_review(
+            review, number=1, title="t", author="a", auto_merge="-",
+            last_activity=None, base_reason="llm")
+        self.assertTrue(decision.close)
+        self.assertIn("request-changes + CLOSES the PR",
+                      paa.manual_action_description(decision, "pr"))
+        self.assertIn("CLOSES the issue", paa.manual_action_description(decision, "issue"))
+
     def test_manual_action_description_includes_labels(self) -> None:
         decision = paa.Decision(
             42, "title", "author", "-", "skip", "LLM chose skip", None,
             "skip", "",
             label_changes=(paa.LabelChange("needs-review", "add"),),
         )
-        self.assertIn("needs-review", paa.manual_action_description(decision))
+        self.assertIn("needs-review", paa.manual_action_description(decision, "pr"))
 
     def test_manual_action_description_includes_label_justification(self) -> None:
         # The triage justification must reach the operator-facing apply line
@@ -320,7 +339,7 @@ class PrAutoApproveLabelParsingTests(unittest.TestCase):
                 "repro requires a clip the author omitted",
             ),),
         )
-        desc = paa.manual_action_description(decision)
+        desc = paa.manual_action_description(decision, "pr")
         self.assertIn("needs sample", desc)
         self.assertIn("repro requires a clip the author omitted", desc)
 

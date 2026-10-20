@@ -126,7 +126,7 @@ class AnthropicReviewLoopTests(_IsolatedCase):
             _reply([dict(type="tool_use", id="t2", name="submit_review",
                              input={"classification": "minor_issues_approve",
                                     "message": "LLM review: one nit.",
-                                    "head_vs_branch_diff_evidence": False})]),
+                                    "head_vs_branch_diff_evidence": False, "close": False})]),
         ])
         reviewer = anthropic_reviewer.AnthropicReviewer(
             "glm-4.6", name="zai:glm-4.6",
@@ -154,7 +154,7 @@ class AnthropicReviewLoopTests(_IsolatedCase):
                                    input={"command": "git log -1"})])
         submit = _reply([dict(type="tool_use", id="t2", name="submit_review",
                               input={"classification": "approve", "message": "",
-                                     "head_vs_branch_diff_evidence": False})])
+                                     "head_vs_branch_diff_evidence": False, "close": False})])
         silent = _reply([dict(type="text", text="done")])
         for replies, outcome in (([shell_round, submit], contextlib.nullcontext()),
                                  ([shell_round, silent, silent],
@@ -182,7 +182,7 @@ class AnthropicReviewLoopTests(_IsolatedCase):
                              input={"command": "git log -1"})]),
             _reply([dict(type="tool_use", id="t2", name="submit_review",
                              input={"classification": "approve", "message": "",
-                                    "head_vs_branch_diff_evidence": False})]),
+                                    "head_vs_branch_diff_evidence": False, "close": False})]),
         ])
         reviewer = anthropic_reviewer.AnthropicReviewer("claude-opus-4", name="anthropic:claude-opus-4")
         reviewer._client = lambda: client  # type: ignore[method-assign]
@@ -234,7 +234,7 @@ class AnthropicReviewLoopTests(_IsolatedCase):
         client = _ScriptedClient([
             _reply([dict(type="tool_use", id="t1", name="submit_review",
                              input={"classification": "approve", "message": "",
-                                    "head_vs_branch_diff_evidence": False})]),
+                                    "head_vs_branch_diff_evidence": False, "close": False})]),
         ])
         reviewer = anthropic_reviewer.AnthropicReviewer("claude-opus-4", name="anthropic:claude-opus-4")
         reviewer._client = lambda: client  # type: ignore[method-assign]
@@ -250,7 +250,7 @@ class AnthropicReviewLoopTests(_IsolatedCase):
             OPENROUTER_EMPTY_BODY,
             _reply([dict(type="tool_use", id="t1", name="submit_review",
                              input={"classification": "approve", "message": "",
-                                    "head_vs_branch_diff_evidence": False})]),
+                                    "head_vs_branch_diff_evidence": False, "close": False})]),
         ])
         reviewer = anthropic_reviewer.AnthropicReviewer(
             "stealth/space-bunny-alpha", name="openrouter:stealth/space-bunny-alpha",
@@ -310,7 +310,7 @@ class EffortThinkingTests(_IsolatedCase):
     def _submit(self) -> dict:
         return _reply([dict(type="tool_use", id="t1", name="submit_review",
                                 input={"classification": "approve", "message": "",
-                                       "head_vs_branch_diff_evidence": False})])
+                                       "head_vs_branch_diff_evidence": False, "close": False})])
 
     def _run(self, effort: str | None, reasoning_summary: str | None = None) -> dict:
         client = _ScriptedClient([self._submit()])
@@ -403,7 +403,7 @@ class PersistBranchesTests(_IsolatedCase):
             _reply([dict(type="tool_use", id="t2", name="submit_review",
                              input={"classification": "minor_issues_approve",
                                     "message": "LLM review: built fix-x.",
-                                    "head_vs_branch_diff_evidence": False,
+                                    "head_vs_branch_diff_evidence": False, "close": False,
                                     "branches": [self.DECLARATION],
                                     "pull_requests": [self.PR_REQUEST]})]),
         ])

@@ -62,7 +62,7 @@ class CheckSchemaTests(unittest.TestCase):
     def test_valid_review_passes(self) -> None:
         llm_review_api.check_schema(
             {"classification": "approve", "message": "",
-             "head_vs_branch_diff_evidence": False},
+             "head_vs_branch_diff_evidence": False, "close": False},
             llm_review_api.REVIEW_SCHEMA["schema"],
         )
 
@@ -76,7 +76,7 @@ class CheckSchemaTests(unittest.TestCase):
         with self.assertRaises(llm_review_api.SchemaError):
             llm_review_api.check_schema(
                 {"classification": "looks_good", "message": "",
-                 "head_vs_branch_diff_evidence": False},
+                 "head_vs_branch_diff_evidence": False, "close": False},
                 llm_review_api.REVIEW_SCHEMA["schema"],
             )
 
@@ -84,7 +84,7 @@ class CheckSchemaTests(unittest.TestCase):
         with self.assertRaises(llm_review_api.SchemaError):
             llm_review_api.check_schema(
                 {"classification": "approve", "message": 12,
-                 "head_vs_branch_diff_evidence": False},
+                 "head_vs_branch_diff_evidence": False, "close": False},
                 llm_review_api.REVIEW_SCHEMA["schema"],
             )
 
@@ -145,10 +145,19 @@ class ValidateReviewTests(unittest.TestCase):
     def test_valid_review_round_trips(self) -> None:
         result = llm_review_api.validate_review(
             {"classification": "minor_issues_approve", "message": "looks ok",
-             "head_vs_branch_diff_evidence": False},
+             "head_vs_branch_diff_evidence": False, "close": False},
         )
         self.assertEqual(result["classification"], "minor_issues_approve")
         self.assertEqual(result["message"], "looks ok")
+        self.assertFalse(result["close"])
+
+    def test_close_is_required_and_passed_through(self) -> None:
+        verdict = {"classification": "major_issues", "message": "superseded by #2",
+                   "head_vs_branch_diff_evidence": False}
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_review_api.validate_review(verdict)
+        self.assertTrue(llm_review_api.validate_review(
+            {**verdict, "close": True})["close"])
 
     def _review_flagged(self, name: str) -> llm_review_api.Review:
         # Real bogus verdict (PR #23553): the
@@ -161,7 +170,7 @@ class ValidateReviewTests(unittest.TestCase):
                     "classification": "major_issues",
                     "message": "LLM-GPT-5.4: this patch drops the current "
                                "master fix for reference-only resource reuse.",
-                    "head_vs_branch_diff_evidence": True,
+                    "head_vs_branch_diff_evidence": True, "close": False,
                 })
 
         reviewer = _Fixed()

@@ -91,9 +91,15 @@ class IssueReportSchemaTests(unittest.TestCase):
     def test_accepts_every_issue_classification(self) -> None:
         for classification in llm_review_api.ISSUE_REPORT_CLASSIFICATIONS:
             result = llm_review_api.validate_issue_report(
-                {"classification": classification, "message": "m"},
+                {"classification": classification, "message": "m", "close": False},
             )
             self.assertEqual(result["classification"], classification)
+
+    def test_close_is_required_and_passed_through(self) -> None:
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_review_api.validate_issue_report({"classification": "reply", "message": "m"})
+        self.assertTrue(llm_review_api.validate_issue_report(
+            {"classification": "reply", "message": "m", "close": True})["close"])
 
     def test_rejects_pr_and_disposition_classifications(self) -> None:
         # Dispositions are labels, not classifications; only the two
@@ -101,7 +107,7 @@ class IssueReportSchemaTests(unittest.TestCase):
         for classification in ("approve", "duplicate", "needs_info"):
             with self.assertRaises(llm_review_api.SchemaError):
                 llm_review_api.validate_issue_report(
-                    {"classification": classification, "message": "m"},
+                    {"classification": classification, "message": "m", "close": False},
                 )
 
     def test_sanitizes_labels_against_allowlist(self) -> None:
@@ -109,6 +115,7 @@ class IssueReportSchemaTests(unittest.TestCase):
             {
                 "classification": "reply",
                 "message": "m",
+                "close": False,
                 "label_changes": [
                     {"label": "resolution/duplicate", "op": "add", "reason": "dup of #1", "post": True},
                     {"label": "secret", "op": "add", "reason": "", "post": False},

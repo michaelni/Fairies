@@ -94,9 +94,18 @@ class UngradedPromptTests(unittest.TestCase):
         text = prompt_for("review", classifies=False)
         for grading in ("Classify the pull request",
                         "minor_issues_approve", "moderate_issues",
-                        "major_issues"):
+                        "major_issues", "You can close the pull request"):
             self.assertNotIn(grading, text)
         self.assertIn("do not classify or rank the issues by severity", text)
+
+    def test_only_the_graded_roles_may_close(self) -> None:
+        for role, line in (("review", "You can close the pull request"),
+                           ("combiner", "You can close the pull request"),
+                           ("issue_investigator", "You can close the issue"),
+                           ("issue_combiner", "You can close the issue")):
+            self.assertIn(line, prompt_for(role), role)
+        for role in ("vetter", "issue_vetter", "triager"):
+            self.assertNotIn("You can close the", prompt_for(role), role)
 
     def test_draft_prompt_keeps_the_issue_cases(self) -> None:
         text = prompt_for("review", classifies=False)

@@ -797,6 +797,7 @@ f"""{'''Report your findings after you have finished reviewing all commit(s) and
 - major_issues: You do not want to approve the PR and the current code would be worse off if its merged
 - reply_no_verdict: You have a comment without making a decision on the PRs approval or blockage.
 - skip: you have no comment or want to make no comment, and make no decision on the PRs approval or blockage.
+{"You can close the pull request: set ``close`` to true when your message explains why it cannot proceed (superseded, already applied or withdrawn), false otherwise. Closing never goes with approve or skip.\n" * (not vetter)}\
 
 ''' * (pr and (verdict and ctx.classifies or vetter))}\
 """
@@ -815,6 +816,7 @@ f"""{'''Report your findings after you have finished reviewing all commit(s) and
 f"""{'''Classify your result into exactly one of these JSON classes after you have finished your work and read all comments:
 - reply: your message is worth posting on the issue.
 - skip: you have nothing worth posting (label changes are still applied).
+You can close the issue: set ``close`` to true when your message states a definite verdict that ends it (resolution/duplicate, resolution/invalid, resolution/external, or resolution/fixed with a verified fixing commit), false otherwise. A skip never closes.
 
 The issue's dispositions (duplicate, reproducibility, missing info, regression, ...) are NOT classifications: record them through the labels and explain them in the message.
 
@@ -1275,6 +1277,7 @@ def make_vet_user_text(review: Review) -> str:
     return (
         f"The verdict to vet, from {model_label(review.model)}:\n\n"
         f"classification: {review.classification}\n"
+        f"close: {json.dumps(review.close)}\n"
         f"label_changes: {json.dumps(list(review.label_changes), ensure_ascii=False)}\n"
         f"branches: {json.dumps(branches, ensure_ascii=False)}\n"
         f"message:\n{review.message}\n"

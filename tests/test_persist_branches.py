@@ -172,7 +172,7 @@ class PersistenceSchemaTests(unittest.TestCase):
         schema = schema_with_branches(llm_review_api.REVIEW_SCHEMA, REPOS)
         llm_review_api.check_schema(
             {"classification": "approve", "message": "",
-             "head_vs_branch_diff_evidence": False,
+             "head_vs_branch_diff_evidence": False, "close": False,
              "branches": [VALID_DECLARATION],
              "pull_requests": [VALID_PR_REQUEST]},
             schema["schema"])
@@ -185,7 +185,7 @@ class PersistenceSchemaTests(unittest.TestCase):
                 with self.assertRaises(llm_review_api.SchemaError):
                     llm_review_api.check_schema(
                         {"classification": "approve", "message": "",
-                         "head_vs_branch_diff_evidence": False,
+                         "head_vs_branch_diff_evidence": False, "close": False,
                          "branches": [],
                          "pull_requests": [bad]},
                         schema["schema"])
@@ -194,7 +194,7 @@ class PersistenceSchemaTests(unittest.TestCase):
         with self.assertRaises(llm_review_api.SchemaError):
             llm_review_api.check_schema(
                 {"classification": "approve", "message": "",
-                 "head_vs_branch_diff_evidence": False, "pull_requests": []},
+                 "head_vs_branch_diff_evidence": False, "close": False, "pull_requests": []},
                 llm_review_api.REVIEW_SCHEMA["schema"])
 
 
@@ -202,7 +202,7 @@ class ValidateWithBranchesTests(unittest.TestCase):
     def test_composes_over_labels_validator(self) -> None:
         result = validate_result_with_branches(
             {"classification": "minor_issues_approve", "message": "m",
-             "head_vs_branch_diff_evidence": False,
+             "head_vs_branch_diff_evidence": False, "close": False,
              "label_changes": [{"label": "important", "op": "add",
                                 "reason": "r", "post": False}],
              "branches": [dict(VALID_DECLARATION, branch="cleanup",
@@ -1268,7 +1268,7 @@ class RoleWithBranchesTests(unittest.TestCase):
         self.assertTrue(role.prompt_kwargs["persist_branches"])
         result = role.validate(
             {"classification": "approve", "message": "",
-             "head_vs_branch_diff_evidence": False,
+             "head_vs_branch_diff_evidence": False, "close": False,
              "label_changes": [], "branches": [VALID_DECLARATION],
              "pull_requests": [VALID_PR_REQUEST]})
         self.assertEqual(result["branches"], [VALID_DECLARATION])
@@ -1388,7 +1388,7 @@ class OpenAIPersistBranchesTests(unittest.TestCase):
 
         payload = json.dumps({
             "classification": "minor_issues_approve", "message": "LLM review",
-            "head_vs_branch_diff_evidence": False,
+            "head_vs_branch_diff_evidence": False, "close": False,
             "branches": [VALID_DECLARATION],
             "pull_requests": [VALID_PR_REQUEST]})
         with mock.patch.object(openai_reviewer,

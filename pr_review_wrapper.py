@@ -1291,10 +1291,13 @@ def emit_review_stdout(
     classification: str,
     message: str,
     *,
+    close: bool = False,
     label_changes: list[dict[str, object]] | None = None,
     branches: list[dict[str, object]] | None = None,
 ) -> None:
     out: dict[str, object] = {"classification": classification, "message": message}
+    if close:
+        out["close"] = True
     if label_changes:
         out["label_changes"] = label_changes
     if branches:
@@ -2048,7 +2051,7 @@ def main() -> int:
         if review.classification == "skip":
             message = f"{'combiner' if combiner is not None else 'reviewer'}: {message}"
         emit_review_stdout(
-            review.classification, message,
+            review.classification, message, close=review.close,
             label_changes=list(review.label_changes),
             branches=list(review.branches),
         )

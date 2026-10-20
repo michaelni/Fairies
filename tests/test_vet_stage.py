@@ -90,6 +90,7 @@ class VetterRoleTests(unittest.TestCase):
         self.assertTrue(texts[0].startswith("Vet the review of this pull request below."))
         self.assertIn("from GPT-5.4", texts[-1])
         self.assertIn("classification: minor_issues_approve", texts[-1])
+        self.assertIn("close: false", texts[-1])
         self.assertIn('"label": "bug"', texts[-1])
         self.assertIn('"branch": "pr7-fix"', texts[-1])
         # the PR fairy opens is posted verbatim: the vetter must see it

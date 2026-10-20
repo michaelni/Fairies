@@ -106,7 +106,7 @@ class ReviewLabelSchemaTests(unittest.TestCase):
             {
                 "classification": "minor_issues_approve",
                 "message": "m",
-                "head_vs_branch_diff_evidence": False,
+                "head_vs_branch_diff_evidence": False, "close": False,
                 "label_changes": [
                     _change("stale", "add", "no activity", post=True),
                     _change("secret", "add"),
@@ -151,7 +151,7 @@ class RoleWithLabelsTests(unittest.TestCase):
         result = role.validate({
             "classification": "minor_issues_approve",
             "message": "m",
-            "head_vs_branch_diff_evidence": False,
+            "head_vs_branch_diff_evidence": False, "close": False,
             "label_changes": [_change("stale", "add", "r")],
         })
         self.assertEqual([c["label"] for c in result["label_changes"]], ["stale"])
@@ -246,6 +246,10 @@ class EmitReviewStdoutTests(unittest.TestCase):
     def test_no_label_changes_key_when_empty(self) -> None:
         out = self._emit()
         self.assertNotIn("label_changes", out)
+
+    def test_close_emitted_only_when_set(self) -> None:
+        self.assertTrue(self._emit(close=True)["close"])
+        self.assertNotIn("close", self._emit())
 
 
 class TriageLabelPromptTests(unittest.TestCase):

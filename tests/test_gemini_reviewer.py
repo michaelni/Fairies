@@ -57,7 +57,7 @@ PER_MINUTE = QUOTA_429["GenerateRequestsPerMinutePerProjectPerModel-FreeTier"]
 PER_DAY = QUOTA_429["GenerateRequestsPerDayPerProjectPerModel-FreeTier"]
 
 SUBMIT = {"classification": "minor_issues_approve", "message": "LLM review: one nit.",
-          "head_vs_branch_diff_evidence": False}
+          "head_vs_branch_diff_evidence": False, "close": False}
 
 
 def _reply(*calls: tuple[str, dict, str]) -> dict:

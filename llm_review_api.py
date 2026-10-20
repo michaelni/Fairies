@@ -216,8 +216,12 @@ REVIEW_SCHEMA = {
                     "that is not an ancestor of that head."
                 ),
             },
+            "close": {
+                "type": "boolean",
+                "description": "True to close the pull request once the message is posted.",
+            },
         },
-        "required": ["classification", "message", "head_vs_branch_diff_evidence"],
+        "required": ["classification", "message", "head_vs_branch_diff_evidence", "close"],
     },
 }
 
@@ -262,8 +266,12 @@ ISSUE_REPORT_SCHEMA = {
                     "Do not include HTML or markdown fences."
                 ),
             },
+            "close": {
+                "type": "boolean",
+                "description": "True to close the issue once the message is posted.",
+            },
         },
-        "required": ["classification", "message"],
+        "required": ["classification", "message", "close"],
     },
 }
 
@@ -467,6 +475,7 @@ def validate_review(obj: object) -> dict[str, object]:
         "classification": obj["classification"],
         "message": obj["message"],
         "head_vs_branch_diff_evidence": obj["head_vs_branch_diff_evidence"],
+        "close": obj["close"],
     }
 
 
@@ -521,6 +530,7 @@ def validate_issue_report(obj: object) -> dict[str, object]:
     return {
         "classification": obj["classification"],
         "message": obj["message"],
+        "close": obj["close"],
     }
 
 
@@ -1035,6 +1045,7 @@ class Review:
     # this stage's verdict declared, each self-contained with its
     # bundle, modes and SHAs.
     branches: tuple[JsonObject, ...] = ()
+    close: bool = False
     model: str = ""
     prompt: str = ""
 
@@ -1184,6 +1195,7 @@ class Reviewer(ABC):
         return Review(
             classification=result["classification"],
             message=result["message"],
+            close=bool(result.get("close")),
             label_changes=tuple(result.get("label_changes") or ()),
             branches=tuple(result.get("branches") or ()),
             model=self.name,

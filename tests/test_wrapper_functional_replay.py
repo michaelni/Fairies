@@ -416,11 +416,16 @@ class UnattendedPostingBlockTests(unittest.TestCase):
                 ([push] * 4, "4 pushed branches"),
                 ([dict(push, bundle=big)], f"{256 * 1024 + 1} bytes of git bundles")):
             with self.subTest(branches=branches):
-                reason = wrapper.unattended_posting_block(branches)
+                reason = wrapper.unattended_posting_block(
+                    Review("approve", branches=tuple(branches)), "pull request")
                 if blocked is None:
                     self.assertIsNone(reason)
                 else:
                     self.assertIn(blocked, reason)
+
+    def test_a_closing_verdict_is_held(self) -> None:
+        self.assertIn("closes the issue", wrapper.unattended_posting_block(
+            Review("reply", close=True), "issue"))
 
 
 class VetStageTests(unittest.TestCase):
@@ -493,6 +498,14 @@ class VetStageTests(unittest.TestCase):
                 self.assertEqual([], seen)
                 self.assertIs(True, ticket["vetting"]["hold_for_human_inspection"])
                 self.assertIn("2 pull requests", ticket["vetting"]["reason"])
+
+    def test_a_closing_verdict_holds_without_the_vetter(self) -> None:
+        ticket, seen = self._run(
+            Review("major_issues", "superseded by #2", close=True, model="openai:gpt-5.4"),
+            "--vet-model", "openai:gpt-x")
+        self.assertEqual([], seen)
+        self.assertIs(True, ticket["vetting"]["hold_for_human_inspection"])
+        self.assertIn("closes the pull request", ticket["vetting"]["reason"])
 
     def test_unconfigured_vetter_and_unpostable_skip_verdict_vet_nothing(self) -> None:
         for review, extra in (

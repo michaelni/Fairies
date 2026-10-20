@@ -303,6 +303,11 @@ class TestFoldSections(unittest.TestCase):
         self.assertEqual(fold_sections("### Verification\nran fate\n### Replies\n"),
                          "<details><summary><b>Verification</b></summary>\n\nran fate\n</details>\n### Replies\n")
 
+    def test_a_result_after_the_heading_stays_in_the_summary(self) -> None:
+        self.assertEqual(fold_sections("### Verification: `make fate` passes\nlog\n"),
+                         "<details><summary><b>Verification: <code>make fate</code> passes</b>"
+                         "</summary>\n\nlog\n</details>\n")
+
     def test_other_sections_and_a_message_without_headings_are_untouched(self) -> None:
         self.assertEqual(fold_sections(HIDDEN_HEAD), HIDDEN_HEAD)
         self.assertEqual(fold_sections("plain text\n"), "plain text\n")

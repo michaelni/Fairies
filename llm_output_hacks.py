@@ -155,9 +155,10 @@ def fold_entries(message: str) -> str:
 
 def fold_sections(message: str) -> str:
     """Fold the sections the prompt lays out under the headings
-    ``Dropped claims`` and ``Verification``, each from its heading to
-    the next heading or margin paragraph opening with bold text, into a
-    ``<details>`` block headed by the heading text."""
+    ``Dropped claims`` and ``Verification``, optionally followed by a
+    colon and a result, each from its heading to the next heading or
+    margin paragraph opening with bold text, into a ``<details>`` block
+    headed by the heading text."""
     lines = message.split("\n")
     out: list[str] = []
     i = 0
@@ -167,7 +168,7 @@ def fold_sections(message: str) -> str:
         if lines[i].startswith("```"):
             end = _fenced_block_end(lines, i)
             out += lines[i:end]
-        elif title.lower() in map(str.lower, _FOLDED_SECTIONS):
+        elif title.partition(":")[0].strip().lower() in map(str.lower, _FOLDED_SECTIONS):
             end = i + 1
             while end < len(lines) and not re.match(r"#{1,6} |\*\*", lines[end]):
                 end = _fenced_block_end(lines, end) if lines[end].startswith("```") else end + 1
@@ -176,7 +177,7 @@ def fold_sections(message: str) -> str:
             body = lines[i + 1:end]
             while body and not body[0].strip():
                 body.pop(0)
-            out += [f"<details><summary><b>{title}</b></summary>", "", *body, "</details>"]
+            out += [f"<details><summary><b>{_inline_html(title)}</b></summary>", "", *body, "</details>"]
             logger.info("section %r folded into a <details> block (%d lines)", title, len(body))
         else:
             end = i + 1

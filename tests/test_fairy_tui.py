@@ -1696,6 +1696,27 @@ class DetailTests(DbCase):
         self.assertIn("review  2026-07-21", text)
         self.assertNotIn("NOT POSTED", text)
 
+    def test_an_unposted_review_says_it_closes_the_pr(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, msg="superseded by #6"))
+        self.db.try_move("reviewed", "reviewed", "pr", "5",
+                         mutate=lambda d: d["review"].update(close=True))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("comment + CLOSES the PR", text)
+        self.assertIn("ago)  CLOSES the PR", text)
+
+    def test_a_posted_review_says_it_closed_the_issue(self) -> None:
+        self.model.filter_mode = "all"
+        self.db.push("posted", "issue", "7", verdict(
+            7, "reply", msg="duplicate of #1", expected_head_sha=None,
+            posted_at="2026-07-21T00:00:00+00:00"))
+        self.db.try_move("posted", "posted", "issue", "7",
+                         mutate=lambda d: d["review"].update(close=True))
+        self.model.poll()
+        text = self._detail_text()
+        self.assertIn("comment + CLOSES the issue", text)
+        self.assertIn("ago)  closed the issue", text)
+
     def test_a_posted_review_renders_where_it_was_sent(self) -> None:
         self.model.filter_mode = "all"
         self.db.push("posted", "pr", "5", verdict(

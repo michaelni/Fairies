@@ -1790,6 +1790,10 @@ class UILoop:
         else:
             byline = [("st_reviewed", ("  review — NOT POSTED  "
                                        + _when(data.get("llm_at")))[:w])]
+        if review.get("close"):
+            byline.append(("sc_bad", (
+                f"  {'closed' if item.state == 'posted' else 'CLOSES'} the "
+                f"{'PR' if item.kind == 'pr' else 'issue'}")[:w - len(byline[0][1])]))
         if labels:
             labels.append([])
         return [[], [("h4", "fairy")] + byline] + labels + message

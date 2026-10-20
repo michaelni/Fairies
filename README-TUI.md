@@ -56,7 +56,8 @@ last row).
   wrapper's vetter judged the verdict,
   then the discussion with the review at its end, where posting will
   put it, marked `NOT POSTED` until it is; once posted it sits in the
-  thread at the time it was sent. Below the review, each
+  thread at the time it was sent. A review that closes the PR or issue
+  says so in red next to that mark, before and after posting. Below the review, each
   branch the review persists: name, push mode, the PR it would open
   with its description, and its commits, each under its own hash and
   author (`b` switches a force push to the range-diff against the

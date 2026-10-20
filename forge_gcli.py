@@ -1512,19 +1512,32 @@ def apply_issue_label_changes(
     if not label_args:
         return
 
+    run_item_action(args, owner, repo, number, kind, "labels", *label_args)
+
+
+def run_item_action(
+    args: argparse.Namespace,
+    owner: str,
+    repo: str,
+    number: int,
+    kind: str,
+    *action: str,
+) -> None:
+    """Run ``gcli pulls|issues -o <owner> -r <repo> -i <number> <action>``;
+    ``kind`` (``KIND_PR`` / ``KIND_ISSUE``) selects the subcommand.
+    Raises ``RuntimeError`` on non-zero gcli exit."""
     subcommand = "pulls" if kind == KIND_PR else "issues"
     cmd = gcli_prefix(args) + [
         subcommand,
         "-o", owner,
         "-r", repo,
         "-i", str(number),
-        "labels",
-        *label_args,
+        *action,
     ]
     logger.info("+ %s", shlex.join(cmd))
     cp = run_gcli(args, cmd)
     if cp.returncode != 0:
         raise RuntimeError(
-            f"gcli {subcommand} labels failed for {owner}/{repo}#{number} "
+            f"gcli {subcommand} {action[0]} failed for {owner}/{repo}#{number} "
             f"(rc={cp.returncode}): {cp.stderr.strip()}"
         )

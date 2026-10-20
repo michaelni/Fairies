@@ -749,7 +749,7 @@ Outside this path, maintainers can manually push changes when needed.
 8. Verification, under the heading "Verification": what was verified and how, the work the drafts report, and everything else.
 9. The classification: a bulleted list with one entry, its first line the classification in bold with a 1 line justification, details below if needed
 """ if pr else """2. The replies, under the heading "Replies": one paragraph per reply, not a list, opening with the author and message link.
-3. The sections Duplicates, Reproduction, Regression, Root Cause, Affected Branches, Affected Users, Design Considerations and Fixes/Implementation, in this order, omitting those you have no result for, each under a heading that names it and states its result in one line, like "### Root Cause: ...", followed by the evidence and details.
+3. The sections Duplicates, Reproduction, Regression, Root Cause, Affected Branches, Affected Users, Design Considerations and Fixes/Implementation, in this order, omitting those which dont apply or you have no result for, each under a heading that names it and states its result in one line, like "### Root Cause: ...", followed by the evidence and details. If things where stated previously, point to them to avoid repeating.
 """}\
 
 When a list is empty omit it. When it is not empty preface it with a well vissible heading so the reader can quickly skip to what she is interrested in.

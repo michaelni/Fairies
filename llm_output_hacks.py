@@ -86,7 +86,9 @@ _LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _ITALIC = re.compile(r"(?<![*\w])\*(?!\*)([^*]+?)\*(?![*\w])")
 _HEADING = re.compile(r"^(?:#{1,6} +(?P<text>.+?)|\*\*(?P<bold>[^*]+)\*\*) *$")
-_FOLDED_SECTIONS = ("Dropped claims", "Verification")
+_FOLDED_SECTIONS = ("Dropped claims", "Verification", "Duplicates", "Reproduction", "Regression",
+                    "Root Cause", "Affected Branches", "Affected Users", "Design Considerations",
+                    "Fixes/Implementation")
 
 
 def _inline_html(markdown: str) -> str:
@@ -154,9 +156,9 @@ def fold_entries(message: str) -> str:
 
 
 def fold_sections(message: str) -> str:
-    """Fold the sections the prompt lays out under the headings
-    ``Dropped claims`` and ``Verification``, optionally followed by a
-    colon and a result, each from its heading to the next heading or
+    """Fold the sections the prompt lays out under the
+    ``_FOLDED_SECTIONS`` headings, optionally followed by a colon and a
+    result, each from its heading to the next heading or
     margin paragraph opening with bold text, into a ``<details>`` block
     headed by the heading text."""
     lines = message.split("\n")

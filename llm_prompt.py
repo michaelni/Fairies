@@ -738,9 +738,9 @@ Outside this path, maintainers can manually push changes when needed.
 - If you suggest a solution, review it as well and document any issues it has.
 
 {f'''##Message layout
-The author reads the message to act on it, the maintainers to decide on the merge. Lay it out as:
+{"The author reads the message to act on it, the maintainers to decide on the merge." if pr else "The reporter reads the message to act on it, the maintainers to decide how to resolve the issue."} Lay it out as:
 1. The LLM-{label} identification and the Scope block.
-2. The replies: a numbered list ordered by most important first, one reply per entry. The first line of an entry gives "Reply" in bold, and a 1 line summary, and where it is (the author and message link). The rest of the entry is the reply.
+{"""2. The replies: a numbered list ordered by most important first, one reply per entry. The first line of an entry gives "Reply" in bold, and a 1 line summary, and where it is (the author and message link). The rest of the entry is the reply.
 3. The findings: a numbered list ordered by severity, most serious first, one problem per entry. The first line of an entry gives the severity in bold (Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line). The rest of the entry is the evidence and, when the fix is clear, the fix.
 4. pre-existing issues: a numbered list ordered by severity, most serious first, one problem per entry. The first line of an entry gives the severity in bold (Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line). The rest of the entry is the evidence and, when the fix is clear, the fix.
 5. A numbered list of unverified or conditional issues and things that you dropped that ask nothing of the author similar to the previous lists
@@ -748,14 +748,17 @@ The author reads the message to act on it, the maintainers to decide on the merg
 7. Dropped claims, under the heading "Dropped claims": a numbered list like the previous lists.
 8. Verification, under the heading "Verification": what was verified and how, the work the drafts report, and everything else.
 9. The classification: a bulleted list with one entry, its first line the classification in bold with a 1 line justification, details below if needed
+""" if pr else """2. The replies, under the heading "Replies": one paragraph per reply, not a list, opening with the author and message link.
+3. The sections Duplicates, Reproduction, Regression, Root Cause, Affected Branches, Affected Users, Design Considerations and Fixes/Implementation, in this order, omitting those you have no result for, each under a heading that names it and states its result in one line, like "### Root Cause: ...", followed by the evidence and details.
+"""}\
 
 When a list is empty omit it. When it is not empty preface it with a well vissible heading so the reader can quickly skip to what she is interrested in.
 In every list the first line of an entry is a bold one-line summary with where it is; the evidence, reply or reason follows on the lines below it, stating results, not the process that produced them.
 A file location is the path from the repository root with the line, like libswscale/aarch64/rgb2rgb_neon.S:741.
-The forge folds "Dropped claims" and "Verification" away: name persisted branches and opened pull requests in the entry they serve or on a line of their own, never only there.
+{'The forge folds "Dropped claims" and "Verification" away: name persisted branches and opened pull requests in the entry they serve or on a line of their own, never only there.' if pr else "The forge folds every section but the Replies to its heading: name persisted branches and opened pull requests in the heading of the section they serve."}
 These lists should be concise. Use formatting like bold to highlight important things. You may reorder this to bring a more important issue to the top.
 
-''' * (pr and verdict and ctx.classifies)}\
+''' * (verdict and ctx.classifies)}\
 
 ''' * (not vetter)}\
 {'''##Persisting branches

@@ -1811,6 +1811,15 @@ def main() -> int:
                 close_shells=close_machine_shells if args.podman else None))
             workset_note(args, "vetting", vetting)
 
+        def hold_or_vet(review: Review) -> None:
+            posting_block = unattended_posting_block(
+                review, "issue" if args.task == "issue" else "pull request")
+            if posting_block:
+                workset_note(args, "vetting",
+                             {"hold_for_human_inspection": True, "reason": posting_block})
+            elif args.vet_model and (review.classification != "skip" or review.label_changes):
+                vet_verdict(review)
+
         triage_label_allowlist = triage_label_allowlist_from_request(request)
         requested_models: list[str] = []
         requested_effort: str | None = None
@@ -1904,8 +1913,7 @@ def main() -> int:
                         label_changes=tuple(triage_label_changes),
                         model=triager.name,
                     )
-                    if args.vet_model:
-                        vet_verdict(reply)
+                    hold_or_vet(reply)
                     emit_review_stdout(reply.classification, reply.message,
                                        label_changes=triage_label_changes)
                     return 0
@@ -2046,13 +2054,7 @@ def main() -> int:
             )
             return EXIT_REVIEW_HALTED
 
-        posting_block = unattended_posting_block(
-            review, "issue" if args.task == "issue" else "pull request")
-        if posting_block:
-            workset_note(args, "vetting",
-                         {"hold_for_human_inspection": True, "reason": posting_block})
-        elif args.vet_model and (review.classification != "skip" or review.label_changes):
-            vet_verdict(review)
+        hold_or_vet(review)
 
         message = review.message
         if review.classification == "skip":

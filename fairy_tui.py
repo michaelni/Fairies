@@ -1228,9 +1228,10 @@ def _clipboard_cmd() -> list[str] | None:
 
 
 def _fold_keys_of(lines: list, source: str, index: int = 0) -> list[tuple[str, int, int]]:
-    """The fold keys of the ▸/▾ headers in ``lines``, in order."""
-    return [(source, index, k) for k in
-            range(sum(_leading_style(line) == "fold" for line in lines))]
+    """The fold keys of the ``FoldHeader`` lines among the rendered
+    markdown ``lines``, in order."""
+    return [(source, index, line.fold) for line in lines
+            if isinstance(line, tui_core.FoldHeader)]
 
 
 def _leading_style(line) -> str | None:

@@ -1545,6 +1545,28 @@ class DetailTests(DbCase):
         self.assertNotIn("folded evidence", "\n".join(rows))
         self.assertIn("ran fate", rows[header + 2])
 
+    def test_nested_details_headers_show_and_toggle_inside_their_unfolded_block(self) -> None:
+        self.db.push("reviewed", "pr", "5", verdict(5, msg=(
+            "LLM-X\n<details><summary><b>Dropped claims</b></summary>\n\n"
+            "1. <details><summary><b>Dropped</b> — the CI claim</summary>\n\n"
+            "   the dropped evidence\n   </details>\n</details>\n")))
+        self.model.poll()
+        ui = make_ui(self.model)
+        ui.paint()
+        rect, gutter, rows = ui._shown["br"]
+        self.assertNotIn("the CI claim", "\n".join(rows))
+        header = next(i for i, r in enumerate(rows) if r.startswith("▸ Dropped claims"))
+        with mock.patch.object(ui, "_to_clipboard", side_effect=AssertionError):
+            ui._copy_click("br", rect.x + gutter, rect.y + 1 + header)
+            ui.paint()
+            rows = ui._shown["br"][2]
+            self.assertIn("1. ▸ Dropped — the CI claim", rows[header + 1])
+            ui._copy_click("br", rect.x + gutter, rect.y + 1 + header + 1)
+            ui.paint()
+        rows = ui._shown["br"][2]
+        self.assertIn("1. ▾ Dropped — the CI claim", rows[header + 1])
+        self.assertIn("the dropped evidence", rows[header + 2])
+
     def test_a_click_on_a_list_row_still_copies_its_number(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.model.poll()

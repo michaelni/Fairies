@@ -49,12 +49,22 @@ from itertools import islice
 from threading import Lock
 from typing import Collection
 
-__all__ = ["Chain", "Rect", "GridLayout", "RingBuffer", "StyledLine",
+__all__ = ["Chain", "Rect", "GridLayout", "RingBuffer", "StyledLine", "FoldHeader",
            "MARKDOWN_STYLES", "wrap", "render_markdown", "sanitize",
            "tile_blocks", "token_at"]
 
 # (style, text) segments; the painter treats an unknown style as "text".
 StyledLine = list[tuple[str, str]]
+
+
+class FoldHeader(list):
+    """The first line of a ``<details>`` block's ▸/▾ header; ``fold`` is
+    the block's number in source order."""
+
+    def __init__(self, line: StyledLine, fold: int) -> None:
+        super().__init__(line)
+        self.fold = fold
+
 
 MARKDOWN_STYLES = frozenset({
     "h1", "h2", "h3", "h4", "bold", "italic", "bold_italic", "strike",
@@ -455,9 +465,9 @@ def render_markdown(text: str, width: int,
     checkboxes, gutter-barred re-wrapped quotes, horizontal rules,
     wrapped paragraphs, HTML comments -- which forges hide but a
     review pane must show, dimmed, delimiters kept -- and ``<details>``
-    blocks: their summary line becomes a ▸/▾ header (style ``fold``),
-    their body shows only for the blocks, numbered in source order,
-    in ``unfolded``; the headers of nested blocks always show."""
+    blocks: their summary line becomes a ▸/▾ header (style ``fold``,
+    first line a ``FoldHeader``), their body shows only for the blocks,
+    numbered in source order, in ``unfolded``."""
     width = max(8, width)
     out: list[StyledLine] = []
     para: list[str] = []
@@ -515,11 +525,13 @@ def render_markdown(text: str, width: int,
             marker, summary = details.groups()
             folds.append(fold_count in unfolded)
             fold_count += 1
+            if hidden:
+                continue
             prefix = ("• " if marker in "-*+" else f"{marker} ") if marker else ""
-            out.extend(wrap(
-                _inline(summary), width,
-                initial=("fold", f"{prefix}{'▾' if folds[-1] else '▸'} "),
-                subsequent=" " * (len(prefix) + 2)))
+            mark = ("fold", f"{prefix}{'▾' if folds[-1] else '▸'} ")
+            first, *rest = wrap(_inline(summary), width, initial=mark,
+                                subsequent=" " * (len(prefix) + 2)) or [[mark]]
+            out += [FoldHeader(first, fold_count - 1), *rest]
             skip_blank = folds[-1]
             continue
         if stripped == "</details>" and folds:

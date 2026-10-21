@@ -41,7 +41,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import tui_core  # noqa: E402
-from tui_core import GridLayout, Rect, RingBuffer, render_markdown  # noqa: E402
+from tui_core import FoldHeader, GridLayout, Rect, RingBuffer, render_markdown  # noqa: E402
 
 
 def line_text(line: tui_core.StyledLine) -> str:
@@ -257,20 +257,26 @@ class RenderMarkdownTests(unittest.TestCase):
         texts = [line_text(x) for x in render_markdown(self.FOLDED, width=60)]
         self.assertEqual(texts, [
             "Findings", "1. ▸ Minor — the reconnect_at_eof claim",
-            "▸ Verification", "• ▸ inner", "after"])
+            "▸ Verification", "after"])
         lines = render_markdown(self.FOLDED, width=60)
         self.assertEqual([x[0] for x in lines if x and x[0][0] == "fold"],
-                         [("fold", "1. ▸ "), ("fold", "▸ "), ("fold", "• ▸ ")])
+                         [("fold", "1. ▸ "), ("fold", "▸ ")])
+        self.assertEqual([x.fold for x in lines if isinstance(x, FoldHeader)], [0, 1])
 
     def test_unfolded_blocks_show_their_body(self) -> None:
         texts = [line_text(x) for x in render_markdown(self.FOLDED, width=60, unfolded={0, 2})]
         self.assertEqual(texts, [
             "Findings", "1. ▾ Minor — the reconnect_at_eof claim", "Evidence paragraph with code.",
-            "▸ Verification", "• ▾ inner", "after"])
-        texts = [line_text(x) for x in render_markdown(self.FOLDED, width=60, unfolded={1})]
-        self.assertEqual(texts, [
+            "▸ Verification", "after"])
+        lines = render_markdown(self.FOLDED, width=60, unfolded={1, 2})
+        self.assertEqual([line_text(x) for x in lines], [
             "Findings", "1. ▸ Minor — the reconnect_at_eof claim",
-            "▾ Verification", "ran fate", "• ▸ inner", "after"])
+            "▾ Verification", "ran fate", "• ▾ inner", "inner body", "after"])
+        self.assertEqual([x.fold for x in lines if isinstance(x, FoldHeader)], [0, 1, 2])
+
+    def test_a_block_without_summary_keeps_its_header(self) -> None:
+        lines = render_markdown("<details><summary></summary>\n\nbody\n</details>\n", width=60)
+        self.assertEqual([(x.fold, x) for x in lines], [(0, [("fold", "▸ ")])])
 
     def test_html_comment_block_shows_dimmed(self) -> None:
         lines = render_markdown(

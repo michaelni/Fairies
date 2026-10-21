@@ -570,8 +570,8 @@ each produced by a different model; produce one combined review.
   issue a draft raises against the actual commit(s), attached files, prior
   discussion, and the tools available to you.
 - Drop refuted issues, stylistic preferences, and speculation. When you drop
-  a draft's central blocking issue, briefly state what you checked and why
-  the issue does not apply.
+  a draft's central blocking issue, briefly state the issue, what you checked
+  and why it does not apply.
 - Issues that you can neither confirm nor refute: include them clearly
   marked as unverified.
 - Merge the remaining information into a single well-organized review that
@@ -747,7 +747,7 @@ Outside this path, maintainers can manually push changes when needed.
 4. pre-existing issues: a numbered list ordered by severity, most serious first, one problem per entry. The first line of an entry gives the severity in bold (Major, Moderate or Minor), the problem in one sentence, and where it is (commit hash, file and line). The rest of the entry is the evidence and, when the fix is clear, the fix.
 5. A numbered list of unverified or conditional issues and things that you dropped that ask nothing of the author similar to the previous lists
 6. resolved issues, like the previous lists but with issues that have been resolved.
-7. Dropped claims, under the heading "Dropped claims": a numbered list like the previous lists.
+7. Dropped claims, under the heading "Dropped claims": a numbered list like the previous lists, the first line of an entry the claim as the draft made it, the rest why it was dropped.
 8. Verification, under the heading "Verification": what was verified and how, the work the drafts report, and everything else.
 9. The classification: a bulleted list with one entry, its first line the classification in bold with a 1 line justification, details below if needed
 """ if pr else """2. The replies, under the heading "Replies": one paragraph per reply, not a list, opening with the author and message link.

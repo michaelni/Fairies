@@ -824,6 +824,7 @@ def validate_result_with_branches(
 def build_triage_schema(
     allowed_models: list[str],
     allowed_labels: list[str] | None = None,
+    closable: bool = False,
 ) -> dict[str, object]:
     """Triage JSON schema; the override fields appear only if enabled.
 
@@ -834,6 +835,7 @@ def build_triage_schema(
     ``requested_verbosity`` (nullable, ``VERBOSITY_LEVELS``) is always
     present. Strict mode enforces the enums on the wire so
     ``validate_triage_result`` does not need to re-check the values.
+    ``closable`` adds the boolean ``close``.
     """
     properties: dict[str, object] = {
         "route": {
@@ -900,6 +902,9 @@ def build_triage_schema(
     if label_allowlist:
         properties["label_changes"] = _label_changes_property(label_allowlist)
         required.append("label_changes")
+    if closable:
+        properties["close"] = ISSUE_REPORT_SCHEMA["schema"]["properties"]["close"]
+        required.append("close")
     return {
         "name": "pr_triage_result",
         "strict": True,
@@ -996,6 +1001,7 @@ def validate_triage_result(
     return {
         "route": route,
         "message": message,
+        "close": obj.get("close") is True,
         "reason": reason,
         "requested_models": requested_models,
         "requested_effort": requested_effort,

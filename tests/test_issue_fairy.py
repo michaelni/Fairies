@@ -113,6 +113,16 @@ class IssueCloseTests(unittest.TestCase):
         self.assertEqual(order, ["comment", "close"])
         self.assertEqual(close.call_args.args[1:], ("o", "r", 4321, "issue", "close"))
 
+    def test_only_the_issue_triager_may_close(self) -> None:
+        triage = {"route": "reply_no_verdict", "message": "fixed by 1234abcd", "reason": "r",
+                  "prompt_injection": False, "requested_verbosity": None, "close": True}
+        with self.assertRaises(llm_review_api.SchemaError):
+            llm_prompt.make_triager_role(allowed_models=[], allowed_labels=[]).validate(triage)
+        role = llm_prompt.make_triager_role(allowed_models=[], allowed_labels=[], task="issue")
+        self.assertTrue(role.validate(triage)["close"])
+        with self.assertRaises(llm_review_api.SchemaError):
+            role.validate({k: v for k, v in triage.items() if k != "close"})
+
 
 class IssueReportSchemaTests(unittest.TestCase):
     def test_accepts_every_issue_classification(self) -> None:

@@ -1014,6 +1014,10 @@ Pick exactly one value for ``route``:
   no repro/* label (it was never fully analyzed).
   Put the FULL reply in ``message``, following the
   normal output guideline.
+  Set ``close`` to true when the reply states a definite verdict that
+  ends the issue (resolution/duplicate, resolution/invalid,
+  resolution/external, or resolution/fixed with a verified fixing
+  commit), false otherwise.
 
 - engage: an investigation pass (potentially with duplicate search, reproduction,
   bisect, debugging and finding the root cause) should run now. Typical cases:
@@ -1029,7 +1033,7 @@ Critical rules:
   string for ``skip`` and ``engage``.
 
 Output schema: return exactly a JSON object with fields ``route``,
-``message``, and ``reason``. ``reason`` is a short one-or-two-sentence
+``message``, ``close`` and ``reason``. ``reason`` is a short one-or-two-sentence
 internal explanation of why you chose that route; it is logged but not
 posted to Forgejo.
 ''' * (not pr and triager)}\
@@ -1254,16 +1258,16 @@ def make_triager_role(
     """Build a triager ``RoleSpec`` for this run's model/label allowlists.
 
     ``task`` selects the subject: ``"pr"`` or ``"issue"`` (the wrapper's
-    ``--task``); routes and schema are identical, only the prompt and
-    user text differ.
+    ``--task``); routes are identical, the issue schema adds ``close``,
+    and the prompt and user text differ.
     """
-    schema = build_triage_schema(allowed_models, allowed_labels)
+    issue = task == "issue"
+    schema = build_triage_schema(allowed_models, allowed_labels, closable=issue)
 
     def validate(obj: object) -> dict[str, object]:
         check_schema(obj, schema["schema"])
         return validate_triage_result(obj, allowed_labels=allowed_labels)
 
-    issue = task == "issue"
     return RoleSpec(
         name="issue_triager" if issue else "triager",
         schema=schema,

@@ -1911,10 +1911,11 @@ def main() -> int:
                         "reply" if args.task == "issue" else "reply_no_verdict",
                         str(triage_result.get("message") or ""),
                         label_changes=tuple(triage_label_changes),
+                        close=triage_result.get("close") is True,
                         model=triager.name,
                     )
                     hold_or_vet(reply)
-                    emit_review_stdout(reply.classification, reply.message,
+                    emit_review_stdout(reply.classification, reply.message, close=reply.close,
                                        label_changes=triage_label_changes)
                     return 0
                 if route == "engage":

@@ -156,6 +156,14 @@ class RoleWithLabelsTests(unittest.TestCase):
         })
         self.assertEqual([c["label"] for c in result["label_changes"]], ["stale"])
 
+    def test_a_refused_reproduction_is_a_content_flag(self) -> None:
+        role = llm_prompt.role_with_labels(llm_prompt.ISSUE_INVESTIGATOR_ROLE,
+                                           ["repro/yes", llm_review_api.REPRO_REFUSE])
+        with self.assertRaisesRegex(llm_review_api.ProviderContentFlagged, "only read the source"):
+            role.validate({"classification": "reply", "message": "m", "close": False,
+                           "label_changes": [_change(llm_review_api.REPRO_REFUSE, "add",
+                                                     "only read the source")]})
+
     def test_reviewer_and_combiner_prompts_gain_label_section(self) -> None:
         for role in ("review", "combiner"):
             with self.subTest(role=role):

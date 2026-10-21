@@ -89,6 +89,7 @@ __all__ = [
     "REVIEW_SCHEMA",
     "UNGRADED_REVIEW_SCHEMA",
     "VET_SCHEMA",
+    "REPRO_REFUSE",
     "BadModelOutput",
     "BranchCollectionFailed",
     "ProviderContentFlagged",
@@ -299,6 +300,9 @@ class ProviderContentFlagged(ProviderTurnFailed):
     pass
 
 
+REPRO_REFUSE = "repro/refuse"
+
+
 # In-run retry budgets for ``ProviderTurnFailed``. The budget is spent
 # here rather than in fairy's outer --llm-max-attempts loop -- a stage
 # retry costs one stage run where an outer attempt re-runs the whole
@@ -505,6 +509,10 @@ def validate_result_with_labels(
     so invalid entries are dropped with a warning by
     ``sanitize_label_changes`` instead -- retrying an expensive review
     pass is not worth one bad label.
+
+    A verdict adding ``REPRO_REFUSE`` raises ``ProviderContentFlagged``:
+    the model refused to reproduce the issue, so its turn is handled like
+    a content flag.
     """
     if not isinstance(obj, dict):  # boundary: raw model JSON
         raise SchemaError(f"$: expected type 'object', got {type(obj).__name__}")
@@ -512,6 +520,9 @@ def validate_result_with_labels(
         validate({k: v for k, v in obj.items() if k != "label_changes"})
     )
     result["label_changes"] = sanitize_label_changes(obj.get("label_changes"), allowed_labels)
+    for change in result["label_changes"]:
+        if change["label"] == REPRO_REFUSE and change["op"] == "add":
+            raise ProviderContentFlagged(f"refused to reproduce the issue: {change['reason']}")
     return result
 
 

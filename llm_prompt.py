@@ -47,6 +47,7 @@ from pathlib import Path
 from common import JsonObject
 from llm_review_api import (
     ISSUE_REPORT_SCHEMA,
+    REPRO_REFUSE,
     REVIEW_SCHEMA,
     TRIAGE_REQUESTABLE_EFFORTS,
     UNGRADED_REVIEW_SCHEMA,
@@ -239,6 +240,7 @@ TRIAGE_LABEL_DEFINITIONS: dict[str, str] = {
     "repro/flaky": "the issue was analyzed and reproduces only intermittently",
     "repro/no": "the issue was analyzed with everything needed provided, but it does not reproduce",
     "repro/no(env)": "the issue was analyzed but reproduction needs hardware or an environment the analyzing bot lacks",
+    REPRO_REFUSE: "the issue was analyzed with everything needed provided, but you refused to attempt replication (or you only read the source code)",
     "needs info": "waiting on information that only the reporter can provide; cleared once it arrives",
     "resolution/duplicate": "the PR or issue duplicates another that is better kept; name the kept one in the message",
     "resolution/invalid": "the PR or issue is not valid (user error, misunderstanding, joke, spam)",
@@ -630,7 +632,7 @@ Make sure you add all needed details in your message so a subsequent session doe
 """ * persist_branches}\
 - Affected branches: for bugs (not enhancements), check whether master and the active release branches are affected.
 - Fixes: if a fix or a pull request for this issue already exists, link it.
-- Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis of a bug (enhancements get no repro/*) you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), or repro/no(env) (reproduction needs hardware or an environment you lack and cannot emulate/simulate). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Issues concluded resolution/invalid or resolution/duplicate need no repro/*. Set "needs info"/"needs sample" whenever your message asks the reporter for something (information, a sample, a retest) -- their answer re-triggers analysis only if one of these labels is set -- and clear them once the information arrived. resolution/duplicate, resolution/invalid, resolution/external and resolution/fixed (only with a verified fixing commit) are definite verdicts; other resolution/* decisions belong to humans.
+- Labels: the issue's state lives in its labels; your findings above are recorded by setting/clearing them. On a full analysis of a bug (enhancements get no repro/*) you MUST end up with exactly one repro/* label on the issue recording the reproduction outcome: repro/yes, repro/flaky, repro/no (everything was provided but it does not reproduce), repro/no(env) (reproduction needs hardware or an environment you lack and cannot emulate/simulate), or {REPRO_REFUSE} (you did not attempt it). repro/* is also the marker that this issue was analyzed, so a pass without one will be re-run. Issues concluded resolution/invalid or resolution/duplicate need no repro/*. Set "needs info"/"needs sample" whenever your message asks the reporter for something (information, a sample, a retest) -- their answer re-triggers analysis only if one of these labels is set -- and clear them once the information arrived. resolution/duplicate, resolution/invalid, resolution/external and resolution/fixed (only with a verified fixing commit) are definite verdicts; other resolution/* decisions belong to humans.
 Do not present unverified suspicions as findings; state clearly what you verified and what you could not.
 
 If something is framed as a bug report do not mark it as an enhancement, just because its not a valid bug. It is a invalid bug, or external bug or other kind of "bug". A new issue that is clearly and concisely a feature request is better than a bug report that after long discussion turns into a feature request. You can ask the reporter to open a proper feature request, if that was their intent.

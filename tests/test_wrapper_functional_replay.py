@@ -79,7 +79,7 @@ except ModuleNotFoundError:
 
 import pr_review_wrapper as wrapper
 import openai_reviewer
-from llm_review_api import QuotaExhausted, Review
+from llm_review_api import REPRO_REFUSE, QuotaExhausted, Review
 from common import EXIT_QUOTA_EXHAUSTED, EXIT_REVIEW_STOPPED_BY_HALT_FILE
 from test_podman_host import ContainerStateHarness
 
@@ -373,6 +373,24 @@ class EngageLabelOwnershipTests(unittest.TestCase):
         (reviewer,) = seen["reviewers"]
         self.assertIn("label_changes", reviewer.role.schema["schema"]["properties"])
         self.assertIsNone(seen["combiner"])
+
+    def test_only_issue_verdicts_may_report_a_refused_reproduction(self) -> None:
+        for task, classification, labels in (("pr", "approve", ["needs docs"]),
+                                             ("issue", "reply", ["needs docs", REPRO_REFUSE])):
+            with self.subTest(task=task):
+                seen: dict[str, list] = {}
+
+                def stub(ctx: object, reviewers: list, combiner: object, **kw: object) -> Review:
+                    seen["reviewers"] = reviewers
+                    return Review(classification, "m", model="openai:x")
+
+                exit_code, _out, _reached = _run_wrapper_with_stubbed_triage(
+                    _fixture_request(triage_label_allowlist=["needs docs"]),
+                    self.TRIAGE_ENGAGE_WITH_LABELS, review_pr_stub=stub,
+                    model_args=["--model", "openai:gpt-5.4", "--task", task])
+                self.assertEqual(exit_code, 0)
+                (reviewer,) = seen["reviewers"]
+                self.assertEqual(reviewer.role.prompt_kwargs["allowed_labels"], labels)
 
 
 class MainPassPromptWiringTests(unittest.TestCase):

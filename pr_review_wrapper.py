@@ -98,6 +98,7 @@ import concurrency
 import llm_review_api
 from llm_review_api import (
     EXIT_BAD_MODEL_OUTPUT,
+    REPRO_REFUSE,
     VERBOSITY_LEVELS,
     BadModelOutput,
     ProviderTurnFailed,
@@ -1955,12 +1956,13 @@ def main() -> int:
         # A user request names models only, so each runs the task's own prompt.
         main_prompts = [None] * len(requested_models) if requested_models else args.main_prompts
         combining = len(main_specs) > 1 or bool(args.combine_model)
-        reviewer_labels = [] if combining else triage_label_allowlist
+        verdict_labels = triage_label_allowlist + [REPRO_REFUSE] * (args.task == "issue")
+        reviewer_labels = [] if combining else verdict_labels
         base_reviewer_role, base_combiner_role = (
             (ISSUE_INVESTIGATOR_ROLE, ISSUE_COMBINER_ROLE) if args.task == "issue"
             else (UNGRADED_REVIEWER_ROLE if combining else REVIEWER_ROLE, COMBINER_ROLE)
         )
-        combiner_role = role_with_labels(base_combiner_role, triage_label_allowlist)
+        combiner_role = role_with_labels(base_combiner_role, verdict_labels)
 
         def stage_role(role):
             """The stage's role, branch-enabled when this run persists

@@ -96,7 +96,8 @@ PUSH_TIMELINE = [{
 
 def _call(*, timeline: list[dict], min_age_days: float = 0.25,
           reviews: list[dict] = [REQUEST_REVIEW],
-          settle_hours: dict[str, float] = {}) -> object:
+          settle_hours: dict[str, float] = {},
+          llm_review_cmd: str | None = None) -> object:
     args = SimpleNamespace(
         force_skip_prs=frozenset(),
         force_review_prs=frozenset(),
@@ -104,7 +105,7 @@ def _call(*, timeline: list[dict], min_age_days: float = 0.25,
         repo="FFmpeg",
         simulate_past=None,
         verbose=False,
-        llm_review_cmd=None,
+        llm_review_cmd=llm_review_cmd,
         include_self_approved=False,
         min_age_days=min_age_days,
         settle_hours=settle_hours,
@@ -120,7 +121,7 @@ def _call(*, timeline: list[dict], min_age_days: float = 0.25,
     }
     with patch.object(
         fairy, "list_commit_statuses", return_value=[],
-    ):
+    ), patch.object(fairy, "get_auto_merge_info", return_value="-"):
         return fairy.prepare_pr(
             args, pr, now=NOW, self_login=SELF,
             wip_re=fairy.compile_wip_regex([]),
@@ -167,6 +168,21 @@ class PushResetsActivityGateTests(unittest.TestCase):
         decision = _call(timeline=PUSH_TIMELINE, min_age_days=10, reviews=[],
                          settle_hours={"bob": 48.0})
         self.assertEqual(decision.reason, "no commit statuses / CI results found")
+
+    def test_requesters_are_those_whose_request_started_the_review(self) -> None:
+        # bob's request came before fairy's comment, carol's mention and
+        # dave's request after it.
+        def request(login: str, at: str) -> dict:
+            return {"type": "review_request", "created_at": at,
+                    "user": {"login": login}, "assignee": {"login": SELF}}
+        mention = {"user": {"login": "carol"}, "state": "COMMENT",
+                   "body": f"@{SELF} please look", "submitted_at": "2026-06-17T20:08:00Z"}
+        prepared = _call(
+            timeline=[request("bob", "2026-06-16T20:00:00Z"),
+                      request("dave", "2026-06-17T20:08:00Z")],
+            reviews=[dict(REQUEST_REVIEW, submitted_at="2026-06-17T20:08:00Z"), mention],
+            llm_review_cmd="review")
+        self.assertEqual(prepared.review_requesters, ("carol", "dave"))
 
 
 if __name__ == "__main__":

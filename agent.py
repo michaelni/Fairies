@@ -288,7 +288,8 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
             "html_url": str(item.get("html_url") or ""),
             "updated_at": item.get("updated_at"),
             **status,
-            "events": [{"type": event["type"], "created_at": event["created_at"]}
+            "events": [{"type": event["type"], "created_at": event["created_at"],
+                        "author": author_login(event.get("user"))}
                        for event in timeline],
             "discussion": discussion,
         }
@@ -454,7 +455,10 @@ def _review_stands(kind: str, ticket: dict, item: dict,
         stands = fairy.review_unaffected_since(
             snapshot, ticket.get("expected_updated_at"),
             ticket.get("expected_head_sha"),
-            ticket.get("expected_patch_ids"), ticket.get("body"))
+            ticket.get("expected_patch_ids"), ticket.get("body")) \
+            or fairy.changed_only_by(
+                ticket.get("review_requesters") or (), snapshot,
+                ticket.get("expected_updated_at"), ticket.get("body"))
     return stands
 
 
@@ -1041,7 +1045,8 @@ def ticket_decision(kind: str, number, ticket: dict) -> fairy.Decision | None:
         expected_head_sha=ticket.get("expected_head_sha"),
         expected_patch_ids=(None if ticket.get("expected_patch_ids") is None
                             else tuple(ticket["expected_patch_ids"])),
-        expected_body=ticket.get("body"))
+        expected_body=ticket.get("body"),
+        review_requesters=tuple(ticket.get("review_requesters") or ()))
 
 
 def postable(decision: fairy.Decision | None) -> bool:
@@ -1057,7 +1062,8 @@ def staleness_reason(ns: argparse.Namespace, kind: str, item: dict,
     the item moved since the review, or is no longer open. The item's
     ``snapshot`` (its refreshed items/ record) tells pushes that only
     rebased the series, review requests, label changes and mentions,
-    which do not count as moving."""
+    which do not count as moving, nor do changes made only by those
+    whose request started the review."""
     if kind == "pr":
         return fairy.check_pr_still_unchanged(ns, item, decision, snapshot)
     return issue_fairy.check_issue_still_unchanged(ns, item, decision, snapshot)
@@ -1083,25 +1089,35 @@ _UNSEEN_CHANGE_WORDS: dict[str, Callable[[dict], str]] = {
     "due_date_set": lambda e: f"due {e['date']}",
     "due_date_changed": lambda e: f"due {e['new_date']}",
     "due_date_removed": lambda e: "due date removed",
+    "state": lambda e: e["state"],
+    "target_branch_changed": lambda e: (f"target branch now {e['new_ref']}"
+                                        if "new_ref" in e else "target branch changed"),
     **{kind: (lambda e, kind=kind: kind.replace("_", " "))
        for kind in FIELDLESS_KINDS.values()},
 }
+_UNSEEN_ARRIVAL_WORDS = {"push": "new commits", "comment": "comments",
+                         "review": "reviews", "review_comment": "review comments"}
 
 
 def _unseen_changes_note(ns: argparse.Namespace, ticket: dict,
-                         snapshot: dict | None) -> str:
+                         snapshot: dict | None, code_changed: bool) -> str:
     """The closing line telling a verdict's readers what changed on the
-    item after its review sampled it, "" when nothing did."""
+    item after its review sampled it, "" when nothing did. Pushes are
+    named only when ``code_changed``."""
     sampled = iso_to_dt(ticket.get("expected_updated_at"))
     if snapshot is None or sampled is None:
         return ""
-    changes = [_UNSEEN_CHANGE_WORDS[entry["kind"]](entry)
-               for entry in snapshot["discussion"]
-               if entry["kind"] in _UNSEEN_CHANGE_WORDS
-               and (not entry["kind"].startswith("label_")
-                    or entry["label"] in ns.triage_labels)
-               and discussion_time(entry) > sampled
-               and entry not in ticket.get("discussion", ())]
+    later = [entry for entry in snapshot["discussion"]
+             if discussion_time(entry) > sampled
+             and entry not in ticket.get("discussion", ())]
+    changes = list(dict.fromkeys(
+        _UNSEEN_ARRIVAL_WORDS[entry["kind"]] for entry in later
+        if entry["kind"] in _UNSEEN_ARRIVAL_WORDS
+        and (entry["kind"] != "push" or code_changed)))
+    changes += [_UNSEEN_CHANGE_WORDS[entry["kind"]](entry) for entry in later
+                if entry["kind"] in _UNSEEN_CHANGE_WORDS
+                and (not entry["kind"].startswith("label_")
+                     or entry["label"] in ns.triage_labels)]
     return (f"\n\nThis review did not see the changes made after it "
             f"started: {', '.join(changes)}" if changes else "")
 
@@ -1164,12 +1180,21 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
         item, snapshot = ingest_item(db, ns, kind, number, cache)
         # the operator's Y: post as-is although the item may have
         # moved since the review; popped so the archive stays clean
-        reason = None if ticket.pop("force_post", None) \
+        forced = ticket.pop("force_post", None)
+        reason = None if forced \
             else staleness_reason(ns, kind, item, decision, snapshot)
         if reason is None:
+            code_changed = snapshot is not None \
+                and not fairy.series_kept(snapshot, decision.expected_head_sha,
+                                          decision.expected_patch_ids)
+            if code_changed and not forced and decision.llm_classification \
+                    in fairy.APPROVING_CLASSIFICATIONS:
+                decision = dataclasses_replace(
+                    decision, action="comment", llm_classification="reply_no_verdict")
             if decision.action in fairy.ACTIONABLE_DECISIONS:
                 decision = dataclasses_replace(decision, llm_message=(
-                    decision.llm_message + _unseen_changes_note(ns, ticket, snapshot)))
+                    decision.llm_message
+                    + _unseen_changes_note(ns, ticket, snapshot, code_changed)))
             try:
                 reason = post_decision(ns, kind, item, decision, cache=cache,
                                        counts=counts)
@@ -1178,7 +1203,9 @@ def send_one(db: filedb.Db, ns: argparse.Namespace, kind: str,
                 ticket.pop("agent_promoted", None)
                 reason = f"send failed: {exc}"
         if reason is None:
-            ticket["review"]["message"] = decision.llm_message
+            ticket["action"] = decision.action
+            ticket["review"].update(classification=decision.llm_classification,
+                                    message=decision.llm_message)
             claim.finish("posted", dict(
                 ticket, posted_at=datetime.now(timezone.utc).isoformat()))
             logger.info("%s #%s posted: %s", kind, number,

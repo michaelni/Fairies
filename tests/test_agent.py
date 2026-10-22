@@ -1063,6 +1063,72 @@ class RebaseSendTests(RebasedSeriesCase):
                          "PR head changed")
 
 
+class RequestedReviewSendTests(RebasedSeriesCase):
+    """The author asked for the review and changed the PR while it ran."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.db.push("outgoing", "pr", "1", verdict_ticket(
+            1, "approve", expected_patch_ids=["p1"], review_requesters=["a"]))
+
+    def send_changed(self, comments: tuple[dict, ...] = (), **changed) -> mock.Mock:
+        self.thread.return_value = ([], list(comments), [], [PUSH], {})
+        with mock.patch.object(fairy, "submit_decision_action",
+                               return_value=None) as submit:
+            self.send(pr_ns=self.ns, changed={"head": {"sha": "h2"},
+                                              "updated_at": "later", **changed})
+        return submit
+
+    def test_new_code_turns_the_approval_into_a_noted_comment(self) -> None:
+        self.git_series_patch_ids.return_value = ["p2"]
+        decision = self.send_changed().call_args.args[1]
+        note = ("m\n\nThis review did not see the changes made after it "
+                "started: new commits")
+        self.assertEqual((decision.action, decision.llm_message), ("comment", note))
+        posted = self.db.get("posted", "pr", "1")
+        self.assertEqual((posted["action"], posted["review"]["classification"]),
+                         ("comment", "reply_no_verdict"))
+
+    def test_a_comment_beside_a_rebase_keeps_the_approval(self) -> None:
+        decision = self.send_changed([
+            {"user": {"login": "a"}, "body": "fixed",
+             "created_at": "2026-07-20T01:00:00Z"}]).call_args.args[1]
+        self.assertEqual(decision.action, "approve")
+        self.assertEqual(decision.llm_message, "m\n\nThis review did not see "
+                         "the changes made after it started: comments")
+
+    def test_a_comment_by_someone_else_blocks(self) -> None:
+        self.send_changed([{"user": {"login": "carol"}, "body": "ping",
+                            "created_at": "2026-07-20T01:00:00Z"}]
+                          ).assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR head changed")
+
+    def test_a_description_edit_blocks(self) -> None:
+        self.git_series_patch_ids.return_value = ["p2"]
+        self.send_changed(body="edited").assert_not_called()
+        self.assertEqual(self.db.get("reviewed", "pr", "1")["send_blocked"],
+                         "PR head changed")
+
+    def test_the_operators_y_keeps_the_approval_and_names_new_commits(self) -> None:
+        self.git_series_patch_ids.return_value = ["p2"]
+        self.db.push("outgoing", "pr", "1", dict(verdict_ticket(
+            1, "approve", expected_patch_ids=["p1"]), force_post=True))
+        decision = self.send_changed().call_args.args[1]
+        self.assertEqual((decision.action, decision.llm_message),
+                         ("approve", "m\n\nThis review did not see the changes "
+                          "made after it started: new commits"))
+
+    def test_the_verdict_stands_in_auto_mode(self) -> None:
+        self.ns.auto_mode = True
+        self.git_series_patch_ids.return_value = ["p2"]
+        self.db.push("reviewed", "pr", "3", verdict_ticket(
+            3, "approve", expected_patch_ids=["p1"], review_requesters=["a"]))
+        self.scan([self.pushed(3)])
+        self.assertEqual(self.db.find("pr", "3"), "reviewed")
+        self.prepare.assert_not_called()
+
+
 class MovedItemTests(AgentCase):
     def test_the_scan_goes_on_with_the_item_its_thread_was_fetched_at(self) -> None:
         moved = dict(make_pr(1), updated_at="2026-07-19T10:00:10Z")

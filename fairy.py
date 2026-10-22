@@ -304,6 +304,7 @@ class Decision:
     # For merge_ready: when fairy's approval review was submitted, so
     # the operator surface can show how long the merge has waited.
     approved_at: datetime | None = None
+    review_requesters: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -347,6 +348,8 @@ class PreparedPR:
     # the triage route (skip / reply_no_verdict) and even on CI-red PRs.
     # Travels as the ``force_engage`` field in the wrapper's stdin request.
     force_engage: bool = False
+    # Those whose review request or @-mention of fairy started this review.
+    review_requesters: tuple[str, ...] = ()
 
 
 logger = logging.getLogger(__name__)
@@ -370,7 +373,8 @@ def prepared_pr_from_dict(data: dict) -> PreparedPR:
     d = dict(data)
     if d.get("last_activity"):
         d["last_activity"] = datetime.fromisoformat(d["last_activity"])
-    for key in ("cancelled_ci_contexts", "blocked_ci_contexts", "external_approvers"):
+    for key in ("cancelled_ci_contexts", "blocked_ci_contexts", "external_approvers",
+                "review_requesters"):
         d[key] = tuple(d.get(key) or ())
     return PreparedPR(**d)
 
@@ -1104,6 +1108,20 @@ def series_kept(snapshot: dict, expected_head_sha: str | None,
             and snapshot["patch_ids"] == list(expected_patch_ids))
 
 
+def changed_only_by(logins: Sequence[str], snapshot: dict | None,
+                    sampled_at: str | None, expected_body: str | None) -> bool:
+    """Whether, per the PR's items/ ``snapshot``, something arrived after
+    ``sampled_at``, all of it from ``logins``, and the description is
+    still ``expected_body``. False when either is unknown."""
+    sampled = iso_to_dt(sampled_at)
+    if snapshot is None or sampled is None:
+        return False
+    later = [entry for entry in snapshot["discussion"] + snapshot["events"]
+             if discussion_time(entry) > sampled]
+    return (bool(later) and snapshot["body"] == expected_body
+            and all(entry.get("author") in logins for entry in later))
+
+
 def check_pr_still_unchanged(
     args: argparse.Namespace,
     current: ApiObject,
@@ -1125,7 +1143,9 @@ def check_pr_still_unchanged(
                   and get_pr_head_sha(current) != decision.expected_head_sha)
     unaffected = review_unaffected_since(
         snapshot, decision.expected_pr_updated_at, decision.expected_head_sha,
-        decision.expected_patch_ids, decision.expected_body)
+        decision.expected_patch_ids, decision.expected_body) or changed_only_by(
+        decision.review_requesters, snapshot, decision.expected_pr_updated_at,
+        decision.expected_body)
     if head_moved and not unaffected:
         return "PR head changed"
     if (decision.expected_pr_updated_at is not None
@@ -2652,6 +2672,7 @@ def prepare_pr(
         return skip("not open", last_activity_value=last_activity)
 
     forced_review_reason: str | None = None
+    review_requesters: tuple[str, ...] = ()
     if number in args.force_review_prs:
         forced_review_reason = "forced review by --force-review"
     elif self_login:
@@ -2712,6 +2733,17 @@ def prepare_pr(
                     latest_review_request.isoformat(),
                     reviewer_last_activity.isoformat() if reviewer_last_activity else "-",
                 )
+
+            if forced_review_reason is not None:
+                requests = [(first_dt(event, "created_at"), event.get("author"))
+                            for event in timeline_events(timeline)
+                            if event["kind"] == "review_request" and event.get("reviewer") == self_login]
+                requests += [(first_dt(item, "submitted_at", "updated_at", "created_at"), get_item_author_login(item))
+                             for item in reviews + comments + review_comments
+                             if get_item_author_login(item) != self_login and item_body_mentions_user(item, mention_re)]
+                review_requesters = tuple(sorted({
+                    login for when, login in requests
+                    if login and when and (reviewer_last_activity is None or when > reviewer_last_activity)}))
 
     if is_marked_wip(pr, wip_re) and forced_review_reason is None:
         return skip("marked WIP/draft", last_activity_value=last_activity)
@@ -2796,6 +2828,7 @@ def prepare_pr(
             ignore_triage_skip=is_forced,
             force_engage=is_forced and args.force_engage,
             forced_review=True,
+            review_requesters=review_requesters,
         )
 
     if author == self_login:

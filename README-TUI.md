@@ -70,7 +70,8 @@ last row).
   thread is kept current
   by the agent's scan, with your `i` notes in it at their time; a
   `── sampled for the review … ──` line marks
-  how far the review saw. `m` switches a PR to its patches or its
+  the end of the thread the review was given; reviewers may read
+  later entries on the forge. `m` switches a PR to its patches or its
   merge diff, syntax- and diff-colored from the side's local
   `patch-repo` mirror.
 

@@ -140,6 +140,7 @@ import workset
 
 __all__ = [
     "ACTIONABLE_DECISIONS",
+    "APPROVING_CLASSIFICATIONS",
     "ApiObject",
     "DEFAULT_WIP_PREFIXES",
     "Decision",
@@ -1644,6 +1645,9 @@ def get_auto_merge_info(
     return forge_gcli.auto_merge_state(args, pr, timeline)
 
 
+# The review classifications that approve the PR.
+APPROVING_CLASSIFICATIONS = frozenset({"approve", "minor_issues_approve"})
+
 # Discussion kinds after which a review no longer stands: new words, a
 # state change or a changed target. A push is judged by the series it
 # left; every other kind is housekeeping the posted verdict names.
@@ -2799,7 +2803,7 @@ def prepare_pr(
             get_item_author_login(item) == self_login
             and normalize_review_state(item.get("state")) != "REQUEST_REVIEW"
             for item in reviews + comments)
-        if posted_classification in ("approve", "minor_issues_approve"):
+        if posted_classification in APPROVING_CLASSIFICATIONS:
             return skip("own pull request, already approved",
                         last_activity_value=last_activity)
         if own_posts >= 2:

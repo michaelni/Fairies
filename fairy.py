@@ -184,6 +184,7 @@ __all__ = [
     "reviewed_patch_ids",
     "safe_apply_llm_review_to_prepared",
     "safe_prepare_pr",
+    "series_kept",
     "thread_before",
     "settle_days",
     "submit_decision_action",
@@ -1073,13 +1074,12 @@ def review_unaffected_since(snapshot: dict | None, sampled_at: str | None,
     sampled it at ``sampled_at`` leaves the review standing, per its items/
     ``snapshot``: nothing of ``VOIDING_KINDS`` (new words, a state or
     target-branch change), no timeline entry the discussion does not
-    carry, pushes only if they kept the series -- and at least one
-    entry, an update with nothing recorded behind it is unexplained --
-    and the description still ``expected_body``. The series is kept
-    while the head is still ``expected_head_sha`` or the patch-ids
-    still ``expected_patch_ids`` (None when unknown); an issue, which
-    has no head, passes None for both. False when ``snapshot`` or
-    ``sampled_at`` is unknown."""
+    carry, pushes only if they kept the series (``series_kept``) -- and
+    at least one entry, an update with nothing recorded behind it is
+    unexplained -- and the description still ``expected_body``. An
+    issue, which has no head, passes None for ``expected_head_sha`` and
+    ``expected_patch_ids``. False when ``snapshot`` or ``sampled_at`` is
+    unknown."""
     sampled = iso_to_dt(sampled_at)
     if snapshot is None or sampled is None:
         return False
@@ -1090,9 +1090,17 @@ def review_unaffected_since(snapshot: dict | None, sampled_at: str | None,
     return (bool(kinds) and not kinds & VOIDING_KINDS
             and types <= _STANDING_EVENTS
             and snapshot["body"] == expected_body
-            and (snapshot.get("head_sha") == expected_head_sha
-                 or expected_patch_ids is not None
-                 and snapshot["patch_ids"] == list(expected_patch_ids)))
+            and series_kept(snapshot, expected_head_sha, expected_patch_ids))
+
+
+def series_kept(snapshot: dict, expected_head_sha: str | None,
+                expected_patch_ids: Sequence[str] | None) -> bool:
+    """Whether the items/ ``snapshot`` of a PR still has the series a
+    review saw: the head ``expected_head_sha`` or the patch-ids
+    ``expected_patch_ids`` (None when unknown)."""
+    return (snapshot.get("head_sha") == expected_head_sha
+            or expected_patch_ids is not None
+            and snapshot["patch_ids"] == list(expected_patch_ids))
 
 
 def check_pr_still_unchanged(

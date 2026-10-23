@@ -1234,23 +1234,25 @@ def agent_promotes(db: filedb.Db, ns: argparse.Namespace, kind: str,
     """Whether the send pass, not an operator, sends this reviewed/
     verdict: every base verdict under --auto-mode, under
     --vetted-auto-mode those the wrapper's vetter passed. Never a
-    sample evaluation, never an item that has any (the operator who
-    asked for several reviews picks the one to post) and never a
-    verdict a blocked send parked: that waits for Y, r or s."""
-    if not filedb.is_base(number) or db.evaluations(kind, number) \
-            or ticket.get("send_blocked"):
+    sample evaluation and never a parked verdict: that waits for Y, r
+    or s."""
+    if not filedb.is_base(number) or ticket.get("send_blocked"):
         return False
     vetting = ticket.get("vetting") or {}
     return ns.auto_mode or (
         ns.vetted_auto_mode and vetting.get("hold_for_human_inspection") is False)
 
 
+CHOOSABLE_SAMPLE_STATES = ("requests", "queued", "llm", "reviewed", "outgoing")
+
+
 def promote_reviewed(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
                      dry_run: bool) -> None:
     """Move the standing verdicts the side's mode lets the agent post
-    to outgoing/, stamped agent_promoted; a dry run only logs them,
-    since a promotion is persistent staging a later normal run would
-    post."""
+    to outgoing/, stamped agent_promoted; a verdict whose item has
+    sample evaluations the operator may still pick is parked for them
+    instead, for good. A dry run only logs, since both are persistent
+    staging a later normal run would act on."""
     for k, number in db.list_state("reviewed"):
         # find() precedence: a reviewed/ crash remnant behind a later
         # state must not be promoted (and posted) a second time
@@ -1260,7 +1262,16 @@ def promote_reviewed(db: filedb.Db, ns: argparse.Namespace, kind: str, *,
         if not (postable(ticket_decision(kind, number, ticket))
                 and agent_promotes(db, ns, kind, number, ticket)):
             continue
-        if dry_run:
+        choosable = [token for state, token in db.evaluations(kind, number)
+                     if state in CHOOSABLE_SAMPLE_STATES]
+        if choosable:
+            parked = "the operator picks between sample evaluations " \
+                + ", ".join(choosable)
+            logger.info("%s #%s not promoted: %s", kind, number, parked)
+            if not dry_run:
+                db.try_move("reviewed", "reviewed", kind, number,
+                            mutate=lambda d: d.update(send_blocked=parked))
+        elif dry_run:
             logger.info("%s #%s: DRY RUN, would promote to outgoing/", kind, number)
         else:
             db.try_move("reviewed", "outgoing", kind, number, mutate=promote)

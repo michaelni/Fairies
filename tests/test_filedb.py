@@ -127,9 +127,10 @@ class TokenTests(DbCase):
         self.db.push("skipped", "pr", "12345s2", {})
         self.db.push("reviewed", "pr", "12346s1", {})
         self.db.push("reviewed", "issue", "12345s3", {})
-        self.assertEqual(["12345s1", "12345s2"],
+        self.assertEqual([("reviewed", "12345s1"), ("skipped", "12345s2")],
                          sorted(self.db.evaluations("pr", "12345")))
-        self.assertEqual(["12346s1"], self.db.evaluations("pr", "12346s1"))
+        self.assertEqual([("reviewed", "12346s1")],
+                         self.db.evaluations("pr", "12346s1"))
         self.assertEqual([], self.db.evaluations("pr", "12347"))
 
     def test_forge_number_and_is_base(self) -> None:

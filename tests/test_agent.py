@@ -1419,22 +1419,49 @@ class SendTests(SendCase):
         self.assertEqual(self.db.find("pr", "2"), "reviewed")
         self.assertEqual(self.db.find("pr", "3"), "reviewed")
 
-    def test_an_item_with_sample_evaluations_is_never_promoted(self) -> None:
+    def test_a_verdict_with_choosable_samples_is_parked_for_good(self) -> None:
         for mode in ("auto_mode", "vetted_auto_mode"):
-            for sample_state in ("reviewed", "skipped", "cancelled"):
+            for sample_state in agent.CHOOSABLE_SAMPLE_STATES:
                 with self.subTest(mode=mode, sample_state=sample_state):
                     self.ns.auto_mode = self.ns.vetted_auto_mode = False
                     setattr(self.ns, mode, True)
                     self.db.push("reviewed", "pr", "1", verdict_ticket(
                         1, vetting={"hold_for_human_inspection": False, "reason": ""}))
                     self.db.push(sample_state, "pr", "1s1", verdict_ticket(1))
-                    with mock.patch.object(fairy, "submit_decision_action") as submit:
+                    with mock.patch.object(fairy, "submit_decision_action",
+                                           return_value=None):
                         self.send(pr_ns=self.ns)
-                    submit.assert_not_called()
+                        self.assertIn("1s1", self.db.get("reviewed", "pr", "1")["send_blocked"])
+                        self.assertEqual(self.db.find("pr", "1s1"), "posted"
+                                         if sample_state == "outgoing" else sample_state)
+                        self.db.try_move(self.db.find("pr", "1s1"), "skipped", "pr", "1s1")
+                        self.send(pr_ns=self.ns)
                     self.assertEqual(self.db.find("pr", "1"), "reviewed")
-                    self.assertEqual(self.db.find("pr", "1s1"), sample_state)
                     self.db.path("reviewed", "pr", "1").unlink()
-                    self.db.path(sample_state, "pr", "1s1").unlink()
+                    self.db.path("skipped", "pr", "1s1").unlink()
+
+    def test_settled_samples_do_not_hold_a_verdict(self) -> None:
+        for sample_state in ("posted", "skipped", "cancelled", "error"):
+            with self.subTest(sample_state=sample_state):
+                self.ns.vetted_auto_mode = True
+                self.db.push("reviewed", "pr", "1", verdict_ticket(
+                    1, vetting={"hold_for_human_inspection": False, "reason": ""}))
+                self.db.push(sample_state, "pr", "1s1", verdict_ticket(1))
+                with mock.patch.object(fairy, "submit_decision_action",
+                                       return_value=None):
+                    self.send(pr_ns=self.ns)
+                self.assertEqual(self.db.find("pr", "1"), "posted")
+                self.assertEqual(self.db.find("pr", "1s1"), sample_state)
+                self.db.path("posted", "pr", "1").unlink()
+                self.db.path(sample_state, "pr", "1s1").unlink()
+
+    def test_a_dry_run_parks_nothing(self) -> None:
+        self.ns.vetted_auto_mode = True
+        self.db.push("reviewed", "pr", "1", verdict_ticket(
+            1, vetting={"hold_for_human_inspection": False, "reason": ""}))
+        self.db.push("reviewed", "pr", "1s1", verdict_ticket(1))
+        self.send(pr_ns=self.ns, dry_run=True)
+        self.assertNotIn("send_blocked", self.db.get("reviewed", "pr", "1"))
 
     def test_vetted_auto_mode_dry_run_promotes_nothing(self) -> None:
         self.ns.vetted_auto_mode = True

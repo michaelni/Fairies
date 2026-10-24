@@ -127,6 +127,8 @@ assert set(_SORT_STATES) == set(filedb.STATES) | {INVALID}, \
 # awaiting-approver IS merge-ready, just approved by someone other
 # than fairy; the display folds them and the * marks the external case
 _STATE_DISP = {"awaiting-approver": "merge-ready*"}
+_REVIEWER_PROGRESS_GLYPH = {"pending": ".", "running": "o", "done": "O",
+                            "failed": "x"}
 STATE_W = max(len(_STATE_DISP.get(s, s)) for s in _SORT_STATES)
 
 
@@ -1513,7 +1515,11 @@ class UILoop:
 
     def _llm_col(self, it: Item) -> str:
         if it.state == "llm":
-            return it.data.get("stage") or "llm"
+            stage = it.data.get("stage") or "llm"
+            if stage == "review" and it.data.get("reviewer_progress"):
+                return "".join(_REVIEWER_PROGRESS_GLYPH.get(state, "?")
+                               for state in it.data["reviewer_progress"])
+            return stage
         if (it.repo, it.kind, it.number) in self.model.requested:
             return "requested"
         if it.state == "merge-ready" and it.data.get("approved_at"):

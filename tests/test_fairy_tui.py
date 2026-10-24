@@ -55,6 +55,7 @@ import blessed  # noqa: E402
 import diff_render  # noqa: E402
 import fairy_tui  # noqa: E402
 import filedb  # noqa: E402
+import llm_review_api  # noqa: E402
 import halt_marker  # noqa: E402
 import tui_core  # noqa: E402
 
@@ -969,6 +970,22 @@ class CopyMessageTests(DbCase):
             ui._copy_click("br", rect.x + 2, rect.y)
         self.assertEqual(len(sent), 1)
         self.assertIn("boom", sent[0])
+
+
+class ReviewProgressColumnTests(DbCase):
+    def test_the_review_stage_shows_one_glyph_per_reviewer(self) -> None:
+        self.db.push("llm", "pr", "5", {
+            "title": "t", "stage": "review",
+            "reviewer_progress": ["pending", "running", "done", "failed"]})
+        self.db.push("llm", "pr", "6", {"title": "t", "stage": "triage"})
+        self.model.poll()
+        ui = make_ui(self.model)
+        rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
+                for r in ui.list_rows()]
+        self.assertTrue(any(" .oOx " in t for t in rows), rows)
+        self.assertTrue(any(" triage " in t for t in rows), rows)
+        self.assertEqual(set(fairy_tui._REVIEWER_PROGRESS_GLYPH),
+                         set(llm_review_api.REVIEWER_PROGRESS_STATES))
 
 
 class ErrorAgeColumnTests(DbCase):

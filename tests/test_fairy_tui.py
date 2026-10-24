@@ -1002,6 +1002,43 @@ class StatusColumnTests(DbCase):
         self.model.poll()
         self.assertIn("#5       a21", self.rows()[0])
 
+    def test_the_second_age_is_the_last_activity_of_a_merger(self) -> None:
+        """A merger is whoever merged a PR in the snapshots; the age
+        comes from the snapshot's discussion and events, so both are
+        right as soon as the snapshots land."""
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        day = lambda n: (now - timedelta(days=n)).isoformat()
+        for n in (5, 6):
+            self.db.push("reviewed", "pr", str(n),
+                         dict(verdict(n), last_activity_iso=day(5)))
+        self.db.push("items", "pr", "5", {
+            "state": "open",
+            "discussion": [{"kind": "comment", "author": "alice",
+                            "created_at": day(3)},
+                           {"kind": "review", "author": "bob",
+                            "submitted_at": day(1)}],
+            "events": [{"type": "label", "author": "alice",
+                        "created_at": day(2)}]})
+        self.db.push("items", "pr", "6", {
+            "state": "open",
+            "discussion": [{"kind": "comment", "author": "bob",
+                            "created_at": day(1)}]})
+        self.db.push("items", "pr", "7", {
+            "state": "merged", "author": "carol",
+            "discussion": [{"kind": "state", "state": "merged",
+                            "author": "alice", "created_at": day(9)}]})
+        self.model.poll()
+        self.assertIn("  5d   2d  ", self.rows()[0])
+        self.assertIn("  5d       ", self.rows()[1])
+        self.db.push("items", "pr", "8", {
+            "state": "merged", "author": "bob",
+            "discussion": [{"kind": "state", "state": "merged",
+                            "author": "bob", "created_at": day(8)}]})
+        self.model.poll()
+        self.assertIn("  5d   1d  ", self.rows()[0])
+        self.assertIn("  5d   1d  ", self.rows()[1])
+
     def test_sample_tickets_share_the_base_items_status(self) -> None:
         self.db.push("reviewed", "pr", "5s2", verdict(5))
         self.db.push("items", "pr", "5", {

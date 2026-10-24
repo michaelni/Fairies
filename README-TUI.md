@@ -42,8 +42,9 @@ last row).
 - **☰ list** — the table. Columns: `▶` marks reviewed rows, kind,
   repo (only when sides span several), `#number`, the status letters
   followed by an orange `»` for a review that persists git branches
-  (red when one opens a PR), state, llm, age, the author who opened
-  the item (10 characters), title. The title bar
+  (red when one opens a PR), state, llm, age, age of the last activity by
+  someone who has merged PRs, the author who opened the item (10
+  characters), title. The title bar
   shows the active lens, the bottom bar the keys.
 - **≣ logs** — merged tail of every side's agent/worker log plus the
   TUI's own, one padded source tag per line, level-colored. `d`

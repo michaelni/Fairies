@@ -227,6 +227,32 @@ def _push_mark(item: Item, snap: dict) -> tuple[str, str]:
     return ("sc_bad", "P")
 
 
+def _activity_by(snap: dict) -> dict[str, datetime]:
+    """login -> when they last posted or did something on the item,
+    from the snapshot's discussion and timeline events."""
+    latest: dict[str, datetime] = {}
+    for entry in (*(snap.get("discussion") or ()), *(snap.get("events") or ())):
+        login = entry.get("author") if isinstance(entry, dict) else None
+        if login:
+            when = forge_item.discussion_time(entry)
+            if login not in latest or when > latest[login]:
+                latest[login] = when
+    return latest
+
+
+def _mergers_of(snap: dict) -> set[str]:
+    """The logins that merged the item, from its discussion."""
+    return {entry["author"] for entry in snap.get("discussion") or ()
+            if isinstance(entry, dict) and entry.get("kind") == "state"
+            and entry.get("state") == "merged" and entry.get("author", "?") != "?"}
+
+
+def _merger_age(snap: dict, mergers: set[str]) -> str:
+    """How long ago one of ``mergers`` last touched the item."""
+    return _age_of(max((when for login, when in snap.get("activity_by", {}).items()
+                        if login in mergers), default=None))
+
+
 def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
     """The row's forge-status letters, 4 cells wide (README-TUI.md
     documents the codes). ``snap`` is the item's polled STATUS_FIELDS,
@@ -314,6 +340,7 @@ class Model:
         self._read: dict[tuple[str, str, int], tuple[str, float]] = {}
         self.status: dict[tuple[str, str, filedb.TicketId], dict] = {}
         self._snap_read: dict[tuple[str, str, filedb.TicketId], float] = {}
+        self.mergers: dict[str, set[str]] = {}
         # Bumped under ``lock`` on every change that can alter list
         # membership; the O(N) visible/stats work is cached against it
         # so a repaint costs O(window) even with 100k tickets.
@@ -455,6 +482,7 @@ class Model:
             read_ticket(key, state, db, mtime)
         status_updates: list[tuple[tuple[str, str, filedb.TicketId],
                                    dict]] = []
+        mergers: dict[str, set[str]] = {}
         for key, db, mtime in snaps:
             if self._snap_read.get(key) == mtime:
                 continue
@@ -467,7 +495,9 @@ class Model:
                 continue  # hand-edited/foreign file of unknown shape
             self._snap_read[key] = mtime
             status_updates.append(
-                (key, {f: snap[f] for f in STATUS_FIELDS if f in snap}))
+                (key, {**{f: snap[f] for f in STATUS_FIELDS if f in snap},
+                       "activity_by": _activity_by(snap)}))
+            mergers.setdefault(key[0], set()).update(_mergers_of(snap))
         dbs = dict(self.sides)
         removed = []
         for key, item in self.items.items():
@@ -502,6 +532,8 @@ class Model:
             self.revision += 1
             self.requested = requested
             self.status.update(status_updates)
+            for repo, logins in mergers.items():
+                self.mergers.setdefault(repo, set()).update(logins)
             for key, state, data, error in updates:
                 item = self.items.get(key)
                 if item is None:
@@ -899,6 +931,13 @@ def _age(iso: str | None, now: datetime | None = None) -> str:
         return ""
     if then.tzinfo is None:
         then = then.replace(tzinfo=timezone.utc)
+    return _age_of(then, now)
+
+
+def _age_of(then: datetime | None, now: datetime | None = None) -> str:
+    """Compact age of a time: 12d for 12 days, 5h below a day."""
+    if then is None:
+        return ""
     seconds = max(0.0, ((now or datetime.now(timezone.utc)) - then).total_seconds())
     return f"{int(seconds // 86400)}d" if seconds >= 86400 \
         else f"{int(seconds // 3600)}h"
@@ -1507,13 +1546,14 @@ class UILoop:
         snap = m.status.get(
             (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {}
         status = _status_cols(it, snap)
+        merger_act = _merger_age(snap, m.mergers.get(it.repo, set()))
         branch_mark = _branch_mark(it.data)
         author = (it.data.get("author") or snap.get("author") or "")[:AUTHOR_W]
         if is_cursor:
             return ("cursor",
                     f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<7} "
                     f"{''.join(c for _, c in status)}{branch_mark[1]} "
-                    f"{state_disp:<{STATE_W}} {llm:<9} {act:>4}  "
+                    f"{state_disp:<{STATE_W}} {llm:<9} {act:>4} {merger_act:>4}  "
                     f"{author:<{AUTHOR_W}} {title}")
         return [
             ("mark", mark),
@@ -1526,7 +1566,8 @@ class UILoop:
             ("text", " "),
             (f"st_{it.state}", f"{state_disp:<{STATE_W}} "),
             ("llm", f"{llm:<9} "),
-            ("num", f"{act:>4}  "),
+            ("num", f"{act:>4} "),
+            ("num", f"{merger_act:>4}  "),
             ("label", f"{author:<{AUTHOR_W}} "),
             ("title", title),
         ]

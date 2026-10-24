@@ -48,7 +48,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from llm_prompt import COMBINER_ROLE, REVIEWER_ROLE  # noqa: E402
-from llm_review_api import (Review, ReviewContext, Reviewer,  # noqa: E402
+from llm_review_api import (REVIEWER_PROGRESS_STATES, Review,  # noqa: E402
+                            ReviewContext, Reviewer,
                             ProviderContentFlagged, ProviderTurnFailed,
                             QuotaExhausted, quota_exhausted,
                             review_with_turn_retries)
@@ -401,6 +402,23 @@ class ReviewPrTests(unittest.TestCase):
                 _FakeReviewer("combiner", Review("approve", "ok", model="c")),
             )
         self.assertEqual([f"zai:glm-5.3: {quota}"], ctx.failed_reviewers)
+
+    def test_parallel_reviewers_report_their_progress(self) -> None:
+        ctx = _ctx()
+        seen: list[list[str]] = []
+        with self.assertLogs("llm_review_api", level="ERROR"):
+            review_pipeline.review_pr(
+                ctx,
+                [_FakeReviewer("a", Review("approve", "ok", model="a")),
+                 _FailingReviewer("zai:glm-5.3")],
+                _FakeReviewer("combiner", Review("approve", "ok", model="c")),
+                on_progress=seen.append,
+            )
+        self.assertEqual(["pending", "pending"], seen[0])
+        self.assertEqual(["done", "failed"], seen[-1])
+        for state in seen:
+            self.assertEqual(2, len(state))
+            self.assertTrue(set(state) <= set(REVIEWER_PROGRESS_STATES), state)
 
     def test_parallel_reviewers_run_on_threads_tagged_with_their_name(self) -> None:
         import threading

@@ -299,16 +299,18 @@ def review_pr(
     model_reviewers: list[Reviewer],
     combiner: Reviewer | None,
     on_drafts: Callable[[list[Review]], None] | None = None,
+    on_progress: Callable[[list[str]], None] | None = None,
 ) -> Review:
     """Run the model reviewers, then optionally the combiner, over ``ctx``.
 
     One model reviewer runs inline; several run concurrently (each opens its
     shells via ``ctx.open_shell``) and reviewers that fail are dropped by
-    ``run_parallel``. Their drafts accumulate on ``ctx`` so the combiner can
-    verify and merge them. ``on_drafts`` is told the surviving drafts before
-    the combiner runs. A configured combiner runs even on a single
-    (configured or surviving) draft: since its prompt diverged from the
-    reviewer's, its verification and grading are no longer redundant.
+    ``run_parallel``, which reports their states to ``on_progress``. Their
+    drafts accumulate on ``ctx`` so the combiner can verify and merge them.
+    ``on_drafts`` is told the surviving drafts before the combiner runs. A
+    configured combiner runs even on a single (configured or surviving)
+    draft: since its prompt diverged from the reviewer's, its verification
+    and grading are no longer redundant.
     Without a combiner exactly one model reviewer is required.
     A provider-ended combiner turn is retried up to
     ``TURN_FAILED_COMBINER_ATTEMPTS`` attempts; still failing it
@@ -321,7 +323,7 @@ def review_pr(
         drafts = [review_with_turn_retries(
             model_reviewers[0], ctx, TURN_FAILED_REVIEWER_ATTEMPTS)]
     else:
-        drafts = run_parallel(model_reviewers, ctx)
+        drafts = run_parallel(model_reviewers, ctx, on_progress)
     ctx.drafts.extend(drafts)
     if on_drafts is not None:
         on_drafts(drafts)

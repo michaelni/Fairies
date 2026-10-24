@@ -1289,8 +1289,17 @@ def review_with_turn_retries(
         budget, is_fallback = 1, True
 
 
-def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
+REVIEWER_PROGRESS_STATES = ("pending", "running", "done", "failed")
+
+
+def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext,
+                 on_progress: Callable[[list[str]], None] | None = None,
+                 ) -> list[Review]:
     """Run each reviewer concurrently; return their drafts in input order.
+
+    ``on_progress`` is told, in reviewer order, every reviewer's state from
+    ``REVIEWER_PROGRESS_STATES``: once before the launch and again after
+    each change; the calls never overlap.
 
     A reviewer that raises (provider outage, exhausted quota, ...) is
     dropped with a logged traceback so the surviving drafts still produce
@@ -1314,14 +1323,32 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext) -> list[Review]:
         len(reviewers),
         ", ".join(r.name for r in reviewers),
     )
-    def run_tagged(reviewer: Reviewer) -> Review:
+    progress = ["pending"] * len(reviewers)
+    progress_lock = threading.Lock()
+    report_progress = on_progress or (lambda states: None)
+
+    def note_progress(index: int, state: str) -> None:
+        with progress_lock:
+            progress[index] = state
+            report_progress(list(progress))
+
+    def run_tagged(index: int, reviewer: Reviewer) -> Review:
         # common's log filter turns the ~tag into the line's [name] field
         threading.current_thread().name = f"reviewer~{reviewer.name}"
-        return review_with_turn_retries(reviewer, ctx,
-                                        TURN_FAILED_REVIEWER_ATTEMPTS)
+        note_progress(index, "running")
+        try:
+            draft = review_with_turn_retries(reviewer, ctx,
+                                             TURN_FAILED_REVIEWER_ATTEMPTS)
+        except BaseException:
+            note_progress(index, "failed")
+            raise
+        note_progress(index, "done")
+        return draft
 
+    report_progress(list(progress))
     with ThreadPoolExecutor(max_workers=len(reviewers)) as executor:
-        futures = [executor.submit(run_tagged, r) for r in reviewers]
+        futures = [executor.submit(run_tagged, i, r)
+                   for i, r in enumerate(reviewers)]
     drafts: list[Review] = []
     failures: list[Exception] = []
     for reviewer, future in zip(reviewers, futures):

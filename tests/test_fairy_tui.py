@@ -1027,14 +1027,15 @@ class StatusColumnTests(DbCase):
         now = datetime.now(timezone.utc)
         day = lambda n: (now - timedelta(days=n)).isoformat()
         for n in (5, 6):
-            self.db.push("reviewed", "pr", str(n),
-                         dict(verdict(n), last_activity_iso=day(5)))
+            self.db.push("reviewed", "pr", str(n), verdict(n))
         self.db.push("items", "pr", "5", {
             "state": "open",
             "discussion": [{"kind": "comment", "author": "alice",
                             "created_at": day(3)},
                            {"kind": "review", "author": "bob",
-                            "submitted_at": day(1)}],
+                            "submitted_at": day(1)},
+                           {"kind": "comment", "author": "carol",
+                            "created_at": day(5)}],
             "events": [{"type": "label", "author": "alice",
                         "created_at": day(2)}]})
         self.db.push("items", "pr", "6", {
@@ -1046,15 +1047,15 @@ class StatusColumnTests(DbCase):
             "discussion": [{"kind": "state", "state": "merged",
                             "author": "alice", "created_at": day(9)}]})
         self.model.poll()
-        self.assertIn("  5d   2d  ", self.rows()[0])
-        self.assertIn("  5d       ", self.rows()[1])
+        self.assertIn("  1d   2d  ", self.rows()[0])
+        self.assertIn("  1d       ", self.rows()[1])
         self.db.push("items", "pr", "8", {
             "state": "merged", "author": "bob",
             "discussion": [{"kind": "state", "state": "merged",
                             "author": "bob", "created_at": day(8)}]})
         self.model.poll()
-        self.assertIn("  5d   1d  ", self.rows()[0])
-        self.assertIn("  5d   1d  ", self.rows()[1])
+        self.assertIn("  1d   1d  ", self.rows()[0])
+        self.assertIn("  1d   1d  ", self.rows()[1])
 
     def test_sample_tickets_share_the_base_items_status(self) -> None:
         self.db.push("reviewed", "pr", "5s2", verdict(5))
@@ -3040,11 +3041,15 @@ class AgeColumnTests(DbCase):
     def test_rows_show_activity_age_and_approval_age(self) -> None:
         from datetime import datetime, timedelta, timezone
         now = datetime.now(timezone.utc)
-        self.db.push("reviewed", "pr", "1", verdict(
-            1, last_activity_iso=(now - timedelta(hours=5)).isoformat()))
+        self.db.push("reviewed", "pr", "1", verdict(1))
+        self.db.push("items", "pr", "1", {
+            "state": "open", "discussion": [{
+                "kind": "comment", "author": "alice",
+                "created_at": (now - timedelta(hours=5)).isoformat()}]})
         self.db.push("merge-ready", "pr", "2", {
-            "title": "t", "approved_at": (now - timedelta(days=12)).isoformat(),
-            "expected_updated_at": (now - timedelta(days=3)).isoformat()})
+            "title": "t", "approved_at": (now - timedelta(days=12)).isoformat()})
+        self.db.push("items", "pr", "2", {
+            "state": "open", "updated_at": (now - timedelta(days=3)).isoformat()})
         self.model.poll()
         ui = make_ui(self.model)
         texts = ["".join(t for _, t in r) if isinstance(r, list) else r[1]

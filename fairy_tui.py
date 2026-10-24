@@ -68,7 +68,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -194,7 +194,7 @@ def _branch_mark(data: dict) -> tuple[str, str]:
 
 
 STATUS_FIELDS = ("state", "auto_merge", "approvals", "change_requests",
-                 "labels", "head_sha", "patch_ids", "author")
+                 "labels", "head_sha", "patch_ids", "author", "updated_at")
 AUTHOR_W = 10
 _REPRO_CODES = {"repro/yes": ("sc_good", "Y"),
                 "repro/flaky": ("sc_warn", "F"),
@@ -249,10 +249,11 @@ def _mergers_of(snap: dict) -> set[str]:
             and entry.get("state") == "merged" and entry.get("author", "?") != "?"}
 
 
-def _merger_age(snap: dict, mergers: set[str]) -> str:
-    """How long ago one of ``mergers`` last touched the item."""
+def _touched_age(snap: dict, logins: Collection[str] | None = None) -> str:
+    """How long ago one of ``logins``, anyone when None, last touched
+    the item."""
     return _age_of(max((when for login, when in snap.get("activity_by", {}).items()
-                        if login in mergers), default=None))
+                        if logins is None or login in logins), default=None))
 
 
 def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
@@ -1538,8 +1539,6 @@ class UILoop:
         mark = "▶" if it.state == "reviewed" else " "
         repo_col = (f"{self._repo_disp[it.repo]:<{self._repo_w}} "
                     if self._repo_w else "")
-        act = _age(it.data.get("last_activity_iso")
-                   or it.data.get("expected_updated_at"))
         title = it.data.get("title") or ""
         state_disp = _STATE_DISP.get(it.state, it.state)
         if it.state == "cancelled" \
@@ -1552,7 +1551,8 @@ class UILoop:
         snap = m.status.get(
             (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {}
         status = _status_cols(it, snap)
-        merger_act = _merger_age(snap, m.mergers.get(it.repo, set()))
+        act = _touched_age(snap) or _age(snap.get("updated_at"))
+        merger_act = _touched_age(snap, m.mergers.get(it.repo, set()))
         branch_mark = _branch_mark(it.data)
         author = (it.data.get("author") or snap.get("author") or "")[:AUTHOR_W]
         if is_cursor:

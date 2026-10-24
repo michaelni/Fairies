@@ -790,10 +790,12 @@ def parse_args() -> argparse.Namespace:
 
 def workset_note(args: argparse.Namespace, field: str, value: object) -> None:
     """Record one wrapper field in the caller's work file (if any):
-    ``stage`` progress ("triage" | "review" | "combine") or a stage's
-    result. The wrapper owns the file while it runs (the caller blocks
-    on the subprocess); the final verdict travels on stdout and is
-    persisted by the caller."""
+    ``stage`` progress ("triage" | "review" | "combine"), the review
+    stage's ``reviewer_progress`` (one ``REVIEWER_PROGRESS_STATES`` entry
+    per model reviewer, in reviewer order) or a stage's result. The
+    wrapper owns the file while it runs (the caller blocks on the
+    subprocess); the final verdict travels on stdout and is persisted by
+    the caller."""
     if args.workset_file:
         def record(data: dict) -> None:
             data[field] = value
@@ -2029,6 +2031,8 @@ def main() -> int:
             review = review_pr(
                 review_ctx, model_reviewers, combiner,
                 on_drafts=note_drafts,
+                on_progress=lambda states: workset_note(
+                    args, "reviewer_progress", states),
             )
         except BadModelOutput:
             return EXIT_BAD_MODEL_OUTPUT

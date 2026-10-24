@@ -62,6 +62,7 @@ from typing import TypeVar
 
 from anthropic_common import ANTHROPIC_API_URL
 from common import JsonObject
+import concurrency
 from podman_host import ContainerInfraError, ContainerShellSession, ShellHostSpec
 import retry_backoff
 from retry_backoff import RetryTooSoon
@@ -1299,7 +1300,9 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext,
 
     ``on_progress`` is told, in reviewer order, every reviewer's state from
     ``REVIEWER_PROGRESS_STATES``: once before the launch and again after
-    each change; the calls never overlap.
+    each change; the calls never overlap. A reviewer is "running" from the
+    moment it first holds its provider's concurrency slot, so one waiting
+    for a busy provider stays "pending".
 
     A reviewer that raises (provider outage, exhausted quota, ...) is
     dropped with a logged traceback so the surviving drafts still produce
@@ -1335,7 +1338,7 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext,
     def run_tagged(index: int, reviewer: Reviewer) -> Review:
         # common's log filter turns the ~tag into the line's [name] field
         threading.current_thread().name = f"reviewer~{reviewer.name}"
-        note_progress(index, "running")
+        concurrency.on_first_slot(lambda: note_progress(index, "running"))
         try:
             draft = review_with_turn_retries(reviewer, ctx,
                                              TURN_FAILED_REVIEWER_ATTEMPTS)

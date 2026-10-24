@@ -94,8 +94,9 @@ events are logged).
 
 **The llm column** doubles as a status column: the wrapper stage while
 in `llm/` (a review stage with several model reviewers shows one glyph
-per reviewer instead: `.` not started, `o` running, `O` finished, `x`
-failed), `requested` while an `r`/`R` request is pending,
+per reviewer instead: `.` waiting for its provider's concurrency slot,
+`o` running, `O` finished, `x` failed), `requested` while an `r`/`R`
+request is pending,
 `appr=<age>` on merge-ready rows (how long the merge has waited),
 `err=<age>` on error rows (how old the failure is), otherwise the
 verdict classification.

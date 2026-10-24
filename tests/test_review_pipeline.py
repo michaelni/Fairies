@@ -420,6 +420,25 @@ class ReviewPrTests(unittest.TestCase):
             self.assertEqual(2, len(state))
             self.assertTrue(set(state) <= set(REVIEWER_PROGRESS_STATES), state)
 
+    def test_a_reviewer_runs_once_it_holds_its_provider_slot(self) -> None:
+        import concurrency
+
+        class _SlottedReviewer(_FakeReviewer):
+            def review(self, ctx: ReviewContext) -> Review:
+                with concurrency.slot("prov"):
+                    return super().review(ctx)
+
+        seen: list[list[str]] = []
+        review_pipeline.review_pr(
+            _ctx(),
+            [_SlottedReviewer("a", Review("approve", "ok", model="a")),
+             _FakeReviewer("b", Review("approve", "ok", model="b"))],
+            _FakeReviewer("combiner", Review("approve", "ok", model="c")),
+            on_progress=seen.append,
+        )
+        self.assertIn("running", [state[0] for state in seen])
+        self.assertNotIn("running", [state[1] for state in seen])
+
     def test_parallel_reviewers_run_on_threads_tagged_with_their_name(self) -> None:
         import threading
         seen: dict[str, str] = {}

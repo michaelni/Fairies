@@ -1035,13 +1035,15 @@ class StatusColumnTests(DbCase):
                            {"kind": "review", "author": "bob",
                             "submitted_at": day(1)},
                            {"kind": "comment", "author": "carol",
-                            "created_at": day(5)}],
-            "events": [{"type": "label", "author": "alice",
-                        "created_at": day(2)}]})
+                            "created_at": day(5)},
+                           {"kind": "label_added", "author": "alice",
+                            "created_at": day(2)}]})
         self.db.push("items", "pr", "6", {
             "state": "open",
             "discussion": [{"kind": "comment", "author": "bob",
-                            "created_at": day(1)}]})
+                            "created_at": day(1)},
+                           {"kind": "mentioned_in_comment", "author": "alice",
+                            "created_at": day(0)}]})
         self.db.push("items", "pr", "7", {
             "state": "merged", "author": "carol",
             "discussion": [{"kind": "state", "state": "merged",

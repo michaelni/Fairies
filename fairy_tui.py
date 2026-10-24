@@ -229,16 +229,25 @@ def _push_mark(item: Item, snap: dict) -> tuple[str, str]:
     return ("sc_bad", "P")
 
 
-def _activity_by(snap: dict) -> dict[str, datetime]:
-    """login -> when they last posted or did something on the item,
-    from the snapshot's discussion and timeline events."""
+_MENTION_KINDS = frozenset({"mentioned", "mentioned_in_description",
+                            "mentioned_in_comment", "mentioned_in_commit",
+                            "cross_reference"})
+_CONTENT_KINDS = frozenset({"comment", "review", "review_comment", "push", "state"})
+
+
+def _activity_by(snap: dict, kinds: Collection[str] | None = None) -> dict[str, datetime]:
+    """login -> when they last did something on the item: a discussion
+    entry of one of ``kinds``, or of any kind but a mention when None."""
     latest: dict[str, datetime] = {}
-    for entry in (*(snap.get("discussion") or ()), *(snap.get("events") or ())):
-        login = entry.get("author") if isinstance(entry, dict) else None
-        if login:
-            when = forge_item.discussion_time(entry)
-            if login not in latest or when > latest[login]:
-                latest[login] = when
+    for entry in snap.get("discussion") or ():
+        if not isinstance(entry, dict) or not entry.get("author"):
+            continue
+        kind = entry.get("kind")
+        if kind in _MENTION_KINDS or (kinds is not None and kind not in kinds):
+            continue
+        login, when = entry["author"], forge_item.discussion_time(entry)
+        if login not in latest or when > latest[login]:
+            latest[login] = when
     return latest
 
 
@@ -249,11 +258,10 @@ def _mergers_of(snap: dict) -> set[str]:
             and entry.get("state") == "merged" and entry.get("author", "?") != "?"}
 
 
-def _touched_age(snap: dict, logins: Collection[str] | None = None) -> str:
-    """How long ago one of ``logins``, anyone when None, last touched
-    the item."""
+def _touched_age(snap: dict, logins: Collection[str]) -> str:
+    """How long ago one of ``logins`` last touched the item."""
     return _age_of(max((when for login, when in snap.get("activity_by", {}).items()
-                        if logins is None or login in logins), default=None))
+                        if login in logins), default=None))
 
 
 def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
@@ -499,7 +507,9 @@ class Model:
             self._snap_read[key] = mtime
             status_updates.append(
                 (key, {**{f: snap[f] for f in STATUS_FIELDS if f in snap},
-                       "activity_by": _activity_by(snap)}))
+                       "activity_by": _activity_by(snap),
+                       "content_at": max(_activity_by(snap, _CONTENT_KINDS).values(),
+                                         default=None)}))
             mergers.setdefault(key[0], set()).update(_mergers_of(snap))
         dbs = dict(self.sides)
         removed = []
@@ -1551,7 +1561,7 @@ class UILoop:
         snap = m.status.get(
             (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {}
         status = _status_cols(it, snap)
-        act = _touched_age(snap) or _age(snap.get("updated_at"))
+        act = _age_of(snap.get("content_at")) or _age(snap.get("updated_at"))
         merger_act = _touched_age(snap, m.mergers.get(it.repo, set()))
         branch_mark = _branch_mark(it.data)
         author = (it.data.get("author") or snap.get("author") or "")[:AUTHOR_W]

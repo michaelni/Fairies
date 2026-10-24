@@ -44,12 +44,13 @@ import fcntl
 import logging
 import random
 import re
+import threading
 import time
-from typing import Iterable, Iterator
+from typing import Callable, Iterable, Iterator
 
 from common import default_cache_path
 
-__all__ = ["configure", "parse_limit", "slot"]
+__all__ = ["configure", "on_first_slot", "parse_limit", "slot"]
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ _RESCAN_DELAY_S = (0.2, 0.7)
 _PROVIDER_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 _limits: dict[str, int] = {}
+_thread = threading.local()
 
 
 def parse_limit(value: str) -> tuple[str, int]:
@@ -81,6 +83,18 @@ def configure(limits: Iterable[tuple[str, int]]) -> None:
     logger.debug("provider concurrency limits: %s", _limits or "-")
 
 
+def on_first_slot(callback: Callable[[], None]) -> None:
+    """Run ``callback`` in the current thread when it next holds a slot."""
+    _thread.on_slot = callback
+
+
+def _slot_held() -> None:
+    callback = getattr(_thread, "on_slot", None)
+    if callback is not None:
+        del _thread.on_slot
+        callback()
+
+
 @contextmanager
 def slot(provider: str) -> Iterator[None]:
     """Hold one of ``provider``'s slots for the duration of the block.
@@ -92,6 +106,7 @@ def slot(provider: str) -> Iterator[None]:
     """
     limit = _limits.get(provider)
     if limit is None:
+        _slot_held()
         yield
         return
 
@@ -114,6 +129,7 @@ def slot(provider: str) -> Iterator[None]:
                 "%s slot %d/%d acquired after %.1fs",
                 provider, index, limit, time.monotonic() - started,
             )
+            _slot_held()
             try:
                 yield
             finally:

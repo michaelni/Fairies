@@ -88,6 +88,36 @@ class SlotTest(unittest.TestCase):
         with concurrency.slot("codex"):
             pass
 
+    def test_on_first_slot_fires_once_the_slot_is_held(self):
+        self.addCleanup(concurrency.configure, [])
+        fired: list[str] = []
+        concurrency.on_first_slot(lambda: fired.append("held"))
+        self.assertEqual([], fired)
+        concurrency.configure([])
+        with concurrency.slot("codex"):
+            self.assertEqual(["held"], fired)
+        with concurrency.slot("codex"):
+            pass
+        self.assertEqual(["held"], fired)
+
+    def test_on_first_slot_waits_for_a_capped_slot(self):
+        self.addCleanup(concurrency.configure, [])
+        concurrency.configure([("prov", 1)])
+        fired: list[str] = []
+        with tempfile.TemporaryDirectory() as lock_root, mock.patch.object(
+                concurrency, "default_cache_path", lambda name: Path(lock_root) / name):
+            holder = concurrency.slot("prov")
+            holder.__enter__()
+            concurrency.on_first_slot(lambda: fired.append("held"))
+
+            def release(_delay):
+                self.assertEqual([], fired)
+                holder.__exit__(None, None, None)
+
+            with mock.patch.object(concurrency.time, "sleep", release):
+                with concurrency.slot("prov"):
+                    self.assertEqual(["held"], fired)
+
     def test_a_wait_is_logged_once(self):
         self.addCleanup(concurrency.configure, [])
         concurrency.configure([("prov", 1)])

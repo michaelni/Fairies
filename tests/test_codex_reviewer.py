@@ -412,6 +412,51 @@ class CodexReviewerRunTests(unittest.TestCase):
         self.assertFalse(Path(home, "auth.json").exists())
         self.assertTrue(Path(home, "auth.json.invalid").is_file())
 
+    def test_unauthorized_turn_failure_sets_auth_json_aside(self) -> None:
+        home = _codex_home_ready()
+        jsonl = "\n".join(json.dumps(event) for event in (
+            {"type": "error", "message": "Reconnecting... 5/5 (workspace "
+             "routing discovery unauthorized (401))"},
+            {"type": "error",
+             "message": "workspace routing discovery unauthorized (401)"},
+            {"type": "turn.failed", "error": {
+                "message": "workspace routing discovery unauthorized (401)"}}))
+        with self.assertRaises(CliAuthFailed):
+            self._run(reviewer=self._reviewer(codex_home=home),
+                      jsonl=jsonl, last_message=None, returncode=1)
+        self.assertFalse(Path(home, "auth.json").exists())
+        self.assertTrue(Path(home, "auth.json.invalid").is_file())
+
+    # stderr lines of failed codex runs, timestamps dropped
+    _HTTP_401_STDERR_LINES = (
+        'ERROR codex_login::auth::manager: Failed to refresh token '
+        'status=401 Unauthorized detail=TokenErrorDetail { error_code: '
+        'Some("refresh_token_invalidated"), .. }',
+        "ERROR codex_login::auth::manager: Failed to refresh token: "
+        "401 Unauthorized: {",
+        "ERROR codex_api::endpoint::responses_websocket: failed to connect "
+        "to websocket: HTTP error: 401 Unauthorized, url: "
+        "wss://chatgpt.com/backend-api/codex/responses",
+        "ERROR rmcp::transport::worker: worker quit with fatal: Transport "
+        'channel closed, when UnexpectedServerResponse("HTTP 401: {',
+    )
+
+    def test_http_401_on_stderr_of_a_failed_run_sets_auth_json_aside(self) -> None:
+        jsonl = json.dumps({"type": "turn.failed",
+                            "error": {"message": "stream disconnected"}})
+        for line in self._HTTP_401_STDERR_LINES:
+            home = _codex_home_ready()
+            with self.subTest(line=line), self.assertRaises(CliAuthFailed):
+                self._run(reviewer=self._reviewer(codex_home=home), jsonl=jsonl,
+                          stderr=line + "\n", last_message=None, returncode=1)
+            self.assertFalse(Path(home, "auth.json").exists())
+
+    def test_http_401_of_a_run_that_answered_leaves_auth_alone(self) -> None:
+        home = _codex_home_ready()
+        self._run(reviewer=self._reviewer(codex_home=home),
+                  stderr=self._HTTP_401_STDERR_LINES[2] + "\n")
+        self.assertTrue(Path(home, "auth.json").is_file())
+
     def test_plain_turn_failure_leaves_auth_alone(self) -> None:
         home = _codex_home_ready()
         jsonl = json.dumps({"type": "turn.failed",

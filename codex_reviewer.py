@@ -221,14 +221,9 @@ def _try_again_at(error_text: str) -> float:
         return 0
 
 
-def _is_auth_failure(error_text: str) -> bool:
-    # codex-cli 0.147.0's terminal credential failures (strings(1) over the
-    # binary): dead refresh tokens end in "Please log out and sign in
-    # again.", absent or incomplete credentials point at "codex login".
-    # Its "Failed to refresh token:" can wrap a transient transport error,
-    # so it deliberately does not match.
-    lowered = error_text.lower()
-    return "log out and sign in again" in lowered or "codex login" in lowered
+_AUTH_FAILURE_RE = re.compile(
+    r"log out and sign in again|codex login|\(401\)|status=401\b"
+    r"|\b401 unauthorized\b|\bhttp 401\b", re.IGNORECASE)
 
 
 class CodexReviewer(CliReviewer):
@@ -357,7 +352,7 @@ class CodexReviewer(CliReviewer):
             f"{CONTAINER_RUN_DIR}/last_message.json",
             max_bytes=MAX_LAST_MESSAGE_BYTES) or "").strip()
         if not last_message:
-            if _is_auth_failure(error_text) or _is_auth_failure(proc.stderr):
+            if _AUTH_FAILURE_RE.search(error_text) or _AUTH_FAILURE_RE.search(proc.stderr):
                 raise self._invalidate_credential(
                     error_text or proc.stderr.strip()[-2000:])
             # A ``turn.failed`` event means the provider ended the turn

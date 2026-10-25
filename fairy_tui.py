@@ -127,6 +127,11 @@ assert set(_SORT_STATES) == set(filedb.STATES) | {INVALID}, \
 # awaiting-approver IS merge-ready, just approved by someone other
 # than fairy; the display folds them and the * marks the external case
 _STATE_DISP = {"awaiting-approver": "merge-ready*"}
+_CLEAR_KEYS = {"reviewed": "s/S skip, x drops", "queued": "x cancels",
+               "llm": "x cancels", "merge-ready": "x drops",
+               "ci-blocked": "x drops", "awaiting-approver": "x drops",
+               "error": "r retries, x drops",
+               INVALID: "fix or delete the file by hand"}
 _REVIEWER_PROGRESS_GLYPH = {"pending": ".", "running": "o", "done": "O",
                             "failed": "x"}
 STATE_W = max(len(_STATE_DISP.get(s, s)) for s in _SORT_STATES)
@@ -793,7 +798,7 @@ class Model:
                 if item.state in ("llm", INVALID) or item.state in HIDDEN_SETTLED:
                     logger.info("cannot %s %s in state %s%s", action, label,
                                 item.state,
-                                " (fix or delete the file by hand)"
+                                f" ({_CLEAR_KEYS[INVALID]})"
                                 if item.state == INVALID else "")
                     return
                 note = {"reason": "operator " + action}
@@ -1676,6 +1681,8 @@ class UILoop:
             head += self._markdown(item, fairy.manual_action_description(decision, item.kind),
                                    width, "head")
         status_line = f"state {item.state}"
+        if item.state in _CLEAR_KEYS and not _unacknowledged(item):
+            status_line += f" ({_CLEAR_KEYS[item.state]})"
         if review.get("classification"):
             status_line += ("   llm "
                             + fairy.format_llm_classification(review["classification"]))

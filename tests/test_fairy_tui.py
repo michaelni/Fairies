@@ -1536,6 +1536,13 @@ class DetailTests(DbCase):
         self.assertIn("posted by the agent — y or s acknowledges",
                       self._detail_text())
 
+    def test_an_acknowledged_error_says_how_to_clear_it(self) -> None:
+        self.db.push("error", "issue", "5s2", {"error": "LLM analysis failed",
+                                               "acknowledged_at": "2026-01-01T00:00:00+00:00"})
+        self.model.filter_mode = "actionable"
+        self.model.poll()
+        self.assertIn("state error (r retries, x drops)", self._detail_text())
+
     def test_a_cross_reference_line_names_the_mentioning_item(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
             {"kind": "mentioned_in_comment", "author": "fairy", "number": 24049,

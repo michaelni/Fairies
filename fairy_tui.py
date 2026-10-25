@@ -1530,7 +1530,7 @@ class UILoop:
             if stage == "review" and it.data.get("reviewer_progress"):
                 return "".join(_REVIEWER_PROGRESS_GLYPH.get(state, "?")
                                for state in it.data["reviewer_progress"])
-            return stage
+            return stage.upper() if it.data.get("stage_running") else stage
         if (it.repo, it.kind, it.number) in self.model.requested:
             return "requested"
         if it.state == "merge-ready" and it.data.get("approved_at"):

@@ -912,7 +912,7 @@ class WrapperWorksetNoteTests(unittest.TestCase):
         return json.loads(self.path.read_text(encoding="utf-8"))
 
     def test_stage_and_triage_result_recorded(self) -> None:
-        pr_review_wrapper.workset_note(self.args, "stage", "triage")
+        pr_review_wrapper.workset_note_stage(self.args, "triage")
         pr_review_wrapper.workset_note(
             self.args, "triage", {"route": "engage", "reason": "r"})
         data = self._raw()
@@ -920,23 +920,21 @@ class WrapperWorksetNoteTests(unittest.TestCase):
         self.assertEqual(data["triage"], {"route": "engage", "reason": "r"})
         self.assertEqual(data["title"], "t")  # ticket fields undisturbed
 
-    def test_drafts_recorded_and_combine_stage_entered(self) -> None:
+    def test_drafts_recorded(self) -> None:
         drafts = [Review(
             "moderate_issues", "d1",
             ({"label": "l", "op": "add", "reason": "", "post": False},),
             model="a",
         )]
-        pr_review_wrapper.workset_note_drafts(self.args, drafts, combining=True)
+        pr_review_wrapper.workset_note_drafts(self.args, drafts)
         data = self._raw()
-        self.assertEqual(data["stage"], "combine")
         self.assertEqual(data["drafts"][0]["message"], "d1")
         self.assertEqual(data["drafts"][0]["model"], "a")
         self.assertEqual(data["drafts"][0]["label_changes"][0]["label"], "l")
 
     def test_failed_reviewers_land_on_the_ticket(self) -> None:
         pr_review_wrapper.workset_note_drafts(
-            self.args, [], combining=True,
-            failed=["codex:gpt-5.6-sol: content flagged"])
+            self.args, [], failed=["codex:gpt-5.6-sol: content flagged"])
         self.assertEqual(self._raw()["failed_reviewers"],
                          ["codex:gpt-5.6-sol: content flagged"])
 
@@ -944,21 +942,32 @@ class WrapperWorksetNoteTests(unittest.TestCase):
         """Regression: PR #24773 on 2026-09-30 kept an interrupted run's
         failed agy reviewer next to the draft the rerun produced."""
         pr_review_wrapper.workset_note_drafts(
-            self.args, [], combining=True,
+            self.args, [],
             failed=["agy:gemini-3.1-pro: agy ended with status 'SUCCESS'"])
         pr_review_wrapper.workset_note_drafts(
-            self.args, [Review("approve", "d", (), model="agy:gemini-3.1-pro")],
-            combining=True)
+            self.args, [Review("approve", "d", (), model="agy:gemini-3.1-pro")])
         self.assertEqual([], self._raw()["failed_reviewers"])
 
     def test_notes_work_on_a_stateless_filedb_ticket(self) -> None:
         self.path.write_text('{"title": "t"}\n', encoding="utf-8")
-        pr_review_wrapper.workset_note(self.args, "stage", "review")
+        pr_review_wrapper.workset_note_stage(self.args, "review")
         self.assertEqual(self._raw()["stage"], "review")
 
+    def test_a_stage_runs_once_its_model_holds_a_slot(self) -> None:
+        import concurrency
+        self.addCleanup(concurrency.configure, [])
+        concurrency.configure([])
+        pr_review_wrapper.workset_note_stage(self.args, "triage")
+        self.assertIs(False, self._raw()["stage_running"])
+        with concurrency.slot("prov"):
+            self.assertIs(True, self._raw()["stage_running"])
+        pr_review_wrapper.workset_note_stage(self.args, "vet")
+        self.assertEqual(("vet", False),
+                         (self._raw()["stage"], self._raw()["stage_running"]))
+
     def test_no_workset_file_is_a_noop(self) -> None:
-        pr_review_wrapper.workset_note(
-            argparse.Namespace(workset_file=None), "stage", "triage")
+        pr_review_wrapper.workset_note_stage(
+            argparse.Namespace(workset_file=None), "triage")
 
 
 if __name__ == "__main__":

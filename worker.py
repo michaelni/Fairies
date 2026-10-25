@@ -157,8 +157,8 @@ def review_claim(claim: filedb.Claim, ns: argparse.Namespace) -> str:
     finally:
         ns.workset_file_override = None
     ticket = claim.read()  # the wrapper noted stage/triage/drafts meanwhile
-    ticket.pop("stage", None)
-    ticket.pop("reviewer_progress", None)
+    for progress_field in ("stage", "stage_running", "reviewer_progress"):
+        ticket.pop(progress_field, None)
     if halt_marker.reason(ns.halt_file) is not None:
         state = "queued"
     else:

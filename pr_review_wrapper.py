@@ -789,10 +789,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def workset_note(args: argparse.Namespace, field: str, value: object) -> None:
-    """Record one wrapper field in the caller's work file (if any):
-    ``stage`` progress ("triage" | "review" | "combine"), the review
-    stage's ``reviewer_progress`` (one ``REVIEWER_PROGRESS_STATES`` entry
-    per model reviewer, in reviewer order) or a stage's result. The
+    """Record one wrapper field in the caller's work file (if any): the
+    review stage's ``reviewer_progress`` (one ``REVIEWER_PROGRESS_STATES``
+    entry per model reviewer, in reviewer order) or a stage's result. The
     wrapper owns the file while it runs (the caller blocks on the
     subprocess); the final verdict travels on stdout and is persisted by
     the caller."""
@@ -802,11 +801,22 @@ def workset_note(args: argparse.Namespace, field: str, value: object) -> None:
         workset.update_json(args.workset_file, record)
 
 
-def workset_note_drafts(args: argparse.Namespace, drafts, *,
-                        combining: bool, failed: list[str] = ()) -> None:
-    """``drafts`` are ``Review``s; the stage moves to "combine" when a
-    combiner runs next. ``failed`` names the reviewers whose draft is
-    missing, so the operator surface can say the verdict is partial."""
+def workset_note_stage(args: argparse.Namespace, stage: str) -> None:
+    """Record entering ``stage`` ("triage" | "vet" | "review" | "combine")
+    in the caller's work file; ``stage_running`` turns true once the
+    stage's model holds its provider's concurrency slot."""
+    if not args.workset_file:
+        return
+    workset.update_json(args.workset_file,
+                        lambda data: data.update(stage=stage, stage_running=False))
+    concurrency.on_first_slot(lambda: workset_note(args, "stage_running", True))
+
+
+def workset_note_drafts(args: argparse.Namespace, drafts,
+                        failed: list[str] = ()) -> None:
+    """``drafts`` are ``Review``s. ``failed`` names the reviewers whose
+    draft is missing, so the operator surface can say the verdict is
+    partial."""
     if not args.workset_file:
         return
 
@@ -819,8 +829,6 @@ def workset_note_drafts(args: argparse.Namespace, drafts, *,
             for d in drafts
         ]
         data["failed_reviewers"] = list(failed)
-        if combining:
-            data["stage"] = "combine"
 
     workset.update_json(args.workset_file, record)
 
@@ -1797,7 +1805,7 @@ def main() -> int:
 
         def vet_verdict(review: Review) -> None:
             close_machine_shells(session for session, _ in shared_shells.values())
-            workset_note(args, "stage", "vet")
+            workset_note_stage(args, "vet")
             inherited_branches[:] = review.branches
             vetter = make_reviewer(
                 args.vet_model, args=args, resources=openai_resources,
@@ -1860,7 +1868,7 @@ def main() -> int:
                 max_output_tokens=args.triage_max_output_tokens,
                 service_tier=args.triage_service_tier,
             )
-            workset_note(args, "stage", "triage")
+            workset_note_stage(args, "triage")
             triage_result = run_triage(triager, triage_ctx)
             if triage_result is not None:
                 workset_note(args, "triage", triage_result)
@@ -2013,7 +2021,7 @@ def main() -> int:
             attach_turn_fallbacks(
                 combiner, args=args, resources=openai_resources,
                 verbosity=final_verbosity, failure_fails_run=True)
-        workset_note(args, "stage", "review")
+        workset_note_stage(args, "review")
 
         def note_drafts(drafts) -> None:
             # the drafts' collected records preload the combiner's fairy
@@ -2021,9 +2029,9 @@ def main() -> int:
             # the combiner verifies the drafts' branches like its own
             # work and re-declares what should survive; open_machine_shell
             # applies the same list to combiner containers that open later
-            workset_note_drafts(args, drafts, combining=combiner is not None,
-                                failed=review_ctx.failed_reviewers)
+            workset_note_drafts(args, drafts, failed=review_ctx.failed_reviewers)
             if combiner is not None:
+                workset_note_stage(args, "combine")
                 hand_over_branches(
                     [record for draft in drafts for record in draft.branches])
 

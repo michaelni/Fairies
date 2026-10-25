@@ -978,12 +978,15 @@ class ReviewProgressColumnTests(DbCase):
             "title": "t", "stage": "review",
             "reviewer_progress": ["pending", "running", "done", "failed"]})
         self.db.push("llm", "pr", "6", {"title": "t", "stage": "triage"})
+        self.db.push("llm", "pr", "7", {"title": "t", "stage": "combine",
+                                        "stage_running": True})
         self.model.poll()
         ui = make_ui(self.model)
         rows = ["".join(t for _, t in r) if isinstance(r, list) else r[1]
                 for r in ui.list_rows()]
         self.assertTrue(any(" .oOx " in t for t in rows), rows)
         self.assertTrue(any(" triage " in t for t in rows), rows)
+        self.assertTrue(any(" COMBINE " in t for t in rows), rows)
         self.assertEqual(set(fairy_tui._REVIEWER_PROGRESS_GLYPH),
                          set(llm_review_api.REVIEWER_PROGRESS_STATES))
 

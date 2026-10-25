@@ -223,15 +223,15 @@ class VerdictRoutingTests(WorkerCase):
         def fake_llm(ns, prepared):
             # the wrapper writes its progress through the override path
             workset.update_json(Path(ns.workset_file_override),
-                                lambda d: d.update(stage="review",
+                                lambda d: d.update(stage="review", stage_running=True,
                                                    reviewer_progress=["done"]))
             return decision(5)
 
         self.run_one(5, fake_llm)
         t = self.db.get("reviewed", "pr", "5")
         # transient progress, spent with the run
-        self.assertNotIn("stage", t)
-        self.assertNotIn("reviewer_progress", t)
+        for progress_field in ("stage", "stage_running", "reviewer_progress"):
+            self.assertNotIn(progress_field, t)
 
 
 class OperatorVetoTests(WorkerCase):

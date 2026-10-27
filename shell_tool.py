@@ -125,6 +125,7 @@ def exec_shell_call(
     *,
     max_timeout_s: float,
     default_timeout_s: float = DEFAULT_SHELL_TIMEOUT_S,
+    machine: str | None = None,
 ) -> JsonObject:
     """Run one model shell-tool call on ``session``; return its result payload.
 
@@ -154,8 +155,8 @@ def exec_shell_call(
         timeout_s = default_timeout_s
     timeout_s = max(1.0, min(timeout_s, max_timeout_s))
 
-    logger.info("shell call timeout=%.1fs cwd=%s cmd=%s", timeout_s, cwd or "-",
-                printable(command[:500]))
+    logger.info("shell call machine=%s timeout=%.1fs cwd=%s cmd=%s", machine or "-",
+                timeout_s, cwd or "-", printable(command[:500]))
     result = session.exec(command, cwd=cwd, timeout_s=timeout_s)
     logger.info(
         "shell done rc=%d dt=%.3fs out_trunc=%s err_trunc=%s",
@@ -212,6 +213,7 @@ def exec_machine_call(
     payload = exec_shell_call(
         shells[machine], args,
         max_timeout_s=max_timeout_s, default_timeout_s=default_timeout_s,
+        machine=machine,
     )
     if first and machine != machine_labels[0] and transcript:
         payload["setup_transcript"] = transcript

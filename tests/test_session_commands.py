@@ -143,6 +143,11 @@ class ExecMachineCallTests(unittest.TestCase):
         self.assertEqual(["arm64"], opened)
         self.assertEqual("on arm64\n", payload["stdout"])
 
+    def test_the_log_names_the_machine(self) -> None:
+        with self.assertLogs(shell_tool.logger, level="INFO") as logs:
+            self._call({}, [], {"command": "true", "machine": "arm64"})
+        self.assertIn("shell call machine=arm64 ", logs.output[0])
+
     def test_unknown_machine_errors_without_open(self) -> None:
         shells, opened = {}, []
         payload = self._call(shells, opened, {"command": "true", "machine": "riscv"})

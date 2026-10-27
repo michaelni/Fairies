@@ -1361,10 +1361,12 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext,
             failures.append(exc)
             reason = (str(exc).splitlines() or [exc.__class__.__name__])[0]
             ctx.failed_reviewers.append(f"{reviewer.name}: {reason}")
-            logger.exception(
+            quota = isinstance(exc, QuotaExhausted)
+            logger.error(
                 "reviewer %s %s: %s; continuing with the surviving drafts",
                 reviewer.name, "failed on container infrastructure (not the model)"
-                if isinstance(exc, ContainerInfraError) else "failed", reason,
+                if isinstance(exc, ContainerInfraError) else "failed",
+                exc if quota else reason, exc_info=not quota,
             )
     if not drafts:
         message = f"all reviewers failed: {'; '.join(ctx.failed_reviewers)}"

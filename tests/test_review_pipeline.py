@@ -116,11 +116,12 @@ class _FailingReviewer(Reviewer):
 class _HeldReviewer(Reviewer):
     """A reviewer whose account's quota is exhausted until ``due_at``."""
 
-    def __init__(self, name: str, due_at: float) -> None:
+    def __init__(self, name: str, due_at: float, error: str | None = None) -> None:
         self.name, self.due_at = name, due_at
+        self.error = error or f"{name}: quota exhausted"
 
     def run(self, ctx: ReviewContext) -> dict[str, object]:
-        raise QuotaExhausted(f"{self.name}: quota exhausted", self.due_at)
+        raise QuotaExhausted(self.error, self.due_at)
 
 
 class _FlaggedReviewer(Reviewer):
@@ -402,6 +403,24 @@ class ReviewPrTests(unittest.TestCase):
                 _FakeReviewer("combiner", Review("approve", "ok", model="c")),
             )
         self.assertEqual([f"zai:glm-5.3: {quota}"], ctx.failed_reviewers)
+
+    def test_a_quota_hold_logs_its_whole_error_without_a_traceback(self) -> None:
+        error = ('grok:grok-4.7: grok balance exhausted; errors: Internal error: {\n'
+                 '  "message": "API error (status 402 Payment Required): '
+                 'Grok Build usage balance exhausted",\n'
+                 '  "http_status": 402\n}')
+        with self.assertLogs("llm_review_api", level="ERROR") as logs:
+            review_pipeline.review_pr(
+                _ctx(),
+                [_FakeReviewer("a", Review("approve", "ok", model="a")),
+                 _HeldReviewer("grok:grok-4.7", 0.0, error),
+                 _FailingReviewer("zai:glm-5.3")],
+                _FakeReviewer("combiner", Review("approve", "ok", model="c")),
+            )
+        held, failed = logs.records
+        self.assertIn(error, held.getMessage())
+        self.assertFalse(held.exc_info)
+        self.assertTrue(failed.exc_info)
 
     def test_parallel_reviewers_report_their_progress(self) -> None:
         ctx = _ctx()

@@ -170,6 +170,10 @@ class ContainerShellError(ContainerInfraError):
     """The persistent container shell channel into a container failed."""
 
 
+class HostUnresponsive(ContainerInfraError):
+    """A control command on a host did not complete within its timeout."""
+
+
 class ContainerShellSession:
     """A persistent shell channel into a review container.
 
@@ -499,14 +503,20 @@ def run_on_remote_host(
     what may be passed through it. ``max_output_bytes`` bounds each
     output stream and fails closed on overrun (``ContainerInfraError``)
     -- for commands whose output an untrusted container controls.
-    ``input_bytes`` is the command's stdin.
+    ``input_bytes`` is the command's stdin. Raises ``HostUnresponsive``
+    when the command does not complete within ``timeout_s``.
     """
-    if max_output_bytes is not None:
-        return _run_capture_capped(host.argv(remote_argv), timeout_s=timeout_s,
-                                   label="ssh", max_output_bytes=max_output_bytes,
-                                   input_bytes=input_bytes)
-    return _run_capture(host.argv(remote_argv), timeout_s=timeout_s, label="ssh",
-                        input_bytes=input_bytes)
+    try:
+        if max_output_bytes is not None:
+            return _run_capture_capped(host.argv(remote_argv), timeout_s=timeout_s,
+                                       label="ssh", max_output_bytes=max_output_bytes,
+                                       input_bytes=input_bytes)
+        return _run_capture(host.argv(remote_argv), timeout_s=timeout_s, label="ssh",
+                            input_bytes=input_bytes)
+    except subprocess.TimeoutExpired as exc:
+        raise HostUnresponsive(
+            f"{host.ssh_dest} did not answer within {timeout_s:.0f}s: "
+            f"{shlex.join(remote_argv)}") from exc
 
 
 def _podman(host: RemoteHost, *args: str, timeout_s: float = 60.0) -> _CmdResult:

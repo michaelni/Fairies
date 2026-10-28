@@ -213,7 +213,7 @@ class CliContainer:
                     self.host, "podman", "exec", self._cid(),
                     "sh", "-c", "kill -KILL -1", timeout_s=60.0,
                     max_output_bytes=CONTAINER_EXEC_OUTPUT_CAP).returncode
-            except (subprocess.TimeoutExpired, ContainerInfraError):
+            except ContainerInfraError:
                 rc = None
         if rc not in (0, 1):
             logger.warning("killing the run failed (rc=%s); removing "

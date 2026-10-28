@@ -167,7 +167,7 @@ class RemoteHostTests(unittest.TestCase):
                 lc.run_on_remote_host(HOST, "git", "bundle", "create", "-",
                                       max_output_bytes=1024)
 
-    def test_capped_run_propagates_the_timeout(self) -> None:
+    def test_a_timed_out_capped_run_names_the_unresponsive_host(self) -> None:
         class _HangingPopen(_StreamPopen):
             def wait(self, timeout=None):
                 if self.returncode is None and timeout is not None:
@@ -176,9 +176,17 @@ class RemoteHostTests(unittest.TestCase):
 
         with mock.patch.object(lc.subprocess, "Popen",
                                return_value=_HangingPopen(b"")):
-            with self.assertRaises(subprocess.TimeoutExpired):
+            with self.assertRaisesRegex(lc.HostUnresponsive, "^fairy@h did not answer "
+                                        "within 1s: git bundle create -$"):
                 lc.run_on_remote_host(HOST, "git", "bundle", "create", "-",
                                       timeout_s=1.0, max_output_bytes=1024)
+
+    def test_a_timed_out_run_names_the_unresponsive_host(self) -> None:
+        with mock.patch.object(lc.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired("ssh", 60)):
+            with self.assertRaisesRegex(lc.HostUnresponsive, "^fairy@h did not answer "
+                                        "within 60s: podman ps$"):
+                lc.run_on_remote_host(HOST, "podman", "ps", timeout_s=60.0)
 
 
 class ImageTagExistsTests(unittest.TestCase):

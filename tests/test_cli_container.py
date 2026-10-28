@@ -222,8 +222,8 @@ class KillRunTests(unittest.TestCase):
     def test_failed_kill_removes_the_container(self) -> None:
         for effect in (
                 {"return_value": mock.Mock(returncode=125)},
-                {"side_effect": cli_container.subprocess.TimeoutExpired(
-                    "ssh", 60.0)},
+                {"side_effect": podman_host.HostUnresponsive(
+                    "fairy@h did not answer within 60s: podman exec")},
                 {"side_effect": cli_container.ContainerInfraError("flooded")}):
             with self.subTest(effect=effect):
                 self.setUp()

@@ -53,7 +53,7 @@ from llm_review_api import (REVIEWER_PROGRESS_STATES, Review,  # noqa: E402
                             ProviderContentFlagged, ProviderTurnFailed,
                             QuotaExhausted, quota_exhausted,
                             review_with_turn_retries)
-from podman_host import ContainerInfraError, ContainerShellError  # noqa: E402
+from podman_host import ContainerInfraError, ContainerShellError, HostUnresponsive  # noqa: E402
 import pr_review_wrapper  # noqa: E402
 import review_pipeline  # noqa: E402
 from test_retry_backoff import isolate  # noqa: E402
@@ -574,6 +574,24 @@ class ReviewPrTests(unittest.TestCase):
         with self.assertRaisesRegex(QuotaExhausted, "plan usage limit reached"):
             review_pipeline.review_pr(ctx, [reviewer], combiner)
         self.assertIsNone(reviewer.seen_drafts)
+
+    def test_all_reviewers_on_a_host_that_does_not_answer_abort_as_such(self) -> None:
+        class _UnansweredReviewer(Reviewer):
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+            def run(self, ctx: ReviewContext) -> dict[str, object]:
+                raise HostUnresponsive(f"fairy@h did not answer within 60s: {self.name}")
+
+        ctx = _ctx()
+        with self.assertRaises(HostUnresponsive) as caught, \
+                self.assertLogs("llm_review_api", level="ERROR"):
+            review_pipeline.review_pr(
+                ctx, [_UnansweredReviewer("codex:a"), _UnansweredReviewer("codex:b")],
+                _FakeReviewer("combiner", Review("approve", "ok", model="c")))
+        self.assertEqual("all reviewers failed: codex:a: fairy@h did not answer within "
+                         "60s: codex:a; codex:b: fairy@h did not answer within 60s: codex:b",
+                         str(caught.exception))
 
     def test_a_quota_hold_beside_another_failure_is_an_ordinary_failure(self) -> None:
         ctx = _ctx()

@@ -77,6 +77,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable, NamedTuple, Sequence
@@ -175,6 +176,7 @@ DEFAULT_MAX_FILE_BYTES = 500_000
 DEFAULT_MAX_HEADER_FILE_BYTES = 150_000
 DEFAULT_MAX_BUNDLE_BYTES = 1_000_000
 DEFAULT_MAX_PATCH_BYTES = 500_000
+UNRESPONSIVE_HOST_HOLD_S = 15 * 60
 DEFAULT_MAX_OUTPUT_TOKENS = 40_000
 # 0 means "do not impose a client-side timeout"; the outer caller
 # (e.g. fairy.py via its --llm-timeout) is responsible for
@@ -2050,7 +2052,8 @@ def main() -> int:
             return EXIT_TURN_FAILED
         except QuotaExhausted as exc:
             logger.error("giving up, every account's quota is exhausted: %s", exc)
-            sys.stdout.write(format_hold(str(exc), exc.due_at) + "\n")
+            sys.stdout.write(format_hold(
+                f"every account's quota is exhausted: {exc}", exc.due_at) + "\n")
             return EXIT_REVIEW_HELD
         except Exception:
             if not poisoned_session_ids:
@@ -2078,6 +2081,12 @@ def main() -> int:
             branches=list(review.branches),
         )
         return 0
+    except podman_host.HostUnresponsive as exc:
+        shell_tool.abort_if_cancelled()
+        logger.error("giving up, a host does not answer: %s", exc)
+        sys.stdout.write(format_hold(
+            str(exc), time.time() + UNRESPONSIVE_HOST_HOLD_S) + "\n")
+        return EXIT_REVIEW_HELD
     except Exception:
         shell_tool.abort_if_cancelled()
         raise

@@ -238,10 +238,10 @@ class ReviewTurnFailed(RuntimeError):
 
 
 class ReviewHeld(RuntimeError):
-    """Every reviewer's account is held off for an exhausted quota
-    (``EXIT_REVIEW_HELD``); the item waits in error/ until
-    ``retry_at``, when the first of them is due, instead of for the
-    doubling backoff."""
+    """The wrapper held the review (``EXIT_REVIEW_HELD``): every
+    reviewer's account is held off for an exhausted quota, or a host
+    does not answer. The item waits in error/ until ``retry_at``
+    instead of for the doubling backoff."""
 
     def __init__(self, message: str, retry_at: datetime) -> None:
         super().__init__(message)
@@ -2199,7 +2199,7 @@ def invoke_llm_wrapper(
     if cp.returncode == EXIT_REVIEW_HELD:
         error, due_at = parse_hold(cp.stdout)
         raise ReviewHeld(
-            f"LLM review held, every account's quota is exhausted: {error}",
+            f"LLM review held, {error}",
             datetime.fromtimestamp(due_at, timezone.utc))
     if cp.returncode != 0:
         raise RuntimeError(

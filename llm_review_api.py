@@ -63,7 +63,8 @@ from typing import TypeVar
 from anthropic_common import ANTHROPIC_API_URL
 from common import JsonObject
 import concurrency
-from podman_host import ContainerInfraError, ContainerShellSession, ShellHostSpec
+from podman_host import (ContainerInfraError, ContainerShellSession, HostUnresponsive,
+                         ShellHostSpec)
 import retry_backoff
 from retry_backoff import RetryTooSoon
 
@@ -1372,6 +1373,8 @@ def run_parallel(reviewers: list[Reviewer], ctx: ReviewContext,
         message = f"all reviewers failed: {'; '.join(ctx.failed_reviewers)}"
         if all(isinstance(exc, QuotaExhausted) for exc in failures):
             raise QuotaExhausted(message, min(exc.due_at for exc in failures))
-        raise (ProviderTurnFailed if all(isinstance(exc, ProviderTurnFailed)
-                                         for exc in failures) else RuntimeError)(message)
+        for uniform in (ProviderTurnFailed, HostUnresponsive):
+            if all(isinstance(exc, uniform) for exc in failures):
+                raise uniform(message)
+        raise RuntimeError(message)
     return drafts

@@ -48,6 +48,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
@@ -345,8 +346,25 @@ class EngageLabelOwnershipTests(unittest.TestCase):
             {"route": "engage", "reason": "r", "label_changes": []},
             review_pr_stub=held)
         self.assertEqual(EXIT_REVIEW_HELD, exit_code)
-        self.assertEqual({"error": "all reviewers failed: codex:gpt: usage limit",
+        self.assertEqual({"error": "every account's quota is exhausted: "
+                                   "all reviewers failed: codex:gpt: usage limit",
                           "due_at": 1791646674.0}, json.loads(out))
+
+    def test_a_host_that_does_not_answer_holds_the_review(self) -> None:
+        def unanswered(ctx: object, reviewers: list, combiner: object, **kw: object) -> Review:
+            raise wrapper.podman_host.HostUnresponsive(
+                "fairy@h did not answer within 60s: podman run")
+
+        before = time.time()
+        exit_code, out, _reached = _run_wrapper_with_stubbed_triage(
+            _fixture_request(),
+            {"route": "engage", "reason": "r", "label_changes": []},
+            review_pr_stub=unanswered)
+        self.assertEqual(EXIT_REVIEW_HELD, exit_code)
+        hold = json.loads(out)
+        self.assertEqual("fairy@h did not answer within 60s: podman run", hold["error"])
+        self.assertAlmostEqual(before + wrapper.UNRESPONSIVE_HOST_HOLD_S,
+                               hold["due_at"], delta=30)
 
     def test_reviewer_labels_emitted_triage_labels_discarded(self) -> None:
         reviewer_labels = (

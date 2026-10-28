@@ -618,6 +618,16 @@ class OrphanReaperTests(ContainerStateHarness, unittest.TestCase):
         self.assertFalse(ended.exists())
         self.assertTrue(live.exists())
 
+    def test_reap_leaves_a_host_that_does_not_answer_for_a_later_run(self) -> None:
+        ended = [self._owner_file("ended1"), self._owner_file("ended2")]
+        with mock.patch.object(lc.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired("ssh", 60)) as run:
+            with self.assertLogs(lc.logger, "WARNING") as logs:
+                lc.reap_orphaned_containers(HOST)
+        self.assertEqual(1, run.call_count)
+        self.assertTrue(all(owner.exists() for owner in ended))
+        self.assertRegex(logs.output[-1], "skipping fairy@h, it does not answer")
+
 
 class CopyAndOpenShellTests(unittest.TestCase):
     def test_copy_into_container_mkdirs_then_streams_tar(self) -> None:

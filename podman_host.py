@@ -915,7 +915,8 @@ def _hold_owner_lock(host: RemoteHost) -> None:
 def reap_orphaned_containers(host: RemoteHost) -> None:
     """Remove the containers on ``host`` whose owner, a process on this
     machine, has ended without removing them; paused ones stay for
-    inspection. Containers owned from other machines are left alone."""
+    inspection. Containers owned from other machines are left alone,
+    as is everything on a host that does not answer."""
     directory = _owner_dir(host)
     for owner_file in directory.glob("[!.]*") if directory.is_dir() else ():
         try:
@@ -927,21 +928,26 @@ def reap_orphaned_containers(host: RemoteHost) -> None:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 continue
-            listed = _podman(host, "ps", "-a", "--filter",
-                             f"label={_OWNER_LABEL}={owner_file.name}",
-                             "--format", "{{.ID}} {{.State}}")
-            if listed.returncode != 0:
-                logger.warning("reap: listing the containers of %s on %s failed: %s",
-                               owner_file.name, host.ssh_dest, listed.stderr_text)
-                continue
-            orphans = []
-            for line in listed.stdout.decode(errors="replace").splitlines():
-                container_id, _, state = line.partition(" ")
-                if state != "paused":
-                    orphans.append(container_id)
-            if orphans and not _reap(
-                    host, orphans, f"container(s) of ended owner {owner_file.name}"):
-                continue
+            try:
+                listed = _podman(host, "ps", "-a", "--filter",
+                                 f"label={_OWNER_LABEL}={owner_file.name}",
+                                 "--format", "{{.ID}} {{.State}}")
+                if listed.returncode != 0:
+                    logger.warning("reap: listing the containers of %s on %s failed: %s",
+                                   owner_file.name, host.ssh_dest, listed.stderr_text)
+                    continue
+                orphans = []
+                for line in listed.stdout.decode(errors="replace").splitlines():
+                    container_id, _, state = line.partition(" ")
+                    if state != "paused":
+                        orphans.append(container_id)
+                if orphans and not _reap(
+                        host, orphans, f"container(s) of ended owner {owner_file.name}"):
+                    continue
+            except HostUnresponsive as exc:
+                logger.warning("reap: skipping %s, it does not answer: %s",
+                               host.ssh_dest, exc)
+                return
             owner_file.unlink(missing_ok=True)
 
 

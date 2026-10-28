@@ -115,6 +115,17 @@ class _FakeOpenAIClient:
         self.responses = _FakeResponses(response_payload)
 
 
+_termination_watch = mock.patch.object(wrapper, "stop_containers_on_termination")
+
+
+def setUpModule() -> None:
+    _termination_watch.start()
+
+
+def tearDownModule() -> None:
+    _termination_watch.stop()
+
+
 class WrapperFunctionalReplayTests(unittest.TestCase):
     def test_replays_fixture_through_main(self) -> None:
         fixture_paths = sorted(FIXTURE_DIR.glob("*.json"))

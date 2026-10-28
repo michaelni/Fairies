@@ -56,9 +56,9 @@ import fairy  # noqa: E402
 import podman_host  # noqa: E402
 import pr_review_wrapper  # noqa: E402
 import shell_tool  # noqa: E402
-from common import (EXIT_QUOTA_EXHAUSTED, EXIT_REVIEW_CANCELLED,  # noqa: E402
+from common import (EXIT_REVIEW_HELD, EXIT_REVIEW_CANCELLED,  # noqa: E402
                     EXIT_REVIEW_HALTED, EXIT_REVIEW_STOPPED_BY_HALT_FILE,
-                    EXIT_TURN_FAILED, format_quota_hold, format_turn_failure)
+                    EXIT_TURN_FAILED, format_hold, format_turn_failure)
 
 
 def _args(attempts: int) -> argparse.Namespace:
@@ -105,9 +105,9 @@ class ReviewHaltedRetryPolicyTests(unittest.TestCase):
 
         def invoke(extra_cmd_args):
             calls.append(extra_cmd_args)
-            raise fairy.ReviewQuotaExhausted("held", datetime.now(timezone.utc))
+            raise fairy.ReviewHeld("held", datetime.now(timezone.utc))
 
-        with self.assertRaises(fairy.ReviewQuotaExhausted):
+        with self.assertRaises(fairy.ReviewHeld):
             fairy.call_llm_with_retries(_args(3), 23750, invoke)
         self.assertEqual(1, len(calls))
 
@@ -160,12 +160,12 @@ class QuotaExitPropagationTests(unittest.TestCase):
             llm_review_cmd="./pr_review_wrapper.py", verbose=0,
             llm_timeout=10)
         cp = subprocess.CompletedProcess(
-            [], EXIT_QUOTA_EXHAUSTED,
-            stdout=format_quota_hold("all reviewers failed: zai:glm: [1308]",
+            [], EXIT_REVIEW_HELD,
+            stdout=format_hold("all reviewers failed: zai:glm: [1308]",
                                      1791646674.0) + "\n",
             stderr="")
         with mock.patch.object(fairy, "run_cmd", return_value=cp):
-            with self.assertRaises(fairy.ReviewQuotaExhausted) as caught:
+            with self.assertRaises(fairy.ReviewHeld) as caught:
                 fairy.invoke_llm_wrapper(
                     args, {}, number=42,
                     allowed_classifications=frozenset(),

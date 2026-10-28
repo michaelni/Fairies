@@ -84,10 +84,10 @@ from typing import Iterable, NamedTuple, Sequence
 from openai import OpenAI
 
 from common import (
-    EXIT_QUOTA_EXHAUSTED,
+    EXIT_REVIEW_HELD,
     EXIT_REVIEW_HALTED,
     EXIT_TURN_FAILED,
-    format_quota_hold,
+    format_hold,
     format_turn_failure,
     add_color_arg,
     apply_config_file_defaults,
@@ -2050,8 +2050,8 @@ def main() -> int:
             return EXIT_TURN_FAILED
         except QuotaExhausted as exc:
             logger.error("giving up, every account's quota is exhausted: %s", exc)
-            sys.stdout.write(format_quota_hold(str(exc), exc.due_at) + "\n")
-            return EXIT_QUOTA_EXHAUSTED
+            sys.stdout.write(format_hold(str(exc), exc.due_at) + "\n")
+            return EXIT_REVIEW_HELD
         except Exception:
             if not poisoned_session_ids:
                 raise

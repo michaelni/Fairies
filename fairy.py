@@ -91,12 +91,12 @@ from cli_backends import CLI_BACKENDS
 import git_util
 import gcli_cache
 from common import (
-    EXIT_QUOTA_EXHAUSTED,
+    EXIT_REVIEW_HELD,
     EXIT_REVIEW_CANCELLED,
     EXIT_REVIEW_HALTED,
     EXIT_REVIEW_STOPPED_BY_HALT_FILE,
     EXIT_TURN_FAILED,
-    parse_quota_hold,
+    parse_hold,
     parse_turn_failure,
     JsonObject,
     add_color_arg,
@@ -237,9 +237,9 @@ class ReviewTurnFailed(RuntimeError):
     error/ and the agent's doubling backoff paces the next try."""
 
 
-class ReviewQuotaExhausted(RuntimeError):
+class ReviewHeld(RuntimeError):
     """Every reviewer's account is held off for an exhausted quota
-    (``EXIT_QUOTA_EXHAUSTED``); the item waits in error/ until
+    (``EXIT_REVIEW_HELD``); the item waits in error/ until
     ``retry_at``, when the first of them is due, instead of for the
     doubling backoff."""
 
@@ -2196,9 +2196,9 @@ def invoke_llm_wrapper(
             "LLM review gave up: provider-ended turns exhausted the "
             f"wrapper's in-run retry budget: {parse_turn_failure(cp.stdout)}"
         )
-    if cp.returncode == EXIT_QUOTA_EXHAUSTED:
-        error, due_at = parse_quota_hold(cp.stdout)
-        raise ReviewQuotaExhausted(
+    if cp.returncode == EXIT_REVIEW_HELD:
+        error, due_at = parse_hold(cp.stdout)
+        raise ReviewHeld(
             f"LLM review held, every account's quota is exhausted: {error}",
             datetime.fromtimestamp(due_at, timezone.utc))
     if cp.returncode != 0:
@@ -2246,7 +2246,7 @@ def call_llm_with_retries(
     flex->default service-tier fallback on the final attempt, else
     None; see ``flex_fallback_extra_args``). Re-raises the last error
     when every attempt failed; ``ReviewHalted``, ``ReviewTurnFailed``,
-    ``ReviewQuotaExhausted`` and ``ReviewCancelled`` immediately: a PR
+    ``ReviewHeld`` and ``ReviewCancelled`` immediately: a PR
     that left a container suspect must not be run again, a spent
     turn-failure budget or an exhausted quota makes more attempts of
     the whole ensemble pointless, and a cancelled review is not wanted
@@ -2267,7 +2267,7 @@ def call_llm_with_retries(
         try:
             review = invoke(extra_cmd_args)
         except (KeyboardInterrupt, ReviewHalted, ReviewTurnFailed,
-                ReviewQuotaExhausted, ReviewCancelled):
+                ReviewHeld, ReviewCancelled):
             raise
         except Exception as exc:
             last_exc = exc
@@ -3088,7 +3088,7 @@ def safe_apply_llm_review_to_prepared(
             prepared.last_activity,
             "error",
             "",
-            retry_at=exc.retry_at if isinstance(exc, ReviewQuotaExhausted) else None,
+            retry_at=exc.retry_at if isinstance(exc, ReviewHeld) else None,
             cancelled_ci_contexts=prepared.cancelled_ci_contexts,
             blocked_ci_contexts=prepared.blocked_ci_contexts,
             external_approvers=prepared.external_approvers,

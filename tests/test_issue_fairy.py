@@ -468,7 +468,7 @@ class LLMPayloadTests(unittest.TestCase):
         due = datetime(2026, 10, 10, 17, 0, tzinfo=timezone.utc)
         with mock.patch.object(
             issue_fairy, "run_llm_issue",
-            side_effect=fairy.ReviewQuotaExhausted("held", due),
+            side_effect=fairy.ReviewHeld("held", due),
         ):
             d = issue_fairy.evaluate_issue(args, p)
         self.assertEqual((d.llm_classification, d.retry_at), ("error", due))

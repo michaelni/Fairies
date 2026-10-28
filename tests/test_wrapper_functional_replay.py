@@ -80,7 +80,7 @@ except ModuleNotFoundError:
 import pr_review_wrapper as wrapper
 import openai_reviewer
 from llm_review_api import REPRO_REFUSE, QuotaExhausted, Review
-from common import EXIT_QUOTA_EXHAUSTED, EXIT_REVIEW_STOPPED_BY_HALT_FILE
+from common import EXIT_REVIEW_HELD, EXIT_REVIEW_STOPPED_BY_HALT_FILE
 from test_podman_host import ContainerStateHarness
 
 
@@ -344,7 +344,7 @@ class EngageLabelOwnershipTests(unittest.TestCase):
             _fixture_request(),
             {"route": "engage", "reason": "r", "label_changes": []},
             review_pr_stub=held)
-        self.assertEqual(EXIT_QUOTA_EXHAUSTED, exit_code)
+        self.assertEqual(EXIT_REVIEW_HELD, exit_code)
         self.assertEqual({"error": "all reviewers failed: codex:gpt: usage limit",
                           "due_at": 1791646674.0}, json.loads(out))
 

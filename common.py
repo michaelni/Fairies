@@ -80,7 +80,7 @@ EXIT_REVIEW_STOPPED_BY_HALT_FILE = 7
 # quota" exit status: its stdout names when the first of them is due, so
 # the ticket waits in error/ until then instead of for the doubling
 # backoff.
-EXIT_QUOTA_EXHAUSTED = 8
+EXIT_REVIEW_HELD = 8
 
 # Per-request timeout of the reviewers' https clients, far above the
 # longest single model call observed (135s).
@@ -97,13 +97,13 @@ def parse_turn_failure(stdout: str) -> str:
     return json.loads(stdout)["error"]
 
 
-def format_quota_hold(error: str, due_at: float) -> str:
-    """The wrapper's stdout line alongside EXIT_QUOTA_EXHAUSTED; ``due_at``
+def format_hold(error: str, due_at: float) -> str:
+    """The wrapper's stdout line alongside EXIT_REVIEW_HELD; ``due_at``
     is the epoch second the next attempt is due."""
     return json.dumps({"error": error, "due_at": due_at}, ensure_ascii=False)
 
 
-def parse_quota_hold(stdout: str) -> tuple[str, float]:
+def parse_hold(stdout: str) -> tuple[str, float]:
     hold = json.loads(stdout)
     return hold["error"], float(hold["due_at"])
 

@@ -1260,12 +1260,12 @@ def attach_turn_fallbacks(
     reviewer.fallbacks = tuple(chain)
 
 
-def unattended_posting_block(review: Review, subject: str) -> str | None:
+def unattended_posting_block(review: Review, task: str) -> str | None:
     """Why the verdict needs an operator whatever the vetter says, or
-    None when it may go out unattended; ``subject`` names what it
-    closes ("pull request" / "issue")."""
-    if review.close:
-        return f"the verdict closes the {subject}; closing needs an operator's approval"
+    None when it may go out unattended; ``task`` is the wrapper's
+    --task ("pr" / "issue")."""
+    if review.close and task == "pr":
+        return "the verdict closes the pull request; closing needs an operator's approval"
     branches = review.branches
     for count, limit, what in (
             (sum(1 for record in branches if record.get("pr")), 1, "pull requests"),
@@ -1824,8 +1824,7 @@ def main() -> int:
             workset_note(args, "vetting", vetting)
 
         def hold_or_vet(review: Review) -> None:
-            posting_block = unattended_posting_block(
-                review, "issue" if args.task == "issue" else "pull request")
+            posting_block = unattended_posting_block(review, args.task)
             if posting_block:
                 workset_note(args, "vetting",
                              {"hold_for_human_inspection": True, "reason": posting_block})

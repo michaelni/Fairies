@@ -464,14 +464,16 @@ class UnattendedPostingBlockTests(unittest.TestCase):
                 ([dict(push, bundle=big)], f"{256 * 1024 + 1} bytes of git bundles")):
             with self.subTest(branches=branches):
                 reason = wrapper.unattended_posting_block(
-                    Review("approve", branches=tuple(branches)), "pull request")
+                    Review("approve", branches=tuple(branches)), "pr")
                 if blocked is None:
                     self.assertIsNone(reason)
                 else:
                     self.assertIn(blocked, reason)
 
-    def test_a_closing_verdict_is_held(self) -> None:
-        self.assertIn("closes the issue", wrapper.unattended_posting_block(
+    def test_a_closing_verdict_is_held_for_a_pull_request_only(self) -> None:
+        self.assertIn("closes the pull request", wrapper.unattended_posting_block(
+            Review("reply", close=True), "pr"))
+        self.assertIsNone(wrapper.unattended_posting_block(
             Review("reply", close=True), "issue"))
 
 
@@ -554,7 +556,7 @@ class VetStageTests(unittest.TestCase):
         self.assertIs(True, ticket["vetting"]["hold_for_human_inspection"])
         self.assertIn("closes the pull request", ticket["vetting"]["reason"])
 
-    def test_a_closing_triage_reply_is_emitted_and_held_without_the_vetter(self) -> None:
+    def test_a_closing_triage_reply_is_emitted_and_vetted(self) -> None:
         with mock.patch.object(wrapper, "emit_review_stdout",
                                wraps=wrapper.emit_review_stdout) as emit:
             ticket, seen = self._run(
@@ -562,9 +564,10 @@ class VetStageTests(unittest.TestCase):
                 triage={"route": "reply_no_verdict", "reason": "r", "message": "fixed by 1234abcd",
                         "close": True, "label_changes": []})
         self.assertIs(True, emit.call_args.kwargs["close"])
-        self.assertEqual([], seen)
-        self.assertIs(True, ticket["vetting"]["hold_for_human_inspection"])
-        self.assertIn("closes the issue", ticket["vetting"]["reason"])
+        [(_name, role, _texts)] = seen
+        self.assertEqual("issue_vetter", role)
+        self.assertEqual(ticket["vetting"],
+                         {"hold_for_human_inspection": False, "reason": "clean"})
 
     def test_unconfigured_vetter_and_unpostable_skip_verdict_vet_nothing(self) -> None:
         for review, extra in (

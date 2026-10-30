@@ -44,12 +44,19 @@ import logging
 import re
 from typing import Callable
 
-__all__ = ["fold_entries", "fold_sections", "hide_scope_block",
+__all__ = ["fold_entries", "fold_sections", "hide_model_name", "hide_scope_block",
            "link_published_branch", "link_source_locations", "names_published_branch"]
 
 logger = logging.getLogger(__name__)
 
 _FENCED_CODE = re.compile(r"(```.*?```)", re.DOTALL)
+_MODEL_NAME = re.compile(r"LLM-([A-Z0-9_]+(?:[.-][A-Z0-9_]+)*)")
+
+
+def hide_model_name(message: str) -> str:
+    """Put the model name of every ``LLM-<model>`` identification in an
+    HTML comment, so the rendered message shows only ``LLM-``."""
+    return _MODEL_NAME.sub(r"LLM-<!-- \1 -->", message)
 
 
 def hide_scope_block(message: str) -> str:

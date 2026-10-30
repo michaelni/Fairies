@@ -133,7 +133,7 @@ from forge_item import (
     timeline_events,
 )
 from llm_output_hacks import (
-    fold_entries, fold_sections, link_published_branch, link_source_locations,
+    fold_entries, fold_sections, hide_model_name, link_published_branch, link_source_locations,
     names_published_branch,
 )
 import workset
@@ -2228,7 +2228,7 @@ def invoke_llm_wrapper(
     message = link_ticket_source_locations(args, message, ticket_url)
     return LLMReview(
         classification=classification,
-        message=fold_sections(fold_entries(message)),
+        message=hide_model_name(fold_sections(fold_entries(message))),
         close=data.get("close") is True,
         label_changes=label_changes,
         branches=branches,

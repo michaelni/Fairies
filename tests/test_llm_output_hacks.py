@@ -39,7 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from llm_output_hacks import (
-    fold_entries, fold_sections, hide_scope_block, link_published_branch,
+    fold_entries, fold_sections, hide_model_name, hide_scope_block, link_published_branch,
     link_source_locations, names_published_branch,
 )
 
@@ -65,6 +65,18 @@ Scope combiner: Verified the exact PR head and merge base.
 
 ### Moderate — first issue
 """
+
+
+class HideModelNameTests(unittest.TestCase):
+    def test_model_name_moves_into_a_comment_without_its_punctuation(self) -> None:
+        self.assertEqual(hide_model_name("LLM-GPT-6-ASTRA \u2014 combined review of 1ce2a4db3060."),
+                         "LLM-<!-- GPT-6-ASTRA --> \u2014 combined review of 1ce2a4db3060.")
+        self.assertEqual(hide_model_name("Review by LLM-GPT-5.4-MINI.\nLLM-GLM-5.3: one issue"),
+                         "Review by LLM-<!-- GPT-5.4-MINI -->.\nLLM-<!-- GLM-5.3 -->: one issue")
+
+    def test_message_without_an_identification_is_untouched(self) -> None:
+        self.assertEqual(hide_model_name("The LLM-based review found nothing."),
+                         "The LLM-based review found nothing.")
 
 
 class HideScopeBlockTests(unittest.TestCase):

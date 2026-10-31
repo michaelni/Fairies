@@ -30,26 +30,9 @@
 
 Match commits in a base branch (origin/master) to forge PR head refs.
 
-Each PR commit is scored against candidate master commits by four tests:
-
-  P  equal git patch-id (the diff hash, stable across a rebase)   2 points
-  S  equal subject (first line)                                   1 point
-  A  equal author date (preserved by a rebase/cherry-pick)        1 point
-  C  master commit date no earlier than the PR commit's           2 points
-     (within a day, to absorb timezone slop)
-
-Match tiers, strongest first, are an exact SHA (the commit itself is on master)
-then total score 6, 5 and 4. The four tests are shown as a signature, e.g.
-"PSAC" (all four), "P.AC" (subject differs) or "SHA" for an exact SHA; a "."
-marks a failed test, so a mistakenly opened PR stands out as, say, "PSA." (its
-patch is on master but predates it).
-
-A master commit matches only one PR commit: once a stronger tier claims it, it
-is no longer offered to weaker ones, so a superseded copy of a merged patch is
-left unmatched rather than mis-paired. When a master commit is claimed by
-several PR commits within a tier none can be singled out and those matches are
-flagged uncertain with "?". Every master commit reaching the same score is
-listed, so a patch that landed more than once is shown in full.
+Each PR commit is scored against candidate master commits by content, see
+pr_landing; every master commit reaching the same score is listed, so a patch
+that landed more than once is shown in full.
 
 A PR's status is decided by its tip, the patch that lands last:
   merged - the tip was found on master
@@ -91,6 +74,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import git_util  # noqa: E402
+import pr_landing  # noqa: E402
 
 STATUS_COLOR = {"merged": "32", "maybe": "33", "part": "36",
                 "open": "31", "closed": "35", "oos": "90"}
@@ -124,12 +108,12 @@ def patch_ids(shas, jobs=None):
 
 
 def build_master_index(base, since):
-    """Return (sha set, subject -> [sha], sha -> meta), meta in git log order.
+    """Return (sha set, sha -> Commit), the commits in git log order.
 
-    meta is (subject, author_date, commit_date). The SHA set spans all of base
-    (merges and full history included) so the exact-SHA match is a true
-    reachability test; subject and meta are windowed by --since to keep indexing
-    cheap. Patch-ids are computed later, in one batch over every needed commit.
+    The SHA set spans all of base (merges and full history included) so the
+    exact-SHA match is a true reachability test; the commits are windowed by
+    --since to keep indexing cheap. Patch-ids are computed later, in one batch
+    over every needed commit.
     """
     master_shas = set(git_lines("rev-list", base))
     rng_args = ["--no-merges"]
@@ -137,13 +121,11 @@ def build_master_index(base, since):
         rng_args += ["--since", since]
 
     meta = {}
-    subject_to_shas = defaultdict(list)
     for line in git_lines("log", *rng_args, "--format=%H\x1f%at\x1f%ct\x1f%s", base):
         sha, at, ct, subj = line.split("\x1f", 3)
-        meta[sha] = (subj, int(at), int(ct))
-        subject_to_shas[subj].append(sha)
+        meta[sha] = pr_landing.Commit(subj, int(at), int(ct))
 
-    return master_shas, subject_to_shas, meta
+    return master_shas, meta
 
 
 def pr_pool(heads, base):
@@ -184,36 +166,6 @@ def pr_divergent(head, pool, order):
             seen.add(sha)
             stack.extend(pool[sha][0])
     return [(sha, *pool[sha][1:]) for sha in sorted(seen, key=order.get)]
-
-
-SHA_SCORE = 7              # exact-SHA match, ranked above any scored match
-TIERS = (SHA_SCORE, 6, 5, 4)
-CDATE_TOL = 24 * 3600      # commit-date slack absorbing timezone errors
-
-
-def candidate_masters(commit, pid, master_shas, patchid_to_shas,
-                      subject_to_shas, meta):
-    """Master commits a PR commit could be, as {master_sha: (score, signature)}.
-
-    An exact SHA wins outright. Otherwise candidates (sharing the patch-id or
-    subject) are scored: patch-id 2, subject 1, author date 1, and 2 when the
-    master commit date is not earlier than the PR commit's (within CDATE_TOL).
-    The signature spells the four tests as P/S/A/C, '.' where one failed. Only
-    candidates scoring at least 4 (the weakest tier) are returned.
-    """
-    sha, _subj, at, ct = commit
-    if sha in master_shas:
-        return {sha: (SHA_SCORE, "SHA")}
-    pool = set(patchid_to_shas.get(pid, ())) | set(subject_to_shas.get(_subj, ()))
-    out = {}
-    for m in pool:
-        msubj, mat, mct = meta[m]
-        tests = (pid is not None and m in patchid_to_shas.get(pid, ()),
-                 _subj == msubj, at == mat, mct >= ct - CDATE_TOL)
-        score = 2 * tests[0] + tests[1] + tests[2] + 2 * tests[3]
-        if score >= 4:
-            out[m] = (score, "".join(c if t else "." for c, t in zip("PSAC", tests)))
-    return out
 
 
 def auto_since(pr_glob, margin_days=30):
@@ -331,7 +283,7 @@ def main():
 
     since = args.since or auto_since(args.pr_glob)
     print(f"# indexing {args.base} since {since} ...", file=sys.stderr)
-    master_shas, subject_to_shas, meta = build_master_index(args.base, since)
+    master_shas, meta = build_master_index(args.base, since)
     print(f"# indexed {len(meta)} master commits", file=sys.stderr)
 
     # sort numerically by trailing PR number when possible
@@ -356,7 +308,7 @@ def main():
             return meta[sha]
         at, ct, subj = git("show", "-s", "--format=%at\x1f%ct\x1f%s",
                            sha).strip().split("\x1f", 2)
-        return subj, int(at), int(ct)
+        return pr_landing.Commit(subj, int(at), int(ct))
 
     def subject_of(sha):
         return commit_meta(sha)[0]
@@ -428,38 +380,14 @@ def main():
     need = set(meta).union(c[0] for cs in inspected.values() for c in cs)
     pids = patch_ids(need)
     print(f"# patch-ids for {len(pids)} of {len(need)} commits", file=sys.stderr)
-    patchid_to_shas = defaultdict(list)
-    for sha in meta:  # keep lists newest-first (meta follows git log order)
-        if sha in pids:
-            patchid_to_shas[pids[sha]].append(sha)
+    index = pr_landing.Index(meta, pids, master_shas)
 
-    # Resolve matches in score tiers so a master commit taken by a stronger
-    # match is no longer offered to a weaker one. Within a tier a master commit
-    # claimed by several PR commits cannot be pinned to one of them, so those
-    # matches are flagged uncertain; the master is still consumed for the next.
     entries = [(pr_ref, commit[0], commit[1],
-                candidate_masters(commit, pids.get(commit[0]), master_shas,
-                                  patchid_to_shas, subject_to_shas, meta))
+                index.candidates(commit[0], pr_landing.Commit(*commit[1:]),
+                                 pids.get(commit[0])))
                for pr_ref in pr_refs for commit in inspected[pr_ref]]
-
-    matched = {}
-    consumed = set()
-    for tier in TIERS:
-        won = {}
-        claimant_shas = defaultdict(set)
-        for i, (pr_ref, sha, subj, cand) in enumerate(entries):
-            if i in matched:
-                continue
-            avail = {m: sig for m, (sc, sig) in cand.items()
-                     if sc == tier and m not in consumed}
-            if avail:
-                won[i] = avail
-                for m in avail:
-                    claimant_shas[m].add(sha)
-        for i, avail in won.items():
-            certain = all(len(claimant_shas[m]) == 1 for m in avail)
-            matched[i] = (avail, certain)
-        consumed.update(m for avail in won.values() for m in avail)
+    matched = dict(enumerate(pr_landing.resolve(
+        [(sha, cand) for _, sha, _, cand in entries])))
 
     def sig_field(sig):  # green when every test passed, yellow when some failed
         return paint(f"{sig:^4}", "32" if "." not in sig else "33")

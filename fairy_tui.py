@@ -1187,6 +1187,7 @@ def _styles(t: blessed.Terminal) -> dict:
             "br_mark": mix(t.bold, c(208)),   "br_pr_mark": mix(t.bold, c(196)),
             "kind_pr": c(75),                 "kind_issue": c(176),
             "llm": c(141),                    "title": c(252),
+            "merger": mix(t.bold, c(255)),
             "st_requests": c(244),
             "st_queued": c(117),              "st_llm": mix(t.bold, c(45)),
             "st_reviewed": mix(t.bold, c(214)),
@@ -1235,6 +1236,7 @@ def _styles(t: blessed.Terminal) -> dict:
         "br_mark": t.bold_yellow, "br_pr_mark": t.bold_red,
         "kind_pr": t.cyan,      "kind_issue": t.magenta,
         "llm": t.magenta,       "title": t.white,
+        "merger": t.bold_white,
         "st_requests": t.bright_black,
         "st_queued": t.cyan,    "st_llm": t.bold_cyan,
         "st_reviewed": t.bold_yellow,
@@ -1548,6 +1550,10 @@ class UILoop:
             return fairy.format_llm_classification(review["classification"])
         return ""
 
+    def _name_style(self, repo: str, login: str, plain: str) -> str:
+        """The style for ``login``: brighter when it has merged in ``repo``."""
+        return "merger" if login in self.model.mergers.get(repo, ()) else plain
+
     def _row(self, it: Item, is_cursor: bool) -> list | tuple:
         m = self.model
         llm = self._llm_col(it)
@@ -1569,7 +1575,8 @@ class UILoop:
         act = _age_of(snap.get("content_at")) or _age(snap.get("updated_at"))
         merger_act = _touched_age(snap, m.mergers.get(it.repo, set()))
         branch_mark = _branch_mark(it.data)
-        author = (it.data.get("author") or snap.get("author") or "")[:AUTHOR_W]
+        login = it.data.get("author") or snap.get("author") or ""
+        author = login[:AUTHOR_W]
         if is_cursor:
             return ("cursor",
                     f"{mark}{_KIND_DISP[it.kind]:<5} {repo_col}#{it.number:<7} "
@@ -1589,7 +1596,7 @@ class UILoop:
             ("llm", f"{llm:<9} "),
             ("num", f"{act:>4} "),
             ("num", f"{merger_act:>4}  "),
-            ("label", f"{author:<{AUTHOR_W}} "),
+            (self._name_style(it.repo, login, "label"), f"{author:<{AUTHOR_W}} "),
             ("title", title),
         ]
 
@@ -1627,7 +1634,9 @@ class UILoop:
         if url:
             head.append([("link", str(url)[:width])])
         if author or data.get("head_branch"):
-            byline = [("label", "author "), ("text", str(author or "?"))]
+            byline = [("label", "author "),
+                      (self._name_style(item.repo, str(author), "text"),
+                       str(author or "?"))]
             if data.get("head_branch"):
                 byline += [("label", "   branch "),
                            ("text", str(data["head_branch"])[:width])]
@@ -1763,7 +1772,8 @@ class UILoop:
                     if c.get("path"):
                         what += f"  {c['path']}" \
                             + (f":{c['line']}" if c.get("line") is not None else "")
-                header = [("h4", str(c.get("author") or "?")),
+                header = [(self._name_style(item.repo, str(c.get("author")), "h4"),
+                           str(c.get("author") or "?")),
                           ("label", f"  {what}  {when}"[:width])]
                 body = c.get("body")
                 if c.get("kind") in _MENTION_KINDS:

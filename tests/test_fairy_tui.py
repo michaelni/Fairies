@@ -1062,6 +1062,28 @@ class StatusColumnTests(DbCase):
         self.assertIn("  1d   1d  ", self.rows()[0])
         self.assertIn("  1d   1d  ", self.rows()[1])
 
+    def test_mergers_names_are_styled_brighter(self) -> None:
+        self.db.push("reviewed", "pr", "4", dict(
+            verdict(4, discussion=[{"kind": "comment", "author": "bob",
+                                    "created_at": "2026-07-27T04:15:00Z",
+                                    "body": "hi"}]),
+            author="dave"))
+        self.db.push("reviewed", "pr", "5", dict(verdict(5), author="alice"))
+        self.db.push("reviewed", "pr", "6", dict(verdict(6), author="bob"))
+        self.db.push("items", "pr", "7", {
+            "state": "merged", "author": "carol",
+            "discussion": [{"kind": "state", "state": "merged",
+                            "author": "bob"}]})
+        self.model.poll()
+        ui = make_ui(self.model)
+        names = ("alice", "bob", "dave")
+        styles = {text.strip(): style for row in ui.list_rows()[1:]
+                  for style, text in row if text.strip() in names}
+        self.assertEqual(styles, {"alice": "label", "bob": "merger"})
+        styles = {text: style for line in ui.detail_lines(100)
+                  for style, text in line if text in names}
+        self.assertEqual(styles, {"dave": "text", "bob": "merger"})
+
     def test_sample_tickets_share_the_base_items_status(self) -> None:
         self.db.push("reviewed", "pr", "5s2", verdict(5))
         self.db.push("items", "pr", "5", {

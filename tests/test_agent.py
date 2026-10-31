@@ -56,6 +56,7 @@ import filedb  # noqa: E402
 import git_util  # noqa: E402
 import halt_marker  # noqa: E402
 import issue_fairy  # noqa: E402
+import pr_landing  # noqa: E402
 
 NOW = datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc)
 
@@ -2722,8 +2723,8 @@ class SettleHoursTests(AgentCase):
     def test_full_pass_with_a_stamp_recomputes_the_hours(self) -> None:
         self.ns.patch_repo = Path("mirror")
         self.ns.scan_closed_days = 30
-        with mock.patch.object(author_settle, "landed_patch_ids",
-                               return_value={"p1"}) as landed, \
+        with mock.patch.object(pr_landing, "forge_commits",
+                               return_value=({}, {"sha1": "p1"})) as landed, \
                 mock.patch.object(author_settle, "settle_hours",
                                   return_value={"alice": 48.0}) as hours:
             self.scan([make_pr(1)])

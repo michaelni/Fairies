@@ -83,6 +83,7 @@ import halt_marker
 import gcli_cache
 import git_util
 import issue_fairy
+import pr_landing
 import worker
 import workset
 from forge_item import FIELDLESS_KINDS, author_login, build_llm_discussion, discussion_time, item_standing, labels
@@ -925,9 +926,9 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
                     and ns.scan_closed_days > 0 and (reviewer := login(kind)):
                 try:
                     ns.settle_hours = author_settle.settle_hours(
-                        db, reviewer, author_settle.landed_patch_ids(
+                        db, reviewer, set(pr_landing.forge_commits(
                             db, ns.patch_repo,
-                            now - timedelta(days=2 * ns.scan_closed_days)))
+                            now - timedelta(days=2 * ns.scan_closed_days))[1].values()))
                 except Exception:
                     logger.exception("%s: settle hours kept from the last pass", kind)
             cutoff = listing_cutoff(

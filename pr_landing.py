@@ -50,17 +50,27 @@ tier claims it, it is no longer offered to weaker ones. When several
 pull request commits claim it within a tier none can be singled out and
 those matches are uncertain.
 
-What belongs here: the scoring and the tier resolution.
-What does NOT belong: reading the commits (tools/match_prs_to_master).
+What belongs here: the scoring, the tier resolution and the index of
+the forge's branches with their cached patch-ids.
+What does NOT belong: reading pull requests from the forge or the filedb
+snapshots (agent) and reporting (tools/match_prs_to_master).
 """
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Container, Sequence
+from datetime import datetime
+from pathlib import Path
 from typing import NamedTuple
 
-__all__ = ["Commit", "Index", "resolve"]
+import filedb
+import git_util
+
+__all__ = ["Commit", "Index", "resolve", "forge_commits", "log_commits"]
+
+logger = logging.getLogger(__name__)
 
 SHA_SCORE = 7
 TIERS = (SHA_SCORE, 6, 5, 4)
@@ -148,3 +158,45 @@ def resolve(entries: Sequence[tuple[str, dict[str, tuple[int, str]]]]
         consumed.update(landed_sha for available in won.values() for landed_sha in available)
     return [matched.get(i, ({}, True)) for i in range(len(entries))]
 
+
+def log_commits(repo_root: Path, *args: str,
+                stdin: Sequence[str] | None = None) -> dict[str, Commit]:
+    """{sha: Commit} of ``git log <args>``, in log order; ``stdin`` names
+    commits to read instead, one that the repository lacks absent."""
+    if stdin is not None and not stdin:
+        return {}
+    out = git_util.git_log(
+        repo_root, "--format=%H%x1f%at%x1f%ct%x1f%s",
+        *(("--no-walk", "--ignore-missing", "--stdin") if stdin is not None else ()),
+        *args, stdin="".join(f"{sha}\n" for sha in stdin or ()))
+    commits = {}
+    for line in out.splitlines():
+        sha, author_date, commit_date, subject = line.split("\x1f", 3)
+        commits[sha] = Commit(subject, int(author_date), int(commit_date))
+    return commits
+
+
+LANDED_DOC = "landed-patch-ids.json"
+
+
+def forge_commits(db: filedb.Db, repo_root: Path, since: datetime
+                  ) -> tuple[dict[str, Commit], dict[str, str]]:
+    """The commits of the forge's branches, pull request refs excluded.
+
+    db:        the db whose root caches the sha-to-patch-id map
+    repo_root: a clone with the forge remote (see git_util.FORGE_REMOTES)
+    since:     only non-merge commits from this time on
+    returns:   {sha: Commit} and {sha: patch-id}
+    """
+    remote = git_util.git_forge_remote(repo_root)
+    commits = log_commits(repo_root, "--no-merges", f"--since={since.isoformat()}",
+                          f"--exclude={remote}/pr/*", f"--remotes={remote}")
+    known = db.read(db.root / LANDED_DOC) or {}
+    ids = {sha: known[sha] for sha in commits if sha in known}
+    new = [sha for sha in commits if sha not in known]
+    if new:
+        ids.update(git_util.git_patch_ids(repo_root, new))
+        db.write(db.root / LANDED_DOC, ids)
+    logger.debug("landed patch-ids: %d commits since %s, %d newly hashed",
+                 len(commits), since.date(), len(new))
+    return commits, ids

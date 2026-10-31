@@ -32,53 +32,26 @@ settle before fairy re-reviews an item she has already engaged on.
 Authors whose pull requests draw many fairy reviews per landed pull
 request wait longer than the default.
 
-What belongs here: the reviews-per-landed ratio over the items store,
-the patch-id index of the forge's branches that tells a hand-applied
-pull request from an abandoned one, and the ratio-to-hours steps.
-What does NOT belong: the gate that applies the hours (fairy,
-issue_fairy) and the pass that triggers the computation (agent).
+What belongs here: the reviews-per-landed ratio over the items store
+and the ratio-to-hours steps.
+What does NOT belong: the patch-id index of the forge's branches that
+tells a hand-applied pull request from an abandoned one (pr_landing),
+the gate that applies the hours (fairy, issue_fairy) and the pass that
+triggers the computation (agent).
 """
 
 from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import datetime
-from pathlib import Path
 
 import filedb
-import git_util
 
-__all__ = ["REVIEWS_PER_LANDED_STEPS", "landed_patch_ids", "settle_hours"]
+__all__ = ["REVIEWS_PER_LANDED_STEPS", "settle_hours"]
 
 logger = logging.getLogger(__name__)
 
 REVIEWS_PER_LANDED_STEPS = ((12, 48.0), (10, 24.0), (8, 12.0))
-
-LANDED_DOC = "landed-patch-ids.json"
-
-
-def landed_patch_ids(db: filedb.Db, repo_root: Path, since: datetime) -> set[str]:
-    """The patch-ids of the forge's branches, pull request refs excluded.
-
-    db:        the db whose root caches the sha-to-patch-id map
-    repo_root: a clone with the forge remote (see git_util.FORGE_REMOTES)
-    since:     only non-merge commits from this time on
-    returns:   the patch-ids
-    """
-    remote = git_util.git_forge_remote(repo_root)
-    shas = git_util.git_rev_list(
-        repo_root, f"--since={since.isoformat()}", "--no-merges",
-        f"--exclude={remote}/pr/*", f"--remotes={remote}")
-    known = db.read(db.root / LANDED_DOC) or {}
-    ids = {sha: known[sha] for sha in shas if sha in known}
-    new = [sha for sha in shas if sha not in known]
-    if new:
-        ids.update(git_util.git_patch_ids(repo_root, new))
-        db.write(db.root / LANDED_DOC, ids)
-    logger.debug("landed patch-ids: %d commits since %s, %d newly hashed",
-                 len(shas), since.date(), len(new))
-    return set(ids.values())
 
 
 def settle_hours(db: filedb.Db, reviewer: str, landed: set[str]) -> dict[str, float]:

@@ -111,11 +111,11 @@ def git_merge_tree(repo_root: Path, sha_a: str, sha_b: str) -> tuple[str, str]:
     return tree.strip(), conflicts.strip()
 
 
-def _git_stdout(repo_root: Path, *args: str,
+def _git_stdout(repo_root: Path, *args: str, stdin: bytes = b"",
                 timeout_s: float | None = None) -> bytes:
     """stdout of ``git <args>`` in ``repo_root``; RuntimeError on failure,
     TimeoutExpired past ``timeout_s``."""
-    cp = subprocess.run(["git", "-C", str(repo_root), *args],
+    cp = subprocess.run(["git", "-C", str(repo_root), *args], input=stdin,
                         capture_output=True, check=False, timeout=timeout_s)
     if cp.returncode != 0:
         raise RuntimeError(
@@ -211,6 +211,10 @@ def git_diff(repo_root: Path, base_sha: str, head_sha: str) -> bytes:
 
 def git_rev_list(repo_root: Path, *args: str) -> list[str]:
     return _git_stdout(repo_root, "rev-list", *args).decode().split()
+
+
+def git_log(repo_root: Path, *args: str, stdin: str = "") -> str:
+    return _git_stdout(repo_root, "log", *args, stdin=stdin.encode()).decode()
 
 
 def git_patch_ids(repo_root: Path, shas: Sequence[str]) -> dict[str, str]:

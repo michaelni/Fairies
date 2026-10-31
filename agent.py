@@ -67,7 +67,7 @@ import subprocess
 import sys
 import time
 from threading import Event
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -176,7 +176,23 @@ def _fetch_thread(ns: argparse.Namespace, kind: str, item: dict, cache,
     return item, ([], comments, [], timeline, reactions)
 
 
-def _fetch_pr_head(ns: argparse.Namespace, number: int,
+FETCH_STAMP_DOC = "patch-repo-fetch.json"
+
+
+def fetch_forge(db: filedb.Db, ns: argparse.Namespace) -> datetime:
+    """One fetch of the forge remote of --patch-repo. Returns when the
+    fetch began -- the mirror holds everything the forge had by then --
+    and records that in the db for later passes. RuntimeError or
+    TimeoutExpired when the fetch failed."""
+    started = datetime.now(timezone.utc)
+    remote = git_util.git_forge_remote(ns.patch_repo)
+    logger.info("git -C %s fetch %s", ns.patch_repo, remote)
+    git_util.git_fetch(ns.patch_repo, remote, timeout_s=120.0)
+    db.write(db.root / FETCH_STAMP_DOC, {"fetched_at": started.isoformat()})
+    return started
+
+
+def _fetch_pr_head(db: filedb.Db, ns: argparse.Namespace, number: int,
                    head_sha: str | None) -> None:
     """Try one fetch of the forge remote of --patch-repo when its
     ``<remote>/pr/<n>`` ref is not at ``head_sha``, the head the forge
@@ -192,29 +208,27 @@ def _fetch_pr_head(ns: argparse.Namespace, number: int,
         return
     started = time.monotonic()
     try:
-        remote = git_util.git_forge_remote(repo)
-        logger.info("pr #%s: head %s is not at %s/pr/%s: git -C %s fetch %s",
-                    number, head_sha[:12], remote, number, repo, remote)
-        git_util.git_fetch(repo, remote, timeout_s=120.0)
+        logger.info("pr #%s: head %s is not at any of %s", number,
+                    head_sha[:12], refs)
+        fetch_forge(db, ns)
     except (RuntimeError, subprocess.TimeoutExpired) as exc:
         logger.warning("pr #%s: head %s not fetched: %s", number,
                        head_sha[:12], exc)
         return
-    logger.info("pr #%s: fetched %s in %.1fs; %s/pr/%s is now %s", number,
-                remote, time.monotonic() - started, remote, number,
+    logger.info("pr #%s: fetched in %.1fs; the pr ref is now %s", number,
+                time.monotonic() - started,
                 (git_util.git_resolve_first(repo, refs) or "absent")[:12])
 
 
-def _patch_ids(db: filedb.Db, ns: argparse.Namespace, kind: str,
-               token: filedb.TicketId, base_sha: str | None,
+def _patch_ids(ns: argparse.Namespace, kind: str, token: filedb.TicketId,
+               stored: dict, base_sha: str | None,
                head_sha: str | None) -> list[str] | None:
     """The patch-ids of the PR's base..head series in --patch-repo,
-    kept from the standing snapshot while base and head are unchanged;
-    None without a mirror, under --simulate-past, and while the mirror
-    lacks the head."""
+    kept from the standing snapshot ``stored`` while base and head are
+    unchanged; None without a mirror, under --simulate-past, and while
+    the mirror lacks the head."""
     if ns.patch_repo is None or ns.simulate_past or None in (base_sha, head_sha):
         return None
-    stored = db.get(filedb.ITEM_STATE, kind, token) or {}
     if (stored.get("base_sha"), stored.get("head_sha")) == (base_sha, head_sha) \
             and stored.get("patch_ids") is not None:
         return stored["patch_ids"]
@@ -250,7 +264,8 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
         if kind == "pr":
             base_sha = fairy.get_pr_base_sha(item)
             head_sha = fairy.get_pr_head_sha(item)
-            _fetch_pr_head(ns, item["number"], head_sha)
+            stored = db.get(filedb.ITEM_STATE, kind, token) or {}
+            _fetch_pr_head(db, ns, item["number"], head_sha)
             live = [s for s in
                     fairy.effective_review_states(reviews).values()
                     if not s.stale]
@@ -264,7 +279,9 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                                        for s in live),
                 "base_sha": base_sha,
                 "head_sha": head_sha,
-                "patch_ids": _patch_ids(db, ns, kind, token, base_sha, head_sha),
+                "patch_ids": _patch_ids(ns, kind, token, stored, base_sha, head_sha),
+                **({field: stored[field] for field in LANDING_FIELDS if field in stored}
+                   if stored.get("head_sha") == head_sha else {}),
             }
         else:
             status = {
@@ -758,6 +775,88 @@ def closure_reason_of(kind: str, item: dict) -> str | None:
     return None
 
 
+LANDING_FIELDS = ("landed_sha", "landed_signature", "landing_verified_at")
+
+
+def verify_landings(db: filedb.Db, ns: argparse.Namespace,
+                    numbers: Collection[int], fetched_at: datetime,
+                    now: datetime) -> set[int]:
+    """Match the tip of each closed pull request in ``numbers`` by
+    content against the forge's branches as the mirror had them at
+    ``fetched_at`` (see pr_landing) and record a verdict that differs
+    from the snapshot's: ``landed_sha`` and ``landed_signature`` name
+    the best match, None when the mirror has none, and
+    ``landing_verified_at`` the fetch that established it. A snapshot
+    is verified only when the fetch is newer than it, as its write
+    followed the close; one whose tip the mirror lacks is left as it
+    is. Returns the numbers that landed."""
+    snapshots = {}
+    for number in numbers:
+        snapshot = db.get(filedb.ITEM_STATE, "pr", str(number))
+        if snapshot and snapshot.get("head_sha") \
+                and iso_to_dt(snapshot["state_changed_at"]) < fetched_at:
+            snapshots[number] = snapshot
+    heads = {number: snapshot["head_sha"] for number, snapshot in snapshots.items()}
+    tips = pr_landing.log_commits(ns.patch_repo, stdin=sorted(set(heads.values())))
+    tip_ids = git_util.git_patch_ids(ns.patch_repo, list(tips))
+    verified = [number for number in snapshots if heads[number] in tips]
+    if len(verified) < len(snapshots):
+        logger.info("pr %s: the mirror lacks the tip, landing not verified",
+                    sorted(set(snapshots) - set(verified)))
+    if not verified:
+        return set()
+    remote = git_util.git_forge_remote(ns.patch_repo)
+    index = pr_landing.Index(
+        *pr_landing.forge_commits(db, ns.patch_repo,
+                                  now - timedelta(days=2 * ns.scan_closed_days)),
+        set(git_util.git_rev_list(ns.patch_repo, f"--exclude={remote}/pr/*",
+                                  f"--remotes={remote}")))
+    landed = set()
+    for number in verified:
+        head = heads[number]
+        sha, (_score, signature) = max(
+            index.candidates(head, tips[head], tip_ids.get(head)).items(),
+            key=lambda candidate: candidate[1][0], default=(None, (0, None)))
+        logger.info("pr #%s closed: tip %s %s", number, head[:12],
+                    f"landed as {sha[:12]} ({signature})" if sha
+                    else "is on no branch of the mirror")
+
+        def record(snapshot: dict, sha=sha, signature=signature) -> None:
+            if snapshot.get("landed_sha", "") != sha:
+                snapshot.update(landed_sha=sha, landed_signature=signature,
+                                landing_verified_at=fetched_at.isoformat())
+        db.update(filedb.ITEM_STATE, "pr", str(number), record)
+        if sha:
+            landed.add(number)
+    return landed
+
+
+def verify_closures(db: filedb.Db, ns: argparse.Namespace,
+                    newly_closed: Collection[int], full: bool,
+                    now: datetime) -> set[int]:
+    """Verify where the pull requests ``newly_closed`` without a merge
+    landed, after one fetch of the forge remote when one of them has no
+    verdict yet; a full pass re-checks every closed snapshot written
+    within --scan-closed-days that has not landed, against the mirror
+    as of the last recorded fetch. Returns the numbers that landed."""
+    numbers = set(newly_closed)
+    if full:
+        horizon = (now - timedelta(days=ns.scan_closed_days)).timestamp()
+        numbers |= {filedb.forge_number(number)
+                    for kind, number, mtime in db.list_state_stat(filedb.ITEM_STATE)
+                    if kind == "pr" and mtime >= horizon}
+    unlanded = {number for number in numbers
+                if (snapshot := db.get(filedb.ITEM_STATE, "pr", str(number)))
+                and snapshot.get("state") == "closed"
+                and not snapshot.get("landed_sha")}
+    if not unlanded:
+        return set()
+    stamp = db.read(db.root / FETCH_STAMP_DOC)
+    fetched_at = fetch_forge(db, ns) if unlanded & set(newly_closed) or not stamp \
+        else iso_to_dt(stamp["fetched_at"])
+    return verify_landings(db, ns, unlanded, fetched_at, now)
+
+
 def closure_reason(db: filedb.Db, ns: argparse.Namespace, kind: str,
                    number: filedb.TicketId, cache) -> str | None:
     """One fetch to name why an item left the open listing. None means
@@ -967,6 +1066,17 @@ def scan_pass(db: filedb.Db, pr_ns: argparse.Namespace | None,
             failed = snapshot_closed(db, ns, kind, closed, caches[kind],
                                      serve_operator) \
                 if ns.scan_closed_days > 0 else None
+            if kind == "pr" and ns.patch_repo and ns.scan_closed_days > 0 \
+                    and not ns.simulate_past:
+                try:
+                    for n in verify_closures(
+                            db, ns, [int(i["number"]) for i in closed
+                                     if reasons[int(i["number"])] == REASON_CLOSED_UNMERGED],
+                            full_side, now):
+                        reasons[n] = REASON_MERGED
+                except Exception:
+                    logger.exception("%s: landing of the closed pull requests not "
+                                     "verified", kind)
             cancel_tickets(db, kind, lambda n: None if (kind, n) in open_set
                            else reasons.get(n) or (closure_reason(
                                db, ns, kind, str(n), caches[kind]) if full_side else None))

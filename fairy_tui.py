@@ -283,7 +283,7 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
                     or item.data.get("auto_merge")) == "merge"
             return [("sc_done", "M" if auto else "m"), ("text", "   ")]
         if snap.get("state") == "closed" \
-                or reason == agent.REASON_CLOSED_UNMERGED:
+                or reason == agent.REASON_CLOSED:
             return [("sc_bad", "R"), ("text", "   ")]
         return [
             ("sc_info", "a") if snap.get("auto_merge") == "merge"

@@ -2719,6 +2719,73 @@ class IncrementalScanTests(AgentCase):
                          NOW - agent.LISTING_OVERLAP)
 
 
+class LandingTests(AgentCase):
+    """A pull request closed after its patches were pushed by hand is
+    told from a rejected one by content, see pr_landing."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.ns.patch_repo = Path("mirror")
+        self.ns.scan_closed_days = 30
+        tip = pr_landing.Commit("fix", 1, 2)
+        self.fetch = self.patch(git_util, "git_fetch")
+        self.patch(git_util, "git_forge_remote", return_value="fforge")
+        self.patch(git_util, "git_resolve_first",
+                   side_effect=lambda repo, refs: "h" + refs[0].rsplit("/", 1)[1])
+        self.patch(git_util, "git_series_patch_ids", return_value=[])
+        self.patch(git_util, "git_rev_list", return_value=[])
+        self.patch(pr_landing, "log_commits",
+                   return_value={"h9": tip, "h8": tip._replace(subject="other")})
+        self.patch(git_util, "git_patch_ids", return_value={"h9": "p9", "h8": "p8"})
+        self.patch(pr_landing, "forge_commits",
+                   return_value=({"m1": tip}, {"m1": "p9"}))
+
+    def patch(self, target, name: str, **kw) -> mock.Mock:
+        patcher = mock.patch.object(target, name, **kw)
+        self.addCleanup(patcher.stop)
+        return patcher.start()
+
+    def test_a_closure_is_verified_against_a_fresh_mirror(self) -> None:
+        for n in (7, 8, 9):
+            self.db.push("queued", "pr", str(n), {"title": "closed"})
+        self.scan([make_pr(1)],
+                  changed=[dict(make_pr(n), state="closed") for n in (7, 8, 9)])
+        self.fetch.assert_called_once_with(Path("mirror"), "fforge", timeout_s=120.0)
+        self.assertEqual(self.db.get("cancelled", "pr", "9")["reason"], "merged")
+        self.assertEqual(self.db.get("cancelled", "pr", "8")["reason"],
+                         "closed without merge")
+        landed, rejected, unknown = (self.db.get("items", "pr", str(n))
+                                     for n in (9, 8, 7))
+        self.assertEqual((landed["landed_sha"], landed["landed_signature"]),
+                         ("m1", "PSAC"))
+        self.assertIsNone(rejected["landed_sha"])
+        self.assertEqual(rejected["landing_verified_at"],
+                         self.db.read(self.db.root / agent.FETCH_STAMP_DOC)["fetched_at"])
+        self.assertNotIn("landing_verified_at", unknown)
+
+    def test_a_full_pass_rechecks_closed_snapshots_without_a_fetch(self) -> None:
+        self.db.push("items", "pr", "9", {"state": "closed", "head_sha": "h9"})
+        self.db.push("items", "pr", "6", {"state": "closed", "head_sha": "h6",
+                                          "landed_sha": "m0"})
+        self.db.write(self.db.root / agent.FETCH_STAMP_DOC, {
+            "fetched_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()})
+        self.scan([make_pr(1)], now=datetime.now(timezone.utc))
+        self.fetch.assert_not_called()
+        self.assertEqual(self.db.get("items", "pr", "9")["landed_sha"], "m1")
+        pr_landing.log_commits.assert_called_once_with(Path("mirror"), stdin=["h9"])
+
+    def test_a_refreshed_snapshot_keeps_the_verdict_at_the_same_head(self) -> None:
+        self.db.push("items", "pr", "9", {
+            "state": "closed", "head_sha": "h9", "updated_at": "old",
+            "landed_sha": "m1", "landed_signature": "PSAC",
+            "landing_verified_at": "t"})
+        self.scan([], changed=[dict(make_pr(9), state="closed")])
+        self.fetch.assert_not_called()
+        snapshot = self.db.get("items", "pr", "9")
+        self.assertEqual((snapshot["landed_sha"], snapshot["landing_verified_at"]),
+                         ("m1", "t"))
+
+
 class SettleHoursTests(AgentCase):
     def test_full_pass_with_a_stamp_recomputes_the_hours(self) -> None:
         self.ns.patch_repo = Path("mirror")

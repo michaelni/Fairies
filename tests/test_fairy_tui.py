@@ -1102,7 +1102,7 @@ class StatusColumnTests(DbCase):
                      dict(verdict(5), reason="merged", auto_merge="merge"))
         self.db.push("cancelled", "pr", "6", dict(verdict(6), reason="merged"))
         self.db.push("cancelled", "pr", "7",
-                     dict(verdict(7), reason="closed without merge"))
+                     dict(verdict(7), reason="closed"))
         with self.model.lock:
             self.model.filter_mode = "all"
         self.model.poll()

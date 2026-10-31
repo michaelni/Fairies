@@ -199,7 +199,8 @@ def _branch_mark(data: dict) -> tuple[str, str]:
 
 
 STATUS_FIELDS = ("state", "auto_merge", "approvals", "change_requests",
-                 "labels", "head_sha", "patch_ids", "author", "updated_at")
+                 "labels", "head_sha", "patch_ids", "author", "updated_at",
+                 "landed_sha", "landing_verified_at")
 AUTHOR_W = 10
 _REPRO_CODES = {"repro/yes": ("sc_good", "Y"),
                 "repro/flaky": ("sc_warn", "F"),
@@ -269,6 +270,13 @@ def _touched_age(snap: dict, logins: Collection[str]) -> str:
                         if login in logins), default=None))
 
 
+def _landed(item: Item, snap: dict) -> bool:
+    """Whether the PR's patches are in: merged on the forge, or on a
+    branch of the mirror as far as the agent could tell."""
+    return snap.get("state") == "merged" or bool(snap.get("landed_sha")) \
+        or item.state == "cancelled" and item.data.get("reason") == agent.REASON_MERGED
+
+
 def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
     """The row's forge-status letters, 4 cells wide (README-TUI.md
     documents the codes). ``snap`` is the item's polled STATUS_FIELDS,
@@ -278,13 +286,13 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
     snapshot's last-seen state."""
     reason = item.data.get("reason") if item.state == "cancelled" else None
     if item.kind == "pr":
-        if snap.get("state") == "merged" or reason == agent.REASON_MERGED:
+        if _landed(item, snap):
             auto = (snap.get("auto_merge")
                     or item.data.get("auto_merge")) == "merge"
             return [("sc_done", "M" if auto else "m"), ("text", "   ")]
-        if snap.get("state") == "closed" \
-                or reason == agent.REASON_CLOSED:
-            return [("sc_bad", "R"), ("text", "   ")]
+        if snap.get("state") == "closed" or reason == agent.REASON_CLOSED_UNMERGED:
+            return [("sc_bad", "R") if snap.get("landing_verified_at")
+                    else ("sc_done", "C"), ("text", "   ")]
         return [
             ("sc_info", "a") if snap.get("auto_merge") == "merge"
             else ("text", " "),
@@ -1561,16 +1569,15 @@ class UILoop:
         repo_col = (f"{self._repo_disp[it.repo]:<{self._repo_w}} "
                     if self._repo_w else "")
         title = it.data.get("title") or ""
+        snap = m.status.get(
+            (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {}
         state_disp = _STATE_DISP.get(it.state, it.state)
-        if it.state == "cancelled" \
-                and it.data.get("reason") == agent.REASON_MERGED:
+        if it.state == "cancelled" and _landed(it, snap):
             state_disp = "merged"
         if it.state in ("queued", "llm") and it.data.get("forced"):
             state_disp += "+"
         if (it.repo, it.kind, it.number) in m.missing:
             state_disp += "?"
-        snap = m.status.get(
-            (it.repo, it.kind, str(filedb.forge_number(it.number)))) or {}
         status = _status_cols(it, snap)
         act = _age_of(snap.get("content_at")) or _age(snap.get("updated_at"))
         merger_act = _touched_age(snap, m.mergers.get(it.repo, set()))

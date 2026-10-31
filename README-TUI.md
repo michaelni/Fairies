@@ -122,7 +122,9 @@ Column 4 is filled on reviewed, outgoing, posted and skipped rows.
 
 A closed PR shows a single code instead: `M` (purple) merged with
 auto-merge scheduled at last sight, `m` (purple) merged — manually,
-as far as fairy can tell, `R` (red) closed without merging.
+as far as fairy can tell, `R` (red) rejected: closed, and a mirror
+fetched after the close has its patches on no branch, `C` (purple)
+closed, not verified against the mirror yet.
 
 An issue shows four columns:
 

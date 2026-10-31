@@ -1102,12 +1102,26 @@ class StatusColumnTests(DbCase):
                      dict(verdict(5), reason="merged", auto_merge="merge"))
         self.db.push("cancelled", "pr", "6", dict(verdict(6), reason="merged"))
         self.db.push("cancelled", "pr", "7",
-                     dict(verdict(7), reason="closed"))
+                     dict(verdict(7), reason="closed without merge"))
         with self.model.lock:
             self.model.filter_mode = "all"
         self.model.poll()
         clusters = [r[19:23] for r in self.rows()]
-        self.assertEqual(clusters, ["M   ", "m   ", "R   "])
+        self.assertEqual(clusters, ["M   ", "m   ", "C   "])
+
+    def test_a_closed_pr_is_rejected_only_once_the_mirror_lacks_it(self) -> None:
+        for n, verdict_fields in ((5, {"landed_sha": None, "landing_verified_at": "t"}),
+                                  (6, {"landed_sha": "m1", "landing_verified_at": "t"}),
+                                  (7, {})):
+            self.db.push("cancelled", "pr", str(n),
+                         dict(verdict(n), reason="closed without merge"))
+            self.db.push("items", "pr", str(n), {"state": "closed", **verdict_fields})
+        with self.model.lock:
+            self.model.filter_mode = "all"
+        self.model.poll()
+        self.assertEqual([r[19:23] for r in self.rows()], ["R   ", "m   ", "C   "])
+        self.assertEqual([r[23:36].strip() for r in self.rows()],
+                         ["cancelled", "merged", "cancelled"])
 
     def test_issue_letters_come_from_labels_and_state(self) -> None:
         self.db.push("reviewed", "issue", "3", verdict(3))

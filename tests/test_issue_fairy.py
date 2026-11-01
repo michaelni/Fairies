@@ -220,6 +220,21 @@ def prepare(args: argparse.Namespace, issue: dict[str, object], *,
     )
 
 
+class SendGuardTests(unittest.TestCase):
+    def test_a_requesters_follow_up_does_not_block_the_send(self) -> None:
+        decision = fairy.Decision(
+            1, "t", "a", "-", "reply", "r", None, "helpful_reply", "m",
+            expected_pr_updated_at="2026-07-09T13:00:00Z", expected_body="b",
+            review_requesters=("dolafe",))
+        current = {"state": "open", "updated_at": "2026-07-09T14:00:00Z"}
+        for login, verdict in (("dolafe", None), ("kepi", "issue updated_at changed")):
+            snapshot = {"body": "b", "events": [], "discussion": [
+                {"kind": "comment", "author": login,
+                 "created_at": "2026-07-09T14:00:00Z"}]}
+            self.assertEqual(issue_fairy.check_issue_still_unchanged(
+                make_args(), current, decision, snapshot), verdict)
+
+
 class PrepareIssueGateTests(unittest.TestCase):
     """Gates exercised with real issue #23738 (8 comments; the newest
     one was created 2026-07-09T13:08:15Z and last edited at 13:15:43Z,
@@ -291,6 +306,7 @@ class PrepareIssueGateTests(unittest.TestCase):
         )
         self.assertIsInstance(p, issue_fairy.PreparedIssue)
         self.assertEqual(p.base_reason, "later discussion mentions fairy")
+        self.assertEqual(p.review_requesters, ("dolafe",))
 
     def test_closed_issue_skips_unless_forced(self) -> None:
         issue = dict(real_issue())

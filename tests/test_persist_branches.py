@@ -1479,7 +1479,8 @@ class TicketRoundTripTests(unittest.TestCase):
             branches=(GOOD_RECORD, DELETE_RECORD))
         prepared = SimpleNamespace(
             pr={"updated_at": "2026-08-25T00:00:00Z", "head": {"ref": "b"}},
-            discussion=[], reviewer_username="fairy")
+            discussion=[], reviewer_username="fairy",
+            review_requesters=())
         fields = worker.verdict_fields(
             decision, prepared, fairy.parse_args(["--owner", "o", "--repo", "r"]))
         self.assertEqual(fields["review"]["branches"],
@@ -1491,7 +1492,8 @@ class TicketRoundTripTests(unittest.TestCase):
         decision = fairy.Decision(5, "t", "a", "-", "comment", "llm", None,
                                   llm_classification="moderate_issues", close=True)
         fields = worker.verdict_fields(
-            decision, SimpleNamespace(pr={}, discussion=[], reviewer_username="fairy"),
+            decision, SimpleNamespace(pr={}, discussion=[], reviewer_username="fairy",
+                                      review_requesters=()),
             fairy.parse_args(["--owner", "o", "--repo", "r"]))
         self.assertIs(True, fields["review"]["close"])
         self.assertTrue(agent.ticket_decision("pr", "5", {"review": fields["review"]}).close)

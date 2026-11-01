@@ -80,7 +80,6 @@ from fairy import (
     label_names,
     list_open_prs,
     llm_skip_reason,
-    max_dt,
     post_label_explanations,
 )
 
@@ -111,12 +110,17 @@ class PreparedIssue:
     # forced analysis runs the full investigator even when the triage
     # pre-check votes skip.
     ignore_triage_skip: bool = False
+    # Same contract as PreparedPR.review_requesters: the logins whose
+    # mention forced this analysis, whose further comments do not
+    # block its send.
+    review_requesters: tuple[str, ...] = ()
 
 
 def prepared_issue_from_dict(data: dict) -> PreparedIssue:
     d = dict(data)
     if d.get("last_activity"):
         d["last_activity"] = datetime.fromisoformat(d["last_activity"])
+    d["review_requesters"] = tuple(d.get("review_requesters") or ())
     return PreparedIssue(**d)
 
 
@@ -276,23 +280,22 @@ def prepare_issue(
     ) if self_login else None
 
     forced_reason: str | None = None
+    review_requesters: tuple[str, ...] = ()
     if is_forced:
         forced_reason = "forced review by --force-review"
     elif self_login:
         mention_re = compile_user_mention_regex(self_login)
-        latest_mention = get_last_activity(
-            issue, [], comments, [],
-            predicate=lambda item: (
-                get_item_author_login(item) != self_login
-                and item_body_mentions_user(item, mention_re)
-            ),
-        )
+        mentions = [(first_dt(item, "updated_at", "created_at"), get_item_author_login(item))
+                    for item in comments
+                    if get_item_author_login(item) != self_login
+                    and item_body_mentions_user(item, mention_re)]
         if author != self_login and item_body_mentions_user(issue, mention_re):
-            latest_mention = max_dt(
-                [latest_mention, first_dt(issue, "created_at")]
-            )
-        if latest_mention is not None and (self_last is None or latest_mention > self_last):
+            mentions.append((first_dt(issue, "created_at"), author))
+        later = [(when, login) for when, login in mentions
+                 if when and (self_last is None or when > self_last)]
+        if later:
             forced_reason = f"later discussion mentions {self_login}"
+            review_requesters = tuple(sorted({login for _, login in later if login}))
 
     if forced_reason is None:
         # The issue's labels are the analysis state machine (set by the
@@ -360,6 +363,7 @@ def prepare_issue(
         reviewer_username=self_login,
         reactions=reactions,
         forced_review=forced_reason is not None,
+        review_requesters=review_requesters,
         ignore_triage_skip=is_forced,
     )
 
@@ -472,6 +476,9 @@ def check_issue_still_unchanged(
         and not fairy.review_unaffected_since(
             snapshot, decision.expected_pr_updated_at, None, None,
             decision.expected_body)
+        and not fairy.changed_only_by(
+            decision.review_requesters, snapshot,
+            decision.expected_pr_updated_at, decision.expected_body)
     ):
         return "issue updated_at changed"
     return None

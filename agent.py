@@ -1654,15 +1654,13 @@ def main() -> int:
         options_argv({**issue_opts, **issue_over})) \
         if issue_opts is not None else None
     lead = pr_ns or issue_ns
-    setup_logging(fairy.logger, max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
-                  logger, db_config.logger, workset.logger, gcli_cache.logger,
-                  filedb.logger, forge_gcli.logger, ci_log.logger,
-                  color=lead.color)
+    loggers = (fairy.logger, logger, db_config.logger, workset.logger,
+               gcli_cache.logger, filedb.logger, forge_gcli.logger, ci_log.logger)
+    setup_logging(loggers[0], max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
+                  *loggers[1:], color=lead.color)
     log_files = {ns.log_file for ns in (pr_ns, issue_ns) if ns and ns.log_file}
     for log_file in log_files:
-        add_file_log(log_file, fairy.logger, logger, db_config.logger,
-                     workset.logger, gcli_cache.logger, filedb.logger,
-                     forge_gcli.logger, ci_log.logger)
+        add_file_log(log_file, *loggers)
     fairy.validate_sides(pr_ns, issue_ns)
     db = filedb.Db(args.db_root)
     logger.info("agent for %s/%s, db %s", lead.owner, lead.repo, db.root)

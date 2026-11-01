@@ -2104,20 +2104,20 @@ def flex_fallback_extra_args(cmd_str: str) -> list[str]:
 
     The wrapper's ``--service-tier`` / ``--triage-service-tier`` are
     plain argparse ``store`` actions, so re-appending them is last-
-    wins and overrides whatever the configured cmd specified. We only
-    emit a fallback for tiers actually set to ``flex`` (in either
-    ``--flag value`` or ``--flag=value`` form); other tiers and the
-    "tier unset, use account default" case are left alone.
+    wins and overrides whatever the configured cmd specified. A
+    fallback is emitted for every tier that is ``flex``: set so
+    explicitly (``--flag value`` or ``--flag=value``), or
+    ``--service-tier`` left at the wrapper's flex default.
     """
     tokens = shlex.split(cmd_str)
     extra: list[str] = []
-    for flag in ("--service-tier", "--triage-service-tier"):
-        flex_set = any(
-            (tok == flag and i + 1 < len(tokens) and tokens[i + 1] == "flex")
-            or tok == f"{flag}=flex"
-            for i, tok in enumerate(tokens)
-        )
-        if flex_set:
+    for flag, wrapper_default in (("--service-tier", "flex"),
+                                  ("--triage-service-tier", None)):
+        given = [tokens[i + 1] if tok == flag else tok[len(flag) + 1:]
+                 for i, tok in enumerate(tokens)
+                 if (tok == flag and i + 1 < len(tokens))
+                 or tok.startswith(f"{flag}=")]
+        if (given[-1] if given else wrapper_default) == "flex":
             extra += [flag, "default"]
     return extra
 

@@ -387,15 +387,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--service-tier",
         choices=["auto", "default", "flex", "priority"],
-        default=None,
+        default="flex",
         help=(
-            "Optional OpenAI ``service_tier`` parameter passed to the main "
-            "responses.create call. ``flex`` trades higher latency / "
+            "OpenAI ``service_tier`` parameter passed to the main "
+            "responses.create call (default: flex). ``flex`` trades higher latency / "
             "best-effort capacity for a substantially lower price on supported "
             "models (gpt-5 / o-series at the time of writing) and is useful as "
             "a cost-reduction measure for batch PR review runs. ``priority`` "
-            "is the opposite trade-off (faster, more expensive). Omit to use "
-            "the account default. Affects the main responses.create call "
+            "is the opposite trade-off (faster, more expensive). "
+            "Affects the main responses.create call "
             "only; the triage call has its own ``--triage-service-tier`` knob "
             "and is not implicitly coupled to this one. Note: not every model "
             "accepts every tier; if the API rejects the value the call will "

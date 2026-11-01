@@ -37,11 +37,12 @@ while the wrapper's rate-limit retry loop spins until the outer
 up to ``3 * llm_timeout`` per PR on the same dead-end queue.
 
 ``flex_fallback_extra_args`` extracts the last-attempt fallback
-policy: when (and only when) the configured wrapper cmd actually
-asked for ``--service-tier flex`` and/or ``--triage-service-tier
-flex``, the helper returns the argparse-last-wins overrides that
-downgrade those tiers to ``default``. Other tiers and "tier unset"
-are left alone so the helper is a no-op for non-flex setups.
+policy: when the configured wrapper cmd asked for ``--service-tier
+flex`` and/or ``--triage-service-tier flex``, or left
+``--service-tier`` at the wrapper's flex default, the helper returns
+the argparse-last-wins overrides that downgrade those tiers to
+``default``. Other tiers are left alone so the helper is a no-op for
+non-flex setups.
 
 These tests pin the parsing edge cases (``--flag value`` vs
 ``--flag=value``, both flags at once, only one set, neither set,
@@ -63,12 +64,11 @@ import fairy  # noqa: E402
 
 
 class FlexFallbackExtraArgsTests(unittest.TestCase):
-    def test_no_cmd_returns_empty(self) -> None:
-        self.assertEqual(fairy.flex_fallback_extra_args(""), [])
-
-    def test_no_service_tier_returns_empty(self) -> None:
-        cmd = "./pr_review_wrapper.py --model gpt-5.4 --reasoning-effort high"
-        self.assertEqual(fairy.flex_fallback_extra_args(cmd), [])
+    def test_unset_service_tier_is_the_wrapper_flex_default(self) -> None:
+        for cmd in ("", "./pr_review_wrapper.py --model gpt-5.4 --reasoning-effort high"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(fairy.flex_fallback_extra_args(cmd),
+                                 ["--service-tier", "default"])
 
     def test_non_flex_tier_returns_empty(self) -> None:
         # Operator already on ``default`` / ``priority`` -- nothing to
@@ -93,10 +93,9 @@ class FlexFallbackExtraArgsTests(unittest.TestCase):
         )
 
     def test_triage_flex_only(self) -> None:
-        # Triage flex without main flex: only the triage flag gets a
-        # downgrade. Main tier is left untouched (unset == account
-        # default already).
-        cmd = "./wrapper.py --triage-service-tier flex --triage-model gpt-5.4-mini"
+        # Triage flex with the main tier explicitly non-flex: only the
+        # triage flag gets a downgrade.
+        cmd = "./wrapper.py --service-tier default --triage-service-tier flex --triage-model gpt-5.4-mini"
         self.assertEqual(
             fairy.flex_fallback_extra_args(cmd),
             ["--triage-service-tier", "default"],

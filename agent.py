@@ -88,7 +88,7 @@ import pr_landing
 import worker
 import workset
 from forge_item import FIELDLESS_KINDS, author_login, build_llm_discussion, discussion_time, item_standing, labels
-from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
+from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help, attachment_urls,
                     config_option_groups, grouped_help,
                     iso_to_dt, options_argv, parse_scoped_overrides,
                     side_actions, setup_logging, split_side_actions,
@@ -312,6 +312,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
             **item_standing(item),
             "reactions": reactions,
             "body": str(item.get("body") or ""),
+            "attachment_urls": attachment_urls(item),
             "html_url": str(item.get("html_url") or ""),
             "updated_at": item.get("updated_at"),
             **status,

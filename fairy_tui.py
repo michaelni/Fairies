@@ -1731,8 +1731,8 @@ class UILoop:
         body = data.get("body") or shown.get("body")
         if body:
             disc = [{"kind": "description", "author": author, "body": body,
-                     **({"reactions": shown["reactions"]}
-                        if shown.get("reactions") else {})}] + disc
+                     **{key: shown[key] for key in ("reactions", "attachment_urls")
+                        if shown.get(key)}}] + disc
         # the thread has no entry kind for a description edit; the
         # sampled and live bodies are its only record (production:
         # #24761, edited while the review ran, send blocked)

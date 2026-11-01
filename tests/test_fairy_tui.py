@@ -1762,6 +1762,16 @@ class DetailTests(DbCase):
         self.model.poll_snapshot()
         self.assertIn("assignee michaelni, dowu   milestone 9.1", self._detail_text())
 
+    def test_the_descriptions_attachments_render_under_it(self) -> None:
+        self.db.push("reviewed", "issue", "5", verdict(5))
+        self.db.push("items", "issue", "5", {
+            "title": "t", "author": "a", "body": "crash", "discussion": [],
+            "attachment_urls": [{"name": "sample.mkv", "size": 7,
+                                 "url": "https://forge/attachments/9"}]})
+        self.model.poll()
+        self.model.poll_snapshot()
+        self.assertIn("https://forge/attachments/9  sample.mkv", self._detail_text())
+
     def test_reactions_render_under_the_body(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[
             {"kind": "comment", "author": "a", "body": "a claim",

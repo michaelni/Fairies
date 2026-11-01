@@ -262,6 +262,13 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     try:
         item, thread = _fetch_thread(ns, kind, item, cache, cache_age)
         reviews, comments, review_comments, timeline, reactions = thread
+        for post in (item, *comments, *reviews, *review_comments) if ns.halt_keyword else ():
+            if ns.halt_keyword in str(post.get("body") or ""):
+                reason = (f"{author_login(post.get('user'))} posted "
+                          f"{ns.halt_keyword!r} in "
+                          f"{post.get('html_url') or item.get('html_url') or ''}")
+                halt_marker.halt(halt_marker.path(db.root, ns.halt_file), reason)
+                raise Halted(reason)
         if kind == "pr":
             base_sha = fairy.get_pr_base_sha(item)
             head_sha = fairy.get_pr_head_sha(item)
@@ -318,14 +325,6 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
         logger.warning("%s #%s: item snapshot not refreshed: %s",
                        kind, token, exc)
         return item, thread or exc, None
-    if ns.halt_keyword:
-        for post in (item, *comments, *reviews, *review_comments):
-            if ns.halt_keyword in str(post.get("body") or ""):
-                reason = (f"{author_login(post.get('user'))} posted "
-                          f"{ns.halt_keyword!r} in "
-                          f"{post.get('html_url') or snapshot['html_url']}")
-                halt_marker.halt(halt_marker.path(db.root, ns.halt_file), reason)
-                raise Halted(reason)
     return item, thread, snapshot
 
 

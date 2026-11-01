@@ -1713,6 +1713,17 @@ class ItemSnapshotScanTests(SendCase):
         self.assertEqual(self.db.list_state("queued"), [])
         self.prepare.assert_not_called()
 
+    def test_halt_keyword_halts_even_when_the_snapshot_write_fails(self) -> None:
+        self.ns.halt_keyword = "FAIRY-STOP"
+        self.thread.return_value = ([], [
+            {"user": {"login": "carol"}, "body": "FAIRY-STOP",
+             "created_at": "2026-07-19T10:00:00Z"}], [], [], {})
+        with mock.patch.object(filedb.Db, "push", side_effect=OSError("disk full")), \
+                self.assertRaises(agent.Halted):
+            self.scan([make_pr(1)])
+        self.assertEqual(halt_marker.reason(halt_marker.path(self.db.root)),
+                         "carol posted 'FAIRY-STOP' in https://forge/pr/1")
+
     def test_halt_keyword_on_an_item_that_left_the_listing_halts(self) -> None:
         """The closure fetch runs under a catch-all that turns any failure
         into a "not open" cancel; Halted must pass it, or the ticket is

@@ -1807,7 +1807,8 @@ class UILoop:
                         f"{content} {', '.join(map(str, users))}"
                         for content, users in c["reactions"].items())[:width])])
                 for att in c.get("attachment_urls") or []:
-                    tail.append([("link", str(att)[:width])])
+                    tail.append([("link", str(att.get("url"))[:width]),
+                                 ("label", f"  {att.get('name')}")])
             if separator_at == len(disc):
                 tail += [[], separator]
         if review_at == len(disc):

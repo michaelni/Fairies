@@ -1891,7 +1891,8 @@ class DetailTests(DbCase):
         disc = [
             {"kind": "comment", "author": "carol",
              "created_at": "2026-07-18T09:00:00Z", "body": "please **rebase**",
-             "attachment_urls": ["https://forge/attachments/1"]},
+             "attachment_urls": [{"name": "log.txt", "size": 12,
+                                 "url": "https://forge/attachments/1"}]},
             {"kind": "review", "author": "dave", "state": "APPROVED",
              "submitted_at": "2026-07-18T10:00:00Z", "body": "LGTM"},
             {"kind": "review_comment", "author": "erin",
@@ -1909,7 +1910,7 @@ class DetailTests(DbCase):
         self.assertIn("discussion (4)", text)
         self.assertIn("carol  comment  2026-07-18", text)
         self.assertIn("rebase", text)
-        self.assertIn("https://forge/attachments/1", text)
+        self.assertIn("https://forge/attachments/1  log.txt", text)
         self.assertIn("dave  review APPROVED", text)
         self.assertIn("erin  review_comment  src/x.c:42", text)
         self.assertIn("a  force-pushed 2 commit(s) abcdef1234", text)

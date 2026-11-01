@@ -482,6 +482,16 @@ def _review_stands(kind: str, ticket: dict, item: dict,
     return stands
 
 
+def _fail_requested_evals(db: filedb.Db, kind: str, tokens: Collection[str],
+                          reason: str) -> None:
+    """Answer the requested evaluations ``tokens`` of an item that has
+    no payload to evaluate with an error ticket each: the ticket
+    consumes the request and puts ``reason`` on screen."""
+    for token in tokens:
+        if db.find(kind, token) in (None, "requests"):
+            db.push("error", kind, token, {"error": reason})
+
+
 def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 wip_re, cache_age, limit, evals={},
                 template_only=frozenset(),
@@ -630,14 +640,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 ticket["error"] = prepared.reason
                 ticket["error_backoff_h"] = error_backoff_h
             _route(db, kind, token, state, ticket, prior)
-            for token in evals.get(number, ()):
-                # a requested evaluation of a gate-skipped item cannot
-                # be built (no payload); the error ticket consumes the
-                # request and puts the reason on screen
-                if db.find(kind, token) in (None, "requests"):
-                    db.push("error", kind, token,
-                            {"error": f"base item gate-skipped: "
-                                      f"{prepared.reason}"})
+            _fail_requested_evals(db, kind, evals.get(number, ()),
+                                  f"base item gate-skipped: {prepared.reason}")
             continue
         if in_backoff_window:
             # updated_at moved during the wait, but only real activity

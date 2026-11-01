@@ -54,6 +54,13 @@ class MergeConflictsMetadataTests(unittest.TestCase):
                      llm_prompt.make_user_text(request, [], [], False)):
             self.assertIn(f'"merge_conflicts": {json.dumps(CONFLICTS)}', text)
 
+    def test_every_role_sees_the_current_labels(self) -> None:
+        request = {"pull_request": {"number": 24886,
+                                    "labels": ["avformat", "resolution/duplicate"]}}
+        for text in (llm_prompt.make_triage_user_text(request, False),
+                     llm_prompt.make_user_text(request, [], [], False)):
+            self.assertIn('"labels": [\n    "avformat",\n    "resolution/duplicate"\n  ]', text)
+
     def test_a_clean_merge_shows_none(self) -> None:
         self.assertNotIn("merge_conflicts", llm_prompt.make_triage_user_text(
             {"pull_request": {"number": 22961}}, False))

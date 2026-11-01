@@ -271,6 +271,7 @@ def _pr_user_text(
     reviewer_username = request.get("reviewer_username")
     if not isinstance(reviewer_username, str):
         reviewer_username = ""
+    labels = pr.get("labels")
     info = {
         "number": pr.get("number"),
         "title": pr.get("title"),
@@ -292,6 +293,7 @@ def _pr_user_text(
         "draft": pr.get("draft"),
         "locked": pr.get("locked"),
         "reviewer_username": reviewer_username,
+        "labels": [name for name in labels or [] if isinstance(name, str) and name],
         **role_info,
         "patch_truncated_by_caller": bool(request.get("patch_truncated")),
         "patch_truncated_by_wrapper": patch_was_truncated,
@@ -330,11 +332,8 @@ def make_user_text(
 
 def make_triage_user_text(request: JsonObject, patch_was_truncated: bool, *,
                           lead: str = "Triage this pull request.") -> str:
-    pr = request.get("pull_request")
-    labels = pr.get("labels") if isinstance(pr, dict) else None
     return _pr_user_text(
-        request, lead, patch_was_truncated,
-        {"labels": [name for name in labels or [] if isinstance(name, str) and name]},
+        request, lead, patch_was_truncated, {},
         "CI failure data from the caller (commit statuses), JSON:")
 
 

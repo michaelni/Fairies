@@ -298,16 +298,18 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
         if _landed(item, snap):
             auto = (snap.get("auto_merge")
                     or item.data.get("auto_merge")) == "merge"
-            return [("sc_done", "M" if auto else "m"), ("text", "   ")]
+            return [("sc_done", "M" if auto else "m"), ("text", "  "),
+                    _resolution_col(snap)]
         if snap.get("state") == "closed" or reason == agent.REASON_CLOSED_UNMERGED:
             return [("sc_bad", "R") if snap.get("landing_verified_at")
-                    else ("sc_done", "C"), ("text", "   ")]
+                    else ("sc_done", "C"), ("text", "  "), _resolution_col(snap)]
+        push = _push_mark(item, snap)
         return [
             ("sc_info", "a") if snap.get("auto_merge") == "merge"
             else ("text", " "),
             _count_col(snap.get("approvals"), "sc_good"),
             _count_col(snap.get("change_requests"), "sc_bad"),
-            _push_mark(item, snap),
+            push if push != ("text", " ") else _resolution_col(snap),
         ]
     labels = snap.get("labels") or []
     return [

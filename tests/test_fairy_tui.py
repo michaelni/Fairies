@@ -1123,6 +1123,30 @@ class StatusColumnTests(DbCase):
         self.assertEqual([r[23:36].strip() for r in self.rows()],
                          ["cancelled", "merged", "cancelled"])
 
+    def test_a_pr_shows_its_resolution_label_like_an_issue(self) -> None:
+        self.db.push("cancelled", "pr", "5",
+                     dict(verdict(5), reason="closed without merge"))
+        self.db.push("items", "pr", "5", {
+            "state": "closed", "landed_sha": None, "landing_verified_at": "t",
+            "labels": ["avformat", "resolution/duplicate"]})
+        self.db.push("reviewed", "pr", "6", verdict(6, expected_patch_ids=["p1"]))
+        self.db.push("items", "pr", "6", {
+            "state": "open", "approvals": 0, "change_requests": 0,
+            "head_sha": "moved", "patch_ids": ["p2"],
+            "labels": ["resolution/duplicate"]})
+        self.db.push("reviewed", "pr", "7", verdict(7))
+        self.db.push("items", "pr", "7", {
+            "state": "open", "approvals": 0, "change_requests": 0,
+            "head_sha": "h7", "labels": ["resolution/duplicate"]})
+        self.db.push("reviewed", "issue", "8", verdict(8))
+        self.db.push("items", "issue", "8", {
+            "state": "closed", "labels": ["resolution/duplicate"]})
+        with self.model.lock:
+            self.model.filter_mode = "all"
+        self.model.poll()
+        self.assertEqual([r[19:23] for r in self.rows()],
+                         ["C  d", "R  d", " 00P", " 00d"])
+
     def test_issue_letters_come_from_labels_and_state(self) -> None:
         self.db.push("reviewed", "issue", "3", verdict(3))
         self.db.push("items", "issue", "3", {

@@ -124,7 +124,9 @@ A closed PR shows a single code instead: `M` (purple) merged with
 auto-merge scheduled at last sight, `m` (purple) merged — manually,
 as far as fairy can tell, `R` (red) rejected: closed, and a mirror
 fetched after the close has its patches on no branch, `C` (purple)
-closed, not verified against the mirror yet.
+closed, not verified against the mirror yet. Column 4 shows the PR's
+`resolution/*` label with the issue codes below; on an open PR the push
+mark takes precedence.
 
 An issue shows four columns:
 

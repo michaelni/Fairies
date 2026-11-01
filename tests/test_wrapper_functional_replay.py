@@ -489,9 +489,11 @@ class VetStageTests(unittest.TestCase):
         ticket = Path(tmp.name) / "pr-1.json"
         ticket.write_text("{}", encoding="utf-8")
         seen: list = []
+        self.vet_tiers: list = []
 
         def fake_vet(vetter: object, ctx: object) -> dict:
             seen.append((vetter.name, vetter.role.name, vetter.role.user_texts(ctx)))
+            self.vet_tiers.append(vetter.service_tier)
             return {"hold_for_human_inspection": False, "reason": "clean"}
 
         with mock.patch.object(wrapper, "vet_review", side_effect=fake_vet):
@@ -516,6 +518,13 @@ class VetStageTests(unittest.TestCase):
         self.assertEqual("openai:gpt-x", name)
         self.assertEqual("vetter", role)
         self.assertIn("LLM-GPT-5.4: one issue", texts[-1])
+
+    def test_vetter_takes_the_triage_service_tier(self) -> None:
+        for extra, tier in (((), None), (("--triage-service-tier", "flex"), "flex")):
+            with self.subTest(tier=tier):
+                self._run(Review("moderate_issues", "LLM-GPT-5.4: one issue", model="openai:gpt-5.4"),
+                          "--vet-model", "openai:gpt-x@low", *extra)
+                self.assertEqual([tier], self.vet_tiers)
 
     def test_triage_reply_is_vetted_and_triage_skip_is_not(self) -> None:
         labels = [{"label": "needs docs", "op": "add", "reason": "r", "post": False}]

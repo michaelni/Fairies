@@ -396,7 +396,7 @@ def parse_args() -> argparse.Namespace:
             "a cost-reduction measure for batch PR review runs. ``priority`` "
             "is the opposite trade-off (faster, more expensive). "
             "Affects the main responses.create call "
-            "only; the triage call has its own ``--triage-service-tier`` knob "
+            "only; the triage and vet calls have their own ``--triage-service-tier`` knob "
             "and is not implicitly coupled to this one. Note: not every model "
             "accepts every tier; if the API rejects the value the call will "
             "fail and the outer caller decides whether to retry."
@@ -407,14 +407,14 @@ def parse_args() -> argparse.Namespace:
         choices=["auto", "default", "flex", "priority"],
         default=None,
         help=(
-            "Optional OpenAI ``service_tier`` for the triage responses.create "
-            "call. Independent of ``--service-tier`` -- when unset (default) "
-            "no ``service_tier`` is passed for the triage call and the account "
+            "Optional OpenAI ``service_tier`` for the triage and vet responses.create "
+            "calls. Independent of ``--service-tier`` -- when unset (default) "
+            "no ``service_tier`` is passed for these calls and the account "
             "default is used, regardless of whether ``--service-tier`` is set "
             "for the main call. Useful when you want to apply ``flex`` to the "
             "cheap triage mini-pass (``--triage-service-tier flex``) without "
             "affecting the expensive main reviewer pass, or vice versa. "
-            "Ignored when ``--triage-model`` is unset."
+            "Ignored when neither ``--triage-model`` nor ``--vet-model`` is set."
         ),
     )
     p.add_argument(
@@ -1813,7 +1813,7 @@ def main() -> int:
                 args.vet_model, args=args, resources=openai_resources,
                 role=make_vetter_role(review, task=args.task,
                                       inherits_branches=args.persist_branches),
-                verbose=args.verbose)
+                verbose=args.verbose, service_tier=args.triage_service_tier)
             # A stage that ran PR-derived code may have tampered with the
             # containers it used, so the vetter opens its own.
             vetting = vet_review(vetter, replace(

@@ -50,7 +50,7 @@ import time
 from typing import Callable, Sequence
 
 import httpx
-from openai import DefaultHttpxClient, OpenAI
+from openai import BadRequestError, DefaultHttpxClient, OpenAI
 
 import concurrency
 from common import dump_response_debug_artifacts, response_to_debug_json
@@ -58,6 +58,7 @@ from llm_prompt import REVIEWER_ROLE, generate_llm_prompt
 from llm_review_api import (
     EXIT_BAD_MODEL_OUTPUT,
     BadModelOutput,
+    ProviderContentFlagged,
     ReviewContext,
     Reviewer,
     RoleSpec,
@@ -100,6 +101,8 @@ logger = logging.getLogger(__name__)
 # ``--service-tier``. Distinct from an explicit ``None``, which sends no
 # tier at all (account default).
 INHERIT_SERVICE_TIER = "__inherit__"
+
+CONTENT_FLAG_ERROR_CODES = ("cyber_policy", "invalid_prompt")
 
 # TCP keepalive for every OpenAI HTTP connection. The main
 # ``responses.create`` call is non-streaming, so zero bytes arriving for
@@ -865,6 +868,8 @@ class OpenAIReviewer(Reviewer):
         except Exception as exc:
             if args.verbose:
                 logger.debug("responses.create failed dt=%.3fs error=%s %s", time.monotonic() - create_started, type(exc).__name__, str(exc).replace("\n", " "))
+            if isinstance(exc, BadRequestError) and exc.code in CONTENT_FLAG_ERROR_CODES:
+                raise ProviderContentFlagged(f"{self.name}: {exc}") from exc
             raise
 
         if args.verbose:

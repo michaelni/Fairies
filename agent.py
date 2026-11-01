@@ -74,6 +74,7 @@ from functools import partial
 from pathlib import Path
 
 import author_settle
+import branch_persist
 import ci_log
 import db_config
 import fairy
@@ -1655,7 +1656,9 @@ def main() -> int:
         if issue_opts is not None else None
     lead = pr_ns or issue_ns
     loggers = (fairy.logger, logger, db_config.logger, workset.logger,
-               gcli_cache.logger, filedb.logger, forge_gcli.logger, ci_log.logger)
+               gcli_cache.logger, filedb.logger, forge_gcli.logger, ci_log.logger,
+               author_settle.logger, pr_landing.logger, branch_persist.logger,
+               worker.logger)
     setup_logging(loggers[0], max(ns.verbose for ns in (pr_ns, issue_ns) if ns),
                   *loggers[1:], color=lead.color)
     log_files = {ns.log_file for ns in (pr_ns, issue_ns) if ns and ns.log_file}

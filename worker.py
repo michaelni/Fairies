@@ -64,6 +64,7 @@ import filedb
 import halt_marker
 import forge_gcli
 import issue_fairy
+import llm_output_hacks
 import workset
 from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     config_option_groups, grouped_help, options_argv,
@@ -316,7 +317,7 @@ def main() -> int:
             options_argv({**issue_opts, **issue_over}), agent=False)
     lead = next(iter(sides.values()))
     loggers = (fairy.logger, logger, db_config.logger, workset.logger,
-               filedb.logger, forge_gcli.logger)
+               filedb.logger, forge_gcli.logger, llm_output_hacks.logger)
     setup_logging(loggers[0], max(ns.verbose for ns in sides.values()),
                   *loggers[1:], color=lead.color)
     for log_file in {ns.log_file for ns in sides.values() if ns.log_file}:

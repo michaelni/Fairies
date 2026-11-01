@@ -1048,6 +1048,8 @@ class StatusColumnTests(DbCase):
             "discussion": [{"kind": "comment", "author": "bob",
                             "created_at": day(1)},
                            {"kind": "mentioned_in_comment", "author": "alice",
+                            "created_at": day(0)},
+                           {"kind": "mentioned_in_commit", "author": "alice",
                             "created_at": day(0)}]})
         self.db.push("items", "pr", "7", {
             "state": "merged", "author": "carol",
@@ -1779,8 +1781,8 @@ class DetailTests(DbCase):
         ui = make_ui(self.model)
         with self.model.lock:
             text = fairy_tui._plain(ui.detail_lines(90))
-        self.assertIn("mentioned this from commit bbbbbbbbbb", text)
-        self.assertIn("the fix", text)
+        self.assertIn("▸ michaelni  mentioned this from commit bbbbbbbbbb", text)
+        self.assertNotIn("the fix", text)
 
     def test_a_review_request_line_names_requester_and_reviewer(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5, discussion=[

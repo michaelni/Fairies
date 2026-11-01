@@ -1339,8 +1339,6 @@ def _closing(c: dict) -> str:
     return f" ({c['action']})" if c.get("action") in ("closes", "reopens") else ""
 
 
-_MENTION_KINDS = ("mentioned_in_description", "mentioned_in_comment", "mentioned")
-
 # The thread line of a discussion item, by kind; pushes and the
 # comment kinds are worded in place.
 _THREAD_LINES: dict[str, Callable[[dict], str]] = {

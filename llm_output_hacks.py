@@ -55,8 +55,8 @@ _MODEL_NAME = re.compile(r"LLM-([A-Z0-9_]+(?:[.-][A-Z0-9_]+)*)")
 
 def hide_model_name(message: str) -> str:
     """Put the model name of every ``LLM-<model>`` identification in an
-    HTML comment, so the rendered message shows only ``LLM-``."""
-    return _MODEL_NAME.sub(r"LLM-<!-- \1 -->", message)
+    HTML comment, so the rendered message shows only ``LLM``."""
+    return _MODEL_NAME.sub(r"LLM<!-- -\1 -->", message)
 
 
 def hide_scope_block(message: str) -> str:

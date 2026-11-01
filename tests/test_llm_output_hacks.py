@@ -70,9 +70,9 @@ Scope combiner: Verified the exact PR head and merge base.
 class HideModelNameTests(unittest.TestCase):
     def test_model_name_moves_into_a_comment_without_its_punctuation(self) -> None:
         self.assertEqual(hide_model_name("LLM-GPT-6-ASTRA \u2014 combined review of 1ce2a4db3060."),
-                         "LLM-<!-- GPT-6-ASTRA --> \u2014 combined review of 1ce2a4db3060.")
+                         "LLM<!-- -GPT-6-ASTRA --> \u2014 combined review of 1ce2a4db3060.")
         self.assertEqual(hide_model_name("Review by LLM-GPT-5.4-MINI.\nLLM-GLM-5.3: one issue"),
-                         "Review by LLM-<!-- GPT-5.4-MINI -->.\nLLM-<!-- GLM-5.3 -->: one issue")
+                         "Review by LLM<!-- -GPT-5.4-MINI -->.\nLLM<!-- -GLM-5.3 -->: one issue")
 
     def test_message_without_an_identification_is_untouched(self) -> None:
         self.assertEqual(hide_model_name("The LLM-based review found nothing."),

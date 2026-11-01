@@ -1176,35 +1176,8 @@ def submit_decision_action(
     else:
         raise RuntimeError(f"unexpected actionable decision: {decision.action!r}")
 
-    # Invalidate the cached PR entry after a successful post.
-    #
-    # Without this, the next run can hit a stale-cache race: the in-memory
-    # entry written earlier in the current run recorded the pre-post
-    # ``issue_comments`` / ``reviews`` under the latest ``pr.updated_at``.
-    # Forgejo's ``/pulls/N`` and ``/issues/N/comments`` endpoints are
-    # eventually consistent; after our write both may eventually reflect the
-    # new comment, but there is a window where ``pr.updated_at`` matches the
-    # value we already cached while the comments list still lacks our
-    # comment. The cache's freshness check is keyed on ``updated_at``
-    # equality, so it would accept the stale comments list indefinitely.
-    # Dropping the entry forces a full refetch next time, at which point
-    # Forgejo has had time to propagate the new comment.
-    #
-    # Persist the pop immediately so it survives an unclean kill of this
-    # run before the outer ``finally``-block save has a chance to execute.
     if cache is not None:
-        cache.entries.pop(
-            gcli_cache.entry_key(args, "pulls", args.owner, args.repo, decision.pr_number),
-            None,
-        )
-        try:
-            gcli_cache.save_cache(args.cache, cache)
-        except Exception as exc:
-            logger.warning(
-                "failed to persist cache invalidation after posting %s "
-                "for PR #%s: %s",
-                decision.action, decision.pr_number, exc,
-            )
+        gcli_cache.forget_item(args, cache, "pulls", decision.pr_number)
     return None
 
 

@@ -506,19 +506,7 @@ def submit_issue_decision(
             decision.llm_message, kind=KIND_ISSUE,
         )
         submitted_counts["comment"] += 1
-        # Same eventual-consistency race as fairy's submit path: drop the
-        # cached entry so the next run refetches the comment list.
-        cache.entries.pop(
-            gcli_cache.entry_key(args, "issues", args.owner, args.repo, decision.pr_number),
-            None,
-        )
-        try:
-            gcli_cache.save_cache(args.cache, cache)
-        except Exception as exc:
-            logger.warning(
-                "failed to persist cache invalidation after commenting on "
-                "issue #%s: %s", decision.pr_number, exc,
-            )
+        gcli_cache.forget_item(args, cache, "issues", decision.pr_number)
     if decision_has_label_changes(decision):
         current = set(labels(issue))
         apply_issue_label_changes(

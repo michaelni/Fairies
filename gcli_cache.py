@@ -209,6 +209,21 @@ def save_cache(path: Path, cache: Cache) -> None:
     logger.debug("gcli_cache save %s: %d entries", path, len(cache.entries))
 
 
+def forget_item(args, cache: Cache, kind: str, number: int) -> None:
+    """Drop the item's entry after posting to it and persist that at
+    once. The forge's item and comment endpoints are eventually
+    consistent: for a while the item's updated_at matches the cached
+    one while the comment list still lacks the post, and the
+    freshness check keys on updated_at, so the stale list would be
+    served until the next unrelated change."""
+    cache.entries.pop(entry_key(args, kind, args.owner, args.repo, number), None)
+    try:
+        save_cache(args.cache, cache)
+    except Exception as exc:
+        logger.warning("%s #%s: cache invalidation after posting not persisted: %s",
+                       kind, number, exc)
+
+
 def _fetch_item(args, kind: str, owner: str, repo: str, n: int) -> dict:
     path = forge_gcli.build_repo_path(owner, repo, f"/{kind}/{n}")
     data = forge_gcli.gcli_api(args, path)

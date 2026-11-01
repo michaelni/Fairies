@@ -692,8 +692,9 @@ class Model:
             agg["by"][it.state] += 1
             data = it.data
             action = data.get("action")
-            if it.state == "reviewed" and action in fairy.ACTIONABLE_DECISIONS:
-                agg["ready"][action] += 1
+            if it.state == "reviewed" and agent.ticket_postable(data):
+                agg["ready"][action if action in fairy.ACTIONABLE_DECISIONS
+                             else "labels"] += 1
             elif it.state == "llm":
                 agg["stages"][data.get("stage") or "starting"] += 1
             elif it.state == "posted" and action:

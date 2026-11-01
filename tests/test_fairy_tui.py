@@ -583,11 +583,13 @@ class MultiSideTests(DbCase):
         self.db.push("reviewed", "pr", "5", dict(verdict(5), action="comment"))
         self.db.push("reviewed", "pr", "6", dict(verdict(6), action="approve"))
         self.db.push("reviewed", "pr", "7", verdict(7, "skip"))  # not appliable
+        self.db.push("reviewed", "issue", "8", dict(
+            verdict(8, "skip", labels=[{"label": "bug", "op": "add"}]), action="skip"))
         self.model.poll()
         ui = make_ui(self.model)
         with self.model.lock:
             text = fairy_tui._plain(ui.stats_lines(120))
-        self.assertIn("awaiting you: approve=1, comment=1", text)
+        self.assertIn("awaiting you: approve=1, comment=1, labels=1", text)
 
     def test_stats_tile_one_block_per_repo(self) -> None:
         self.db.push("reviewed", "pr", "5", verdict(5))

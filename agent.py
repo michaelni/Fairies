@@ -93,7 +93,7 @@ from common import (OVERRIDE_EPILOG, add_file_log, add_grouped_help,
                     side_actions, setup_logging, split_side_actions,
                     WATCH_FALLBACK_POLL_S, watch_paths)
 
-__all__ = ["main", "scan_pass", "send_pass",
+__all__ = ["main", "scan_pass", "send_pass", "ticket_postable",
            "REASON_MERGED", "REASON_CLOSED_UNMERGED", "REASON_CLOSED"]
 
 logger = logging.getLogger(__name__)
@@ -1167,6 +1167,13 @@ def postable(decision: fairy.Decision | None) -> bool:
         or fairy.decision_has_label_changes(decision))
 
 
+def ticket_postable(ticket: dict) -> bool:
+    """Whether the verdict ``ticket`` has anything a y would post: a
+    review action or label changes."""
+    return ticket.get("action") in fairy.ACTIONABLE_DECISIONS \
+        or bool((ticket.get("review") or {}).get("label_changes"))
+
+
 def staleness_reason(ns: argparse.Namespace, kind: str, item: dict,
                      decision: fairy.Decision,
                      snapshot: dict | None) -> str | None:
@@ -1403,7 +1410,7 @@ def log_summary(db: filedb.Db) -> None:
     ready = []
     for kind, number in db.list_state("reviewed"):
         t = db.get("reviewed", kind, number) or {}
-        if t.get("action") in fairy.ACTIONABLE_DECISIONS:
+        if ticket_postable(t):
             ready.append((kind, number, t.get("action"), t.get("title", "")))
     if ready:
         logger.info("reviewed/ awaiting you: %d", len(ready))

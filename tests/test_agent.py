@@ -2205,6 +2205,9 @@ class LogSummaryTests(AgentCase):
     def test_summary_names_appliable_verdicts_and_ci_details(self) -> None:
         self.db.push("reviewed", "pr", "5", dict(verdict_ticket(5),
                                                action="approve", title="t5"))
+        self.db.push("reviewed", "issue", "8", dict(
+            verdict_ticket(8), action="skip", title="t8",
+            review={"label_changes": [{"label": "bug", "op": "add"}]}))
         self.db.push("merge-ready", "pr", "6", {"title": "t6"})
         self.db.push("ci-blocked", "pr", "7", {
             "title": "t7", "cancelled_ci_contexts": ["job1"],
@@ -2212,7 +2215,7 @@ class LogSummaryTests(AgentCase):
         with self.assertLogs(agent.logger, level="INFO") as logs:
             agent.log_summary(self.db)
         text = "\n".join(logs.output)
-        self.assertIn("awaiting you: 1", text)
+        self.assertIn("awaiting you: 2", text)
         self.assertIn("approve", text)
         self.assertIn("approved, ready to apply", text)
         self.assertIn("t6", text)

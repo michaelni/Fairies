@@ -236,6 +236,12 @@ class RenderMarkdownTests(unittest.TestCase):
             ("link", "dashdec.c:824"), ("url", " (https://example.org/x)"), ("text", ", "),
             ("italic", "every"), ("text", " & "), ("code", "&lt;")])
 
+    def test_a_bold_html_span_may_hold_a_code_span(self) -> None:
+        self.assertEqual(
+            tui_core._inline("<b>Moderate — <code>cbSize</code> is little-endian</b> here"),
+            [("bold", "Moderate — "), ("code", "cbSize"), ("bold", " is little-endian"),
+             ("text", " here")])
+
     FOLDED = (
         "### Findings\n"
         "1. <details><summary><b>Minor</b> — the <code>reconnect_at_eof</code> claim</summary>\n"

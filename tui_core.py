@@ -300,7 +300,8 @@ _DETAILS_RE = re.compile(r"(?:([-*+]|\d+[.)])\s+)?<details>\s*<summary>(.*?)</su
 _INLINE_RE = re.compile(
     r"(\*\*\*.+?\*\*\*|\*\*.+?\*\*|\*[^*\s][^*]*\*|~~.+?~~|`[^`]+`"
     r"|\[[^\]]+\]\([^)\s]+\)|https?://[^\s)\]>]+"
-    r"|<(?:b|strong|i|em|code)>.+?</(?:b|strong|i|em|code)>|<a href=\"[^\"]*\">.+?</a>)"
+    r"|<b>.+?</b>|<strong>.+?</strong>|<i>.+?</i>|<em>.+?</em>|<code>.+?</code>"
+    r"|<a href=\"[^\"]*\">.+?</a>)"
 )
 _HTML_SPAN_RE = re.compile(r'<(b|strong|i|em|code|a)(?: href="([^"]*)")?>(.*)</\1>', re.DOTALL)
 _HTML_SPAN_STYLES = {"b": "bold", "strong": "bold", "i": "italic", "em": "italic"}

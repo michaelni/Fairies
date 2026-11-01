@@ -108,7 +108,7 @@ class IssueCloseTests(unittest.TestCase):
                 mock.patch.object(issue_fairy.gcli_cache, "save_cache"):
             reason = issue_fairy.submit_issue_decision(
                 args, {"number": 4321}, self._decision("reply"),
-                cache=argparse.Namespace(entries={}), submitted_counts={"comment": 0})
+                submitted_counts={"comment": 0})
         self.assertIsNone(reason)
         self.assertEqual(order, ["comment", "close"])
         self.assertEqual(close.call_args.args[1:], ("o", "r", 4321, "issue", "close"))

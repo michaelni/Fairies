@@ -489,7 +489,6 @@ def submit_issue_decision(
     issue: ApiObject,
     decision: Decision,
     *,
-    cache: gcli_cache.Cache,
     submitted_counts: dict[str, int],
 ) -> str | None:
     """Post the comment (if any), then apply label changes; None when
@@ -506,7 +505,6 @@ def submit_issue_decision(
             decision.llm_message, kind=KIND_ISSUE,
         )
         submitted_counts["comment"] += 1
-        gcli_cache.forget_item(args, cache, "issues", decision.pr_number)
     if decision_has_label_changes(decision):
         current = set(labels(issue))
         apply_issue_label_changes(

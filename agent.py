@@ -1256,18 +1256,23 @@ def post_decision(ns: argparse.Namespace, kind: str, item: dict,
     seams; the block reason when one refused, None when everything
     went out."""
     if kind == "issue":
-        return issue_fairy.submit_issue_decision(
-            ns, item, decision, cache=cache, submitted_counts=counts)
-    if decision.action in fairy.ACTIONABLE_DECISIONS:
-        reason = fairy.submit_decision_action(ns, decision, cache=cache)
+        reason = issue_fairy.submit_issue_decision(
+            ns, item, decision, submitted_counts=counts)
         if reason is not None:
             return reason
-        counts[decision.action] += 1
-    if fairy.decision_has_label_changes(decision):
-        fairy.apply_triage_labels(ns, item, decision)
-    if decision.close:
-        forge_gcli.run_item_action(ns, ns.owner, ns.repo, decision.pr_number,
-                                   forge_gcli.KIND_PR, "close")
+    else:
+        if decision.action in fairy.ACTIONABLE_DECISIONS:
+            reason = fairy.submit_decision_action(ns, decision)
+            if reason is not None:
+                return reason
+            counts[decision.action] += 1
+        if fairy.decision_has_label_changes(decision):
+            fairy.apply_triage_labels(ns, item, decision)
+        if decision.close:
+            forge_gcli.run_item_action(ns, ns.owner, ns.repo, decision.pr_number,
+                                       forge_gcli.KIND_PR, "close")
+    gcli_cache.forget_item(ns, cache, "issues" if kind == "issue" else "pulls",
+                           decision.pr_number)
     return None
 
 

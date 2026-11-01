@@ -1463,7 +1463,7 @@ class CrossItemBranchTests(unittest.TestCase):
                                   return_value="k"), \
                 mock.patch.object(issue_fairy.gcli_cache, "save_cache"):
             reason = issue_fairy.submit_issue_decision(
-                args, {"number": 4321}, decision, cache=cache,
+                args, {"number": 4321}, decision,
                 submitted_counts={"comment": 0})
         self.assertIsNone(reason)
         self.assertEqual(published, ["pr4321-fix"])

@@ -1158,8 +1158,6 @@ def check_pr_still_unchanged(
 def submit_decision_action(
     args: argparse.Namespace,
     decision: Decision,
-    *,
-    cache: gcli_cache.Cache | None = None,
 ) -> str | None:
     """Post ``decision``; None on success, the branch publication block
     reason otherwise. Branches are published before the review message,
@@ -1176,8 +1174,6 @@ def submit_decision_action(
     else:
         raise RuntimeError(f"unexpected actionable decision: {decision.action!r}")
 
-    if cache is not None:
-        gcli_cache.forget_item(args, cache, "pulls", decision.pr_number)
     return None
 
 

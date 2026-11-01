@@ -1617,6 +1617,15 @@ class SendTests(SendCase):
         t = self.db.get("reviewed", "pr", "1")
         self.assertEqual(t["send_blocked"], "PR updated_at changed")
 
+    def test_a_label_only_post_forgets_the_cached_item(self) -> None:
+        labels = [{"label": "needs docs", "op": "add", "reason": "", "post": False}]
+        self.db.push("outgoing", "pr", "1", verdict_ticket(1, "skip", labels=labels))
+        with mock.patch.object(fairy, "apply_triage_labels") as apply, \
+                mock.patch.object(agent.gcli_cache, "forget_item") as forget:
+            self.send(pr_ns=self.ns)
+        apply.assert_called_once()
+        forget.assert_called_once_with(self.ns, mock.ANY, "pulls", 1)
+
     def test_issue_outgoing_posts_through_the_issue_seam(self) -> None:
         issue_ns = issue_fairy.parse_args(["--owner", "o", "--repo", "r"])
         self.db.push("outgoing", "issue", "5", verdict_ticket(

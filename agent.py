@@ -602,6 +602,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                         "sampled_at": now.isoformat(),
                         "expected_updated_at": item.get("updated_at"),
                     }, prior)
+                _fail_requested_evals(db, kind, evals.get(number, ()),
+                                      f"prepare failed: {exc}")
                 continue
         if prior == "reviewed" and not ns.auto_mode and number not in forced_ns:
             # A reviewed/ verdict in manual mode is the operator's

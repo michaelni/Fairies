@@ -2194,6 +2194,14 @@ class IssueSideScanTests(AgentCase):
         self.prepare_issue.assert_not_called()
         self.assertEqual(self.db.find("issue", "5"), "reviewed")
 
+    def test_a_failed_prepare_answers_the_sample_requests(self) -> None:
+        self.db.push("requests", "issue", "1s1", {"action": "rerun"})
+        self.scan_issues([make_issue(1)], prepare=RuntimeError("boom"))
+        self.assertEqual(self.db.get("error", "issue", "1s1"),
+                         {"error": "prepare failed: boom"} | {
+                             "state_changed_at": mock.ANY})
+        self.assertIsNone(self.db.get("requests", "issue", "1s1"))
+
     def test_a_failed_thread_fetch_shows_its_cause(self) -> None:
         self.thread.side_effect = RuntimeError("forge down")
         self.scan_issues([dict(make_issue(1), user={"login": "u"}, body="b1")],

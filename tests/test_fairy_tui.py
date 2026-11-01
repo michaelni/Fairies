@@ -1006,6 +1006,20 @@ class ErrorAgeColumnTests(DbCase):
         self.assertTrue(any("err=2d" in t for t in rows), rows)
 
 
+class LlmColumnStyleTests(DbCase):
+    def test_moderate_and_major_verdicts_are_bold(self) -> None:
+        for n, cls in enumerate(("approve", "moderate_issues", "major_issues"), 5):
+            self.db.push("reviewed", "pr", str(n), verdict(n, cls))
+        self.model.poll()
+        with self.model.lock:
+            self.model.cursor_key = ("none", "pr", "0")
+        styles = {text.strip(): style for r in make_ui(self.model).list_rows()
+                  for style, text in r}
+        self.assertEqual(styles["ok"], "llm")
+        self.assertEqual(styles["moderate"], "llm_issues")
+        self.assertEqual(styles["major"], "llm_issues")
+
+
 class StatusColumnTests(DbCase):
     """The letter cluster between #number and state is drawn from the
     items/ snapshot's status fields, with the cancelled ticket's reason

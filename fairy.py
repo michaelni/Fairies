@@ -595,12 +595,12 @@ def add_side_agent_args(p: argparse.ArgumentParser, *,
         type=float,
         default=24.0,
         help="Time-to-live (hours) on the cached discussion (a PR's "
-             "comments, reviews and inline review comments, an issue's "
-             "comments); these can be silently edited or deleted server-side "
-             "without bumping the item's updated_at, the TTL forces a "
-             "periodic refetch as a backstop. Other PR fields (timeline, "
-             "commits, files) are gated only on pr.updated_at and ignore "
-             "this TTL. (default: 24)",
+             "comments, reviews, inline review comments and timeline, an "
+             "issue's comments and timeline); these can be silently edited "
+             "or deleted server-side without bumping the item's updated_at, "
+             "the TTL forces a periodic refetch as a backstop. Other PR "
+             "fields (commits, files) are gated only on pr.updated_at and "
+             "ignore this TTL. (default: 24)",
     )
     p.add_argument(
         "--reactions-cache-max-age-hours",

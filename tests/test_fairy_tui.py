@@ -1757,10 +1757,11 @@ class DetailTests(DbCase):
         self.db.push("reviewed", "pr", "5", verdict(5))
         self.db.push("items", "pr", "5", {
             "title": "t", "author": "a", "assignees": ["michaelni", "dowu"],
-            "milestone": "9.1", "discussion": []})
+            "milestone": "9.1", "locked": True, "discussion": []})
         self.model.poll()
         self.model.poll_snapshot()
-        self.assertIn("assignee michaelni, dowu   milestone 9.1", self._detail_text())
+        self.assertIn("assignee michaelni, dowu   milestone 9.1   locked",
+                      self._detail_text())
 
     def test_the_descriptions_attachments_render_under_it(self) -> None:
         self.db.push("reviewed", "issue", "5", verdict(5))

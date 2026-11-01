@@ -1659,6 +1659,8 @@ class UILoop:
                            ("text", ", ".join(map(str, shown["assignees"])))]
             if shown.get("milestone"):
                 byline += [("label", "   milestone "), ("text", str(shown["milestone"]))]
+            if shown.get("locked"):
+                byline += [("log_warn", "   locked")]
             head.append(byline)
         if item.error:
             head += tui_core.wrap([("log_err", str(item.error))], width,

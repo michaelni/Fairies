@@ -315,6 +315,13 @@ class TestFoldSections(unittest.TestCase):
         self.assertEqual(fold_sections("### Verification\nran fate\n### Replies\n"),
                          "<details><summary><b>Verification</b></summary>\n\nran fate\n</details>\n### Replies\n")
 
+    def test_a_bold_lead_in_the_body_does_not_end_the_section(self) -> None:
+        self.assertEqual(
+            fold_sections("### Verification\n**Combiner:** built the head.\n\n"
+                          "**Classification: approve.** fine\n"),
+            "<details><summary><b>Verification</b></summary>\n\n**Combiner:** built the head.\n"
+            "</details>\n\n**Classification: approve.** fine\n")
+
     def test_a_result_after_the_heading_stays_in_the_summary(self) -> None:
         self.assertEqual(fold_sections("### Verification: `make fate` passes\nlog\n"),
                          "<details><summary><b>Verification: <code>make fate</code> passes</b>"

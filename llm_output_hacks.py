@@ -96,6 +96,17 @@ _HEADING = re.compile(r"^(?:#{1,6} +(?P<text>.+?)|\*\*(?P<bold>[^*]+)\*\*) *$")
 _FOLDED_SECTIONS = ("Dropped claims", "Verification", "Duplicates", "Reproduction", "Regression",
                     "Root Cause", "Affected Branches", "Affected Users", "Design Considerations",
                     "Fixes/Implementation")
+_SECTION_NAMES = frozenset(name.lower() for name in
+                           (*_FOLDED_SECTIONS, "Classification", "Replies", "Findings"))
+
+
+def _ends_section(line: str) -> bool:
+    """A heading, a line that is only bold, or a paragraph whose bold
+    lead names a section."""
+    if _HEADING.match(line):
+        return True
+    lead = _BOLD.match(line)
+    return bool(lead) and lead[1].partition(":")[0].strip().lower() in _SECTION_NAMES
 
 
 def _inline_html(markdown: str) -> str:
@@ -165,9 +176,9 @@ def fold_entries(message: str) -> str:
 def fold_sections(message: str) -> str:
     """Fold the sections the prompt lays out under the
     ``_FOLDED_SECTIONS`` headings, optionally followed by a colon and a
-    result, each from its heading to the next heading or
-    margin paragraph opening with bold text, into a ``<details>`` block
-    headed by the heading text."""
+    result, each from its heading to the next heading or margin
+    paragraph whose bold lead names a section, into a ``<details>``
+    block headed by the heading text."""
     lines = message.split("\n")
     out: list[str] = []
     i = 0
@@ -179,7 +190,7 @@ def fold_sections(message: str) -> str:
             out += lines[i:end]
         elif title.partition(":")[0].strip().lower() in map(str.lower, _FOLDED_SECTIONS):
             end = i + 1
-            while end < len(lines) and not re.match(r"#{1,6} |\*\*", lines[end]):
+            while end < len(lines) and not _ends_section(lines[end]):
                 end = _fenced_block_end(lines, end) if lines[end].startswith("```") else end + 1
             while not lines[end - 1].strip():
                 end -= 1

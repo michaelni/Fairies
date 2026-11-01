@@ -1775,6 +1775,14 @@ class ItemSnapshotScanTests(SendCase):
                                            "merged": True})
         self.assertEqual(self.db.get("items", "pr", "7")["state"], "merged")
 
+    def test_pr_snapshot_records_labels(self) -> None:
+        self.ns.force_review_prs = {7}
+        self.scan([], fetch=lambda ns, n: {
+            **make_pr(n), "labels": [{"name": "avformat"},
+                                     {"name": "resolution/duplicate"}]})
+        self.assertEqual(self.db.get("items", "pr", "7")["labels"],
+                         ["avformat", "resolution/duplicate"])
+
     def test_a_closure_the_timeline_does_not_show_is_warned_about(self) -> None:
         self.ns.force_review_prs = {7}
         with self.assertLogs(agent.logger, "WARNING") as logs:

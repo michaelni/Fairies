@@ -248,8 +248,8 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
     """Refresh the item's filedb snapshot: its fields, discussion and
     forge status -- for a PR the "open"/"closed"/"merged" state, the
     auto-merge schedule, the approval and change-request counts
-    (latest non-stale review per author) and the series' patch-ids,
-    for an issue the "open"/"closed" state and its labels, and for
+    (latest non-stale review per author), the labels and the series'
+    patch-ids, for an issue the "open"/"closed" state and its labels, and for
     both the type and time of each timeline event. A failure
     costs freshness, never the scan of the item; returns the item, as of
     its thread, the thread, or the exception its fetch raised, and the
@@ -277,6 +277,7 @@ def _put_snapshot(db: filedb.Db, ns: argparse.Namespace, kind: str,
                 "approvals": sum(s.state == "APPROVED" for s in live),
                 "change_requests": sum(s.state == "CHANGES_REQUESTED"
                                        for s in live),
+                "labels": labels(item),
                 "base_sha": base_sha,
                 "head_sha": head_sha,
                 "patch_ids": _patch_ids(ns, kind, token, stored, base_sha, head_sha),

@@ -221,6 +221,15 @@ def _count_col(count, style: str) -> tuple[str, str]:
     return (style if count else "sc_dim", str(min(int(count), 9)))
 
 
+def _resolution_col(snap: dict) -> tuple[str, str]:
+    """The row's resolution cell from the item's resolution/ label;
+    blank without one."""
+    resolution = next((l.removeprefix("resolution/") for l in snap.get("labels") or []
+                       if l.startswith("resolution/")), None)
+    return ("text", " ") if resolution is None \
+        else _RESOLUTION_CODES.get(resolution, ("sc_dim", "?"))
+
+
 def _push_mark(item: Item, snap: dict) -> tuple[str, str]:
     """The row's push cell: a push after the review that kept every
     patch (``r``, orange) or changed one (``P``, red); blank while the
@@ -301,8 +310,6 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
             _push_mark(item, snap),
         ]
     labels = snap.get("labels") or []
-    resolution = next((l.removeprefix("resolution/") for l in labels
-                       if l.startswith("resolution/")), None)
     return [
         ("sc_done", "C") if snap.get("state") == "closed"
         or reason == agent.REASON_CLOSED
@@ -312,8 +319,7 @@ def _status_cols(item: Item, snap: dict) -> tui_core.StyledLine:
         else ("sc_info", "E") if "enhancement" in labels else ("text", " "),
         next((_REPRO_CODES[l] for l in _REPRO_CODES if l in labels),
              ("text", " ")),
-        ("text", " ") if resolution is None
-        else _RESOLUTION_CODES.get(resolution, ("sc_dim", "?")),
+        _resolution_col(snap),
     ]
 
 

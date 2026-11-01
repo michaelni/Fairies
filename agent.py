@@ -584,6 +584,8 @@ def _scan_items(db, ns, kind, items, *, now, cache, self_login, forced_ns,
                 if prior not in ("posted", "cancelled", "reviewed"):
                     _route(db, kind, token, "error", {
                         "title": str(item.get("title") or ""),
+                        "author": author_login(item.get("user")),
+                        "body": str(item.get("body") or ""),
                         "html_url": str(item.get("html_url") or ""),
                         "error": f"prepare failed: {exc}",
                         "error_backoff_h": error_backoff_h,

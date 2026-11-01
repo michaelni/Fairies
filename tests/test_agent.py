@@ -2196,9 +2196,12 @@ class IssueSideScanTests(AgentCase):
 
     def test_a_failed_thread_fetch_shows_its_cause(self) -> None:
         self.thread.side_effect = RuntimeError("forge down")
-        self.scan_issues([make_issue(1)], prepare=issue_fairy.prepare_issue)
-        self.assertEqual(self.db.get("error", "issue", "1")["error"],
+        self.scan_issues([dict(make_issue(1), user={"login": "u"}, body="b1")],
+                         prepare=issue_fairy.prepare_issue)
+        ticket = self.db.get("error", "issue", "1")
+        self.assertEqual(ticket["error"],
                          "prepare failed: the thread could not be fetched: forge down")
+        self.assertEqual((ticket["author"], ticket["body"]), ("u", "b1"))
 
 
 class LogSummaryTests(AgentCase):
